@@ -10,11 +10,30 @@ import { z } from 'zod'
 type Shape = Record<string, z.ZodType>
 type ShapeKey<Fields extends Shape> = Extract<keyof Fields, string>
 
+/**
+ * Opinionated lifecycle timestamps — every table has them, server-owned,
+ * always excluded from insert/command boundaries. Maintained by the
+ * `timestamps` trigger helper (see cvx-kit/triggers).
+ */
+const timestampShape = {
+	createdAt: z.number().optional(),
+	updatedAt: z.number().optional(),
+	archivedAt: z.number().optional(),
+} satisfies Shape
+
+type TimestampShape = typeof timestampShape
+
+export const TIMESTAMP_FIELDS = [
+	'createdAt',
+	'updatedAt',
+	'archivedAt',
+] as const
+
 export type TableBoundaryOptions<
 	Fields extends Shape,
 	ServerFields extends readonly ShapeKey<Fields>[],
 	CommandFields extends readonly ShapeKey<Fields>[],
-	PublicFields extends readonly ShapeKey<Fields>[],
+	PublicFields extends readonly ShapeKey<Fields & TimestampShape>[],
 > = {
 	serverFields?: ServerFields
 	commandFields?: CommandFields
@@ -27,7 +46,9 @@ export function zodTable<
 	Fields extends Shape,
 	const ServerFields extends readonly ShapeKey<Fields>[] = readonly [],
 	const CommandFields extends readonly ShapeKey<Fields>[] = readonly [],
-	const PublicFields extends readonly ShapeKey<Fields>[] = readonly [],
+	const PublicFields extends readonly ShapeKey<
+		Fields & TimestampShape
+	>[] = readonly [],
 >(
 	tableName: Table,
 	fields: (id: typeof zid) => Fields,
@@ -38,15 +59,23 @@ export function zodTable<
 		PublicFields
 	> = {},
 ) {
-	const shape = fields(zid)
+	const shape = { ...fields(zid), ...timestampShape } as Fields &
+		TimestampShape
 	const storage = z.object(shape).strict()
 	const schema = storage.extend({
 		_id: zid(tableName),
 		_creationTime: z.number(),
 	})
 	const insertSchema = z
-		.object(omitShape(shape, options.serverFields ?? ([] as never)))
-		.strict()
+		.object(
+			omitShape(shape, [
+				...TIMESTAMP_FIELDS,
+				...(options.serverFields ?? ([] as never)),
+			] as never),
+		)
+		.strict() as z.ZodObject<
+		Omit<Fields, ServerFields[number] | (typeof TIMESTAMP_FIELDS)[number]>
+	>
 	const updateSchema = insertSchema.partial()
 	const commandInput = z
 		.object(pickShape(shape, options.commandFields ?? ([] as never)))
@@ -121,12 +150,6 @@ export function zodVariantTable<Table extends string, Schema extends z.ZodType>(
 		table: defineTable(zodToConvex(storage)),
 	}
 }
-
-/** Server-owned audit timestamps; spread into a shape and list in serverFields. */
-export const timestampFields = {
-	createdAt: z.number(),
-	updatedAt: z.number(),
-} satisfies Shape
 
 /**
  * A zid that presents as a plain string in generated JSON schemas so

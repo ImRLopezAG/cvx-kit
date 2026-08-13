@@ -5,7 +5,7 @@ export {
 } from './errors'
 export {
 	jsonSafeZid,
-	timestampFields,
+	TIMESTAMP_FIELDS,
 	zodTable,
 	zodVariantTable,
 	type TableBoundaryOptions,
@@ -25,7 +25,7 @@ export {
 	appendOnly,
 	createTriggers,
 	noDelete,
-	touchUpdatedAt,
+	timestamps,
 	Triggers,
 	type Change,
 	type Trigger,

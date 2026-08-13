@@ -94,6 +94,17 @@ describe('createAuthFunctions on the real Convex runtime', () => {
 		])
 	})
 
+	it('maintains opinionated timestamps through the timestamps trigger', async () => {
+		const t = harness()
+		const asEditor = t.withIdentity(editorIdentity)
+		await asEditor.mutation(api.create, { title: 'Stamped', secretNote: 's' })
+		const stamped = await t.run(async (ctx) => {
+			return await ctx.db.query('documents').first()
+		})
+		expect(typeof (stamped as { createdAt?: number }).createdAt).toBe('number')
+		expect(typeof (stamped as { updatedAt?: number }).updatedAt).toBe('number')
+	})
+
 	it('enforces append-only evidence tables registered via appendOnly()', async () => {
 		const t = harness()
 		const asEditor = t.withIdentity(editorIdentity)

@@ -185,3 +185,6 @@ export type {
 	TransactionMetricsContext,
 } from './result'
 export { emitSemanticEvent } from './telemetry'
+
+// Component definition as default export: `import foundation from "cvx-kit/components/foundation"` → app.use(foundation)
+export { default } from "./convex.config"

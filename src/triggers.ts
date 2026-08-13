@@ -55,22 +55,35 @@ export function noDelete<DataModel extends GenericDataModel>(
 }
 
 /**
- * Maintains a server-owned `updatedAt` field on every insert and update.
- * Pair with zod-table's timestampFields + serverFields mask.
+ * Maintains zod-table's opinionated lifecycle timestamps: createdAt and
+ * updatedAt on insert, updatedAt on every update. archivedAt stays under
+ * application control. Register once per table; writes made through the
+ * auth constructors keep these fields correct automatically.
  */
-export function touchUpdatedAt<DataModel extends GenericDataModel>(
+export function timestamps<DataModel extends GenericDataModel>(
 	triggers: Triggers<DataModel>,
 	...tables: readonly TableNamesInDataModel<DataModel>[]
 ) {
 	for (const table of tables) {
 		triggers.register(table, async (ctx, change) => {
 			if (change.operation === 'delete') return
-			const document = change.newDoc as { updatedAt?: number }
-			// Only touch when the write didn't already set it, to avoid loops.
-			if (document.updatedAt === undefined) {
-				await ctx.innerDb.patch(change.id, {
-					updatedAt: Date.now(),
-				} as never)
+			const now = Date.now()
+			if (change.operation === 'insert') {
+				const document = change.newDoc as { createdAt?: number }
+				if (document.createdAt === undefined) {
+					await ctx.innerDb.patch(change.id, {
+						createdAt: now,
+						updatedAt: now,
+					} as never)
+				}
+				return
+			}
+			const previous = change.oldDoc as { updatedAt?: number }
+			const current = change.newDoc as { updatedAt?: number }
+			// A write that already moved updatedAt (including our own patch)
+			// is left alone — this is the recursion guard.
+			if (current.updatedAt === previous.updatedAt) {
+				await ctx.innerDb.patch(change.id, { updatedAt: now } as never)
 			}
 		})
 	}

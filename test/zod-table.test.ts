@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 
-import { timestampFields, zodTable } from '../src/zod-table'
+import { zodTable } from '../src/zod-table'
 
 const documents = zodTable(
 	'documents',
@@ -9,21 +9,40 @@ const documents = zodTable(
 		title: z.string(),
 		ownerId: id('users'),
 		secretNote: z.string(),
-		...timestampFields,
 	}),
 	{
-		serverFields: ['createdAt', 'updatedAt'],
 		commandFields: ['title'],
 		publicFields: ['title', 'ownerId'],
 	},
 )
 
 describe('zodTable', () => {
-	it('removes server-owned fields from the insert boundary', () => {
+	it('bakes opinionated timestamps into storage', () => {
+		expect(Object.keys(documents.storage.shape).sort()).toEqual([
+			'archivedAt',
+			'createdAt',
+			'ownerId',
+			'secretNote',
+			'title',
+			'updatedAt',
+		])
+	})
+
+	it('always removes timestamps from the insert boundary', () => {
 		expect(Object.keys(documents.insertSchema.shape).sort()).toEqual([
 			'ownerId',
 			'secretNote',
 			'title',
+		])
+	})
+
+	it('allows exposing timestamps through publicFields explicitly', () => {
+		const archive = zodTable('archive', () => ({ name: z.string() }), {
+			publicFields: ['name', 'createdAt'],
+		})
+		expect(Object.keys(archive.publicDto.shape).sort()).toEqual([
+			'createdAt',
+			'name',
 		])
 	})
 

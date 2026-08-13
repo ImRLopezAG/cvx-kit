@@ -316,3 +316,6 @@ function freezeDefinition(definition: ApprovalDefinition): ApprovalDefinition {
 		),
 	})
 }
+
+// Component definition as default export: `import approvals from "cvx-kit/components/approvals"` → app.use(approvals)
+export { default } from "./convex.config"

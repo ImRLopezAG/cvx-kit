@@ -30,7 +30,7 @@ bun add cvx-kit
 One zod shape per entity, masked into every boundary it crosses:
 
 ```ts
-import { timestampFields, zodTable } from 'cvx-kit/zod-table'
+import { zodTable } from 'cvx-kit/zod-table'
 
 export const documents = zodTable(
   'documents',
@@ -38,17 +38,21 @@ export const documents = zodTable(
     title: z.string(),
     ownerId: id('users'),
     secretNote: z.string(),
-    ...timestampFields,
   }),
   {
-    serverFields: ['createdAt', 'updatedAt'], // removed from inserts
-    commandFields: ['title'],                 // what a command may say
-    publicFields: ['title', 'ownerId'],       // the DTO allowlist
+    commandFields: ['title'],           // what a command may say
+    publicFields: ['title', 'ownerId'], // the DTO allowlist
   },
 )
 // documents.table → defineTable(...) for schema.ts
 // documents.toPublicDto(row) → projects AND re-parses (runtime redaction)
 ```
+
+Every table gets `createdAt`, `updatedAt`, and `archivedAt` baked in —
+opinionated, server-owned, always excluded from inserts and commands
+(expose them via `publicFields` when a DTO needs them). Register the
+`timestamps` trigger once and they maintain themselves; `archivedAt` stays
+under application control.
 
 `zodVariantTable` covers discriminated-union tables; `jsonSafeZid` keeps
 LLM-tool JSON schemas primitive while preserving the `Id<...>` type.
@@ -88,7 +92,7 @@ separate command import.
 
 ```ts
 // convex/convex.config.ts
-import foundation from 'cvx-kit/components/foundation/convex.config'
+import foundation from 'cvx-kit/components/foundation'
 app.use(foundation)
 
 // convex/foundation.ts — declared once, the single kernel source
@@ -135,7 +139,7 @@ function handles — the component never imports host code.
 
 ```ts
 // convex/convex.config.ts
-import approvals from 'cvx-kit/components/approvals/convex.config'
+import approvals from 'cvx-kit/components/approvals'
 app.use(approvals)
 ```
 

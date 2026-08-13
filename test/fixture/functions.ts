@@ -8,7 +8,7 @@ import {
 } from 'convex/server'
 import { z } from 'zod'
 import { createAuthFunctions } from '../../src/auth'
-import { appendOnly, createTriggers } from '../../src/triggers'
+import { appendOnly, createTriggers, timestamps } from '../../src/triggers'
 import { documents } from './schema'
 
 /** The fixture app's own role vocabulary — deliberately not reader/writer/admin. */
@@ -18,6 +18,7 @@ const FIXTURE_ROLES = ['viewer', 'editor', 'owner'] as const
 
 export const triggers = createTriggers<GenericDataModel>()
 appendOnly(triggers, 'documentHistory')
+timestamps(triggers, 'documents')
 // Evaluation trigger: every document insert writes a history evidence row.
 triggers.register('documents', async (ctx, change) => {
 	if (change.operation !== 'insert') return

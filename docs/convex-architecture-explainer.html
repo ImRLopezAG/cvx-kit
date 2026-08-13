@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Ontology Convex Architecture — the reusable core you keep rebuilding</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --ink: #1f2328; --muted: #59606a;
+    --accent: #2a5db0; --accent2: #8a4baf; --ok: #1a7f4b; --warn: #a05a00;
+    --card: #ffffff; --line: #d9d5cc; --code-bg: #14181f; --code-ink: #d8dee9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --ink:#e6e3dc; --muted:#9aa2ad; --card:#1c2128;
+            --line:#333a44; --accent:#7aa7e8; --accent2:#c093e0; --ok:#5fc78e; --warn:#e0a24f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 .5rem; }
+  h2 { font-size: 1.25rem; margin: 2.5rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .3rem; }
+  h3 { font-size: 1.05rem; margin: 1.6rem 0 .4rem; }
+  p, li, dd, dt { max-width: 70ch; }
+  a { color: var(--accent); }
+  dl.meta { display:grid; grid-template-columns: max-content 1fr; gap:.15rem 1rem;
+            font-size:.9rem; color:var(--muted); border:1px solid var(--line);
+            background:var(--card); border-radius:8px; padding:.75rem 1rem; margin:1rem 0 2rem; }
+  dl.meta dt { font-weight:600; }
+  dl.meta dd { margin:0; }
+  pre { background: var(--code-bg); color: var(--code-ink); padding: .9rem 1rem;
+        border-radius: 8px; overflow-x: auto; font-size: .82rem; line-height: 1.5; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code, li code, td code { background: color-mix(in srgb, var(--line) 45%, transparent);
+        padding: .05rem .3rem; border-radius: 4px; font-size: .85em; }
+  .k { color:#7aa7e8; } .s { color:#a3be8c; } .c { color:#7b8496; font-style:italic; }
+  .f { color:#e0af68; } .t { color:#c093e0; }
+  .note { border-left: 3px solid var(--accent); background: var(--card);
+          padding: .6rem .9rem; border-radius: 0 8px 8px 0; margin: 1rem 0; }
+  .why { border-left: 3px solid var(--accent2); background: var(--card);
+         padding: .6rem .9rem; border-radius: 0 8px 8px 0; margin: 1rem 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; margin: 1rem 0; }
+  th, td { text-align: left; border-bottom: 1px solid var(--line); padding: .4rem .6rem; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .path { font-size:.8rem; color:var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  figure { margin: 1.5rem 0; }
+  figcaption { font-size:.85rem; color:var(--muted); margin-top:.4rem; max-width:70ch; }
+  footer { margin-top: 3rem; color: var(--muted); font-size:.85rem; border-top:1px solid var(--line); padding-top:1rem; }
+  svg text { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>The Ontology Convex Architecture — the reusable core you keep rebuilding</h1>
+
+<dl class="meta">
+  <dt>Date</dt><dd>2026-08-13</dd>
+  <dt>Input shape</dt><dd>concept</dd>
+  <dt>Subject</dt><dd>The layered Convex implementation in <code>~/dev/sunday/ontology/convex</code> — components, share layer, auth utils, triggers, audit, and durable workflows — read as the extractable core shared by Qualitys, OneOffice, ProjectSaaS, and Agent.io</dd>
+</dl>
+
+<p>You asked what makes this implementation sustainable enough to be worth
+packaging. The short answer: <strong>every generic mechanism lives behind a
+boundary that is mechanically enforced by tests, and every app-specific
+decision is injected into it from outside</strong>. That inversion — kernel
+components own the machinery, the host injects the policy — is exactly what
+makes a <code>~/dev/cvx</code> npm package feasible. This explainer walks the
+stack layer by layer and ends with a portability map: what lifts out clean,
+what needs a seam cut, and what stays app-side.</p>
+
+<h2>1. The whole stack in one picture</h2>
+
+<figure>
+<svg viewBox="0 0 880 560" role="img" aria-label="Layer diagram of the Convex architecture" width="100%">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#59606a"/>
+    </marker>
+  </defs>
+  <!-- API layer -->
+  <rect x="20" y="20" width="840" height="70" rx="10" fill="#2a5db0" opacity="0.14" stroke="#2a5db0"/>
+  <text x="40" y="48" font-size="15" font-weight="bold" fill="#2a5db0">api/ — declarative facade</text>
+  <text x="40" y="70" font-size="12.5" fill="#59606a">authQuery / adminMutation + zod args/returns + domain handler. No logic. No raw query()/mutation().</text>
+
+  <!-- utils band -->
+  <rect x="20" y="110" width="840" height="70" rx="10" fill="#8a4baf" opacity="0.13" stroke="#8a4baf"/>
+  <text x="40" y="138" font-size="15" font-weight="bold" fill="#8a4baf">utils.ts — custom function constructors</text>
+  <text x="40" y="160" font-size="12.5" fill="#59606a">WorkOS AuthKit identity → frozen actor {userId, org, role} · triggers.wrapDB · include() bounded reads · admin/system variants</text>
+
+  <!-- domain -->
+  <rect x="20" y="200" width="540" height="180" rx="10" fill="#1a7f4b" opacity="0.12" stroke="#1a7f4b"/>
+  <text x="40" y="228" font-size="15" font-weight="bold" fill="#1a7f4b">domain/ — the only place business rules live</text>
+  <rect x="40" y="245" width="240" height="55" rx="7" fill="#ffffff" opacity="0.85" stroke="#1a7f4b"/>
+  <text x="52" y="268" font-size="12.5" font-weight="bold" fill="#1f2328">shared/schema.ts</text>
+  <text x="52" y="286" font-size="11.5" fill="#59606a">zodTable() entity factory</text>
+  <rect x="300" y="245" width="240" height="55" rx="7" fill="#ffffff" opacity="0.85" stroke="#1a7f4b"/>
+  <text x="312" y="268" font-size="12.5" font-weight="bold" fill="#1f2328">shared/command.ts</text>
+  <text x="312" y="286" font-size="11.5" fill="#59606a">ApplicationCommand: observe + audit</text>
+  <rect x="40" y="310" width="500" height="55" rx="7" fill="#ffffff" opacity="0.85" stroke="#1a7f4b"/>
+  <text x="52" y="333" font-size="12.5" font-weight="bold" fill="#1f2328">assignments/ · settlementPayments/</text>
+  <text x="52" y="351" font-size="11.5" fill="#59606a">command registries, query DTOs, rules, triggers, workflows</text>
+
+  <!-- components -->
+  <rect x="580" y="200" width="280" height="180" rx="10" fill="#a05a00" opacity="0.12" stroke="#a05a00"/>
+  <text x="600" y="228" font-size="15" font-weight="bold" fill="#a05a00">components/ (local)</text>
+  <rect x="600" y="245" width="240" height="55" rx="7" fill="#ffffff" opacity="0.85" stroke="#a05a00"/>
+  <text x="612" y="268" font-size="12.5" font-weight="bold" fill="#1f2328">foundation</text>
+  <text x="612" y="286" font-size="11.5" fill="#59606a">0 tables — Command/Query/Obs kernels</text>
+  <rect x="600" y="310" width="240" height="55" rx="7" fill="#ffffff" opacity="0.85" stroke="#a05a00"/>
+  <text x="612" y="333" font-size="12.5" font-weight="bold" fill="#1f2328">approvals</text>
+  <text x="612" y="351" font-size="11.5" fill="#59606a">2 tables + nested workflow + auditLog</text>
+
+  <!-- npm components -->
+  <rect x="20" y="400" width="840" height="70" rx="10" fill="#59606a" opacity="0.12" stroke="#59606a"/>
+  <text x="40" y="428" font-size="15" font-weight="bold" fill="#59606a">npm components (mounted in convex.config.ts, wrapped by one root facade each)</text>
+  <text x="40" y="450" font-size="12.5" fill="#59606a">@convex-dev/workos-authkit → auth.ts · convex-audit-log → audit.ts · @convex-dev/workflow ×2 → workflows.ts · @convex-dev/workpool → pool.ts</text>
+
+  <!-- tests -->
+  <rect x="20" y="490" width="840" height="52" rx="10" fill="#b03a2e" opacity="0.12" stroke="#b03a2e"/>
+  <text x="40" y="512" font-size="14" font-weight="bold" fill="#b03a2e">__tests__/architecture.test.ts — the boundary enforcer</text>
+  <text x="40" y="532" font-size="12" fill="#59606a">bans inline tables/enums, deep imports, sibling owners; proves foundation has no app imports; proves approvals is copy-paste portable</text>
+
+  <line x1="440" y1="90" x2="440" y2="110" stroke="#59606a" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="290" y1="180" x2="290" y2="200" stroke="#59606a" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="700" y1="180" x2="700" y2="200" stroke="#59606a" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="440" y1="380" x2="440" y2="400" stroke="#59606a" stroke-width="1.5" marker-end="url(#arr)"/>
+</svg>
+<figcaption>Requests enter through <code>api/</code>, are authenticated and
+shaped by <code>utils.ts</code>, execute in <code>domain/</code> using kernels
+from <code>components/foundation</code>, and side-effect through the npm
+component facades. Architecture tests police every arrow.</figcaption>
+</figure>
+
+<p>In prose: <code>convex/schema.ts</code> is four lines
+(<code>defineSchema(domainTables)</code>). <code>convex/convex.config.ts</code>
+declares typed env vars and mounts five components. Each component gets exactly
+one root facade file (<code>foundation.ts</code>, <code>approvals.ts</code>,
+<code>audit.ts</code>, <code>auth.ts</code>, <code>workflows.ts</code>,
+<code>pool.ts</code>) — the rest of the app never touches
+<code>components.*</code> directly. That "one facade per component" rule is
+asserted in <span class="path">convex/__tests__/facades.test.ts</span>.</p>
+
+<h2>2. The share layer: <code>zodTable()</code>, one shape → four boundaries</h2>
+
+<p>This is the piece you called "the share layer of the main". A single zod
+shape per entity is masked into every boundary the entity crosses, so the DB
+validator, the wire validator, and the TypeScript type are literally the same
+object. From <span class="path">convex/domain/shared/schema.ts:20-103</span>:</p>
+
+<pre><code><span class="k">const</span> shape = fields(zid)                          <span class="c">// callback gets zid, so id('assignments') works</span>
+<span class="k">const</span> storage = z.object(shape).strict()          <span class="c">// what the DB stores</span>
+<span class="k">const</span> schema  = storage.extend({ _id: zid(tableName), _creationTime: z.number() })
+<span class="k">const</span> insertSchema = z.object(omitShape(shape, options.serverFields ?? [])).strict()
+<span class="k">const</span> updateSchema = insertSchema.partial()
+<span class="k">const</span> commandInput = z.object(pickShape(shape, options.commandFields ?? [])).strict()
+<span class="k">const</span> publicDto    = z.object(pickShape(shape, options.publicFields  ?? [])).strict()
+...
+table: defineTable(zodToConvex(storage)),         <span class="c">// convex-helpers/server/zod4 bridge</span>
+tools: { insert: commandInput,
+         update: z.object({ data: commandInput.partial(), id: zid(tableName) }).strict() }</code></pre>
+
+<p>The three masks are the design insight:</p>
+<ul>
+  <li><strong><code>serverFields</code></strong> — fields the server owns
+  (<code>createdAt</code>, <code>updatedAt</code>): removed from what clients
+  may insert.</li>
+  <li><strong><code>commandFields</code></strong> — the tiny subset a command
+  is allowed to say (e.g. for assignments only
+  <code>assignedToUserId</code> and <code>snapshot</code>).</li>
+  <li><strong><code>publicFields</code></strong> — the DTO allowlist.
+  <code>toPublicDto(row)</code> both projects <em>and re-parses</em>, so
+  leaking a private field is a runtime error, not a code-review hope.</li>
+</ul>
+
+<div class="why"><strong>Why this is the sustainable move:</strong> redaction,
+input narrowing, and typing are usually three hand-maintained artifacts that
+drift. Here they are derived, so they cannot drift. There is also
+<code>zodVariantTable()</code> for discriminated-union tables, and note you
+have an older parallel copy at
+<span class="path">src/server/convex/schemas/helper.ts</span> (adds implicit
+timestamps and a JSON-safe zid for LLM tools) — the package should merge these
+two into one.</div>
+
+<h2>3. <code>utils.ts</code> — auth-aware function constructors</h2>
+
+<p>Every public function in the app is built from six constructors, all
+<code>zCustom*</code> from <code>convex-helpers/server/zod4</code>:
+<code>authQuery/authMutation/authAction</code>,
+<code>admin*</code> (adds a role gate), and internal
+<code>systemMutation/systemAction</code>. The heart is
+<code>authenticatedUser</code>
+(<span class="path">convex/utils.ts:185-218</span>):</p>
+
+<pre><code><span class="k">async function</span> <span class="f">authenticatedUser</span>(ctx: AuthContext) {
+  <span class="k">const</span> identity = <span class="k">await</span> ctx.auth.getUserIdentity()
+  <span class="k">const</span> user = identity ? <span class="k">await</span> authKit.getAuthUser(ctx) : <span class="k">null</span>
+  <span class="k">if</span> (!identity || !user) <span class="k">return</span> App.errors.throw({ code: <span class="s">'UNAUTHENTICATED'</span> })
+  <span class="c">// … extracts organizationId from the WorkOS JWT, maps role,</span>
+  <span class="c">// returns a frozen { identity, user, org, role, actor } bundle</span>
+}</code></pre>
+
+<p>Three properties worth copying everywhere:</p>
+<ul>
+  <li><strong>The JWT is not the whole truth for actions.</strong> Action
+  constructors re-verify membership live against WorkOS
+  (<code>listOrganizationMemberships</code>, statuses <code>['active']</code>)
+  and <em>fail closed</em>: any WorkOS error throws <code>FORBIDDEN</code>
+  (<span class="path">utils.ts:230-251</span>). Queries and mutations trust the
+  JWT (they're transactional and fast); actions — which touch the outside
+  world — do not.</li>
+  <li><strong>Mutations get <code>triggers.wrapDB(ctx)</code> baked in</strong>
+  (<span class="path">utils.ts:150</span>), so trigger enforcement is
+  structurally unavoidable — nobody can "forget" to wrap the db.</li>
+  <li><strong><code>include()</code></strong> is a fluent index-selection
+  builder (<code>when / matching / otherwise / execute</code>) that hard-caps
+  every read at 100 rows and throws
+  <code>INVALID_REQUEST_BOUNDARY</code> on unbounded queries — a bounded-read
+  discipline instead of hoping nobody writes a full scan.</li>
+</ul>
+
+<p>The WorkOS wiring around it is three small files:
+<code>auth.ts</code> (<code>new AuthKit&lt;DataModel&gt;(components.workOSAuthKit, …)</code>
+plus webhook-driven user sync via <code>authKit.events</code>),
+<code>auth.config.ts</code> (two <code>customJwt</code> providers pointing at
+WorkOS issuers/JWKS), and <code>http.ts</code>
+(<code>authKit.registerRoutes</code> on a Hono router). The "Convex user
+entity" you validate against is the AuthKit component's own user table, read
+through <code>authKit.getAuthUser(ctx)</code>.</p>
+
+<h2>4. Triggers — invariants at the database boundary</h2>
+
+<p>One app-wide <code>Triggers&lt;DataModel&gt;</code> registry
+(<span class="path">convex/triggers.ts</span>), domains register into it. The
+current use is small but exemplary
+(<span class="path">domain/assignments/triggers.ts</span>):</p>
+
+<pre><code>triggers.register(table, <span class="k">async</span> (_ctx, change) =&gt; {
+  <span class="k">if</span> (change.operation !== <span class="s">'insert'</span>) {
+    <span class="k">throw new</span> Error(<span class="s">`${table} is append-only`</span>)
+  }
+})  <span class="c">// assignmentVotes and assignmentHistory are evidence tables</span></code></pre>
+
+<p>Because the wrap happens inside the mutation constructors, "append-only
+evidence table" is an invariant of the runtime, not a convention. This is the
+pattern for anything that must hold no matter which mutation writes:
+denormalized counters, cascading cleanups, immutability.</p>
+
+<h2>5. The foundation component — a kernel that owns nothing</h2>
+
+<p>The most unusual and most portable piece.
+<code>components/foundation</code> is a Convex component with
+<strong>zero tables</strong> (<code>defineSchema({})</code>, enforced by test)
+and one trivial function (<code>status</code>). Its value is entirely in the
+client-side classes it ships:</p>
+
+<ul>
+  <li><strong><code>Command&lt;Context, Registry&gt;</code></strong> — a
+  registry of operations, each <code>{ command, result }</code> as zod
+  parseables. <code>exec()</code> parses the input, runs the handler,
+  <em>parses the output too</em>, and rejects unregistered operations with
+  <code>COMMAND_OPERATION_NOT_CONFIGURED</code>. Execution policy is injected:
+  the kernel never decides what "run" means.</li>
+  <li><strong><code>Query&lt;Context, Defaults&gt;</code></strong> — same idea
+  for reads; the comment in the source says it directly: <em>"Authorization
+  remains an injected host policy."</em></li>
+  <li><strong><code>Observability</code></strong> — emits
+  <code>command.execution</code> events with operation, classification,
+  outcome, error code, and clamped duration; gated by a thunk; every emission
+  is wrapped in try/catch because <em>"observability is intentionally
+  behaviorally inert"</em> — telemetry can never break a transaction.</li>
+  <li><strong><code>executeResultBoundary</code></strong> — returns a handled
+  failure as a value <em>only if the transaction has written nothing yet</em>
+  (checked via <code>ctx.meta.getTransactionMetrics()</code>); otherwise it
+  rethrows so Convex rolls back. Typed errors without ever committing a
+  half-done transaction.</li>
+</ul>
+
+<p>The host binds it once (<span class="path">convex/foundation.ts</span>):</p>
+
+<pre><code><span class="k">export const</span> { Command, Query, observability } = <span class="k">new</span> <span class="t">Foundation</span>(
+  components.foundation,
+  { observability: {
+      enabled: () =&gt; env.COMMAND_OBSERVABILITY_ENABLED === <span class="s">'true'</span>,
+      classifyError: App.errors.classifyCommand } },
+)</code></pre>
+
+<h2>6. <code>ApplicationCommand</code> — where audit stops being optional</h2>
+
+<p>The app wraps the kernel once, in
+<span class="path">domain/shared/command.ts</span>, and this wrapper is what
+makes every command observable <em>and</em> audited:</p>
+
+<pre><code><span class="k">return</span> observability.observe({ operation, classification: definition.classification }, <span class="k">async</span> () =&gt; {
+  <span class="k">const</span> result = <span class="k">await</span> execution.run()
+  <span class="k">const</span> audit  = <span class="k">await</span> execution.definition.audit({ command, result }, context)
+  <span class="k">if</span> (audit) <span class="k">await</span> writeAuditEntry(context, { ...audit, classification })
+  <span class="k">return</span> result
+})</code></pre>
+
+<p>The type <code>AuditedOperation</code> makes <code>classification</code> and
+the <code>audit()</code> factory <strong>mandatory fields of every operation
+definition</strong>. You cannot register a command without deciding its audit
+story — auditing is type-enforced, not opt-in. <code>writeAuditEntry</code>
+maps the app's shape onto the <code>convex-audit-log</code> component
+(action, actor, resource, tags, retention category = classification), and the
+read side is admin-only queries with bounded windowing and tamper-resistant
+cursors (an FNV-1a fingerprint binds the cursor to its filters, so replayed
+cursors with different filters are rejected).</p>
+
+<p>Command results are values, not exceptions: a zod discriminated union on
+<code>ok</code> with <code>denied(code)</code> / <code>success(value)</code>
+helpers. Combined with <code>executeResultBoundary</code>, a denied command is
+data the client can render, while an unexpected error still rolls back.</p>
+
+<h2>7. Durable workflows — three flavors of the same discipline</h2>
+
+<table>
+<tr><th>Pipeline</th><th>Primitive</th><th>The discipline it shows</th></tr>
+<tr><td>Assignment auto-assign</td><td><code>@convex-dev/workflow</code> (own mount)</td>
+    <td>Plan in a retried action, fan out mutations per item, derive a
+    <code>blocked | partial | completed</code> status from step results.</td></tr>
+<tr><td>Payment materialization</td><td>workflow + <code>@convex-dev/workpool</code>
+    (parallelism 4, backoff retry)</td>
+    <td>Lease tokens guard concurrent runs; loops are bounded (an explicit
+    iteration ceiling that throws rather than spin forever);
+    <code>defineOnComplete</code> routes pool failures back into the
+    workflow.</td></tr>
+<tr><td>Approvals</td><td>workflow nested <em>inside</em> the component</td>
+    <td>The component owns its own durable engine — hosts mount nothing
+    extra.</td></tr>
+</table>
+
+<p>Note the mount naming: the same npm component is mounted twice under
+different names (<code>assignmentWorkflow</code>,
+<code>paymentMaterializationWorkflow</code>), each with its own
+<code>WorkflowManager</code> and pool options — isolation between pipelines
+comes free from the component model.</p>
+
+<h2>8. The approvals component — proof the pattern scales up</h2>
+
+<p><code>components/approvals</code> is a full generic product: declarative
+approval workflows (decision / branch / mutation / action / notify steps) with
+quorum, maker-checker, expiry, a compiled-and-frozen descriptor, durable
+execution, and its own audit trail. What makes it generic:</p>
+
+<ul>
+  <li><strong>Tenancy is an opaque <code>scopeRef</code> string.</strong> The
+  component never resolves identity; the host passes
+  <code>ctx.actor.organizationId</code>. No tenant table needed inside.</li>
+  <li><strong>Callbacks are function handles.</strong> Host mutations are
+  stored as opaque strings via <code>createFunctionHandle</code>, so the
+  component calls back into app code it has never imported.</li>
+  <li><strong>A <code>compatibilityKey</code> guards every run-touching
+  call</strong> — redefine the workflow shape and old runs refuse to be driven
+  by the new definition.</li>
+  <li><strong>Decisions arrive as workflow events</strong>
+  (<code>step.awaitEvent</code>), so a run durably sleeps until a human
+  decides, and evidence is replayed to branch callbacks.</li>
+</ul>
+
+<p>The app-side definition reads like configuration
+(<span class="path">domain/assignments/approval.ts</span>):</p>
+
+<pre><code><span class="k">export const</span> assignmentApproval = approvals.define({
+  name: <span class="s">'assignmentApproval'</span>,
+  steps: [
+    approvals.decision(<span class="s">'managerDecision'</span>, { decisions: [<span class="s">'approved'</span>, <span class="s">'rejected'</span>],
+      quorum: { kind: <span class="s">'count'</span>, approvals: 1 }, makerChecker: <span class="k">true</span>,
+      expiresAfterMs: ASSIGNMENT_APPROVAL_DURATION_MS }),
+    approvals.branch(<span class="s">'applyDecision'</span>, { approvedStepKey: <span class="s">'activateAssignment'</span>,
+      rejectedStepKey: <span class="s">'releaseAssignment'</span> }),
+    approvals.mutation(<span class="s">'activateAssignment'</span>, { handler: internal.domain.assignments.approval_functions.applyDecision }),
+    approvals.mutation(<span class="s">'releaseAssignment'</span>,  { handler: internal.domain.assignments.approval_functions.applyDecision }),
+  ],
+})</code></pre>
+
+<div class="note"><strong>The copyability test is the crown jewel.</strong>
+<span class="path">components/approvals/__tests__/copyability.test.ts</span>
+literally <code>cp -r</code>'s the component into a temp directory with only
+<code>node_modules</code> symlinked, generates a minimal host config, and
+asserts that <code>tsc</code> and <code>convex codegen --dry-run</code> both
+succeed. Portability isn't a claim — it's a CI assertion. Your npm package
+should ship this test pattern for every component in it.</div>
+
+<h2>9. The enforcement layer — why this stays clean</h2>
+
+<p><span class="path">convex/__tests__/architecture.test.ts</span> loads every
+production source file as raw text and fails the build on:</p>
+
+<ul>
+  <li><code>defineTable</code>/<code>defineSchema</code> outside files named
+  <code>schema.ts</code>; inline <code>z.enum([…])</code> literals (all
+  vocabularies must come from <code>constants.ts</code>).</li>
+  <li>Deep <code>@server/*</code> imports outside a six-file allowlist;
+  hand-written <code>makeFunctionReference</code>; banned legacy symbols and
+  directories (<code>/bridge/</code>, <code>/migration/</code>, …).</li>
+  <li><code>foundation.ts</code> importing anything beyond the foundation
+  client; the foundation component importing anything app-shaped at all.</li>
+  <li>The approvals component mentioning <code>@cvx</code>,
+  <code>process.env</code>, <code>WorkOS</code>, <code>Neon</code>,
+  <code>Drizzle</code>, or <code>Redis</code>, and owning any tables beyond
+  its declared two.</li>
+</ul>
+
+<div class="why"><strong>This is the real answer to "why is it
+sustainable".</strong> The layering survives because violating it fails CI,
+not because everyone remembers the rules. When you extract the package, these
+tests are as much a part of the product as the code: ship a
+<code>createArchitectureTest(rules)</code> helper so every consuming project
+gets the same guardrails on day one.</div>
+
+<h2>10. Portability map for the <code>~/dev/cvx</code> package</h2>
+
+<table>
+<tr><th>Piece</th><th>Portability</th><th>What to do</th></tr>
+<tr><td><code>components/foundation</code></td>
+    <td><strong>Lift as-is.</strong> Zero tables, zero app imports, policy injected.</td>
+    <td>Publish as a component; keep the boundary test.</td></tr>
+<tr><td><code>components/approvals</code></td>
+    <td><strong>Lift as-is.</strong> Copyability is already CI-proven.</td>
+    <td>Publish; ship the copyability test as a template.</td></tr>
+<tr><td><code>zodTable</code> / <code>zodVariantTable</code></td>
+    <td><strong>Lift with a merge.</strong> Pure functions over zod + convex-helpers.</td>
+    <td>Unify with the older <code>src/server/convex/schemas/helper.ts</code>
+        variant (timestamps, jsonSafeZid) into one factory with options.</td></tr>
+<tr><td><code>utils.ts</code> constructors</td>
+    <td><strong>Needs one seam.</strong> Generic over any DataModel except:
+        AuthKit instance, role mapping, error factory, trigger registry.</td>
+    <td>Export <code>createAuthFunctions({ authKit, mapRole, errors, triggers })</code>
+        that returns the six constructors + <code>include()</code>.</td></tr>
+<tr><td><code>ApplicationCommand</code> + <code>writeAuditEntry</code></td>
+    <td><strong>Needs one seam.</strong> Depends on an AuditLog instance and an
+        observability instance.</td>
+    <td><code>createApplicationCommand({ observability, writeAudit })</code>;
+        keep <code>AuditedOperation</code>'s mandatory-audit typing.</td></tr>
+<tr><td>WorkOS wiring (<code>auth.ts</code>, <code>auth.config.ts</code>, <code>http.ts</code>)</td>
+    <td><strong>Templateable.</strong> ~30 lines, identical across projects.</td>
+    <td>Ship as a scaffold/init function, not runtime code: the env names and
+        issuer URLs are the only variables.</td></tr>
+<tr><td>Audit facade cursor machinery</td>
+    <td><strong>Liftable.</strong> Fingerprinted cursors + bounded windows are
+        generic over any AuditLog.</td>
+    <td>Extract; leave the DTO vocabularies app-side.</td></tr>
+<tr><td>Workflow/pool tuning, domain registries, DTOs, constants</td>
+    <td><strong>Stays app-side.</strong> This is the business.</td>
+    <td>Document the shapes; the package provides the kernels they plug into.</td></tr>
+</table>
+
+<p>The through-line: this codebase already separated mechanism from policy —
+the package boundary you want is the boundary the architecture tests already
+enforce. Extraction is mostly <em>moving</em> code, plus cutting the four
+injection seams named above (auth deps, error factory, audit writer,
+observability config) so the mechanisms stop importing your app's singletons
+and start receiving them.</p>
+
+<footer>Composed 2026-08-13 by ce-explain</footer>
+</main>
+</body>
+</html>

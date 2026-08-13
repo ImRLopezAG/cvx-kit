@@ -1,0 +1,112 @@
+{
+	"name": "cvx-kit",
+	"version": "0.1.0",
+	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
+	"type": "module",
+	"license": "MIT",
+	"sideEffects": false,
+	"files": [
+		"dist",
+		"src"
+	],
+	"exports": {
+		"./package.json": "./package.json",
+		".": {
+			"types": "./dist/index.d.mts",
+			"import": "./dist/index.mjs"
+		},
+		"./zod-table": {
+			"types": "./dist/zod-table.d.mts",
+			"import": "./dist/zod-table.mjs"
+		},
+		"./auth": {
+			"types": "./dist/auth.d.mts",
+			"import": "./dist/auth.mjs"
+		},
+		"./command": {
+			"types": "./dist/command.d.mts",
+			"import": "./dist/command.mjs"
+		},
+		"./errors": {
+			"types": "./dist/errors.d.mts",
+			"import": "./dist/errors.mjs"
+		},
+		"./test": "./src/test.ts",
+		"./foundation": {
+			"types": "./dist/components/foundation/client.d.mts",
+			"import": "./dist/components/foundation/client.mjs"
+		},
+		"./foundation/convex.config": {
+			"types": "./dist/components/foundation/convex.config.d.mts",
+			"import": "./dist/components/foundation/convex.config.mjs"
+		},
+		"./foundation/convex.config.js": {
+			"types": "./dist/components/foundation/convex.config.d.mts",
+			"import": "./dist/components/foundation/convex.config.mjs"
+		},
+		"./foundation/_generated/component": {
+			"types": "./dist/components/foundation/_generated/component.d.mts"
+		},
+		"./approvals": {
+			"types": "./dist/components/approvals/client.d.mts",
+			"import": "./dist/components/approvals/client.mjs"
+		},
+		"./approvals/convex.config": {
+			"types": "./dist/components/approvals/convex.config.d.mts",
+			"import": "./dist/components/approvals/convex.config.mjs"
+		},
+		"./approvals/convex.config.js": {
+			"types": "./dist/components/approvals/convex.config.d.mts",
+			"import": "./dist/components/approvals/convex.config.mjs"
+		},
+		"./approvals/_generated/component": {
+			"types": "./dist/components/approvals/_generated/component.d.mts"
+		},
+		"./triggers": {
+			"types": "./dist/triggers.d.mts",
+			"import": "./dist/triggers.mjs"
+		}
+	},
+	"scripts": {
+		"build": "vp pack",
+		"typecheck": "tsc --noEmit",
+		"test": "vp test run",
+		"prepublishOnly": "bun run typecheck && bun run test && bun run build",
+		"build:codegen": "convex codegen --component-dir ./src/components/foundation && convex codegen --component-dir ./src/components/approvals && vp pack",
+		"release": "npm version patch && git push --follow-tags",
+		"release:minor": "npm version minor && git push --follow-tags"
+	},
+	"dependencies": {
+		"@convex-dev/workflow": "0.4.4",
+		"convex-audit-log": "^0.2.0",
+		"convex-helpers": "0.1.122"
+	},
+	"peerDependencies": {
+		"convex": "^1.43.0",
+		"zod": "^4.0.0"
+	},
+	"devDependencies": {
+		"@edge-runtime/vm": "^5.0.0",
+		"convex": "1.43.0",
+		"convex-test": "^0.0.55",
+		"publint": "^0.3.23",
+		"typescript": "7.0.2",
+		"vite-plus": "0.2.8",
+		"zod": "4.4.3"
+	},
+	"keywords": [
+		"convex",
+		"component",
+		"workos",
+		"zod"
+	],
+	"author": "Angel Lopez",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ImRLopezAG/cvx-kit.git"
+	},
+	"homepage": "https://github.com/ImRLopezAG/cvx-kit#readme",
+	"bugs": {
+		"url": "https://github.com/ImRLopezAG/cvx-kit/issues"
+	}
+}

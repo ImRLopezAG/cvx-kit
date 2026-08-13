@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 
-import { Foundation } from '../src/components/foundation/client'
-import { ApplicationCommand, type AuditEntryInput } from '../src/command'
+import {
+	Foundation,
+	type AuditEntryInput,
+} from '../src/components/foundation/client'
 
 type Context = { actorId: string }
 
+// The host declares one Foundation and destructures everything from it —
+// the single kernel source, mirroring convex/foundation.ts.
 function foundationHarness() {
 	const events: unknown[] = []
-	// The host declares one Foundation; it is the sole source of the
-	// Command kernel and observability, mirroring convex/foundation.ts.
-	const foundation = new Foundation(
+	const auditEntries: AuditEntryInput[] = []
+	const { Command } = new Foundation(
 		{ functions: { status: 'status' } },
 		{
 			observability: {
@@ -19,17 +22,19 @@ function foundationHarness() {
 				emit: (event) => {
 					events.push(event)
 				},
+				writeAudit: (_context, entry) => {
+					auditEntries.push(entry)
+				},
 			},
 		},
 	)
-	return { foundation, events }
+	return { Command, events, auditEntries }
 }
 
 function harness() {
-	const { foundation, events } = foundationHarness()
-	const auditEntries: AuditEntryInput[] = []
+	const { Command, events, auditEntries } = foundationHarness()
 	const operations = {
-		'documents.rename': ApplicationCommand.operation({
+		'documents.rename': Command.operation({
 			command: z.object({ id: z.string(), title: z.string() }).strict(),
 			result: z.object({ ok: z.literal(true) }).strict(),
 			classification: 'business',
@@ -40,19 +45,11 @@ function harness() {
 			}),
 		}),
 	} as const
-	const commands = new ApplicationCommand<Context, typeof operations>(
-		operations,
-		{
-			foundation,
-			writeAudit: (_context, entry) => {
-				auditEntries.push(entry)
-			},
-		},
-	)
+	const commands = new Command<Context, typeof operations>(operations)
 	return { commands, events, auditEntries }
 }
 
-describe('ApplicationCommand', () => {
+describe('Foundation Command protocol', () => {
 	it('validates input, executes, audits, and observes', async () => {
 		const { commands, events, auditEntries } = harness()
 		const rename = commands.exec({
@@ -98,25 +95,16 @@ describe('ApplicationCommand', () => {
 	})
 
 	it('skips the audit write when the operation returns null', async () => {
-		const { foundation, events } = foundationHarness()
-		const auditEntries: AuditEntryInput[] = []
+		const { Command, events, auditEntries } = foundationHarness()
 		const operations = {
-			'documents.read': ApplicationCommand.operation({
+			'documents.read': Command.operation({
 				command: z.object({}).strict(),
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'read',
 				audit: () => null,
 			}),
 		} as const
-		const commands = new ApplicationCommand<Context, typeof operations>(
-			operations,
-			{
-				foundation,
-				writeAudit: (_context, entry) => {
-					auditEntries.push(entry)
-				},
-			},
-		)
+		const commands = new Command<Context, typeof operations>(operations)
 		const read = commands.exec({
 			operation: 'documents.read',
 			handler: async () => ({ ok: true as const }),

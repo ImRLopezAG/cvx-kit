@@ -27,10 +27,6 @@
 			"types": "./dist/triggers.d.mts",
 			"import": "./dist/triggers.mjs"
 		},
-		"./command": {
-			"types": "./dist/command.d.mts",
-			"import": "./dist/command.mjs"
-		},
 		"./errors": {
 			"types": "./dist/errors.d.mts",
 			"import": "./dist/errors.mjs"

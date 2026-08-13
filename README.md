@@ -80,11 +80,11 @@ export const { authQuery, authMutation, authAction, adminQuery, adminMutation,
 Actions re-verify membership live and fail closed; mutations get the trigger
 registry structurally; `include()` bounds every read (default 100 rows).
 
-### `cvx-kit/components/foundation` + `cvx-kit/command`
+### `cvx-kit/components/foundation`
 
-One command story. The foundation component is the kernel provider: you
-declare it once, and everything else consumes that instance — you never
-touch `Command`/`Query`/`Observability` directly.
+Declared once; everything destructures from it. `Command` comes out of the
+Foundation already bound to observability and the audit writer — there is no
+separate command import.
 
 ```ts
 // convex/convex.config.ts
@@ -93,26 +93,37 @@ app.use(foundation)
 
 // convex/foundation.ts — declared once, the single kernel source
 import { Foundation } from 'cvx-kit/components/foundation'
-export const foundation = new Foundation(components.foundation, {
-  observability: { enabled: () => env.OBS === 'true', classifyError },
-})
+export const { Command, Query, observability } = new Foundation(
+  components.foundation,
+  {
+    observability: {
+      enabled: () => env.OBS === 'true',
+      classifyError,
+      writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
+    },
+  },
+)
 
-// convex/domain/<owner>/commands.ts — the only command API you use
-import { ApplicationCommand } from 'cvx-kit/command'
-import { foundation } from '../foundation'
+// convex/domain/<owner>/commands.ts
+import { Command } from '../foundation'
 
-const commands = new ApplicationCommand(operations, {
-  foundation, // kernel + observability come from here
-  writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
+const commands = new Command({
+  'documents.rename': Command.operation({
+    command: renameInput,
+    result: renameResult,
+    classification: 'business',
+    audit: ({ command }, ctx) => ({ ... }),
+  }),
 })
+export const executeRename = commands.exec({ operation: 'documents.rename', handler })
 ```
 
-`ApplicationCommand` pulls the command kernel and observability from the
-declared `Foundation` — validate, observe, execute, audit. `classification`
-and `audit()` are mandatory per operation: auditing is type-enforced, not
-opt-in. The foundation component itself owns zero tables and ships
-`executeResultBoundary` (typed failures only while the transaction has no
-effects; otherwise rethrow so Convex rolls back).
+Every command is validated (input and output zod-parsed), observed, and
+audited in-transaction. `classification` and `audit()` are mandatory per
+operation: auditing is type-enforced, not opt-in. The foundation component
+itself owns zero tables and ships `executeResultBoundary` (typed failures
+only while the transaction has no effects; otherwise rethrow so Convex
+rolls back).
 
 ### `cvx-kit/components/approvals` (component)
 

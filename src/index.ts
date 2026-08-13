@@ -31,14 +31,11 @@ export {
 	type Trigger,
 } from './triggers'
 export {
-	ApplicationCommand,
-	type ApplicationCommandDeps,
+	Foundation,
+	type ApplicationCommand,
 	type AuditedOperation,
 	type AuditedRegistry,
 	type AuditEntryInput,
 	type AuditWriter,
-} from './command'
-export {
-	Foundation,
 	type FoundationOptions,
 } from './components/foundation/client'

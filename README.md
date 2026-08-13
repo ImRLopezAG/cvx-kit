@@ -23,6 +23,22 @@ bun add cvx-kit
   target ES2025, minified, deps external, publint-verified
 - `bun run build:codegen` — re-run `convex codegen` for both components, then build
 
+## Documentation
+
+Full docs ship with the package — `node_modules/cvx-kit/docs/` when installed,
+authored in [`src/docs/`](./src/docs/):
+
+- [`architecture.md`](./src/docs/architecture.md) — the layered application shape the kit encodes
+- [`conventions.md`](./src/docs/conventions.md) — the doctrine: folder structure, file anatomy, naming grammar, import rules
+- [`zod-table.md`](./src/docs/zod-table.md) — one zod shape per entity, masked into every boundary
+- [`auth.md`](./src/docs/auth.md) — auth-aware function constructors from injected policy
+- [`commands.md`](./src/docs/commands.md) — Foundation, the audited command protocol, observability
+- [`triggers.md`](./src/docs/triggers.md) — trigger registry, timestamps/append-only/no-delete
+- [`approvals.md`](./src/docs/approvals.md) — declarative approval workflows
+- [`maintainability.md`](./src/docs/maintainability.md) — keeping a Convex app maintainable long-term
+- [`migration.md`](./src/docs/migration.md) — restructuring an existing raw Convex project into this architecture
+- [`llms.md`](./src/docs/llms.md) — condensed reference to paste into an LLM/agent context
+
 ## Modules
 
 ### `cvx-kit/zod-table`

@@ -80,44 +80,41 @@ export const { authQuery, authMutation, authAction, adminQuery, adminMutation,
 Actions re-verify membership live and fail closed; mutations get the trigger
 registry structurally; `include()` bounds every read (default 100 rows).
 
-### `cvx-kit/command`
+### `cvx-kit/components/foundation` + `cvx-kit/command`
 
-The audited command protocol with injected observability and audit writer.
-`classification` and `audit()` are mandatory per operation — auditing is
-type-enforced, not opt-in:
+One command story. The foundation component is the kernel provider: you
+declare it once, and everything else consumes that instance — you never
+touch `Command`/`Query`/`Observability` directly.
 
 ```ts
+// convex/convex.config.ts
+import foundation from 'cvx-kit/components/foundation/convex.config'
+app.use(foundation)
+
+// convex/foundation.ts — declared once, the single kernel source
+import { Foundation } from 'cvx-kit/components/foundation'
+export const foundation = new Foundation(components.foundation, {
+  observability: { enabled: () => env.OBS === 'true', classifyError },
+})
+
+// convex/domain/<owner>/commands.ts — the only command API you use
 import { ApplicationCommand } from 'cvx-kit/command'
-import { audit } from './audit'
-import { observability } from './foundation'
+import { foundation } from '../foundation'
 
 const commands = new ApplicationCommand(operations, {
-  observability,
+  foundation, // kernel + observability come from here
   writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
 })
 ```
 
-### `cvx-kit/foundation` (component)
-
-Capability-free kernel component: zero tables, `Command`/`Query` kernels with
-injected execution policy, behaviorally inert `Observability`, and
+`ApplicationCommand` pulls the command kernel and observability from the
+declared `Foundation` — validate, observe, execute, audit. `classification`
+and `audit()` are mandatory per operation: auditing is type-enforced, not
+opt-in. The foundation component itself owns zero tables and ships
 `executeResultBoundary` (typed failures only while the transaction has no
 effects; otherwise rethrow so Convex rolls back).
 
-```ts
-// convex/convex.config.ts
-import foundation from 'cvx-kit/foundation/convex.config'
-app.use(foundation)
-
-// convex/foundation.ts
-import { Foundation } from 'cvx-kit/foundation'
-export const { Command, Query, observability } = new Foundation(
-  components.foundation,
-  { observability: { enabled: () => env.OBS === 'true', classifyError } },
-)
-```
-
-### `cvx-kit/approvals` (component)
+### `cvx-kit/components/approvals` (component)
 
 Declarative approval workflows (decision / branch / mutation / action /
 notify) with quorum, maker-checker, expiry, compatibility keys, durable
@@ -127,7 +124,7 @@ function handles — the component never imports host code.
 
 ```ts
 // convex/convex.config.ts
-import approvals from 'cvx-kit/approvals/convex.config'
+import approvals from 'cvx-kit/components/approvals/convex.config'
 app.use(approvals)
 ```
 
@@ -140,7 +137,7 @@ https://docs.convex.dev/components/authoring):
 - Components live in `src/components/<name>` with their own
   `convex.config.ts`, `schema.ts`, functions, and **checked-in
   `_generated/`** (required for npm-distributed components).
-- Hosts mount via the `./<name>/convex.config` subpath export and call the
+- Hosts mount via the `./components/<name>/convex.config` subpath export and call the
   component only through its client class — never its tables directly.
 - `bun run build:codegen` re-runs `convex codegen --component-dir` for both
   components before building.

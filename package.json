@@ -23,6 +23,10 @@
 			"types": "./dist/auth.d.mts",
 			"import": "./dist/auth.mjs"
 		},
+		"./triggers": {
+			"types": "./dist/triggers.d.mts",
+			"import": "./dist/triggers.mjs"
+		},
 		"./command": {
 			"types": "./dist/command.d.mts",
 			"import": "./dist/command.mjs"
@@ -32,39 +36,35 @@
 			"import": "./dist/errors.mjs"
 		},
 		"./test": "./src/test.ts",
-		"./foundation": {
+		"./components/foundation": {
 			"types": "./dist/components/foundation/client.d.mts",
 			"import": "./dist/components/foundation/client.mjs"
 		},
-		"./foundation/convex.config": {
+		"./components/foundation/convex.config": {
 			"types": "./dist/components/foundation/convex.config.d.mts",
 			"import": "./dist/components/foundation/convex.config.mjs"
 		},
-		"./foundation/convex.config.js": {
+		"./components/foundation/convex.config.js": {
 			"types": "./dist/components/foundation/convex.config.d.mts",
 			"import": "./dist/components/foundation/convex.config.mjs"
 		},
-		"./foundation/_generated/component": {
+		"./components/foundation/_generated/component": {
 			"types": "./dist/components/foundation/_generated/component.d.mts"
 		},
-		"./approvals": {
+		"./components/approvals": {
 			"types": "./dist/components/approvals/client.d.mts",
 			"import": "./dist/components/approvals/client.mjs"
 		},
-		"./approvals/convex.config": {
+		"./components/approvals/convex.config": {
 			"types": "./dist/components/approvals/convex.config.d.mts",
 			"import": "./dist/components/approvals/convex.config.mjs"
 		},
-		"./approvals/convex.config.js": {
+		"./components/approvals/convex.config.js": {
 			"types": "./dist/components/approvals/convex.config.d.mts",
 			"import": "./dist/components/approvals/convex.config.mjs"
 		},
-		"./approvals/_generated/component": {
+		"./components/approvals/_generated/component": {
 			"types": "./dist/components/approvals/_generated/component.d.mts"
-		},
-		"./triggers": {
-			"types": "./dist/triggers.d.mts",
-			"import": "./dist/triggers.mjs"
 		}
 	},
 	"scripts": {

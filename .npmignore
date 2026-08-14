@@ -1,0 +1,12 @@
+# Ship only dist/, docs/, and src/test.ts (the vitest helper that must stay source).
+/src/*
+!/src/test.ts
+/test
+/bun.lock
+/tsconfig.json
+/vite.config.ts
+/.github
+/.omc
+/.claude
+*.tsbuildinfo
+.DS_Store

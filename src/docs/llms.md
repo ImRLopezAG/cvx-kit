@@ -69,7 +69,7 @@ function constructors, a trigger registry, an audited command protocol
 | `cvx-kit/tenancy` | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD` |
 | `cvx-kit/triggers` | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers` |
 | `cvx-kit/errors` | `KitError`, `defaultErrors`, `ErrorFactory` |
-| `cvx-kit/components/foundation` | `Foundation`, `executeResultBoundary`, `projectResult`, `Observability`; default export = component config for `app.use` |
+| `cvx-kit/components/foundation` | `Foundation` — the ONLY runtime export besides the default component config for `app.use`. Everything (`Command`, `Query`, `observability`, `executeResultBoundary`, `projectResult`, `emitSemanticEvent`) destructures from the instance; nothing is importable loose. |
 | `cvx-kit/components/approvals` | `Approvals` client; default export = component config for `app.use` |
 | `cvx-kit/test` | `registerFoundation(t)`, `registerApprovals(t)` for convex-test |
 

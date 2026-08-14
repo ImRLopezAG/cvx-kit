@@ -10,6 +10,8 @@ import {
 	type ObservabilityOptions,
 } from './modules/observability/observability'
 import { Query } from './modules/query/query'
+import { executeResultBoundary, projectResult } from './result'
+import { emitSemanticEvent } from './telemetry'
 
 /** Shape handed to the injected audit writer; classification comes from the operation. */
 export type AuditEntryInput = {
@@ -252,6 +254,10 @@ export class Foundation<
 	readonly Command: CommandConstructor
 	readonly Query = Query
 	readonly observability: Observability
+	/** Typed-failure boundary — see result.ts. Facade-bound like the kernels. */
+	readonly executeResultBoundary = executeResultBoundary
+	readonly projectResult = projectResult
+	readonly emitSemanticEvent = emitSemanticEvent
 
 	constructor(component: Component, options: FoundationOptions) {
 		this.status = component.functions.status
@@ -275,6 +281,11 @@ export class Foundation<
 	}
 }
 
+// Kernel CLASSES are deliberately NOT exported: Command, Query, and
+// Observability exist only as capabilities of a Foundation instance —
+// `const { Command, Query, observability } = new Foundation(...)`. A loose
+// import would construct kernels without the injected observability, audit
+// writer, and permission checker. Types stay exported for signatures.
 export type {
 	CommandExecution,
 	CommandInput,
@@ -282,20 +293,16 @@ export type {
 	CommandResult,
 	Parseable,
 } from './modules/command/command'
-export { Observability } from './modules/observability/observability'
 export type {
 	CommandObservation,
 	ObservabilityOptions,
 } from './modules/observability/observability'
-export { Query } from './modules/query/query'
 export type { QueryExecution } from './modules/query/query'
-export { executeResultBoundary, projectResult } from './result'
 export type {
 	Result,
 	ResultBoundary,
 	TransactionMetricsContext,
 } from './result'
-export { emitSemanticEvent } from './telemetry'
 
 // Component definition as default export: `import foundation from "cvx-kit/components/foundation"` → app.use(foundation)
 export { default } from "./convex.config"

@@ -184,7 +184,8 @@ failure. Default sink is one JSON line on `console.info`
 ## `executeResultBoundary` — typed failures, but only while it's safe
 
 ```ts
-import { executeResultBoundary } from 'cvx-kit/components/foundation'
+// destructured from the Foundation facade, like everything else
+const { executeResultBoundary, projectResult } = new Foundation(...)
 
 const result = await executeResultBoundary(ctx, () => run(), boundary)
 // Result<Value, Failure> = { ok: true, value } | { ok: false, error }

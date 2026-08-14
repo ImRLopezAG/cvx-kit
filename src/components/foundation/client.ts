@@ -304,5 +304,7 @@ export type {
 	TransactionMetricsContext,
 } from './result'
 
-// Component definition as default export: `import foundation from "cvx-kit/components/foundation"` → app.use(foundation)
-export { default } from "./convex.config"
+// The component definition is deliberately NOT re-exported here: Convex's
+// CLI only discovers a component whose resolved file is convex.config.js,
+// so hosts must mount via the dedicated subpath:
+//   import foundation from 'cvx-kit/components/foundation/convex.config'

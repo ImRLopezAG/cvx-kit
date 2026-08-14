@@ -109,7 +109,7 @@ separate command import.
 
 ```ts
 // convex/convex.config.ts
-import foundation from 'cvx-kit/components/foundation'
+import foundation from 'cvx-kit/components/foundation/convex.config'
 app.use(foundation)
 
 // convex/foundation.ts — declared once, the single kernel source
@@ -156,7 +156,7 @@ function handles — the component never imports host code.
 
 ```ts
 // convex/convex.config.ts
-import approvals from 'cvx-kit/components/approvals'
+import approvals from 'cvx-kit/components/approvals/convex.config'
 app.use(approvals)
 ```
 

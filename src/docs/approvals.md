@@ -12,7 +12,7 @@ and callbacks cross the boundary as **function handles**.
 
 ```ts
 // convex/convex.config.ts
-import approvals from 'cvx-kit/components/approvals'
+import approvals from 'cvx-kit/components/approvals/convex.config'
 app.use(approvals)
 ```
 

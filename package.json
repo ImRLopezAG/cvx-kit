@@ -38,11 +38,13 @@
 		},
 		"./components/foundation/convex.config": {
 			"types": "./dist/components/foundation/convex.config.d.mts",
-			"import": "./dist/components/foundation/convex.config.mjs"
+			"import": "./dist/components/foundation/convex.config.js",
+			"default": "./dist/components/foundation/convex.config.js"
 		},
 		"./components/foundation/convex.config.js": {
 			"types": "./dist/components/foundation/convex.config.d.mts",
-			"import": "./dist/components/foundation/convex.config.mjs"
+			"import": "./dist/components/foundation/convex.config.js",
+			"default": "./dist/components/foundation/convex.config.js"
 		},
 		"./components/foundation/_generated/component": {
 			"types": "./dist/components/foundation/_generated/component.d.mts"
@@ -53,18 +55,20 @@
 		},
 		"./components/approvals/convex.config": {
 			"types": "./dist/components/approvals/convex.config.d.mts",
-			"import": "./dist/components/approvals/convex.config.mjs"
+			"import": "./dist/components/approvals/convex.config.js",
+			"default": "./dist/components/approvals/convex.config.js"
 		},
 		"./components/approvals/convex.config.js": {
 			"types": "./dist/components/approvals/convex.config.d.mts",
-			"import": "./dist/components/approvals/convex.config.mjs"
+			"import": "./dist/components/approvals/convex.config.js",
+			"default": "./dist/components/approvals/convex.config.js"
 		},
 		"./components/approvals/_generated/component": {
 			"types": "./dist/components/approvals/_generated/component.d.mts"
 		}
 	},
 	"scripts": {
-		"build": "vp pack",
+		"build": "vp pack && node scripts/convex-config-bridge.mjs && publint",
 		"typecheck": "tsc --noEmit",
 		"test": "vp test run",
 		"docs:sync": "rm -f docs/*.md && cp src/docs/*.md docs/",

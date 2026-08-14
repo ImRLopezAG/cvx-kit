@@ -78,8 +78,8 @@ function constructors, a trigger registry, an audited command protocol
 ```ts
 // convex/convex.config.ts
 import { defineApp } from 'convex/server'
-import foundation from 'cvx-kit/components/foundation'
-import approvals from 'cvx-kit/components/approvals'
+import foundation from 'cvx-kit/components/foundation/convex.config'
+import approvals from 'cvx-kit/components/approvals/convex.config'
 const app = defineApp()
 app.use(foundation)
 app.use(approvals)

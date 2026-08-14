@@ -12,7 +12,7 @@ from it; there is no separate command import.
 ```ts
 // convex/convex.config.ts
 import { defineApp } from 'convex/server'
-import foundation from 'cvx-kit/components/foundation'
+import foundation from 'cvx-kit/components/foundation/convex.config'
 
 const app = defineApp()
 app.use(foundation)

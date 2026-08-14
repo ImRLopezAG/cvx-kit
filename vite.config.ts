@@ -16,6 +16,8 @@ export default defineConfig({
 		sourcemap: true,
 		minify: true,
 		clean: true,
-		publint: true,
+		// publint runs as a separate build step AFTER the convex.config.js
+		// bridge is materialized (see scripts/convex-config-bridge.mjs).
+		publint: false,
 	},
 })

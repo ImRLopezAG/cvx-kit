@@ -317,5 +317,7 @@ function freezeDefinition(definition: ApprovalDefinition): ApprovalDefinition {
 	})
 }
 
-// Component definition as default export: `import approvals from "cvx-kit/components/approvals"` → app.use(approvals)
-export { default } from "./convex.config"
+// The component definition is deliberately NOT re-exported here: Convex's
+// CLI only discovers a component whose resolved file is convex.config.js,
+// so hosts must mount via the dedicated subpath:
+//   import approvals from 'cvx-kit/components/approvals/convex.config'

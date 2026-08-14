@@ -10,3 +10,6 @@
 /.claude
 *.tsbuildinfo
 .DS_Store
+
+# repo-internal explainers; the shipped docs/ mirrors src/docs only
+/docs/explain

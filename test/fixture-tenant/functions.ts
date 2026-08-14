@@ -1,6 +1,7 @@
 import {
 	actionGeneric,
 	internalActionGeneric,
+	internalQueryGeneric,
 	internalMutationGeneric,
 	mutationGeneric,
 	queryGeneric,
@@ -29,6 +30,7 @@ export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
 	action: actionGeneric,
 	internalMutation: internalMutationGeneric,
 	internalAction: internalActionGeneric,
+	internalQuery: internalQueryGeneric,
 	getAuthUser: async (ctx) => {
 		const identity = await ctx.auth.getUserIdentity()
 		return identity ? { id: identity.subject } : null
@@ -104,6 +106,15 @@ export const steal = auth.authMutation({
 export const readGlobals = auth.authQuery({
 	args: {},
 	handler: async (ctx) => {
+		const rows = await ctx.db.query('globals').collect()
+		return rows.length
+	},
+})
+
+export const countGlobals = auth.systemQuery({
+	args: {},
+	handler: async (ctx) => {
+		// system* stays unwrapped: internal reads see every table.
 		const rows = await ctx.db.query('globals').collect()
 		return rows.length
 	},

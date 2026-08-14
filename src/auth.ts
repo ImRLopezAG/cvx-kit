@@ -98,6 +98,7 @@ export type AuthFunctionsConfig<
 	query: QueryBuilder<DataModel, 'public'>
 	mutation: MutationBuilder<DataModel, 'public'>
 	action: ActionBuilder<DataModel, 'public'>
+	internalQuery: QueryBuilder<DataModel, 'internal'>
 	internalMutation: MutationBuilder<DataModel, 'internal'>
 	internalAction: ActionBuilder<DataModel, 'internal'>
 	/** Resolves the synchronized principal, e.g. (ctx) => authKit.getAuthUser(ctx). */
@@ -461,6 +462,10 @@ export function createAuthFunctions<
 		adminQuery: roleQuery(...config.adminRoles),
 		adminMutation: roleMutation(...config.adminRoles),
 		adminAction: roleAction(...config.adminRoles),
+		systemQuery: zCustomQuery(config.internalQuery, {
+			args: {},
+			input: async (ctx) => ({ ctx: { ...ctx, include }, args: {} }),
+		}),
 		systemMutation: zCustomMutation(config.internalMutation, {
 			args: {},
 			input: async (ctx) => ({ ctx: { ...wrapDB(ctx), include }, args: {} }),

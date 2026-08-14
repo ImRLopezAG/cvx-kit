@@ -26,7 +26,7 @@ function constructors, a trigger registry, an audited command protocol
 2. **Raw `query`/`mutation`/`action`/`internal*` builders appear only in
    `convex/functions.ts`** (the `createAuthFunctions` call). All other
    functions use `authQuery/authMutation/authAction`, `roleQuery/...`,
-   `adminQuery/...` (public) or `systemMutation/systemAction` (internal).
+   `adminQuery/...` (public) or `systemQuery/systemMutation/systemAction` (internal).
    This is what guarantees auth, triggers, and bounded reads.
 3. **Every public query returns DTOs** via `<table>.toPublicDto(row)` —
    runtime redaction, not just types.
@@ -93,9 +93,9 @@ appendOnly(triggers, 'history')
 
 // convex/functions.ts
 export const { authQuery, authMutation, authAction, adminQuery, adminMutation,
-  adminAction, roleQuery, roleMutation, roleAction, systemMutation,
+  adminAction, roleQuery, roleMutation, roleAction, systemQuery, systemMutation,
   systemAction, include } = createAuthFunctions<DataModel>({
-  query, mutation, action, internalMutation, internalAction,   // from ./_generated/server
+  query, mutation, action, internalQuery, internalMutation, internalAction,   // from ./_generated/server
   getAuthUser: (ctx) => authKit.getAuthUser(ctx),
   mapRole: defaultRoleMap,          // 'member'→'writer'; reader|writer|admin pass
   adminRoles: ['admin'],

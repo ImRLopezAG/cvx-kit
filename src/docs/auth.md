@@ -12,7 +12,7 @@ host. The kit provides the structure; the app provides the policy.
 // convex/functions.ts (the single place constructors are built)
 import { createAuthFunctions, defaultRoleMap } from 'cvx-kit/auth'
 import {
-  action, internalAction, internalMutation, mutation, query,
+  action, internalAction, internalMutation, internalQuery, mutation, query,
 } from './_generated/server'
 import type { DataModel } from './_generated/dataModel'
 import { triggers } from './triggers'
@@ -22,10 +22,10 @@ export const {
   authQuery, authMutation, authAction,
   roleQuery, roleMutation, roleAction,
   adminQuery, adminMutation, adminAction,
-  systemMutation, systemAction,
+  systemQuery, systemMutation, systemAction,
   include, authenticatedUser,
 } = createAuthFunctions<DataModel>({
-  query, mutation, action, internalMutation, internalAction,
+  query, mutation, action, internalQuery, internalMutation, internalAction,
   getAuthUser: (ctx) => authKit.getAuthUser(ctx),
   mapRole: defaultRoleMap,          // or your own vocabulary (see below)
   adminRoles: ['admin'],
@@ -49,6 +49,7 @@ imports from `_generated/server` appear **only** in this file.
 | `authQuery` / `authMutation` / `authAction` | public | any authenticated org member | actions live-verify membership |
 | `roleQuery(...roles)` / `roleMutation(...)` / `roleAction(...)` | public | listed roles only | factory — call with your roles |
 | `adminQuery` / `adminMutation` / `adminAction` | public | `config.adminRoles` | pre-built `role*(...adminRoles)` |
+| `systemQuery` | internal | none (trusted caller) | include-equipped, RLS-unwrapped |
 | `systemMutation` | internal | none (trusted caller) | still trigger-wrapped |
 | `systemAction` | internal | none | plain internal action |
 
@@ -67,7 +68,8 @@ Authenticated constructors extend the ctx with a frozen auth bundle:
   approvals, and commands as the canonical actor reference
 - `ctx.include` — the bounded query builder (below)
 
-`systemMutation` gets `include` and trigger wrapping but no auth bundle.
+`systemQuery` and `systemMutation` get `include` (plus trigger wrapping for the
+mutation) but no auth bundle.
 
 ## Role vocabulary is per-app
 

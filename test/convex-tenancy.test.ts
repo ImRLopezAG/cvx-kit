@@ -65,4 +65,10 @@ describe('tenancy security on the real Convex runtime', () => {
 		await t.mutation(api.seedGlobal, {})
 		expect(await t.withIdentity(orgOneOwner).query(api.readGlobals, {})).toBe(0)
 	})
+
+	it('systemQuery is internal, include-equipped, and RLS-unwrapped', async () => {
+		const t = harness()
+		await t.mutation(api.seedGlobal, {})
+		expect(await t.query(api.countGlobals, {})).toBe(1)
+	})
 })

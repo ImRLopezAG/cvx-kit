@@ -1,6 +1,7 @@
 import {
 	actionGeneric,
 	internalActionGeneric,
+	internalQueryGeneric,
 	internalMutationGeneric,
 	mutationGeneric,
 	queryGeneric,
@@ -35,6 +36,7 @@ export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
 	action: actionGeneric,
 	internalMutation: internalMutationGeneric,
 	internalAction: internalActionGeneric,
+	internalQuery: internalQueryGeneric,
 	getAuthUser: async (ctx) => {
 		const identity = await ctx.auth.getUserIdentity()
 		return identity ? { id: identity.subject } : null

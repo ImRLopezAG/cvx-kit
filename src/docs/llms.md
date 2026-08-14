@@ -39,8 +39,14 @@ function constructors, a trigger registry, an audited command protocol
    transaction. Optional per-operation `permission` (checked via the
    Foundation's injected `checkPermission`) and `guard(ctx, command)`
    preconditions run BEFORE the handler, plus a registry-wide default guard
-   (`new Command(operations, { guard })`). Order: permission → default guard
-   → operation guard → handler → audit.
+   (`new Command(operations, { guard })`). Composable middleware
+   (`Command.middleware(async ({ context, next }) => ...)`) wraps
+   [guards → handler] via registry `middleware: [...]` and per-operation
+   `middleware: [...]` — `next({ context })` enriches downstream ctx, and
+   the chain's output is re-parsed by the result schema. Query takes the
+   same shape (`Query.middleware`, kernel + per-executor arrays). Order:
+   permission → registry middleware → operation middleware → default guard
+   → operation guard → handler → result parse → aggregates → audit.
 6. **Never write timestamps by hand.** `createdAt`/`updatedAt` are maintained
    by the `timestamps` trigger; `archivedAt` is the app-controlled soft-delete
    marker.

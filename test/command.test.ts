@@ -272,3 +272,152 @@ describe('Foundation Command aggregate allowlist', () => {
 		expect(auditEntries).toEqual([])
 	})
 })
+
+describe('Foundation Command middleware', () => {
+	function middlewareHarness() {
+		const calls: string[] = []
+		const { Command } = new Foundation(
+			{ functions: { status: 'status' } },
+			{
+				observability: {
+					enabled: false,
+					classifyError: () => ({
+						outcome: 'failed',
+						errorCode: 'UNEXPECTED',
+					}),
+					writeAudit: () => {},
+				},
+			},
+		)
+		return { Command, calls }
+	}
+
+	it('runs registry middleware → operation middleware → guards → handler, with context enrichment', async () => {
+		const { Command, calls } = middlewareHarness()
+		const registryLayer = Command.middleware(async ({ next }) => {
+			calls.push('registry:before')
+			const result = await next({ context: { traceId: 't_1' } })
+			calls.push('registry:after')
+			return result
+		})
+		const operationLayer = Command.middleware<{ traceId?: string }>(
+			async ({ context, next }) => {
+				calls.push(`operation:${context.traceId}`)
+				return next({ context: { vendor: 'acme' } })
+			},
+		)
+		const operations = {
+			'documents.touch': Command.operation({
+				command: z.object({}).strict(),
+				result: z.object({ ok: z.literal(true) }).strict(),
+				classification: 'business',
+				middleware: [operationLayer as never],
+				guard: ((ctx: { vendor?: string }) => {
+					calls.push(`guard:${ctx.vendor}`)
+				}) as never,
+				audit: () => null,
+			}),
+		} as const
+		const commands = new Command<
+			{ actorId: string; traceId?: string; vendor?: string },
+			typeof operations
+		>(operations, { middleware: [registryLayer as never] })
+		const touch = commands.exec({
+			operation: 'documents.touch',
+			handler: async (ctx) => {
+				calls.push(`handler:${ctx.traceId}:${ctx.vendor}`)
+				return { ok: true as const }
+			},
+		})
+		const result = await touch({ actorId: 'user_1' }, {})
+		expect(result).toEqual({ ok: true })
+		expect(calls).toEqual([
+			'registry:before',
+			'operation:t_1',
+			'guard:acme',
+			'handler:t_1:acme',
+			'registry:after',
+		])
+	})
+
+	it('re-parses whatever leaves the chain — a fabricated result throws', async () => {
+		const { Command } = middlewareHarness()
+		const fabricate = Command.middleware(async ({ next }) => {
+			await next()
+			return { ok: 'not-a-literal-true' }
+		})
+		const operations = {
+			'documents.touch': Command.operation({
+				command: z.object({}).strict(),
+				result: z.object({ ok: z.literal(true) }).strict(),
+				classification: 'business',
+				middleware: [fabricate as never],
+				audit: () => null,
+			}),
+		} as const
+		const commands = new Command<{ actorId: string }, typeof operations>(
+			operations,
+		)
+		const touch = commands.exec({
+			operation: 'documents.touch',
+			handler: async () => ({ ok: true as const }),
+		})
+		await expect(touch({ actorId: 'user_1' }, {})).rejects.toThrow()
+	})
+
+	it('a middleware that skips next() short-circuits guards and handler', async () => {
+		const { Command, calls } = middlewareHarness()
+		const shortCircuit = Command.middleware(async () => ({ ok: true }))
+		const operations = {
+			'documents.touch': Command.operation({
+				command: z.object({}).strict(),
+				result: z.object({ ok: z.literal(true) }).strict(),
+				classification: 'business',
+				middleware: [shortCircuit as never],
+				guard: (() => {
+					calls.push('guard')
+				}) as never,
+				audit: () => null,
+			}),
+		} as const
+		const commands = new Command<{ actorId: string }, typeof operations>(
+			operations,
+		)
+		const touch = commands.exec({
+			operation: 'documents.touch',
+			handler: async () => {
+				calls.push('handler')
+				return { ok: true as const }
+			},
+		})
+		expect(await touch({ actorId: 'user_1' }, {})).toEqual({ ok: true })
+		expect(calls).toEqual([])
+	})
+
+	it('calling next() twice throws', async () => {
+		const { Command } = middlewareHarness()
+		const double = Command.middleware(async ({ next }) => {
+			await next()
+			return next()
+		})
+		const operations = {
+			'documents.touch': Command.operation({
+				command: z.object({}).strict(),
+				result: z.object({ ok: z.literal(true) }).strict(),
+				classification: 'business',
+				middleware: [double as never],
+				audit: () => null,
+			}),
+		} as const
+		const commands = new Command<{ actorId: string }, typeof operations>(
+			operations,
+		)
+		const touch = commands.exec({
+			operation: 'documents.touch',
+			handler: async () => ({ ok: true as const }),
+		})
+		await expect(touch({ actorId: 'user_1' }, {})).rejects.toThrow(
+			/more than once/,
+		)
+	})
+})

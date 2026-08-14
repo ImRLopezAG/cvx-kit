@@ -22,7 +22,8 @@ export type CommandExecution<
 	definition: Registry[Key]
 	command: CommandInput<Registry, Key>
 	parseResult: (value: unknown) => CommandResult<Registry, Key>
-	run: () => Promise<CommandResult<Registry, Key>>
+	/** Runs the handler (result-parsed). Accepts a middleware-enriched context. */
+	run: (context?: Context) => Promise<CommandResult<Registry, Key>>
 }>
 
 type CommandDefinition = Readonly<{
@@ -147,7 +148,8 @@ export class Command<Context, const Registry extends CommandRegistry> {
 				definition,
 				command,
 				parseResult,
-				run: async () => parseResult(await handler(context, command)),
+				run: async (contextOverride?: Context) =>
+					parseResult(await handler(contextOverride ?? context, command)),
 			})
 		}
 	}

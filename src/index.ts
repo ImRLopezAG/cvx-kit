@@ -51,6 +51,8 @@ export {
 	type AuditEntryInput,
 	type AuditWriter,
 	type CommandDefaults,
+	type CommandMiddleware,
 	type FoundationOptions,
 	type PermissionChecker,
+	type QueryMiddleware,
 } from './components/foundation/client'

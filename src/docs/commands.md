@@ -148,6 +148,54 @@ Guards deny by throwing; a denial before the handler never needs rollback
 because nothing has executed. Keep guards read-only — a guard that writes is
 a handler in disguise.
 
+### Middleware — composable, next()-based
+
+For wrap-around concerns (timing, tracing, context enrichment, replay
+wrappers) that two disconnected callbacks can't express, both kernels take
+Express/TanStack-style middleware. The chain runs **inside** the pipeline's
+invariants: after the permission check, around [guards → handler], before the
+result-schema re-parse, aggregate allowlist, and audit — so middleware can
+never skip authorization, return an invalid result, or desynchronize audit
+from effects.
+
+```ts
+const timing = Command.middleware(async ({ operation, next }) => {
+  const started = Date.now()
+  const result = await next()                       // inner middleware → guards → handler
+  observability.observe // (or your own sink)
+  console.info(`${operation} took ${Date.now() - started}ms`)
+  return result
+})
+
+const withVendor = Command.middleware(async ({ context, next }) =>
+  next({ context: { vendor: await loadVendor(context) } }))  // enriches downstream ctx
+
+const commands = new Command<Ctx, typeof operations>(operations, {
+  guard: (ctx) => assertNotReadonlyWindow(ctx),
+  middleware: [timing],                             // registry-wide, outermost
+})
+
+'<entities>.publish': Command.operation({
+  ...,
+  middleware: [withVendor],                         // per-operation, inside registry chain
+  guard: (ctx, command) => { /* ctx.vendor available here */ },
+})
+```
+
+Order: registry middleware (array order) → operation middleware → default
+guard → operation guard → handler. `next()` returns the downstream result;
+`next({ context })` merges enrichment into the context handed to inner
+middleware, guards, and the handler. Skipping `next()` short-circuits
+(guards and handler never run — the returned value still must satisfy the
+result schema); calling it twice throws `COMMAND_MIDDLEWARE_NEXT_REUSED`.
+Whatever leaves the chain is re-parsed through the operation's strict result
+schema — a middleware cannot fabricate an invalid result.
+
+The Query kernel takes the same shape: `new Query({ defaults, middleware,
+execute })` plus per-executor `middleware: [...]`, with `Query.middleware`
+as the typing helper. Kernel middleware runs before executor middleware,
+inside the host's injected `execute` policy.
+
 If any step throws, the Convex transaction rolls back — handler writes and
 audit entry together. Audit and effects can never disagree.
 

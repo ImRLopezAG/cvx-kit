@@ -54,16 +54,38 @@ export type AuditedOperation = Readonly<{
 	 * the audit vocabulary is enforced, not advisory.
 	 */
 	aggregates?: readonly string[]
+	/** Per-operation middleware, inside the registry-wide chain. */
+	middleware?: readonly CommandMiddleware[]
 	audit: (
 		resolution: Readonly<{ command: never; result: never }>,
 		context: never,
 	) => MaybePromise<Omit<AuditEntryInput, 'classification'> | null>
 }>
 
+/**
+ * Composable, next()-based middleware wrapping [guards → handler]. Runs
+ * INSIDE the pipeline's invariants: after the permission check, before the
+ * result-schema parse, aggregate allowlist, and audit — so middleware can
+ * time, trace, enrich context (`next({ context })`), short-circuit, or
+ * transform results, but can never skip authorization, return an invalid
+ * result, or desynchronize audit from effects.
+ */
+export type CommandMiddleware<Context = never> = (input: {
+	operation: string
+	command: unknown
+	context: Context
+	next: (options?: {
+		/** Merged into the context handed to inner middleware, guards, handler. */
+		context?: Record<string, unknown>
+	}) => Promise<unknown>
+}) => Promise<unknown>
+
 /** Registry-wide defaults applied to every operation of one Command. */
 export type CommandDefaults = Readonly<{
 	/** Runs before every operation's own guard. Throw to deny. */
 	guard?: (context: never) => MaybePromise<void>
+	/** Outermost middleware, in array order, around every operation. */
+	middleware?: readonly CommandMiddleware[]
 }>
 
 /** Injected permission policy: throw to deny. Host semantics, kit ordering. */
@@ -117,6 +139,13 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 		definition: Definition,
 	): Definition {
 		return definition
+	}
+
+	/** Identity helper that types a middleware against its context. */
+	static middleware<Context = never>(
+		middleware: CommandMiddleware<Context>,
+	): CommandMiddleware<Context> {
+		return middleware
 	}
 
 	constructor(
@@ -176,12 +205,47 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 						operation: execution.operation,
 					})
 				}
-				await this.#defaults.guard?.(execution.context as never)
-				await execution.definition.guard?.(
-					execution.context as never,
-					execution.command as never,
+				const middleware = [
+					...(this.#defaults.middleware ?? []),
+					...(execution.definition.middleware ?? []),
+				]
+				const terminal = async (context: unknown) => {
+					await this.#defaults.guard?.(context as never)
+					await execution.definition.guard?.(
+						context as never,
+						execution.command as never,
+					)
+					return execution.run(context as never)
+				}
+				let deepest = -1
+				const dispatch = async (
+					index: number,
+					context: unknown,
+				): Promise<unknown> => {
+					if (index <= deepest) {
+						throw new CommandMiddlewareError(execution.operation)
+					}
+					deepest = index
+					const layer = middleware[index]
+					if (!layer) return terminal(context)
+					return layer({
+						operation: execution.operation,
+						command: execution.command,
+						context: context as never,
+						next: (options) =>
+							dispatch(
+								index + 1,
+								options?.context
+									? { ...(context as object), ...options.context }
+									: context,
+							),
+					})
+				}
+				// Middleware may transform the return value, so the strict
+				// result schema re-parses whatever leaves the chain.
+				const result = execution.parseResult(
+					await dispatch(0, execution.context),
 				)
-				const result = await execution.run()
 				const audit = await execution.definition.audit(
 					{ command: execution.command, result } as never,
 					execution.context as never,
@@ -201,6 +265,18 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 				}
 				return result
 			},
+		)
+	}
+}
+
+/** A middleware called next() more than once. */
+class CommandMiddlewareError extends Error {
+	readonly code = 'COMMAND_MIDDLEWARE_NEXT_REUSED'
+	readonly name = 'CommandMiddlewareError'
+
+	constructor(operation: string) {
+		super(
+			`A middleware for operation "${operation}" called next() more than once`,
 		)
 	}
 }
@@ -240,6 +316,7 @@ type CommandConstructor = {
 		defaults?: CommandDefaults,
 	): BoundCommand<Context, Operations>
 	operation: (typeof BoundCommand)['operation']
+	middleware: (typeof BoundCommand)['middleware']
 }
 
 /**
@@ -297,7 +374,10 @@ export type {
 	CommandObservation,
 	ObservabilityOptions,
 } from './modules/observability/observability'
-export type { QueryExecution } from './modules/query/query'
+export type {
+	QueryExecution,
+	QueryMiddleware,
+} from './modules/query/query'
 export type {
 	Result,
 	ResultBoundary,

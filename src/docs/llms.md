@@ -36,7 +36,11 @@ function constructors, a trigger registry, an audited command protocol
 5. **State changes are commands**: an operations registry with mandatory
    `classification` and `audit()` per operation, executed via
    `commands.exec({ operation, handler })`. Audit writes happen in the same
-   transaction.
+   transaction. Optional per-operation `permission` (checked via the
+   Foundation's injected `checkPermission`) and `guard(ctx, command)`
+   preconditions run BEFORE the handler, plus a registry-wide default guard
+   (`new Command(operations, { guard })`). Order: permission → default guard
+   → operation guard → handler → audit.
 6. **Never write timestamps by hand.** `createdAt`/`updatedAt` are maintained
    by the `timestamps` trigger; `archivedAt` is the app-controlled soft-delete
    marker.
@@ -47,15 +51,23 @@ function constructors, a trigger registry, an audited command protocol
    tables, no reaching private children (`components.approvals.workflow`).
 9. **Operation names are `domain.verb` lowercase-dotted; error codes are
    UPPER_SNAKE** — otherwise observability silently drops the events.
+10. **Row-level security is configured, not hand-rolled**: the optional
+   `security` config on `createAuthFunctions` takes role-level `rules`
+   (works standalone) and/or `tenancy` (a table registry; adds
+   `ctx.tenant`, deny-default isolation, and pairs with `tenantTable` +
+   `tenantOwnership`). Multi-tenant apps stamp inserts with
+   `tenant: ctx.tenant` and re-verify client ids with
+   `requireTenantReference`. See `tenancy.md`.
 
 ## Exports map
 
 | Import | Provides |
 |---|---|
 | `cvx-kit` | everything below re-exported (except components' defaults) |
-| `cvx-kit/zod-table` | `zodTable`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS` |
-| `cvx-kit/auth` | `createAuthFunctions`, `createInclude`, `defaultRoleMap` |
-| `cvx-kit/triggers` | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `Triggers` |
+| `cvx-kit/zod-table` | `zodTable`, `tenantTable`, `createModule`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS` |
+| `cvx-kit/auth` | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap` |
+| `cvx-kit/tenancy` | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD` |
+| `cvx-kit/triggers` | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers` |
 | `cvx-kit/errors` | `KitError`, `defaultErrors`, `ErrorFactory` |
 | `cvx-kit/components/foundation` | `Foundation`, `executeResultBoundary`, `projectResult`, `Observability`; default export = component config for `app.use` |
 | `cvx-kit/components/approvals` | `Approvals` client; default export = component config for `app.use` |

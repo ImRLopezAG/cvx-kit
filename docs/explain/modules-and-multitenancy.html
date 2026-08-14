@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modules, not entities — and tenancy as a structural feature of cvx-kit</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1d212b; --ink: #e6e9ef;
+    --muted: #9aa3b2; --accent: #7aa2f7; --good: #9ece6a; --warn: #e0af68;
+    --bad: #f7768e; --code-bg: #12141a; --border: #2a2f3a;
+  }
+  html { background: var(--bg); }
+  body {
+    color: var(--ink); margin: 0; padding: 2rem 1.25rem 4rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  main { max-width: 72ch; margin: 0 auto; }
+  .wide { max-width: 100ch; margin-left: auto; margin-right: auto; }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .75rem; }
+  h2 { font-size: 1.2rem; margin: 2.5rem 0 .5rem; color: var(--accent); }
+  h3 { font-size: 1rem; margin: 1.75rem 0 .4rem; }
+  p, li { font-size: .95rem; }
+  dl.meta {
+    display: grid; grid-template-columns: max-content 1fr; gap: .15rem .9rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: .75rem 1rem; font-size: .85rem; margin: 0 0 2rem;
+  }
+  dl.meta dt { color: var(--muted); font-weight: 600; }
+  dl.meta dd { margin: 0; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .85em;
+         background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: .9rem 1rem; overflow-x: auto; font-size: .8rem; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; }
+  .k { color: #bb9af7; } .s { color: #9ece6a; } .c { color: #565f89; font-style: italic; }
+  .f { color: #7aa2f7; } .t { color: #e0af68; } .n { color: #f7768e; }
+  .note {
+    border-left: 3px solid var(--accent); background: var(--panel);
+    padding: .6rem .9rem; border-radius: 0 8px 8px 0; margin: 1rem 0; font-size: .9rem;
+  }
+  .warn { border-left-color: var(--warn); }
+  .danger { border-left-color: var(--bad); }
+  table.cmp { border-collapse: collapse; width: 100%; font-size: .85rem; margin: 1rem 0; }
+  table.cmp th, table.cmp td { border: 1px solid var(--border); padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  table.cmp th { background: var(--panel2); }
+  figure { margin: 1.5rem 0; }
+  figcaption { color: var(--muted); font-size: .8rem; margin-top: .4rem; }
+  .svgbox { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .75rem; }
+  footer { color: var(--muted); font-size: .8rem; margin-top: 3.5rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  strong { color: #fff; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Modules, not entities — and tenancy as a structural feature of cvx-kit</h1>
+
+<dl class="meta">
+  <dt>Date</dt><dd>2026-08-13</dd>
+  <dt>Input shape</dt><dd>concept</dd>
+  <dt>Subject</dt><dd>Evolving cvx-kit's domain layer from entity-per-folder to module segregation, and designing multi-tenancy into the kit — grounded in ~/dev/one-office (multi-tenant Convex ERP) and ~/dev/cvx</dd>
+</dl>
+
+<p><strong>The short version.</strong> Two upgrades, and they're independent:
+(1) the unit of the domain layer should be the <em>module</em> (a bounded
+context owning several related tables), not the entity — your docs currently
+imply one folder per table, and one-office proves the module shape scales
+better; (2) tenancy in one-office is not a convention, it's a
+<strong>five-layer structural machine</strong> — schema injection,
+registry-generated row-level security, branded contexts, post-image triggers,
+and architecture tests — and almost all of it is generic enough to live in
+cvx-kit as opt-in machinery, with the policy (which identity provider, which
+claim is the tenant) staying injected, exactly like <code>createAuthFunctions</code>
+already works.</p>
+
+<h2>Part 1 — The domain unit is a module, not a table</h2>
+
+<p>Your current docs say <code>domain/&lt;entity&gt;/</code>, one directory per
+entity, one <code>zodTable</code> per directory. That was true of the app the
+kit was extracted from — an <em>administration</em> app with few entities.
+one-office has dozens of tables and does something different: the domain
+layer is split into <strong>bounded contexts</strong>, each owning
+<em>many</em> tables that change together:</p>
+
+<figure class="wide">
+<div class="svgbox">
+<svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, Menlo, monospace" font-size="12">
+  <!-- entity-per-folder side -->
+  <text x="110" y="22" fill="#9aa3b2" font-size="13" font-weight="bold">entity-per-folder (current docs)</text>
+  <g fill="#1d212b" stroke="#2a2f3a">
+    <rect x="20"  y="40" width="120" height="34" rx="6"/>
+    <rect x="20"  y="82" width="120" height="34" rx="6"/>
+    <rect x="20"  y="124" width="120" height="34" rx="6"/>
+    <rect x="20"  y="166" width="120" height="34" rx="6"/>
+    <rect x="20"  y="208" width="120" height="34" rx="6"/>
+    <rect x="20"  y="250" width="120" height="34" rx="6"/>
+  </g>
+  <g fill="#e6e9ef">
+    <text x="32" y="62">products/</text>
+    <text x="32" y="104">prices/</text>
+    <text x="32" y="146">unitsOfMeasure/</text>
+    <text x="32" y="188">warehouses/</text>
+    <text x="32" y="230">stockEntries/</text>
+    <text x="32" y="272">itemLedger/</text>
+  </g>
+  <text x="170" y="160" fill="#f7768e" font-size="20">→</text>
+  <text x="155" y="185" fill="#f7768e" font-size="11">100 folders,</text>
+  <text x="155" y="200" fill="#f7768e" font-size="11">blurred seams</text>
+
+  <!-- module side -->
+  <text x="330" y="22" fill="#9aa3b2" font-size="13" font-weight="bold">module segregation (one-office)</text>
+  <g>
+    <rect x="260" y="40" width="270" height="110" rx="8" fill="#171a21" stroke="#7aa2f7"/>
+    <text x="275" y="62" fill="#7aa2f7" font-weight="bold">domain/catalog/</text>
+    <text x="275" y="82" fill="#e6e9ef">tables: products, prices,</text>
+    <text x="275" y="98" fill="#e6e9ef">unitsOfMeasure, …</text>
+    <text x="275" y="124" fill="#9aa3b2">schema.ts · table.ts · rules.ts</text>
+    <text x="275" y="140" fill="#9aa3b2">commands.ts · queries.ts · shared.ts</text>
+  </g>
+  <g>
+    <rect x="260" y="165" width="270" height="110" rx="8" fill="#171a21" stroke="#7aa2f7"/>
+    <text x="275" y="187" fill="#7aa2f7" font-weight="bold">domain/inventory/</text>
+    <text x="275" y="207" fill="#e6e9ef">tables: warehouses, stockEntries,</text>
+    <text x="275" y="223" fill="#e6e9ef">itemLedger, …</text>
+    <text x="275" y="249" fill="#9aa3b2">same fixed file roles,</text>
+    <text x="275" y="265" fill="#9aa3b2">module owns several tables</text>
+  </g>
+  <!-- allowed dependency arrows -->
+  <path d="M 530 220 C 590 220 590 95 532 95" fill="none" stroke="#9ece6a" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="560" y="150" fill="#9ece6a" font-size="11" transform="rotate(0)">rules/queries only</text>
+
+  <!-- application layer -->
+  <g>
+    <rect x="660" y="80" width="200" height="70" rx="8" fill="#171a21" stroke="#e0af68"/>
+    <text x="675" y="103" fill="#e0af68" font-weight="bold">application/</text>
+    <text x="675" y="121" fill="#e6e9ef" font-size="11">cross-module atomic</text>
+    <text x="675" y="136" fill="#e6e9ef" font-size="11">workflows (writes)</text>
+  </g>
+  <path d="M 662 115 C 610 115 600 95 532 90" fill="none" stroke="#e0af68" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <path d="M 662 130 C 610 140 600 210 532 212" fill="none" stroke="#e0af68" stroke-width="1.5" marker-end="url(#ar2)"/>
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#9ece6a"/></marker>
+    <marker id="ar2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#e0af68"/></marker>
+  </defs>
+</svg>
+</div>
+<figcaption>Left: what your docs currently prescribe. Right: one-office's
+shape — the same fixed file roles, but the directory is a bounded context
+owning related tables; cross-module writes go up into an
+<code>application/</code> layer, and sibling reads are restricted to
+<code>rules.ts</code>/<code>queries.ts</code>.</figcaption>
+</figure>
+
+<p>The crucial insight from one-office: <strong>nothing about the file
+anatomy changes</strong>. Every module still has exactly
+<code>schema.ts · table.ts · constants.ts · commands.ts · queries.ts ·
+rules.ts · shared.ts · triggers.ts · __tests__/</code> — its CODE_CONDUCT
+spells out the identical roles yours does. What changes is the <em>grain</em>:
+<code>domain/catalog/schema.ts</code> declares several
+<code>zodTable</code>s, and <code>domain/catalog/table.ts</code> exports one
+merged <code>catalogTables</code> map. The module registry in
+<code>domain/table.ts</code> then reads like a table of contents for the
+whole business:</p>
+
+<pre><code><span class="c">// one-office convex/domain/table.ts — the whole backend in one expression</span>
+<span class="k">export const</span> domainTables = { ...sharedTables, ...tenancyTables, ...catalogTables,
+  ...inventoryTables, ...purchasingTables, ...salesTables, ...posTables } <span class="k">as const</span></code></pre>
+
+<h3>What defines a module boundary?</h3>
+
+<p>Not table count — <em>change cohesion and vocabulary</em>. one-office's
+<code>CONTEXT.md</code> is a ubiquitous-language glossary (each term with
+explicit "Avoid:" antonyms), and the modules fall out of it: things named in
+the same breath (<code>products</code>, <code>prices</code>,
+<code>unitsOfMeasure</code>) live together as <code>catalog/</code>. A good
+test for your docs: <strong>two tables belong in one module when a single
+command routinely writes both, or when one's vocabulary is meaningless
+without the other</strong>. If neither is true, separate modules.</p>
+
+<h3>The dependency rules that make it safe</h3>
+
+<p>Measured from one-office's actual imports, the discipline is precise —
+and this is what keeps modules from re-blurring into a monolith:</p>
+
+<table class="cmp">
+<tr><th>Rule</th><th>Meaning</th></tr>
+<tr><td><strong>Sibling reads: <code>rules.ts</code> / <code>queries.ts</code> only</strong></td>
+<td>inventory may import <code>catalog/rules</code> (pure predicates) and
+<code>catalog/queries</code>. It may <em>never</em> import
+<code>catalog/commands.ts</code> — one module never mutates another's state.</td></tr>
+<tr><td><strong>Cross-module writes: <code>application/</code></strong></td>
+<td>A workflow that must atomically touch sales + inventory + invoicing lives
+in <code>application/postSalesDocument.ts</code>, above both modules. The
+<code>api/</code> adapters then import <code>application/*</code> and their
+own module — never a second module.</td></tr>
+<tr><td><strong><code>domain/shared/</code> stays generic</strong></td>
+<td>Cross-cutting kernels (permissions, idempotency, fixed-point math, the
+command/query policy classes) — never business nouns.</td></tr>
+</table>
+
+<div class="note">
+<strong>For cvx-kit this is a docs change, not a code change.</strong> The kit
+has no <code>domain/</code> awareness in code; the entity-per-folder rule
+lives in <code>conventions.md</code>/<code>architecture.md</code>. Rewrite the
+grain: <code>domain/&lt;module&gt;/</code> owning 1..n related tables, the
+sibling-import rule upgraded from "never" to "rules/queries only, never
+commands", and a new optional <code>application/</code> layer for
+cross-module atomic workflows. A single-context app degenerates gracefully:
+one module, or a module per entity — the current shape remains a special
+case of the new rule.</div>
+
+<h2>Part 2 — What multi-tenant actually means in one-office</h2>
+
+<p>Your origin app was single-org administration: whoever is in the org
+administers the data, end of story. one-office serves many organizations from
+one deployment, so every row must answer "whose row is this?" and every read
+and write must be provably scoped. The design decisions, from its ADR:</p>
+
+<ul>
+<li><strong>Tenant = the WorkOS organization id, stored as a plain string
+field named <code>tenant</code> on every business row.</strong> No local
+orgs/users/memberships tables — WorkOS stays the identity authority, Convex
+stores one operational-settings record per org. No shadow auth tables to
+drift.</li>
+<li><strong>The active tenant is always derived server-side from the JWT's
+organization claim</strong> — never accepted as an argument. Org switching is
+a frontend/WorkOS concern; when the user switches, the next request carries a
+different claim.</li>
+<li><strong>Every index on a tenant table is tenant-prefixed</strong>:
+<code>by_tenant</code>, <code>by_tenant_code</code>,
+<code>by_tenant_office_archived_at</code>. Reads are impossible to express
+efficiently <em>without</em> scoping.</li>
+<li><strong>Tables split into two registries</strong>: tenant tables (get all
+the machinery below) and private/global tables (platform state, cross-tenant
+uniqueness claims, reconciliation jobs) — deliberately excluded, and therefore
+the sharpest remaining footgun surface.</li>
+</ul>
+
+<h3>Isolation is defense-in-depth, not a convention</h3>
+
+<figure class="wide">
+<div class="svgbox">
+<svg viewBox="0 0 880 330" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, Menlo, monospace" font-size="12">
+  <defs>
+    <marker id="fl" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#7aa2f7"/></marker>
+  </defs>
+  <g>
+    <rect x="20" y="30" width="160" height="52" rx="8" fill="#171a21" stroke="#7aa2f7"/>
+    <text x="35" y="52" fill="#7aa2f7" font-weight="bold">1 · schema</text>
+    <text x="35" y="70" fill="#e6e9ef" font-size="11">tenantTable() injects</text>
+  </g>
+  <text x="35" y="100" fill="#9aa3b2" font-size="11">tenant field; update</text>
+  <text x="35" y="114" fill="#9aa3b2" font-size="11">schema strips it</text>
+
+  <g>
+    <rect x="240" y="30" width="170" height="52" rx="8" fill="#171a21" stroke="#7aa2f7"/>
+    <text x="255" y="52" fill="#7aa2f7" font-weight="bold">2 · builders</text>
+    <text x="255" y="70" fill="#e6e9ef" font-size="11">tenantQuery/Mutation</text>
+  </g>
+  <text x="255" y="100" fill="#9aa3b2" font-size="11">resolve tenant from JWT,</text>
+  <text x="255" y="114" fill="#9aa3b2" font-size="11">wrap db: triggers → RLS</text>
+
+  <g>
+    <rect x="470" y="30" width="170" height="52" rx="8" fill="#171a21" stroke="#7aa2f7"/>
+    <text x="485" y="52" fill="#7aa2f7" font-weight="bold">3 · RLS, deny-default</text>
+    <text x="485" y="70" fill="#e6e9ef" font-size="11">generated from registry</text>
+  </g>
+  <text x="485" y="100" fill="#9aa3b2" font-size="11">read/insert/modify ⇒</text>
+  <text x="485" y="114" fill="#9aa3b2" font-size="11">doc.tenant === ctx.tenant</text>
+
+  <g>
+    <rect x="700" y="30" width="160" height="52" rx="8" fill="#171a21" stroke="#7aa2f7"/>
+    <text x="715" y="52" fill="#7aa2f7" font-weight="bold">4 · triggers</text>
+    <text x="715" y="70" fill="#e6e9ef" font-size="11">post-image invariant</text>
+  </g>
+  <text x="715" y="100" fill="#9aa3b2" font-size="11">tenant can never be</text>
+  <text x="715" y="114" fill="#9aa3b2" font-size="11">reassigned on update</text>
+
+  <path d="M 182 56 L 238 56" stroke="#7aa2f7" stroke-width="1.5" marker-end="url(#fl)"/>
+  <path d="M 412 56 L 468 56" stroke="#7aa2f7" stroke-width="1.5" marker-end="url(#fl)"/>
+  <path d="M 642 56 L 698 56" stroke="#7aa2f7" stroke-width="1.5" marker-end="url(#fl)"/>
+
+  <g>
+    <rect x="240" y="160" width="400" height="52" rx="8" fill="#171a21" stroke="#9ece6a"/>
+    <text x="255" y="182" fill="#9ece6a" font-weight="bold">5 · architecture tests</text>
+    <text x="255" y="200" fill="#e6e9ef" font-size="11">raw builders banned outside an explicit allowlist; RLS registry asserted exhaustive</text>
+  </g>
+  <path d="M 440 158 L 440 120" stroke="#9ece6a" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+  <g>
+    <rect x="20" y="250" width="840" height="60" rx="8" fill="#171a21" stroke="#e0af68"/>
+    <text x="35" y="273" fill="#e0af68" font-weight="bold">Sideguards</text>
+    <text x="35" y="292" fill="#e6e9ef" font-size="11">branded ctx (unexported unique symbol — a tenant ctx can't be forged) · requireTenantReference for client-supplied ids (404, not 403 — no existence disclosure) · components take tenant as an explicit arg from the host adapter only</text>
+  </g>
+</svg>
+</div>
+<figcaption>one-office's isolation stack. Any single layer can be bypassed;
+the composition can't be bypassed <em>accidentally</em>.</figcaption>
+</figure>
+
+<p>The three pieces worth reading in full, because they're the ones cvx-kit
+should absorb:</p>
+
+<pre><code><span class="c">// (1) one-office domain/shared/schema.ts — tenancy injected at the schema boundary</span>
+<span class="k">export const</span> <span class="f">tenantTable</span> = (tableName, schema, options = {}) =&gt; {
+  <span class="k">const</span> definition = <span class="f">zodTable</span>(tableName, (id) =&gt; ({ ...schema(id),
+    tenant: z.<span class="f">string</span>().<span class="f">min</span>(<span class="t">1</span>) }), {...})
+  <span class="c">// tenant exists on every row, and can NEVER appear in an update</span>
+  <span class="k">const</span> tenantSafeUpdate = definition.updateSchema.<span class="f">omit</span>({ tenant: <span class="t">true</span> })
+  <span class="k">return</span> { ...definition, updateSchema: tenantSafeUpdate }
+}</code></pre>
+
+<pre><code><span class="c">// (2) one-office convex/utils.ts — RLS generated mechanically from the registry.</span>
+<span class="c">// Nothing per-table to remember: a new tenantTable is isolated the moment</span>
+<span class="c">// it's registered, or the exhaustiveness test fails.</span>
+<span class="k">export const</span> <span class="f">tenantRules</span> = (tenant: <span class="t">string</span>) =&gt;
+  Object.<span class="f">fromEntries</span>(TENANT_TABLE_NAMES.<span class="f">map</span>((tableName) =&gt; [tableName, {
+    read:   <span class="k">async</span> (_ctx, doc) =&gt; doc.tenant === tenant,
+    insert: <span class="k">async</span> (_ctx, doc) =&gt; doc.tenant === tenant,
+    modify: <span class="k">async</span> (_ctx, doc) =&gt; doc.tenant === tenant,
+  }]))
+<span class="k">export const</span> TENANT_RLS_CONFIG = Object.<span class="f">freeze</span>({ defaultPolicy: <span class="s">'deny'</span> })
+
+<span class="c">// inside tenantMutation: triggers first, then RLS — order matters</span>
+<span class="k">const</span> { db: triggeredDb } = triggers.<span class="f">wrapDB</span>(ctx)
+db: <span class="f">wrapDatabaseWriter</span>({}, triggeredDb, <span class="f">tenantRules</span>(tenant), TENANT_RLS_CONFIG)</code></pre>
+
+<pre><code><span class="c">// (3) one-office convex/triggers.ts — RLS authorizes against the PRE-image,</span>
+<span class="c">// so ownership must also hold on the POST-image. Registered for every tenant table.</span>
+<span class="k">export const</span> <span class="f">rejectTenantReassignment</span> = <span class="k">async</span> (_ctx, change) =&gt; {
+  <span class="k">if</span> (change.operation === <span class="s">'insert'</span> &amp;&amp; !change.newDoc.tenant) <span class="k">throw</span> CROSS_TENANT_REFERENCE
+  <span class="k">if</span> (change.operation === <span class="s">'update'</span> &amp;&amp; change.oldDoc.tenant !== change.newDoc.tenant)
+    <span class="k">throw</span> CROSS_TENANT_REFERENCE <span class="c">// 'Tenant ownership cannot be reassigned'</span>
+}</code></pre>
+
+<div class="note warn"><strong>Why layer 4 exists at all</strong> is the best
+lesson in the codebase: RLS <code>modify</code> checks the document you're
+<em>changing</em> (pre-image). Without the trigger, a mutation could legally
+load its own tenant's row and patch <code>tenant</code> to another org's id —
+a write RLS happily allows. Every layer covers a hole in the previous one.
+That's the mindset tenancy requires.</div>
+
+<h2>Part 3 — How this lands in cvx-kit</h2>
+
+<p>The dividing line — and it's the same line the kit already draws for auth —
+is <strong>mechanism in the kit, policy in the host</strong>. WorkOS, the JWT
+claim shape, permission slugs: policy, injected. Field injection, RLS
+generation, trigger invariants, builder wiring: mechanism, and today every
+consumer would have to hand-roll all of it. Proposal, in kit-API terms:</p>
+
+<h3>3a. <code>tenantTable</code> in <code>cvx-kit/zod-table</code></h3>
+
+<pre><code><span class="k">export const</span> &lt;entities&gt; = <span class="f">tenantTable</span>(<span class="s">'&lt;entities&gt;'</span>, (id) =&gt; ({ ... }), {
+  commandFields: [...], publicFields: [...],
+})
+<span class="c">// = zodTable + { tenant: z.string().min(1) } baked in, exactly like timestamps:</span>
+<span class="c">//   • excluded from insertSchema/commandInput (server-owned, like createdAt)</span>
+<span class="c">//   • stripped from updateSchema — tenant is immutable at the type boundary</span>
+<span class="c">//   • never in publicDto unless explicitly allowlisted</span></code></pre>
+
+<p>This mirrors the kit's existing timestamp opinion precisely: a
+server-owned field, injected once, unwritable from any client-facing mask.</p>
+
+<h3>3b. A tenancy module: registry → rules + trigger</h3>
+
+<pre><code><span class="c">// cvx-kit/tenancy (new export)</span>
+<span class="k">export function</span> <span class="f">createTenancy</span>&lt;DataModel&gt;(config: {
+  tables: <span class="k">readonly</span> TableNamesInDataModel&lt;DataModel&gt;[]  <span class="c">// THE registry</span>
+}) {
+  <span class="k">return</span> {
+    tables,                                  <span class="c">// re-exported for tests</span>
+    <span class="f">rules</span>: (tenant) =&gt; ...,                  <span class="c">// deny-default RLS map, generated</span>
+    <span class="f">registerGuards</span>: (triggers) =&gt; ...,       <span class="c">// rejectTenantReassignment on every table</span>
+    <span class="f">requireTenantReference</span>: ...,             <span class="c">// 404-not-403 cross-reference guard</span>
+  }
+}</code></pre>
+
+<p>One registry drives everything — the property that made one-office safe is
+that <em>adding a table to the registry is the entire onboarding</em>; there
+is no second place to forget.</p>
+
+<h3>3c. Tenant-aware constructors via <code>createAuthFunctions</code></h3>
+
+<pre><code><span class="f">createAuthFunctions</span>&lt;DataModel&gt;({
+  ...,
+  tenancy: {                                  <span class="c">// optional — absent = today's behavior</span>
+    tenancy,                                  <span class="c">// the createTenancy(...) instance</span>
+    resolve: (bundle) =&gt; bundle.org.organizationId,  <span class="c">// policy: claim → tenant, injected</span>
+  },
+})
+<span class="c">// adds: tenantQuery, tenantMutation, tenantAction, tenantSystemMutation</span>
+<span class="c">// ctx gains ctx.tenant; mutation db is wrapped triggers → RLS(deny);</span>
+<span class="c">// insert paths stamp tenant from ctx — handlers never write it</span></code></pre>
+
+<p>The auth bundle already carries <code>org.organizationId</code> — the kit
+already resolves the org from the JWT and refuses requests without one. The
+tenant is one <code>resolve</code> away. Keeping <code>tenancy</code> optional
+means the single-org administration apps (your origin app) change nothing,
+and a multi-tenant app opts in with ~10 lines.</p>
+
+<h3>3d. Alignment that already exists</h3>
+
+<p>Two kit pieces anticipated this design and need no change, only
+documentation:</p>
+
+<ul>
+<li><strong>Approvals' <code>scopeRef</code> is the tenant slot.</strong> The
+component was already built tenancy-agnostic — pass
+<code>ctx.tenant</code> as <code>scopeRef</code> and per-tenant approval
+isolation falls out.</li>
+<li><strong>Components take <code>tenant</code> as an explicit argument.</strong>
+one-office's rule — the host adapter is the only code allowed to supply it,
+always from <code>ctx.tenant</code>, never from client input — is exactly the
+kit's existing "opaque validated data across the component boundary" rule.</li>
+</ul>
+
+<h3>3e. What stays out of the kit</h3>
+
+<table class="cmp">
+<tr><th>Concern</th><th>Why it stays host-side</th></tr>
+<tr><td>Org switching, invitations, memberships</td><td>Identity-provider surface (WorkOS UI + webhooks). The kit sees only "the claim changed".</td></tr>
+<tr><td>Permission catalogs (<code>erp.sales.manage</code>…)</td><td>Product vocabulary. The kit's role constructors are the extension point; a permission-claim check plugs into <code>mapRole</code>/role gates.</td></tr>
+<tr><td>Tenant provisioning/archival</td><td>A webhook-driven domain command in the host (one-office: idempotent <code>provisionOrganization</code>).</td></tr>
+<tr><td>Global/private tables</td><td>Deliberately outside the machinery. The kit's job is to make the registry split <em>visible</em> (docs + a conventions rule), not to guard what it can't see.</td></tr>
+</table>
+
+<div class="note danger"><strong>The honest footguns to document with the
+feature</strong> — all learned the hard way in one-office: (1) actions have no
+db, so action→internal handoffs must pass the server-derived tenant, never a
+caller value — the internal builders should be asserted to <em>not accept</em>
+a tenant arg; (2) provider ids (memberships, invitations) are global — org-scoped
+mutations must re-check ownership against the active org or you ship a
+cross-tenant IDOR; (3) private/global tables get none of the machinery — every
+one is a per-handler-discipline zone and should be rare and named; (4)
+cross-reference loads must return "not found", never "forbidden" — existence
+is also tenant data.</div>
+
+<h3>Suggested order of work</h3>
+
+<ol>
+<li><strong>Docs first</strong> (no code risk): rewrite
+<code>conventions.md</code>/<code>architecture.md</code> to module grain +
+sibling rules/queries rule + optional <code>application/</code> layer.</li>
+<li><code>tenantTable</code> in zod-table (small, additive, mirrors timestamps).</li>
+<li><code>cvx-kit/tenancy</code>: registry → rules/guards/reference-check.</li>
+<li><code>tenancy</code> option in <code>createAuthFunctions</code> + the
+<code>tenant*</code> constructors (the only intrusive piece — wrap order
+triggers→RLS, ctx branding, insert stamping).</li>
+<li>Architecture-test recipes in the docs: registry exhaustiveness,
+raw-builder ban already exists — add "tenant tables use tenantTable" and
+"internal builders accept no tenant arg".</li>
+</ol>
+
+<p>Steps 1–3 are safe to ship in a patch release; step 4 deserves its own
+minor version and a design pass on the ctx type (one-office's unexported
+<code>unique symbol</code> branding is worth copying so a "tenant ctx" can't
+be hand-assembled).</p>
+
+<footer>Composed 2026-08-13 by ce-explain</footer>
+</main>
+</body>
+</html>

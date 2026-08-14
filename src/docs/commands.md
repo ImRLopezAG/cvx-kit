@@ -85,16 +85,68 @@ The public API layer then wraps the executor in an `authMutation` and passes
 
 1. **Parse the command** through the operation's `command` schema (strict zod).
 2. **Observe**: start the observation clock.
-3. **Run the handler**; its return value is parsed through the `result` schema
+3. **Permission check** — if the operation declares `permission`, the
+   Foundation's injected `checkPermission(ctx, { permission, operation })`
+   runs; throw to deny. Declaring a permission with no injected checker
+   **fails closed** (`COMMAND_PERMISSION_NOT_CONFIGURED`).
+4. **Default guard** — the registry-wide guard passed as the Command's second
+   argument (`new Command(operations, { guard })`), if any.
+5. **Operation guard** — the operation's own `guard(ctx, command)`:
+   preconditions like state-machine legality, ownership beyond roles, or
+   invariants over the parsed command. Throw to deny — nothing has run yet,
+   so a denial is always clean.
+6. **Run the handler**; its return value is parsed through the `result` schema
    — outputs are validated too.
-4. **Audit**: call the operation's `audit({ command, result }, ctx)`. If it
+7. **Audit**: call the operation's `audit({ command, result }, ctx)`. If it
    returns non-null, the entry (plus the operation's `classification`) is
    written through the injected `writeAudit` — **in the same transaction** as
    the handler's writes. Returning `null` skips the audit (the ontology
-   convention: failures are not audited).
-5. **Emit the observation**: `{ operation, classification, outcome,
+   convention: failures are not audited). When the operation declares
+   `aggregates: [...]`, an audit whose `aggregate.type` is not in that
+   allowlist throws (`COMMAND_AGGREGATE_NOT_DECLARED`) — the audit
+   vocabulary is enforced, not advisory. The per-operation catalog is
+   introspectable as `commands.aggregates` for tests.
+8. **Emit the observation**: `{ operation, classification, outcome,
    errorCode?, durationMs }` — completed, denied, or failed per
    `classifyError`.
+
+### Guards and permissions
+
+```ts
+// convex/foundation.ts — permission semantics are host policy, injected once
+export const { Command, Query, observability } = new Foundation(
+  components.foundation,
+  {
+    observability: { ... },
+    checkPermission: (ctx, { permission }) =>
+      requirePermission(ctx.identity, permission),   // throw to deny
+  },
+)
+
+// domain/<module>/commands.ts
+const operations = {
+  '<entities>.publish': Command.operation({
+    command: <entities>.commandInput.extend({ id: zid('<entities>') }),
+    result: z.object({ ok: z.literal(true) }).strict(),
+    classification: 'business',
+    permission: '<domain>.manage',                    // checked first
+    aggregates: ['<aggregate-type>'],                 // audit vocabulary allowlist
+    guard: async (ctx, command) => {                  // precondition, pre-handler
+      const row = await requireTenantReference(ctx.tenant, () => ctx.db.get(command.id))
+      if (row.state !== 'draft') errors.throw({ code: 'INVALID_STATE' })
+    },
+    audit: ({ command }) => ({ ... }),
+  }),
+} as const
+
+const commands = new Command<MutationCtx, typeof operations>(operations, {
+  guard: (ctx) => assertNotReadonlyWindow(ctx),       // registry-wide default
+})
+```
+
+Guards deny by throwing; a denial before the handler never needs rollback
+because nothing has executed. Keep guards read-only — a guard that writes is
+a handler in disguise.
 
 If any step throws, the Convex transaction rolls back — handler writes and
 audit entry together. Audit and effects can never disagree.

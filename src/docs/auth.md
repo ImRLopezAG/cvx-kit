@@ -135,6 +135,16 @@ Selector methods:
 - `.execute(limit, transform?)` — bounded `take` + optional projection. This
   is the normal terminal.
 
+## Row-level security and tenancy (optional)
+
+The `security` config adds structural RLS to every `auth*`/`role*`/`admin*`
+constructor — role-level rules (`security.rules`, standalone), tenant
+isolation from a table registry (`security.tenancy`, opt-in), or both
+AND-composed. Queries get a wrapped reader; mutations wrap triggers first,
+then the RLS writer; `system*` stays unwrapped. With tenancy configured, ctx
+gains `ctx.tenant` (actions re-derive it from live verification). Full
+treatment: `tenancy.md`.
+
 ## Errors
 
 All rejections go through the injected `ErrorFactory` (default: throws

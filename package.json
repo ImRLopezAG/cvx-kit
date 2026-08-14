@@ -25,6 +25,10 @@
 			"types": "./dist/auth.d.mts",
 			"import": "./dist/auth.mjs"
 		},
+		"./tenancy": {
+			"types": "./dist/tenancy.d.mts",
+			"import": "./dist/tenancy.mjs"
+		},
 		"./triggers": {
 			"types": "./dist/triggers.d.mts",
 			"import": "./dist/triggers.mjs"

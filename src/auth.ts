@@ -22,7 +22,16 @@ import type {
 	UserIdentity,
 } from 'convex/server'
 import type { Triggers } from 'convex-helpers/server/triggers'
+import type { TableNamesInDataModel } from 'convex/server'
 import { defaultErrors, type ErrorFactory } from './errors'
+import {
+	composeRules,
+	createTenantRules,
+	wrapDatabaseReader,
+	wrapDatabaseWriter,
+	type RLSConfig,
+	type Rules,
+} from './tenancy'
 
 /** The default vocabulary; every app can supply its own via the Role generic. */
 export type DefaultRole = 'reader' | 'writer' | 'admin'
@@ -39,7 +48,42 @@ export type AuthBundle<Role extends string> = Readonly<{
 	org: Readonly<{ organizationId: string; role: Role }>
 	role: Role
 	actor: Actor<Role>
+	/** The resolved tenant — security.tenancy.resolve, or the organization id. */
+	tenant: string
 }>
+
+/**
+ * Row-level security configuration. Tenant isolation and role-level rules
+ * compose (AND) onto the same wrapped database: queries get a wrapped
+ * reader, mutations get triggers first, then a wrapped writer.
+ */
+export type SecurityConfig<
+	DataModel extends GenericDataModel,
+	Role extends string,
+> = {
+	/**
+	 * Tenant isolation. `tables` is THE registry: every listed table gets
+	 * read/insert/modify gated on row.tenant === ctx.tenant. Pair with
+	 * tenantTable (schema) and tenantOwnership (triggers) on the same list.
+	 */
+	tenancy?: {
+		tables: readonly TableNamesInDataModel<DataModel>[]
+		/** Maps the auth bundle to the tenant; defaults to org.organizationId. */
+		resolve?: (bundle: Omit<AuthBundle<Role>, 'tenant'>) => string
+	}
+	/**
+	 * Role-level (or any policy) rules derived from the authenticated bundle,
+	 * composed AND-wise with tenant isolation. E.g. gate `modify` on a table
+	 * to admin roles.
+	 */
+	rules?: (bundle: AuthBundle<Role>) => Rules<unknown, DataModel>
+	/**
+	 * Policy for tables with no rule. Defaults to 'deny' when tenancy is
+	 * configured (unlisted tables are unreachable — fail closed), 'allow'
+	 * otherwise.
+	 */
+	defaultPolicy?: RLSConfig['defaultPolicy']
+}
 
 type AnyAuthContext<DataModel extends GenericDataModel> =
 	| GenericQueryCtx<DataModel>
@@ -90,6 +134,12 @@ export type AuthFunctionsConfig<
 	) => GenericMutationCtx<DataModel>
 	/** Upper bound for include() reads. */
 	maxIncludedQueryRows?: number
+	/**
+	 * Row-level security: tenant isolation (from a table registry) and
+	 * role-level rules, applied structurally inside every auth*, role*, and
+	 * admin* constructor. system* constructors stay unwrapped (trusted).
+	 */
+	security?: SecurityConfig<DataModel, Role>
 }
 
 /** WorkOS-style default: `member` writes; reader/writer/admin pass through. */
@@ -223,13 +273,66 @@ export function createAuthFunctions<
 					: undefined
 		const role = config.mapRole(organizationRole)
 		if (!role) return errors.throw({ code: 'FORBIDDEN' })
-		return Object.freeze({
+		const base = {
 			identity,
 			user: Object.freeze({ id: user.id }),
 			org: Object.freeze({ organizationId, role }),
 			role,
 			actor: Object.freeze({ userId: user.id, organizationId, role }),
+		}
+		return Object.freeze({
+			...base,
+			tenant: config.security?.tenancy?.resolve?.(base) ?? organizationId,
 		})
+	}
+
+	const securityConfig: RLSConfig | undefined = config.security
+		? {
+				defaultPolicy:
+					config.security.defaultPolicy ??
+					(config.security.tenancy ? 'deny' : 'allow'),
+			}
+		: undefined
+
+	function securityRules(
+		bundle: AuthBundle<Role>,
+	): Rules<unknown, DataModel> | undefined {
+		const security = config.security
+		if (!security) return undefined
+		const sets: Rules<unknown, DataModel>[] = []
+		if (security.tenancy) {
+			sets.push(
+				createTenantRules<DataModel>(bundle.tenant, security.tenancy.tables),
+			)
+		}
+		if (security.rules) sets.push(security.rules(bundle))
+		return sets.length === 1 ? sets[0] : composeRules(...sets)
+	}
+
+	function secureReader(
+		ctx: GenericQueryCtx<DataModel>,
+		bundle: AuthBundle<Role>,
+	): GenericQueryCtx<DataModel> {
+		const rules = securityRules(bundle)
+		if (!rules) return ctx
+		return {
+			...ctx,
+			db: wrapDatabaseReader({}, ctx.db, rules as never, securityConfig),
+		}
+	}
+
+	function secureWriter(
+		ctx: GenericMutationCtx<DataModel>,
+		bundle: AuthBundle<Role>,
+	): GenericMutationCtx<DataModel> {
+		const rules = securityRules(bundle)
+		if (!rules) return ctx
+		// Triggers wrap first (ctx already trigger-wrapped by the caller),
+		// then row-level security wraps the triggered db — order matters.
+		return {
+			...ctx,
+			db: wrapDatabaseWriter({}, ctx.db, rules as never, securityConfig),
+		}
 	}
 
 	async function verifiedMembership(userId: string, organizationId: string) {
@@ -253,15 +356,17 @@ export function createAuthFunctions<
 	}
 
 	async function queryInput(ctx: GenericQueryCtx<DataModel>) {
+		const bundle = await authenticatedUser(ctx)
 		return {
-			ctx: { ...ctx, include, ...(await authenticatedUser(ctx)) },
+			ctx: { ...secureReader(ctx, bundle), include, ...bundle },
 			args: {},
 		}
 	}
 
 	async function mutationInput(ctx: GenericMutationCtx<DataModel>) {
+		const bundle = await authenticatedUser(ctx)
 		return {
-			ctx: { ...wrapDB(ctx), include, ...(await authenticatedUser(ctx)) },
+			ctx: { ...secureWriter(wrapDB(ctx), bundle), include, ...bundle },
 			args: {},
 		}
 	}
@@ -275,20 +380,28 @@ export function createAuthFunctions<
 		if (!membership) return { ctx: { ...ctx, ...authenticated }, args: {} }
 		const role = config.mapRole(membership.roleSlug)
 		if (!role) return errors.throw({ code: 'FORBIDDEN' })
+		const verified = {
+			identity: authenticated.identity,
+			user: authenticated.user,
+			org: Object.freeze({
+				organizationId: membership.organizationId,
+				role,
+			}),
+			role,
+			actor: Object.freeze({
+				userId: authenticated.user.id,
+				organizationId: membership.organizationId,
+				role,
+			}),
+		}
 		return {
 			ctx: {
 				...ctx,
-				...authenticated,
-				org: Object.freeze({
-					organizationId: membership.organizationId,
-					role,
-				}),
-				role,
-				actor: Object.freeze({
-					userId: authenticated.user.id,
-					organizationId: membership.organizationId,
-					role,
-				}),
+				...verified,
+				// Tenant re-derives from the live-verified organization.
+				tenant:
+					config.security?.tenancy?.resolve?.(verified) ??
+					membership.organizationId,
 			},
 			args: {},
 		}

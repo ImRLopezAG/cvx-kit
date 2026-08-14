@@ -35,6 +35,7 @@ authored in [`src/docs/`](./src/docs/):
 - [`commands.md`](./src/docs/commands.md) — Foundation, the audited command protocol, observability
 - [`triggers.md`](./src/docs/triggers.md) — trigger registry, timestamps/append-only/no-delete
 - [`approvals.md`](./src/docs/approvals.md) — declarative approval workflows
+- [`tenancy.md`](./src/docs/tenancy.md) — row-level security (roles) with opt-in multi-tenant isolation
 - [`maintainability.md`](./src/docs/maintainability.md) — keeping a Convex app maintainable long-term
 - [`migration.md`](./src/docs/migration.md) — restructuring an existing raw Convex project into this architecture
 - [`llms.md`](./src/docs/llms.md) — condensed reference to paste into an LLM/agent context

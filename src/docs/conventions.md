@@ -55,6 +55,27 @@ Three zones, three privileges:
 Dependency direction is one-way: `api → domain → shared → kit`. Anything
 pointing the other way is a violation.
 
+### Module grain
+
+`domain/<entity>/` is really `domain/<module>/`: the directory is a **bounded
+context that may own several related tables**, not necessarily one. Two
+tables belong in the same module when a single command routinely writes both,
+or when one's vocabulary is meaningless without the other; otherwise they are
+separate modules. The file anatomy in §2 is unchanged — a module's
+`schema.ts` simply declares several `zodTable`s and its `table.ts` exports
+one merged map (combine maps in `domain/table.ts` with `createModule`, which
+rejects duplicate owners). A one-table module is the degenerate case, so
+small apps look exactly like before.
+
+Cross-module rules:
+
+- Sibling modules may import each other's `rules.ts` and `queries.ts`
+  **only** — never `commands.ts`: one module never mutates another's state.
+- A workflow that must atomically write across modules lives in an optional
+  `application/` layer above `domain/` (`application/<workflow>.ts`); `api/`
+  adapters then import `application/*` and their own module, never a second
+  module.
+
 ---
 
 ## 2. File anatomy — what each file contains, exactly

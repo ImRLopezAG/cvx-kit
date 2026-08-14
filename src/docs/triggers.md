@@ -48,6 +48,11 @@ createAuthFunctions<DataModel>({ ..., triggers })
   votes/history/audit-style evidence tables.
 - **`noDelete(triggers, ...tables)`** — forbids hard deletes only; updates
   pass. Pair with `archivedAt` for soft deletion.
+- **`tenantOwnership(triggers, ...tables)`** — the tenancy post-image
+  invariant: inserts must carry a non-empty `tenant`, updates may never
+  reassign it. Register for every table in the tenancy registry (row-level
+  security checks the pre-image only — this closes that hole). See
+  `tenancy.md`.
 
 `Triggers`, `Change`, and `Trigger` are re-exported for custom registrations.
 

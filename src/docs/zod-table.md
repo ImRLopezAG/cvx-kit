@@ -93,6 +93,29 @@ Think of the options as three independent allowlists over the same shape:
 All derived objects are `.strict()` — unknown keys are rejected, in both
 directions.
 
+## `tenantTable` — tenant-owned rows
+
+`tenantTable` is `zodTable` plus a server-owned `tenant` string field —
+injected exactly like timestamps: present in storage, excluded from
+`insertSchema`/`updateSchema`/`commandInput`, in `publicDto` only by explicit
+allowlist. Handlers stamp it from `ctx.tenant`; row-level security matches on
+it; the `tenantOwnership` trigger forbids reassigning it. See `tenancy.md`.
+
+```ts
+export const <entities> = tenantTable('<entities>', (id) => ({ ... }), {
+  commandFields: [...], publicFields: [...],
+})
+```
+
+## `createModule` — module table maps
+
+Merges per-module table maps into the application schema, throwing when two
+modules declare the same table — the combinator for `domain/table.ts`:
+
+```ts
+export default defineSchema(createModule(<moduleA>Tables, <moduleB>Tables))
+```
+
 ## `zodVariantTable` — discriminated unions
 
 For tables whose rows are a discriminated union (events, polymorphic

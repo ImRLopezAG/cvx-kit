@@ -138,6 +138,92 @@ export function zodTable<
 	}
 }
 
+const tenantShape = {
+	tenant: z.string().min(1),
+} satisfies Shape
+
+type TenantShape = typeof tenantShape
+
+/**
+ * A zodTable whose rows are tenant-owned: injects the server-owned `tenant`
+ * field (the tenancy boundary — see cvx-kit/tenancy). Like timestamps, it is
+ * excluded from insert/update/command boundaries; handlers stamp it from
+ * ctx.tenant, row-level security matches on it, and the tenantOwnership
+ * trigger forbids reassigning it. Expose it via publicFields only when a DTO
+ * genuinely needs it.
+ */
+export function tenantTable<
+	Table extends string,
+	Fields extends Shape,
+	const ServerFields extends readonly ShapeKey<Fields>[] = readonly [],
+	const CommandFields extends readonly ShapeKey<Fields>[] = readonly [],
+	const PublicFields extends readonly ShapeKey<
+		Fields & TenantShape & TimestampShape
+	>[] = readonly [],
+>(
+	tableName: Table,
+	fields: (id: typeof zid) => Fields,
+	options: TableBoundaryOptions<
+		Fields & TenantShape,
+		readonly (ServerFields[number] | 'tenant')[],
+		CommandFields,
+		PublicFields
+	> = {},
+) {
+	return zodTable(
+		tableName,
+		(id) => ({ ...fields(id), ...tenantShape }),
+		{
+			...options,
+			serverFields: [
+				...((options.serverFields ?? []) as readonly (
+					| ServerFields[number]
+					| 'tenant'
+				)[]),
+				'tenant',
+			] as never,
+		} as never,
+	) as ReturnType<
+		typeof zodTable<
+			Table,
+			Fields & TenantShape,
+			readonly (ServerFields[number] | 'tenant')[],
+			CommandFields,
+			PublicFields
+		>
+	>
+}
+
+/**
+ * Merges per-module table maps into the application schema map, rejecting
+ * duplicate table names across modules — the module-registry combinator for
+ * domain/table.ts: `defineSchema(createModule(catalogTables, salesTables))`.
+ */
+export function createModule<
+	const Maps extends readonly Record<string, TableDefinition<any>>[],
+>(...maps: Maps): UnionToIntersection<Maps[number]> {
+	const combined: Record<string, TableDefinition<any>> = {}
+	for (const map of maps) {
+		for (const [tableName, definition] of Object.entries(map)) {
+			if (tableName in combined) {
+				throw new Error(
+					`Table "${tableName}" is declared by more than one module`,
+				)
+			}
+			combined[tableName] = definition
+		}
+	}
+	return combined as UnionToIntersection<Maps[number]>
+}
+
+type UnionToIntersection<Union> = (
+	Union extends unknown
+		? (member: Union) => void
+		: never
+) extends (member: infer Intersection) => void
+	? Intersection
+	: never
+
 /** Preserves discriminated-union storage while retaining the same table owner. */
 export function zodVariantTable<Table extends string, Schema extends z.ZodType>(
 	tableName: Table,

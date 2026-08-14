@@ -55,6 +55,40 @@ export function noDelete<DataModel extends GenericDataModel>(
 }
 
 /**
+ * Post-image tenant invariant for tenantTable rows. Row-level security
+ * authorizes a modification against the PRE-image, so ownership must also be
+ * enforced against the post-image: inserts must carry a tenant, and updates
+ * may never reassign it. Register for every tenant table (same registry that
+ * drives createTenantRules).
+ */
+export function tenantOwnership<DataModel extends GenericDataModel>(
+	triggers: Triggers<DataModel>,
+	...tables: readonly TableNamesInDataModel<DataModel>[]
+) {
+	for (const table of tables) {
+		triggers.register(table, async (_ctx, change) => {
+			if (change.operation === 'insert') {
+				const document = change.newDoc as { tenant?: unknown }
+				if (
+					typeof document.tenant !== 'string' ||
+					document.tenant.length === 0
+				) {
+					throw new Error(`${table} rows require a tenant`)
+				}
+				return
+			}
+			if (change.operation === 'update') {
+				const previous = change.oldDoc as { tenant?: unknown }
+				const current = change.newDoc as { tenant?: unknown }
+				if (previous.tenant !== current.tenant) {
+					throw new Error(`${table} tenant ownership cannot be reassigned`)
+				}
+			}
+		})
+	}
+}
+
+/**
  * Maintains zod-table's opinionated lifecycle timestamps: createdAt and
  * updatedAt on insert, updatedAt on every update. archivedAt stays under
  * application control. Register once per table; writes made through the

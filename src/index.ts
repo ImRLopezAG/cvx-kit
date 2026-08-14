@@ -4,12 +4,23 @@ export {
 	type ErrorFactory,
 } from './errors'
 export {
+	createModule,
 	jsonSafeZid,
+	tenantTable,
 	TIMESTAMP_FIELDS,
 	zodTable,
 	zodVariantTable,
 	type TableBoundaryOptions,
 } from './zod-table'
+export {
+	assertTenantOwned,
+	composeRules,
+	createTenantRules,
+	requireTenantReference,
+	TENANT_FIELD,
+	type RLSConfig,
+	type Rules,
+} from './tenancy'
 export {
 	createAuthFunctions,
 	createInclude,
@@ -20,9 +31,11 @@ export {
 	type DefaultRole,
 	type Include,
 	type IncludedQuery,
+	type SecurityConfig,
 } from './auth'
 export {
 	appendOnly,
+	tenantOwnership,
 	createTriggers,
 	noDelete,
 	timestamps,
@@ -37,5 +50,7 @@ export {
 	type AuditedRegistry,
 	type AuditEntryInput,
 	type AuditWriter,
+	type CommandDefaults,
 	type FoundationOptions,
+	type PermissionChecker,
 } from './components/foundation/client'

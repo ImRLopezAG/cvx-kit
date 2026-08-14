@@ -35,11 +35,40 @@ export type AuditedOperation = Readonly<{
 	command: Readonly<{ parse: (value: unknown) => unknown }>
 	result: Readonly<{ parse: (value: unknown) => unknown }>
 	classification: string
+	/**
+	 * Permission slug required to execute this operation. Checked through the
+	 * Foundation's injected checkPermission BEFORE guards and the handler;
+	 * declaring a permission without injecting a checker fails closed.
+	 */
+	permission?: string
+	/**
+	 * Per-operation precondition, after the permission check and the registry
+	 * default guard, before the handler. Throw to deny — nothing has run yet.
+	 */
+	guard?: (context: never, command: never) => MaybePromise<void>
+	/**
+	 * Allowlist of aggregate types this operation's audit may reference. When
+	 * declared, an audit entry whose aggregate.type is not listed throws —
+	 * the audit vocabulary is enforced, not advisory.
+	 */
+	aggregates?: readonly string[]
 	audit: (
 		resolution: Readonly<{ command: never; result: never }>,
 		context: never,
 	) => MaybePromise<Omit<AuditEntryInput, 'classification'> | null>
 }>
+
+/** Registry-wide defaults applied to every operation of one Command. */
+export type CommandDefaults = Readonly<{
+	/** Runs before every operation's own guard. Throw to deny. */
+	guard?: (context: never) => MaybePromise<void>
+}>
+
+/** Injected permission policy: throw to deny. Host semantics, kit ordering. */
+export type PermissionChecker = (
+	context: never,
+	input: Readonly<{ permission: string; operation: string }>,
+) => MaybePromise<void>
 
 export type AuditedRegistry = Readonly<Record<string, AuditedOperation>>
 
@@ -52,6 +81,12 @@ export type FoundationOptions = Readonly<{
 			 */
 			writeAudit?: AuditWriter
 		}>
+	/**
+	 * Permission policy for operations that declare a `permission`. Runs
+	 * before guards and the handler; throw to deny. An operation with a
+	 * permission but no injected checker fails closed.
+	 */
+	checkPermission?: PermissionChecker
 }>
 
 type FoundationComponentApi = Readonly<{
@@ -68,6 +103,13 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 	readonly #kernel: CommandKernelClass<Context, Operations>
 	readonly #observability: Observability
 	readonly #writeAudit: AuditWriter
+	readonly #checkPermission: PermissionChecker | undefined
+	readonly #defaults: CommandDefaults
+
+	/** Declared aggregate types per operation — introspectable for tests. */
+	readonly aggregates: Readonly<{
+		[Key in OperationKey<Operations>]: Operations[Key]['aggregates']
+	}>
 
 	static operation<const Definition extends AuditedOperation>(
 		definition: Definition,
@@ -77,10 +119,25 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 
 	constructor(
 		operations: Operations,
-		deps: { observability: Observability; writeAudit: AuditWriter },
+		deps: {
+			observability: Observability
+			writeAudit: AuditWriter
+			checkPermission?: PermissionChecker
+			defaults?: CommandDefaults
+		},
 	) {
 		this.#observability = deps.observability
 		this.#writeAudit = deps.writeAudit
+		this.#checkPermission = deps.checkPermission
+		this.#defaults = deps.defaults ?? {}
+		this.aggregates = Object.freeze(
+			Object.fromEntries(
+				Object.entries(operations).map(([operation, definition]) => [
+					operation,
+					definition.aggregates,
+				]),
+			),
+		) as this['aggregates']
 		this.#kernel = new CommandKernelClass<Context, Operations>({
 			operations,
 			execute: (execution) => this.#execute(execution),
@@ -106,12 +163,35 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 				classification: execution.definition.classification,
 			},
 			async () => {
+				// Guards run before the handler: permission → default → operation.
+				const permission = execution.definition.permission
+				if (permission !== undefined) {
+					if (!this.#checkPermission) {
+						throw new CommandPermissionError(execution.operation)
+					}
+					await this.#checkPermission(execution.context as never, {
+						permission,
+						operation: execution.operation,
+					})
+				}
+				await this.#defaults.guard?.(execution.context as never)
+				await execution.definition.guard?.(
+					execution.context as never,
+					execution.command as never,
+				)
 				const result = await execution.run()
 				const audit = await execution.definition.audit(
 					{ command: execution.command, result } as never,
 					execution.context as never,
 				)
 				if (audit) {
+					const allowed = execution.definition.aggregates
+					if (allowed && !allowed.includes(audit.aggregate.type)) {
+						throw new CommandAggregateError(
+							execution.operation,
+							audit.aggregate.type,
+						)
+					}
 					await this.#writeAudit(execution.context as never, {
 						...audit,
 						classification: execution.definition.classification,
@@ -119,6 +199,30 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 				}
 				return result
 			},
+		)
+	}
+}
+
+/** The audit referenced an aggregate type outside the operation's allowlist. */
+class CommandAggregateError extends Error {
+	readonly code = 'COMMAND_AGGREGATE_NOT_DECLARED'
+	readonly name = 'CommandAggregateError'
+
+	constructor(operation: string, aggregateType: string) {
+		super(
+			`Operation "${operation}" audited aggregate type "${aggregateType}" outside its declared aggregates`,
+		)
+	}
+}
+
+/** Fails closed: an operation declared a permission but no checker exists. */
+class CommandPermissionError extends Error {
+	readonly code = 'COMMAND_PERMISSION_NOT_CONFIGURED'
+	readonly name = 'CommandPermissionError'
+
+	constructor(operation: string) {
+		super(
+			`Operation "${operation}" declares a permission but the Foundation has no checkPermission`,
 		)
 	}
 }
@@ -131,6 +235,7 @@ export type ApplicationCommand<
 type CommandConstructor = {
 	new <Context, const Operations extends AuditedRegistry>(
 		operations: Operations,
+		defaults?: CommandDefaults,
 	): BoundCommand<Context, Operations>
 	operation: (typeof BoundCommand)['operation']
 }
@@ -153,12 +258,18 @@ export class Foundation<
 		const observability = new Observability(options.observability)
 		this.observability = observability
 		const writeAudit = options.observability.writeAudit ?? (() => undefined)
+		const checkPermission = options.checkPermission
 		this.Command = class <
 			Context,
 			const Operations extends AuditedRegistry,
 		> extends BoundCommand<Context, Operations> {
-			constructor(operations: Operations) {
-				super(operations, { observability, writeAudit })
+			constructor(operations: Operations, defaults?: CommandDefaults) {
+				super(operations, {
+					observability,
+					writeAudit,
+					checkPermission,
+					defaults,
+				})
 			}
 		}
 	}

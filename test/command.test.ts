@@ -114,3 +114,161 @@ describe('Foundation Command protocol', () => {
 		expect(events).toHaveLength(1)
 	})
 })
+
+describe('Foundation Command guards and permissions', () => {
+	function guardedHarness(options?: {
+		checkPermission?: (
+			context: never,
+			input: { permission: string; operation: string },
+		) => void
+	}) {
+		const auditEntries: AuditEntryInput[] = []
+		const calls: string[] = []
+		const { Command } = new Foundation(
+			{ functions: { status: 'status' } },
+			{
+				observability: {
+					enabled: false,
+					classifyError: () => ({
+						outcome: 'denied',
+						errorCode: 'FORBIDDEN',
+					}),
+					writeAudit: (_context, entry) => {
+						auditEntries.push(entry)
+					},
+				},
+				checkPermission: options?.checkPermission as never,
+			},
+		)
+		const operations = {
+			'documents.publish': Command.operation({
+				command: z.object({ state: z.string() }).strict(),
+				result: z.object({ ok: z.literal(true) }).strict(),
+				classification: 'business',
+				permission: 'documents.manage',
+				guard: (async (_ctx: Context, command: { state: string }) => {
+					calls.push('operation-guard')
+					if (command.state !== 'draft') throw new Error('NOT_DRAFT')
+				}) as never,
+				audit: () => ({
+					operation: 'documents.publish',
+					actorId: 'user_1',
+					aggregate: { type: 'document', id: 'doc_1' },
+				}),
+			}),
+		} as const
+		const commands = new Command<Context, typeof operations>(operations, {
+			guard: (async () => {
+				calls.push('default-guard')
+			}) as never,
+		})
+		const publish = commands.exec({
+			operation: 'documents.publish',
+			handler: async () => {
+				calls.push('handler')
+				return { ok: true as const }
+			},
+		})
+		return { publish, calls, auditEntries }
+	}
+
+	it('runs permission → default guard → operation guard → handler', async () => {
+		const { publish, calls } = guardedHarness({
+			checkPermission: (_context, input) => {
+				calls.push(`permission:${input.permission}@${input.operation}`)
+			},
+		})
+		await publish({ actorId: 'user_1' }, { state: 'draft' })
+		expect(calls).toEqual([
+			'permission:documents.manage@documents.publish',
+			'default-guard',
+			'operation-guard',
+			'handler',
+		])
+	})
+
+	it('a denying guard stops the handler and skips the audit', async () => {
+		const { publish, calls, auditEntries } = guardedHarness({
+			checkPermission: () => {},
+		})
+		await expect(
+			publish({ actorId: 'user_1' }, { state: 'published' }),
+		).rejects.toThrow('NOT_DRAFT')
+		expect(calls).not.toContain('handler')
+		expect(auditEntries).toEqual([])
+	})
+
+	it('a denying permission check stops everything', async () => {
+		const { publish, calls } = guardedHarness({
+			checkPermission: () => {
+				throw new Error('FORBIDDEN')
+			},
+		})
+		await expect(
+			publish({ actorId: 'user_1' }, { state: 'draft' }),
+		).rejects.toThrow('FORBIDDEN')
+		expect(calls).toEqual([])
+	})
+
+	it('fails closed when a permission is declared but no checker exists', async () => {
+		const { publish } = guardedHarness()
+		await expect(
+			publish({ actorId: 'user_1' }, { state: 'draft' }),
+		).rejects.toThrow(/checkPermission/)
+	})
+})
+
+describe('Foundation Command aggregate allowlist', () => {
+	function aggregateHarness(auditType: string) {
+		const auditEntries: AuditEntryInput[] = []
+		const { Command } = new Foundation(
+			{ functions: { status: 'status' } },
+			{
+				observability: {
+					enabled: false,
+					classifyError: () => ({
+						outcome: 'failed',
+						errorCode: 'UNEXPECTED',
+					}),
+					writeAudit: (_context, entry) => {
+						auditEntries.push(entry)
+					},
+				},
+			},
+		)
+		const operations = {
+			'documents.archive': Command.operation({
+				command: z.object({ id: z.string() }).strict(),
+				result: z.object({ ok: z.literal(true) }).strict(),
+				classification: 'business',
+				aggregates: ['document'],
+				audit: () => ({
+					operation: 'documents.archive',
+					actorId: 'user_1',
+					aggregate: { type: auditType, id: 'doc_1' },
+				}),
+			}),
+		} as const
+		const commands = new Command<Context, typeof operations>(operations)
+		const archive = commands.exec({
+			operation: 'documents.archive',
+			handler: async () => ({ ok: true as const }),
+		})
+		return { commands, archive, auditEntries }
+	}
+
+	it('writes audits whose aggregate type is declared', async () => {
+		const { commands, archive, auditEntries } = aggregateHarness('document')
+		await archive({ actorId: 'user_1' }, { id: 'doc_1' })
+		expect(auditEntries).toHaveLength(1)
+		expect(commands.aggregates['documents.archive']).toEqual(['document'])
+	})
+
+	it('throws when the audit names an undeclared aggregate type', async () => {
+		const { archive, auditEntries } = aggregateHarness('invoice')
+		await expect(
+			archive({ actorId: 'user_1' }, { id: 'doc_1' }),
+		).rejects.toThrow(/outside its declared aggregates/)
+		expect(auditEntries).toEqual([])
+	})
+})

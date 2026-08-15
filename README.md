@@ -36,6 +36,10 @@ authored in [`src/docs/`](./src/docs/):
 - [`triggers.md`](./src/docs/triggers.md) — trigger registry, timestamps/append-only/no-delete
 - [`approvals.md`](./src/docs/approvals.md) — declarative approval workflows
 - [`tenancy.md`](./src/docs/tenancy.md) — row-level security (roles) with opt-in multi-tenant isolation
+- [`crud.md`](./src/docs/crud.md) — the CRUD command factory
+- [`webhooks.md`](./src/docs/webhooks.md) — the sanctioned webhook boundary
+- [`agent-tools.md`](./src/docs/agent-tools.md) — agent tools that are audited commands
+- [`upgrading.md`](./src/docs/upgrading.md) — 0.0.x → 0.1.0, old way → new way
 - [`maintainability.md`](./src/docs/maintainability.md) — keeping a Convex app maintainable long-term
 - [`migration.md`](./src/docs/migration.md) — restructuring an existing raw Convex project into this architecture
 - [`llms.md`](./src/docs/llms.md) — condensed reference to paste into an LLM/agent context
@@ -186,6 +190,12 @@ registerApprovals(t)
 
 ## Releasing
 
+Every release also creates a GitHub Release whose notes are the matching
+[CHANGELOG](./CHANGELOG.md) section (extracted by
+`scripts/extract-changelog.mjs` in the release workflow).
+
+### OIDC setup
+
 Publishing uses [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)
 (OIDC) — no tokens stored anywhere. The release workflow authenticates via
 GitHub's OIDC and npm generates provenance attestations automatically.
@@ -205,13 +215,4 @@ One-time setup (already-published package required first):
 
 ## Roadmap
 
-- [ ] Port the approvals `copyability` test (cp -r + tsc + `convex codegen
-      --dry-run`) into this repo's suite as the portability guarantee.
-- [ ] `createArchitectureTest(rules)` helper so consuming projects get the
-      boundary guardrails (no inline tables/enums, single facade per
-      component) on day one.
-- [ ] WorkOS scaffold generator for `auth.ts` / `auth.config.ts` / `http.ts`.
-- [ ] Audit facade helpers (fingerprinted cursors, bounded windows) over any
-      `convex-audit-log` instance.
-- [ ] Decide the published name/scope before `npm publish` (`cvx-kit` is a
-      working title).
+See [ROADMAP.md](./ROADMAP.md) — milestones from 0.1.0 through 1.0.0.

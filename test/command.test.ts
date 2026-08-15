@@ -294,13 +294,13 @@ describe('Foundation Command middleware', () => {
 
 	it('runs registry middleware → operation middleware → guards → handler, with context enrichment', async () => {
 		const { Command, calls } = middlewareHarness()
-		const registryLayer = Command.middleware(async ({ next }) => {
+		const registryLayer = Command.middleware<{ actorId: string }, { traceId: string }>(async ({ next }) => {
 			calls.push('registry:before')
 			const result = await next({ context: { traceId: 't_1' } })
 			calls.push('registry:after')
 			return result
 		})
-		const operationLayer = Command.middleware<{ traceId?: string }>(
+		const operationLayer = Command.middleware<{ traceId?: string }, { vendor: string }>(
 			async ({ context, next }) => {
 				calls.push(`operation:${context.traceId}`)
 				return next({ context: { vendor: 'acme' } })
@@ -311,7 +311,7 @@ describe('Foundation Command middleware', () => {
 				command: z.object({}).strict(),
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'business',
-				middleware: [operationLayer as never],
+				middleware: [operationLayer],
 				guard: ((ctx: { vendor?: string }) => {
 					calls.push(`guard:${ctx.vendor}`)
 				}) as never,
@@ -321,7 +321,7 @@ describe('Foundation Command middleware', () => {
 		const commands = new Command<
 			{ actorId: string; traceId?: string; vendor?: string },
 			typeof operations
-		>(operations, { middleware: [registryLayer as never] })
+		>(operations, { middleware: [registryLayer] })
 		const touch = commands.exec({
 			operation: 'documents.touch',
 			handler: async (ctx) => {
@@ -351,7 +351,7 @@ describe('Foundation Command middleware', () => {
 				command: z.object({}).strict(),
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'business',
-				middleware: [fabricate as never],
+				middleware: [fabricate],
 				audit: () => null,
 			}),
 		} as const
@@ -373,7 +373,7 @@ describe('Foundation Command middleware', () => {
 				command: z.object({}).strict(),
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'business',
-				middleware: [shortCircuit as never],
+				middleware: [shortCircuit],
 				guard: (() => {
 					calls.push('guard')
 				}) as never,
@@ -405,7 +405,7 @@ describe('Foundation Command middleware', () => {
 				command: z.object({}).strict(),
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'business',
-				middleware: [double as never],
+				middleware: [double],
 				audit: () => null,
 			}),
 		} as const

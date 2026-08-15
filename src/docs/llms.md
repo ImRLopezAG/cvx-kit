@@ -7,6 +7,8 @@
 > `migration.md` (same directory).
 > Structure, file anatomy, and naming rules → `conventions.md` is
 > authoritative. Restructuring an existing raw project → `migration.md`.
+> Upgrading from 0.0.x → `upgrading.md`. New 0.1.0 helpers: `crud.md`,
+> `webhooks.md`, `agent-tools.md`; pagination in `zod-table.md`/`auth.md`.
 
 > **Placeholders.** Names like `documents`, `users`, `history`, `title`,
 > `ownerId`, and `documentPublish` in the examples below are illustrative
@@ -70,9 +72,14 @@ function constructors, a trigger registry, an audited command protocol
 | Import | Provides |
 |---|---|
 | `cvx-kit` | everything below re-exported (except components' defaults) |
-| `cvx-kit/zod-table` | `zodTable`, `tenantTable`, `createModule`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS` |
+| `cvx-kit/zod-table` | `zodTable`, `tenantTable`, `createModule`, `paginated`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS` |
 | `cvx-kit/auth` | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap` |
 | `cvx-kit/tenancy` | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD` |
+| `cvx-kit/crud` | `createCrudCommands` — create/update/archive from a zodTable, inside the command pipeline; `enrich` REQUIRED for tenantTables |
+| `cvx-kit/state-machine` | `createStateMachine` — typed transitions from constants tuples; `assert` drops into command guards |
+| `cvx-kit/middleware` | `rateLimit` — packaged middleware over an injected rate-limiter instance; keyed by `ctx.tenant`, missing key = config error |
+| `cvx-kit/webhooks` | `createWebhookBoundary`, `recordWebhookEvent`, `webhookEventsTable` — raw-body verify, natural-key dedup in the mutation |
+| `cvx-kit/agent-tools` | `createAgentTools` — tool records from table masks; mutation handlers route through command executors |
 | `cvx-kit/triggers` | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers` |
 | `cvx-kit/errors` | `KitError`, `defaultErrors`, `ErrorFactory` |
 | `cvx-kit/components/foundation` | `Foundation` — the ONLY runtime export besides the default component config for `app.use`. Everything (`Command`, `Query`, `observability`, `executeResultBoundary`, `projectResult`, `emitSemanticEvent`) destructures from the instance; nothing is importable loose. |

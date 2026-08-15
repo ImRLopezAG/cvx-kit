@@ -6,6 +6,7 @@ export {
 export {
 	createModule,
 	jsonSafeZid,
+	paginated,
 	tenantTable,
 	TIMESTAMP_FIELDS,
 	zodTable,
@@ -34,6 +35,20 @@ export {
 	type SecurityConfig,
 } from './auth'
 export {
+	createAgentTools,
+	type AgentToolHandlers,
+	type AgentToolRecord,
+} from './agent-tools'
+export { createCrudCommands, type CrudConfig } from './crud'
+export { rateLimit, type RateLimiterLike } from './middleware'
+export {
+	createWebhookBoundary,
+	recordWebhookEvent,
+	webhookEventsTable,
+	type WebhookBoundaryConfig,
+} from './webhooks'
+export { createStateMachine } from './state-machine'
+export {
 	appendOnly,
 	tenantOwnership,
 	createTriggers,
@@ -50,7 +65,10 @@ export {
 	type AuditedRegistry,
 	type AuditEntryInput,
 	type AuditWriter,
+	type CommandConstructor,
 	type CommandDefaults,
+	type AnyCommandMiddleware,
+	type AnyQueryMiddleware,
 	type CommandMiddleware,
 	type FoundationOptions,
 	type PermissionChecker,

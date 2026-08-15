@@ -1,9 +1,14 @@
 import {
 	type ConvexValidatorFromZod,
+	convexToZod,
 	zid,
 	zodToConvex,
 } from 'convex-helpers/server/zod4'
-import { defineTable, type TableDefinition } from 'convex/server'
+import {
+	defineTable,
+	paginationOptsValidator,
+	type TableDefinition,
+} from 'convex/server'
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 
@@ -129,11 +134,13 @@ export function zodTable<
 		insert,
 		update,
 		tools: {
+			// jsonSafeZid (not zid): tool masks feed generated JSON schemas, so
+			// ids must present as plain strings while keeping the Id<...> type.
 			insert: commandInput,
 			update: z
-				.object({ data: commandInput.partial(), id: zid(tableName) })
+				.object({ data: commandInput.partial(), id: jsonSafeZid(tableName) })
 				.strict(),
-			id: z.object({ id: zid(tableName) }).strict(),
+			id: z.object({ id: jsonSafeZid(tableName) }).strict(),
 		},
 	}
 }
@@ -223,6 +230,31 @@ type UnionToIntersection<Union> = (
 ) extends (member: infer Intersection) => void
 	? Intersection
 	: never
+
+/**
+ * Cursor-pagination boundary schemas bridged from Convex's own validators:
+ * `args.paginationOpts` for function args, `result` for the page shape.
+ * Pair with `include(...).paginate(opts)` (cvx-kit/auth). The result object
+ * is deliberately non-strict — Convex may attach engine fields (splitCursor,
+ * pageStatus); the page items themselves are validated against the dto.
+ * Note: under row-level security, pages may be SHORTER than numItems when
+ * rules reject rows mid-page; cursors remain correct.
+ */
+export function paginated<Dto extends z.ZodType>(dto: Dto) {
+	return {
+		args: { paginationOpts: convexToZod(paginationOptsValidator) },
+		result: z.object({
+			page: z.array(dto),
+			isDone: z.boolean(),
+			continueCursor: z.string(),
+			splitCursor: z.string().nullable().optional(),
+			pageStatus: z
+				.enum(['SplitRecommended', 'SplitRequired'])
+				.nullable()
+				.optional(),
+		}),
+	}
+}
 
 /** Preserves discriminated-union storage while retaining the same table owner. */
 export function zodVariantTable<Table extends string, Schema extends z.ZodType>(

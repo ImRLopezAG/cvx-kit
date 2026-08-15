@@ -6,6 +6,8 @@ import {
 import type {
 	ActionBuilder,
 	DocumentByInfo,
+	PaginationOptions,
+	PaginationResult,
 	GenericActionCtx,
 	GenericDataModel,
 	GenericMutationCtx,
@@ -179,6 +181,19 @@ export type IncludedQuery<Table extends GenericTableInfo> = {
 			data: Awaited<ReturnType<Query<Table>['take']>>,
 		) => Result | Promise<Result>,
 	): Promise<Result>
+	/**
+	 * Cursor pagination over the selected indexed query. numItems is bounded
+	 * by the same maxRows policy as execute(). Under row-level security a
+	 * page may be shorter than numItems (rejected rows are filtered after
+	 * pagination); cursors remain correct. Pair with paginated(dto) from
+	 * cvx-kit/zod-table for the boundary schemas.
+	 */
+	paginate<Item = DocumentByInfo<Table>>(
+		opts: PaginationOptions,
+		transform?: (
+			page: DocumentByInfo<Table>[],
+		) => Item[] | Promise<Item[]>,
+	): Promise<PaginationResult<Item>>
 }
 
 export type Include = <Table extends GenericTableInfo>(
@@ -217,6 +232,21 @@ export function createInclude(options?: {
 				}
 				const data = await (selected ?? query.fullTableScan()).take(limit)
 				return transform ? transform(data) : (data as never)
+			},
+			paginate: async (opts, transform) => {
+				if (
+					!Number.isSafeInteger(opts.numItems) ||
+					opts.numItems < 1 ||
+					opts.numItems > maxRows
+				) {
+					return errors.throw({
+						code: 'INVALID_REQUEST_BOUNDARY',
+						message: `A page size must be from 1 to ${maxRows}`,
+					})
+				}
+				const result = await (selected ?? query.fullTableScan()).paginate(opts)
+				if (!transform) return result as never
+				return { ...result, page: await transform(result.page) } as never
 			},
 		}
 	}

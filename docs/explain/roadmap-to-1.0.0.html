@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cvx-kit — the road to 1.0.0</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1d212b; --ink: #e6e9ef;
+    --muted: #9aa3b2; --accent: #7aa2f7; --good: #9ece6a; --warn: #e0af68;
+    --bad: #f7768e; --code-bg: #12141a; --border: #2a2f3a;
+  }
+  html { background: var(--bg); }
+  body {
+    color: var(--ink); margin: 0; padding: 2rem 1.25rem 4rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  main { max-width: 72ch; margin: 0 auto; }
+  .wide { max-width: 100ch; margin-left: auto; margin-right: auto; }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .75rem; }
+  h2 { font-size: 1.2rem; margin: 2.5rem 0 .5rem; color: var(--accent); }
+  h3 { font-size: 1rem; margin: 1.6rem 0 .4rem; }
+  p, li { font-size: .95rem; }
+  dl.meta {
+    display: grid; grid-template-columns: max-content 1fr; gap: .15rem .9rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: .75rem 1rem; font-size: .85rem; margin: 0 0 2rem;
+  }
+  dl.meta dt { color: var(--muted); font-weight: 600; }
+  dl.meta dd { margin: 0; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .85em;
+         background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
+  .note {
+    border-left: 3px solid var(--accent); background: var(--panel);
+    padding: .6rem .9rem; border-radius: 0 8px 8px 0; margin: 1rem 0; font-size: .9rem;
+  }
+  .warn { border-left-color: var(--warn); }
+  table.cmp { border-collapse: collapse; width: 100%; font-size: .85rem; margin: 1rem 0; }
+  table.cmp th, table.cmp td { border: 1px solid var(--border); padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  table.cmp th { background: var(--panel2); }
+  figure { margin: 1.5rem 0; }
+  figcaption { color: var(--muted); font-size: .8rem; margin-top: .4rem; }
+  .svgbox { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .75rem; }
+  footer { color: var(--muted); font-size: .8rem; margin-top: 3.5rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+  strong { color: #fff; }
+  .m { display: grid; grid-template-columns: 6.5rem 1fr; gap: 0 1rem; margin: 1.1rem 0; }
+  .m .v { font-family: ui-monospace, Menlo, monospace; font-weight: 700; color: var(--accent); }
+  .m.rc .v { color: var(--warn); }
+  .m.one .v { color: var(--good); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>cvx-kit — the road to 1.0.0</h1>
+
+<dl class="meta">
+  <dt>Date</dt><dd>2026-08-14</dd>
+  <dt>Input shape</dt><dd>idea</dd>
+  <dt>Subject</dt><dd>The release roadmap from 0.0.8 to 1.0.0, as defined in ROADMAP.md — what each milestone means, why it's ordered this way, and what "stable" will actually promise</dd>
+</dl>
+
+<p><strong>The one-sentence version:</strong> the roadmap is not a feature
+list — it's a controlled shutdown of your freedom to break things. Every
+milestone closes one class of change you're currently allowed to make, until
+at 1.0.0 the only thing left open is additive.</p>
+
+<h2>Why now, and why this order</h2>
+
+<p>In one week, cvx-kit shipped four breaking changes as <em>patch</em>
+releases: the required <code>internalQuery</code> builder, the facade
+lockdown, the component mount-path change, and the tarball reshape. All
+correct, all fine — because you are the only consumer. The moment a second
+project installs the package, each of those becomes a broken build on
+someone else's machine with no semver signal warning them. A roadmap to
+1.0.0 is really an answer to one question: <strong>in what order do we give
+up which freedoms?</strong></p>
+
+<figure class="wide">
+<div class="svgbox">
+<svg viewBox="0 0 880 250" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, Menlo, monospace" font-size="12">
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#7aa2f7"/></marker>
+  </defs>
+  <line x1="30" y1="60" x2="850" y2="60" stroke="#2a2f3a" stroke-width="2"/>
+  <g>
+    <circle cx="60" cy="60" r="7" fill="#9aa3b2"/>
+    <text x="60" y="40" fill="#9aa3b2" text-anchor="middle" font-weight="bold">0.0.8</text>
+    <text x="60" y="90" fill="#9aa3b2" text-anchor="middle" font-size="10">today</text>
+    <text x="60" y="105" fill="#9aa3b2" text-anchor="middle" font-size="10">anything may</text>
+    <text x="60" y="118" fill="#9aa3b2" text-anchor="middle" font-size="10">break, anytime</text>
+  </g>
+  <g>
+    <circle cx="240" cy="60" r="7" fill="#7aa2f7"/>
+    <text x="240" y="40" fill="#7aa2f7" text-anchor="middle" font-weight="bold">0.1.0</text>
+    <text x="240" y="90" fill="#e6e9ef" text-anchor="middle" font-size="10">THE BIG ONE</text>
+    <text x="240" y="105" fill="#9aa3b2" text-anchor="middle" font-size="10">names frozen + full</text>
+    <text x="240" y="118" fill="#9aa3b2" text-anchor="middle" font-size="10">feature set (6 helpers)</text>
+  </g>
+  <g>
+    <circle cx="420" cy="60" r="7" fill="#7aa2f7"/>
+    <text x="420" y="40" fill="#7aa2f7" text-anchor="middle" font-weight="bold">0.2.0</text>
+    <text x="420" y="90" fill="#e6e9ef" text-anchor="middle" font-size="10">rules become tests</text>
+    <text x="420" y="105" fill="#9aa3b2" text-anchor="middle" font-size="10">createArchitectureTest</text>
+    <text x="420" y="118" fill="#9aa3b2" text-anchor="middle" font-size="10">copyability in suite</text>
+  </g>
+  <g>
+    <circle cx="600" cy="60" r="7" fill="#7aa2f7"/>
+    <text x="600" y="40" fill="#7aa2f7" text-anchor="middle" font-weight="bold">0.3.0</text>
+    <text x="600" y="90" fill="#e6e9ef" text-anchor="middle" font-size="10">first hour generated</text>
+    <text x="600" y="105" fill="#9aa3b2" text-anchor="middle" font-size="10">WorkOS scaffold,</text>
+    <text x="600" y="118" fill="#9aa3b2" text-anchor="middle" font-size="10">audit facades</text>
+  </g>
+  <g>
+    <circle cx="740" cy="60" r="7" fill="#e0af68"/>
+    <text x="740" y="40" fill="#e0af68" text-anchor="middle" font-weight="bold">1.0.0-rc</text>
+    <text x="740" y="90" fill="#e6e9ef" text-anchor="middle" font-size="10">gates, not features</text>
+    <text x="740" y="105" fill="#9aa3b2" text-anchor="middle" font-size="10">2 real apps, weeks</text>
+    <text x="740" y="118" fill="#9aa3b2" text-anchor="middle" font-size="10">1 minor w/o breaks</text>
+  </g>
+  <g>
+    <circle cx="845" cy="60" r="7" fill="#9ece6a"/>
+    <text x="845" y="40" fill="#9ece6a" text-anchor="middle" font-weight="bold">1.0.0</text>
+    <text x="830" y="90" fill="#e6e9ef" text-anchor="end" font-size="10">surface frozen</text>
+  </g>
+  <text x="150" y="180" fill="#9aa3b2" font-size="11">freedom to break ▼ decreasing</text>
+  <path d="M 120 195 L 760 195" stroke="#f7768e" stroke-width="2" marker-end="url(#ar)" opacity="0.6"/>
+  <text x="120" y="215" fill="#f7768e" font-size="10">wide open</text>
+  <text x="700" y="215" fill="#9ece6a" font-size="10">additive only</text>
+</svg>
+</div>
+<figcaption>Each milestone closes one class of allowed change. The rc is the
+only milestone with no work items — only proof obligations.</figcaption>
+</figure>
+
+<h2>The milestones, and what each one really is</h2>
+
+<div class="m"><span class="v">0.1.0</span><div>
+<strong>The big one — consolidation AND the full feature set.</strong> One
+release that closes the breaking window and ships every planned helper, so a
+consumer adopts a complete kit once instead of chasing minors — and every
+feature lands already conforming to the frozen names.
+<em>Consolidation:</em> the <strong>package name decision</strong>
+(<code>cvx-kit</code> is a working title — the only item that gets more
+expensive with every install), the API-audit pass against
+<code>conventions.md</code>'s own naming grammar, <strong>typed middleware
+context accumulation</strong>, CHANGELOG, and breaking-only-on-minor from
+here on. <em>Features, all six:</em> the <strong>pagination bridge</strong>
+(<code>paginated(table.publicDto)</code> + <code>include(...).paginate(opts)</code>
+— cursors, not just bounded <code>take</code>); the <strong>CRUD command
+factory</strong> (<code>createCrudCommands(table, policy)</code> — the
+standard create/update/archive operations from a zodTable's masks, the
+single biggest per-entity boilerplate left); the <strong>state-machine
+helper</strong> (<code>createStateMachine(STATES, transitions)</code>, typed
+against the constants tuple, dropping into command guards); the
+<strong>rate-limit middleware factory</strong> (the first official
+middleware, over <code>@convex-dev/rate-limiter</code>, keyed by
+<code>ctx.tenant</code>); the <strong>webhook boundary helper</strong>
+(signature verification + natural-key dedup + <code>system*</code>
+delegation); and the <strong>agent tool generator</strong>
+(<code>createAgentTools</code> from the existing <code>tools.*</code> masks —
+agents get audited commands, never raw db access). Each ships with docs,
+runtime tests, and an <code>llms.md</code> entry.</div></div>
+
+<div class="m"><span class="v">0.2.0</span><div>
+<strong>Rules become tests.</strong> Everything <code>conventions.md</code>
+prescribes in prose — no raw builders outside <code>functions.ts</code>, no
+inline enums, no sibling-domain imports, facades mount once — becomes an
+importable <code>createArchitectureTest(rules)</code> a consumer runs on day
+one. This is the origin app's deepest lesson: <em>a rule that exists in
+prose but not in the suite is a request, not a rule.</em> Includes the
+tenancy-registry exhaustiveness helper, the <code>llms.md</code> conformance
+check (every export in its tables must exist with that signature — built
+here, reused as an rc gate), and the copyability test (copy a component to
+a tmpdir with only its package deps, run <code>tsc</code>) joining the
+permanent suite. Guardrails come after 0.1.0 on purpose: architecture tests
+freeze names into consumers' suites, so they must enforce the
+<em>already-frozen</em> vocabulary.</div></div>
+
+<div class="m"><span class="v">0.3.0</span><div>
+<strong>The first hour is generated.</strong> The WorkOS scaffold
+(<code>auth.ts</code>, <code>auth.config.ts</code>, <code>http.ts</code>,
+<code>functions.ts</code>, <code>foundation.ts</code>, <code>triggers.ts</code>
+from one command), audit facade helpers, and the final go/no-go on an
+idempotency component — deferred, and only revived if a consumer demonstrates
+a need beyond Convex's own exactly-once mutation delivery.</div></div>
+
+<div class="m rc"><span class="v">1.0.0-rc</span><div>
+<strong>Gates, not features.</strong> Nothing new ships here; the rc exists
+when facts are true: two real applications on the latest kit for weeks, one
+full minor cycle needing zero breaking changes, an automated check that
+<code>llms.md</code>'s export tables match the real API, a CI matrix across
+bun/node and the convex peer range, and every exported runtime symbol
+exercised by at least one test. If a gate can't be met, that's information —
+the API wasn't ready, and the rc waits.</div></div>
+
+<div class="m one"><span class="v">1.0.0</span><div>
+<strong>The promise.</strong> Frozen export surface, a written semver
+contract (what counts as breaking; deprecations live one minor with
+warnings), and <code>MIGRATING.md</code> from 0.x. From here, a consumer can
+<code>^1.0.0</code> and sleep.</div></div>
+
+<h2>What is deliberately NOT on the road</h2>
+
+<table class="cmp">
+<tr><th>Excluded</th><th>Why the decision is already made</th></tr>
+<tr><td>General idempotency store</td><td>Convex's client already delivers
+exactly-once execution per mutation call; UI double-submission and webhook
+retries are boundary-local problems with natural keys. Decided this week —
+the roadmap records it so a future contributor doesn't relitigate it.</td></tr>
+<tr><td>Frontend/React bindings</td><td>The kit is a backend architecture;
+the client surface is Convex's own.</td></tr>
+<tr><td>Multi-provider auth abstractions</td><td>The injected-policy seam
+(<code>getAuthUser</code> / <code>mapRole</code> / <code>verifyMembership</code>)
+already accepts any provider — an abstraction layer above it would be
+speculation.</td></tr>
+</table>
+
+<h2>Candidates — recorded, not committed</h2>
+
+<p>Two ideas parked with reasons on file, so they're remembered without
+blocking any milestone: <strong>observability sink adapters</strong>
+(OTel/Axiom-shaped formatters for the injectable <code>emit</code>, so
+<code>command.execution</code> events land in real telemetry without
+per-consumer mapping) and a <strong>migration companion</strong> (a thin
+<code>@convex-dev/migrations</code> wrapper aligned with zodTable epochs —
+"make optional field required after backfill" as a declared step, closing
+the loop with <code>migration.md</code>'s zero-downtime section). Either
+graduates into a milestone when a consumer actually needs it.</p>
+
+<div class="note warn"><strong>The ordering logic worth internalizing:</strong>
+consolidation (0.1) must precede guardrails (0.2) because architecture tests
+freeze names into consumers' test suites — enforcing conventions you're about
+to rename would double the migration. Guardrails must precede scaffolding
+(0.3) because a generator that emits code the architecture tests reject is
+worse than no generator. And the rc gates come last because they are the only
+part you can't do by writing code — they require calendar time under real
+load, which is why starting them early buys nothing.</div>
+
+<div class="note"><strong>Where this lives:</strong> the actionable version
+with checkboxes is <code>ROADMAP.md</code> at the repo root (linked from the
+README); this explainer is the "why" behind it. When a milestone's items are
+all checked, the release that closes it is the version in its heading.</div>
+
+<footer>Composed 2026-08-14 by ce-explain</footer>
+</main>
+</body>
+</html>

@@ -55,7 +55,7 @@ export type AuditedOperation = Readonly<{
 	 */
 	aggregates?: readonly string[]
 	/** Per-operation middleware, inside the registry-wide chain. */
-	middleware?: readonly CommandMiddleware[]
+	middleware?: readonly AnyCommandMiddleware[]
 	audit: (
 		resolution: Readonly<{ command: never; result: never }>,
 		context: never,
@@ -70,14 +70,28 @@ export type AuditedOperation = Readonly<{
  * transform results, but can never skip authorization, return an invalid
  * result, or desynchronize audit from effects.
  */
-export type CommandMiddleware<Context = never> = (input: {
+export type CommandMiddleware<
+	Context = never,
+	Extension extends Record<string, unknown> = Record<string, unknown>,
+> = (input: {
 	operation: string
 	command: unknown
 	context: Context
 	next: (options?: {
 		/** Merged into the context handed to inner middleware, guards, handler. */
-		context?: Record<string, unknown>
+		context?: Extension
 	}) => Promise<unknown>
+}) => Promise<unknown>
+
+/** Any-context middleware — what registries and operations accept. */
+// Contravariant seam: the supertype every typed CommandMiddleware<C, E>
+// assigns to (context contra-narrows to never; next's options widen to
+// unknown). Definition sites stay typed via Command.middleware.
+export type AnyCommandMiddleware = (input: {
+	operation: string
+	command: unknown
+	context: never
+	next: (options?: { context?: unknown }) => Promise<unknown>
 }) => Promise<unknown>
 
 /** Registry-wide defaults applied to every operation of one Command. */
@@ -85,7 +99,7 @@ export type CommandDefaults = Readonly<{
 	/** Runs before every operation's own guard. Throw to deny. */
 	guard?: (context: never) => MaybePromise<void>
 	/** Outermost middleware, in array order, around every operation. */
-	middleware?: readonly CommandMiddleware[]
+	middleware?: readonly AnyCommandMiddleware[]
 }>
 
 /** Injected permission policy: throw to deny. Host semantics, kit ordering. */
@@ -141,10 +155,19 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 		return definition
 	}
 
-	/** Identity helper that types a middleware against its context. */
-	static middleware<Context = never>(
-		middleware: CommandMiddleware<Context>,
-	): CommandMiddleware<Context> {
+	/**
+	 * Identity helper that types a middleware against its context and the
+	 * context extension it passes downstream via next({ context }).
+	 */
+	static middleware<
+		Context = never,
+		const Extension extends Record<string, unknown> = Record<
+			string,
+			unknown
+		>,
+	>(
+		middleware: CommandMiddleware<Context, Extension>,
+	): CommandMiddleware<Context, Extension> {
 		return middleware
 	}
 
@@ -236,7 +259,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 							dispatch(
 								index + 1,
 								options?.context
-									? { ...(context as object), ...options.context }
+									? { ...(context as object), ...(options.context as object) }
 									: context,
 							),
 					})
@@ -310,7 +333,12 @@ export type ApplicationCommand<
 	Operations extends AuditedRegistry,
 > = BoundCommand<Context, Operations>
 
-type CommandConstructor = {
+/**
+ * The constructor shape a Foundation instance exposes as `Command`.
+ * Exported as a TYPE ONLY so factories (e.g. cvx-kit/crud) can accept the
+ * destructured facade class as input without importing any runtime kernel.
+ */
+export type CommandConstructor = {
 	new <Context, const Operations extends AuditedRegistry>(
 		operations: Operations,
 		defaults?: CommandDefaults,
@@ -375,6 +403,7 @@ export type {
 	ObservabilityOptions,
 } from './modules/observability/observability'
 export type {
+	AnyQueryMiddleware,
 	QueryExecution,
 	QueryMiddleware,
 } from './modules/query/query'

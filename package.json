@@ -23,6 +23,26 @@
 			"types": "./dist/tenancy.d.mts",
 			"import": "./dist/tenancy.mjs"
 		},
+		"./state-machine": {
+			"types": "./dist/state-machine.d.mts",
+			"import": "./dist/state-machine.mjs"
+		},
+		"./crud": {
+			"types": "./dist/crud.d.mts",
+			"import": "./dist/crud.mjs"
+		},
+		"./middleware": {
+			"types": "./dist/middleware.d.mts",
+			"import": "./dist/middleware.mjs"
+		},
+		"./webhooks": {
+			"types": "./dist/webhooks.d.mts",
+			"import": "./dist/webhooks.mjs"
+		},
+		"./agent-tools": {
+			"types": "./dist/agent-tools.d.mts",
+			"import": "./dist/agent-tools.mjs"
+		},
 		"./triggers": {
 			"types": "./dist/triggers.d.mts",
 			"import": "./dist/triggers.mjs"

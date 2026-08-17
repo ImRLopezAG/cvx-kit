@@ -43,6 +43,11 @@ function write(relativePath, contents) {
 	writeFileSync(path, contents)
 }
 
+function step(label, callback) {
+	console.log(`smoke step: ${label}`)
+	return callback()
+}
+
 try {
 	run(
 		'bun',
@@ -232,13 +237,19 @@ export const status = query({
 `,
 	)
 
-	if (installer === 'bun') run('bun', ['install'])
-	else run('npm', ['install', '--ignore-scripts'])
+	if (installer === 'bun') step('install with bun', () => run('bun', ['install']))
+	else
+		step('install with npm', () => run('npm', ['install', '--ignore-scripts']))
 	if (installer === 'bun')
-		run('bunx', ['vp', 'test', 'run', 'packed-test-helper.test.ts'])
-	else run('npx', ['vp', 'test', 'run', 'packed-test-helper.test.ts'])
+		step('test helper with bun', () =>
+			run('bunx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
+		)
+	else
+		step('test helper with npm', () =>
+			run('npx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
+		)
 
-	runConvex('dev', '--once')
+	step('deploy Convex fixture', () => runConvex('dev', '--once'))
 	const health = JSON.parse(runConvex('run', 'smoke:health'))
 	if (health.status !== 'ready' || health.schemaVersion !== 1) {
 		throw new Error(

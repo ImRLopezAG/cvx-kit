@@ -32,9 +32,10 @@ function run(command, args, cwd = fixture) {
 }
 
 function runConvex(...args) {
-	return installer === 'bun'
-		? run('bunx', ['convex', ...args])
-		: run('npx', ['convex', ...args])
+	return run(process.execPath, [
+		join(fixture, 'node_modules', 'convex', 'bin', 'main.js'),
+		...args,
+	])
 }
 
 function write(relativePath, contents) {

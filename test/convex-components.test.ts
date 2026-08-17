@@ -1,9 +1,11 @@
 // @vitest-environment edge-runtime
 import { convexTest } from 'convex-test'
-import { anyApi } from 'convex/server'
+import { anyApi, defineSchema, defineTable } from 'convex/server'
+import { v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
 
 import approvalsSchema from '../src/components/approvals/schema'
+import type { ComponentApi as ApprovalsComponentApi } from '../src/components/approvals/_generated/component'
 import {
 	canTransitionApprovalRun,
 	classifyPendingRunAt,
@@ -13,6 +15,13 @@ import foundationSchema from '../src/components/foundation/schema'
 const foundationModules = import.meta.glob(
 	'../src/components/foundation/**/*.ts',
 )
+const approvalsModules = import.meta.glob('../src/components/approvals/**/*.ts')
+type ApprovalsApiHasHealth = ApprovalsComponentApi extends {
+	health: { check: unknown }
+}
+	? true
+	: false
+const approvalsApiHasHealth: ApprovalsApiHasHealth = true
 
 describe('foundation component on the real Convex runtime', () => {
 	it('reports ready from its status query', async () => {
@@ -26,6 +35,32 @@ describe('foundation component on the real Convex runtime', () => {
 })
 
 describe('approvals component contracts', () => {
+	it('exposes the health query in its generated component API', () => {
+		expect(approvalsApiHasHealth).toBe(true)
+	})
+
+	it('verifies the deployed schema version and required decision indexes', async () => {
+		const t = convexTest(approvalsSchema, approvalsModules)
+		expect(await t.query(anyApi.health.check, {})).toEqual({
+			status: 'ready',
+			schemaVersion: 1,
+			requiredIndexes: [
+				'by_runId_and_decidedAt',
+				'by_runId_and_stepKey_and_actor_actorRef',
+			],
+		})
+	})
+
+	it('explains when the installed component schema lacks required indexes', async () => {
+		const staleSchema = defineSchema({
+			approvalDecisions: defineTable(v.any()),
+		})
+		const t = convexTest(staleSchema, approvalsModules)
+		await expect(t.query(anyApi.health.check, {})).rejects.toThrow(
+			'cvx-kit approvals schema v1 is not installed with its required indexes',
+		)
+	})
+
 	it('declares exactly its two evidence tables', () => {
 		expect(Object.keys(approvalsSchema.tables).sort()).toEqual([
 			'approvalDecisions',

@@ -1,5 +1,28 @@
 # Upgrading to 0.1.0 — the new way of things
 
+## Approvals packaging repair (0.1.x patch)
+
+`cvx-kit@0.1.0` published component schemas as `schema.mjs`, which Convex does
+not discover for packaged components. Upgrade to the patch containing this
+repair, remove any `patchedDependencies` entry that copied or renamed the
+approvals schema, reinstall from a clean lockfile state, and run one normal
+deployment:
+
+```bash
+bun install
+bunx convex dev --once
+```
+
+The repaired package publishes only `schema.js` and `schema.d.ts` for each
+component. Do not retain both `.mjs` and `.js`; Convex canonicalizes them to the
+same module and rejects the deployment with `CanonicalizationConflict`.
+
+This upgrade does not change table fields or index definitions, so a second
+deployment is not required for staged index backfills. Existing deployments
+that never received the component schema will create the tables and indexes on
+the first repaired deployment. Confirm readiness through
+`components.approvals.health.check` before resuming approval traffic.
+
 The migration file for consumers on 0.0.x. Each section: the old way you were
 hand-writing, the 0.1.0 way, and what stays unchanged. Nothing existing
 breaks in this release except one boundary-mask improvement (see the last

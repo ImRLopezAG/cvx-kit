@@ -10,6 +10,25 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [Unreleased]
+
+### Fixed
+
+- Package Convex component schemas exclusively as discoverable `schema.js` and
+  `schema.d.ts` files. This restores the approvals tables and the
+  `approvalDecisions.by_runId_and_decidedAt` and
+  `approvalDecisions.by_runId_and_stepKey_and_actor_actorRef` indexes without
+  consumer `patchedDependencies` workarounds or canonicalization conflicts.
+
+### Added
+
+- Packed-tarball content checks and clean anonymous-deployment smoke tests for
+  every bundled component under both Bun and npm installation.
+- `components.approvals.health.check`, which verifies the approvals schema
+  version and required decision indexes with an actionable failure diagnostic.
+- Supported Convex, Zod, Bun, Node.js, and npm versions plus an approvals
+  packaging migration note.
+
 ## [0.1.0] - 2026-08-14
 
 The big one: the full helper surface, in one release.

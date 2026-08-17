@@ -13,6 +13,9 @@ bun add cvx-kit
 # or: npm install cvx-kit
 ```
 
+Supported versions: Convex `^1.43.0`, Zod `^4.0.0`, Bun `1.3+`, and Node.js
+`24+` with npm `11+`. The library runtime is ESM-only.
+
 ## Toolchain
 
 - `bun install` — dependencies

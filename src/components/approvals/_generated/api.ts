@@ -13,6 +13,7 @@ import type * as client from "../client.js";
 import type * as constants from "../constants.js";
 import type * as decisions from "../decisions.js";
 import type * as functions from "../functions.js";
+import type * as health from "../health.js";
 import type * as requests from "../requests.js";
 import type * as validators from "../validators.js";
 import type * as workflow from "../workflow.js";
@@ -31,6 +32,7 @@ const fullApi: ApiFromModules<{
   constants: typeof constants;
   decisions: typeof decisions;
   functions: typeof functions;
+  health: typeof health;
   requests: typeof requests;
   validators: typeof validators;
   workflow: typeof workflow;

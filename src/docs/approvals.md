@@ -16,6 +16,20 @@ import approvals from 'cvx-kit/components/approvals/convex.config'
 app.use(approvals)
 ```
 
+After installation or upgrade, deploy once and run the component health query
+from a host wrapper:
+
+```ts
+return ctx.runQuery(components.approvals.health.check, {})
+```
+
+It returns the installed approvals schema version and required index names. It
+also executes reads through
+`approvalDecisions.by_runId_and_decidedAt` and
+`approvalDecisions.by_runId_and_stepKey_and_actor_actorRef`, failing with an
+installation-specific diagnostic if the packaged component schema was not
+deployed.
+
 The component mounts its own private `workflow` and `auditLog` children. Do
 **not** re-register those children at the app root under the same identity,
 and never reach into `components.approvals.workflow` / `.auditLog` from host

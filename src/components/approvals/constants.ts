@@ -29,6 +29,19 @@ export const APPROVAL_CALLBACK_KINDS = ['mutation', 'action'] as const
 
 export const APPROVAL_DESCRIPTOR_SCHEMA_VERSION = 1 as const
 
+/** Version of the component-owned tables and indexes deployed by cvx-kit. */
+export const APPROVAL_COMPONENT_SCHEMA_VERSION = 1 as const
+
+/** Indexes required by approval evidence reads and decision writes. */
+export const APPROVAL_DECISION_HISTORY_INDEX =
+	'by_runId_and_decidedAt' as const
+export const APPROVAL_ACTOR_DECISION_INDEX =
+	'by_runId_and_stepKey_and_actor_actorRef' as const
+export const APPROVAL_REQUIRED_DECISION_INDEXES = [
+	APPROVAL_DECISION_HISTORY_INDEX,
+	APPROVAL_ACTOR_DECISION_INDEX,
+] as const
+
 export const APPROVAL_AUDIT_RETENTION_CATEGORY = 'approval-protocol'
 export const MIN_APPROVAL_AUDIT_RETENTION_DAYS = 1
 export const MAX_APPROVAL_AUDIT_RETENTION_DAYS = 3_650

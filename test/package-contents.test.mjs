@@ -6,11 +6,17 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vite-plus/test'
 
 const packedFiles = (() => {
+	const env = { ...process.env }
+	delete env.NODE_AUTH_TOKEN
+	delete env.NPM_CONFIG_USERCONFIG
 	const output = execFileSync('npm', ['pack', '--dry-run', '--json'], {
 		cwd: process.cwd(),
 		encoding: 'utf8',
+		env,
 	})
-	return JSON.parse(output)[0].files.map((file) => file.path)
+	const [pack] = JSON.parse(output)
+	if (!pack?.files) throw new Error('npm pack returned no package manifest')
+	return pack.files.map((file) => file.path)
 })()
 
 describe('packed Convex components', () => {

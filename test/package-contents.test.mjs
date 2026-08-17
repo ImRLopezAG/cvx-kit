@@ -15,7 +15,11 @@ const packedFiles = (() => {
 		env,
 	})
 	const result = JSON.parse(output)
-	const pack = Array.isArray(result) ? result[0] : result
+	const pack = Array.isArray(result)
+		? result[0]
+		: result.files
+			? result
+			: Object.values(result)[0]
 	if (!pack?.files) throw new Error('npm pack returned no package manifest')
 	return pack.files.map((file) => file.path)
 })()

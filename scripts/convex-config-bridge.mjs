@@ -2,7 +2,13 @@
 // is literally named `convex.config.js` (see DEFINITION_FILENAME_JS in the
 // convex CLI). vp pack emits .mjs, so this postbuild step materializes the
 // compiled definition as convex.config.js in each component's dist directory.
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+	readFileSync,
+	readdirSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -22,6 +28,13 @@ for (const component of ['foundation', 'approvals']) {
 		'',
 	)
 	writeFileSync(join(directory, 'schema.js'), schema)
+	for (const filename of readdirSync(directory)) {
+		if (!filename.endsWith('.mjs')) continue
+		const path = join(directory, filename)
+		const source = readFileSync(path, 'utf8')
+		const bridged = source.replaceAll('./schema.mjs', './schema.js')
+		if (bridged !== source) writeFileSync(path, bridged)
+	}
 	renameSync(join(directory, 'schema.d.mts'), join(directory, 'schema.d.ts'))
 	const dataModelDeclaration = join(
 		directory,

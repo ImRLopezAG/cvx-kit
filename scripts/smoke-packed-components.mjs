@@ -111,9 +111,28 @@ export default app
 	)
 	write(
 		'convex/smoke.ts',
-		`import { v } from 'convex/values'
-import { components } from './_generated/api'
-import { mutation, query } from './_generated/server'
+		`import { approvalCallbackArgs } from 'cvx-kit/components/approvals'
+import { createFunctionHandle, paginationOptsValidator } from 'convex/server'
+import { v } from 'convex/values'
+import { components, internal } from './_generated/api'
+import { internalMutation, mutation, query } from './_generated/server'
+
+export const applyDecision = internalMutation({
+  args: approvalCallbackArgs,
+  returns: v.null(),
+  handler: (_ctx, input) => {
+    if (input.decision?.evidence[0]?.stepKey !== 'releaseDecision') {
+      throw new Error('Missing callback decision step key')
+    }
+    return null
+  },
+})
+
+export const rejectDecision = internalMutation({
+  args: approvalCallbackArgs,
+  returns: v.null(),
+  handler: () => null,
+})
 
 export const health = query({
   args: {},
@@ -128,25 +147,59 @@ export const foundationHealth = query({
 })
 
 export const start = mutation({
-  args: {},
+  args: { resourceRef: v.optional(v.string()) },
   returns: v.object({ runId: v.string() }),
-  handler: (ctx) => ctx.runMutation(components.approvals.requests.start, {
+  handler: async (ctx, args) => {
+    const approvedHandle = await createFunctionHandle(internal.smoke.applyDecision)
+    const rejectedHandle = await createFunctionHandle(internal.smoke.rejectDecision)
+    return ctx.runMutation(components.approvals.requests.start, {
+      scopeRef: 'smoke',
+      resourceType: 'release',
+      resourceRef: args.resourceRef ?? 'packed-component',
+      requester: { actorRef: 'requester', capabilities: [] },
+      workflow: {
+        schemaVersion: 1,
+        compatibilityKey: 'packedSmoke',
+        name: 'packedSmoke',
+        steps: [
+          {
+            kind: 'decision',
+            key: 'releaseDecision',
+            decisions: ['approved', 'rejected'],
+            quorum: { kind: 'count', approvals: 1 },
+            makerChecker: true,
+          },
+          {
+            kind: 'branch',
+            key: 'routeDecision',
+            approvedStepKey: 'applyDecision',
+            rejectedStepKey: 'rejectDecision',
+          },
+          {
+            kind: 'mutation',
+            key: 'applyDecision',
+            callback: { kind: 'mutation', handle: approvedHandle, retry: false },
+          },
+          {
+            kind: 'mutation',
+            key: 'rejectDecision',
+            callback: { kind: 'mutation', handle: rejectedHandle, retry: false },
+          },
+        ],
+      },
+    })
+  },
+})
+
+export const list = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+    state: v.optional(v.union(v.literal('pending'), v.literal('approved'))),
+  },
+  returns: v.any(),
+  handler: (ctx, args) => ctx.runQuery(components.approvals.requests.list, {
     scopeRef: 'smoke',
-    resourceType: 'release',
-    resourceRef: 'packed-component',
-    requester: { actorRef: 'requester', capabilities: [] },
-    workflow: {
-      schemaVersion: 1,
-      compatibilityKey: 'packedSmoke',
-      name: 'packedSmoke',
-      steps: [{
-        kind: 'decision',
-        key: 'releaseDecision',
-        decisions: ['approved', 'rejected'],
-        quorum: { kind: 'count', approvals: 1 },
-        makerChecker: true,
-      }],
-    },
+    ...args,
   }),
 })
 
@@ -165,6 +218,15 @@ export const history = query({
   args: { runId: v.string() },
   returns: v.any(),
   handler: (ctx, args) => ctx.runQuery(components.approvals.decisions.list, args),
+})
+
+export const status = query({
+  args: { runId: v.string() },
+  returns: v.any(),
+  handler: (ctx, args) => ctx.runQuery(components.approvals.requests.status, {
+    ...args,
+    compatibilityKey: 'packedSmoke',
+  }),
 })
 `,
 	)
@@ -191,6 +253,48 @@ export const history = query({
 		)
 	}
 	const { runId } = JSON.parse(runConvex('run', 'smoke:start'))
+	const { runId: secondRunId } = JSON.parse(
+		runConvex(
+			'run',
+			'smoke:start',
+			JSON.stringify({ resourceRef: 'packed-component-2' }),
+		),
+	)
+	const firstPage = JSON.parse(
+		runConvex(
+			'run',
+			'smoke:list',
+			JSON.stringify({
+				state: 'pending',
+				paginationOpts: { cursor: null, numItems: 1 },
+			}),
+		),
+	)
+	if (firstPage.page.length !== 1 || firstPage.page[0]._id !== secondRunId) {
+		throw new Error(`Unexpected first approval page: ${JSON.stringify(firstPage)}`)
+	}
+	const secondPage = JSON.parse(
+		runConvex(
+			'run',
+			'smoke:list',
+			JSON.stringify({
+				state: 'pending',
+				paginationOpts: {
+					cursor: firstPage.continueCursor,
+					numItems: 10,
+				},
+			}),
+		),
+	)
+	if (
+		secondPage.page.length !== 1 ||
+		secondPage.page[0]._id !== runId ||
+		secondPage.page[0]._id === firstPage.page[0]._id
+	) {
+		throw new Error(
+			`Unexpected continuation approval page: ${JSON.stringify(secondPage)}`,
+		)
+	}
 
 	let decision
 	let lastError
@@ -214,6 +318,17 @@ export const history = query({
 	)
 	if (history.length !== 1 || history[0].decision !== 'approved') {
 		throw new Error(`Unexpected approval history: ${JSON.stringify(history)}`)
+	}
+	let status
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		status = JSON.parse(
+			runConvex('run', 'smoke:status', JSON.stringify({ runId })),
+		)
+		if (status.execution?.type === 'completed') break
+		await new Promise((resolve) => setTimeout(resolve, 500))
+	}
+	if (status?.execution?.type !== 'completed') {
+		throw new Error(`Approval callback did not complete: ${JSON.stringify(status)}`)
 	}
 	console.log(`packed component smoke passed with ${installer}`)
 } finally {

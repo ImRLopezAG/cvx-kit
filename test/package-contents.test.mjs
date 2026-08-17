@@ -51,4 +51,19 @@ describe('packed Convex components', () => {
 			expect(declaration).not.toContain('../schema.mjs')
 		},
 	)
+
+	it('rewrites runtime imports to the discoverable approvals schema', () => {
+		const requests = readFileSync(
+			join(
+				process.cwd(),
+				'dist',
+				'components',
+				'approvals',
+				'requests.mjs',
+			),
+			'utf8',
+		)
+		expect(requests).toContain('./schema.js')
+		expect(requests).not.toContain('./schema.mjs')
+	})
 })

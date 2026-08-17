@@ -1,5 +1,6 @@
 import { WorkflowManager, type WorkflowId } from '@convex-dev/workflow'
 import { zodToConvex } from 'convex-helpers/server/zod4'
+import { paginator } from 'convex-helpers/server/pagination'
 import {
 	paginationOptsValidator,
 	paginationResultValidator,
@@ -14,6 +15,7 @@ import {
 	query,
 } from './_generated/server'
 import { logApprovalTransition } from './audit'
+import schema from './schema'
 import { APPROVAL_EXECUTION_STATES, APPROVAL_RUN_STATES } from './constants'
 import { canTransitionApprovalRun } from './functions'
 import {
@@ -142,7 +144,7 @@ export const list = query({
 	},
 	returns: paginationResultValidator(approvalRunValidator()),
 	handler: (ctx, input) =>
-		ctx.db
+		paginator(ctx.db, schema)
 			.query('approvalRuns')
 			.withIndex('by_scopeRef_and_state', (query) =>
 				input.state === undefined

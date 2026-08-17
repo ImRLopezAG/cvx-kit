@@ -27,6 +27,9 @@ import {
 	type CreateApprovalHandle,
 } from './workflow_steps'
 
+export { approvalCallbackArgs, approvalCallbackInput } from './validators'
+export type { ApprovalCallbackInput } from './validators'
+
 export type ApprovalsOptions = Readonly<{
 	createHandle?: CreateApprovalHandle
 }>

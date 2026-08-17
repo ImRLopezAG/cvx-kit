@@ -1,4 +1,4 @@
-import { zid } from 'convex-helpers/server/zod4'
+import { zid, zodToConvex } from 'convex-helpers/server/zod4'
 import { z } from 'zod'
 
 import {
@@ -57,6 +57,42 @@ export const approvalMetadata = z
 		(value) => Object.keys(value).length <= MAX_APPROVAL_METADATA_ENTRIES,
 		`Metadata may contain at most ${MAX_APPROVAL_METADATA_ENTRIES} entries`,
 	)
+
+const approvalCallbackEvidence = z
+	.object({
+		stepKey: approvalName,
+		actorRef: approvalReference,
+		decision: approvalDecision,
+		reason: approvalReason.optional(),
+		decidedAt: z.number(),
+	})
+	.strict()
+
+const approvalCallbackTerminalEvidence = approvalCallbackEvidence.omit({
+	stepKey: true,
+})
+
+export const approvalCallbackInput = z
+	.object({
+		runId: approvalReference,
+		scopeRef: approvalReference,
+		resourceType: approvalName,
+		resourceRef: approvalReference,
+		metadata: approvalMetadata.optional(),
+		decision: z
+			.object({
+				stepKey: approvalName,
+				outcome: z.union([approvalDecision, z.literal('expired')]),
+				evidence: z.array(approvalCallbackEvidence),
+				terminalEvidence: approvalCallbackTerminalEvidence.optional(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict()
+
+/** Convex argument validator for approval mutation, action, and notify callbacks. */
+export const approvalCallbackArgs = zodToConvex(approvalCallbackInput)
 
 export const approvalActor = z
 	.object({
@@ -270,3 +306,6 @@ export type ApprovalWorkflowDescriptor = z.infer<
 >
 export type ApprovalActor = z.infer<typeof approvalActor>
 export type ApprovalMetadata = z.infer<typeof approvalMetadata>
+export type ApprovalCallbackInput = Readonly<
+	z.infer<typeof approvalCallbackInput>
+>

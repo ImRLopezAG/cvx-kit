@@ -7,8 +7,11 @@ import {
 import type { ApprovalDecision } from './constants'
 import {
 	approvalWorkflowDescriptor,
+	type ApprovalCallbackInput,
 	type ApprovalWorkflowDescriptor,
 } from './validators'
+
+export type { ApprovalCallbackInput } from './validators'
 
 export type ApprovalMutationStep = Readonly<{
 	kind: 'mutation'
@@ -67,30 +70,6 @@ export type CreateApprovalHandle = (
 export type ApprovalDecisionEvidence = Readonly<{
 	actorRef: string
 	decision: ApprovalDecision
-}>
-
-export type ApprovalCallbackInput = Readonly<{
-	runId: string
-	scopeRef: string
-	resourceType: string
-	resourceRef: string
-	metadata?: Readonly<Record<string, string>>
-	decision?: Readonly<{
-		stepKey: string
-		outcome: ApprovalDecision | 'expired'
-		evidence: readonly Readonly<{
-			actorRef: string
-			decision: ApprovalDecision
-			reason?: string
-			decidedAt: number
-		}>[]
-		terminalEvidence?: Readonly<{
-			actorRef: string
-			decision: ApprovalDecision
-			reason?: string
-			decidedAt: number
-		}>
-	}>
 }>
 
 export function approvalDecisionEventName(

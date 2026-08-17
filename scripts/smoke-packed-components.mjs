@@ -31,6 +31,14 @@ function run(command, args, cwd = fixture) {
 	})
 }
 
+function runStreaming(command, args, cwd = fixture) {
+	execFileSync(command, args, {
+		cwd,
+		stdio: 'inherit',
+		env: { ...process.env, CONVEX_AGENT_MODE: 'anonymous' },
+	})
+}
+
 function runConvex(...args) {
 	return run(process.execPath, [
 		join(fixture, 'node_modules', 'convex', 'bin', 'main.js'),
@@ -238,16 +246,20 @@ export const status = query({
 	)
 
 	if (installer === 'bun')
-		step('install with bun', () => run('bun', ['install', '--ignore-scripts']))
+		step('install with bun', () =>
+			runStreaming('bun', ['install', '--ignore-scripts']),
+		)
 	else
-		step('install with npm', () => run('npm', ['install', '--ignore-scripts']))
+		step('install with npm', () =>
+			runStreaming('npm', ['install', '--ignore-scripts']),
+		)
 	if (installer === 'bun')
 		step('test helper with bun', () =>
-			run('bunx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
+			runStreaming('bunx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
 		)
 	else
 		step('test helper with npm', () =>
-			run('npx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
+			runStreaming('npx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
 		)
 
 	step('deploy Convex fixture', () => runConvex('dev', '--once'))

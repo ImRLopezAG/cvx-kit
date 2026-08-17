@@ -16,6 +16,20 @@ import approvals from 'cvx-kit/components/approvals/convex.config'
 app.use(approvals)
 ```
 
+After installation or upgrade, deploy once and run the component health query
+from a host wrapper:
+
+```ts
+return ctx.runQuery(components.approvals.health.check, {})
+```
+
+It returns the installed approvals schema version and required index names. It
+also executes reads through
+`approvalDecisions.by_runId_and_decidedAt` and
+`approvalDecisions.by_runId_and_stepKey_and_actor_actorRef`, failing with an
+installation-specific diagnostic if the packaged component schema was not
+deployed.
+
 The component mounts its own private `workflow` and `auditLog` children. Do
 **not** re-register those children at the app root under the same identity,
 and never reach into `components.approvals.workflow` / `.auditLog` from host
@@ -99,10 +113,14 @@ const { runId } = await publishApproval.start(ctx, {
 // decide — a manager approves or rejects
 await publishApproval.decide(ctx, { runId, decision: 'approved', reason }, ctx.actor)
 
-// observe
+// observe from a host query
 await publishApproval.status(ctx, runId)   // pending | approved | rejected | expired | canceled
 await publishApproval.evidence(ctx, runId) // per-step decision evidence
-await publishApproval.list(ctx, { scopeRef, ... })
+await publishApproval.list(ctx, {
+  scopeRef,
+  state: 'pending',
+  paginationOpts: { cursor: null, numItems: 20 },
+})
 
 // manage
 await publishApproval.cancel(ctx, runId, ctx.actor)
@@ -119,6 +137,8 @@ Because the component cannot know your tables, the handler must re-establish
 trust:
 
 ```ts
+import { approvalCallbackArgs } from 'cvx-kit/components/approvals'
+
 export const applyDecision = systemMutation({
   args: approvalCallbackArgs,
   handler: async (ctx, input) => {
@@ -135,6 +155,34 @@ export const applyDecision = systemMutation({
 
 That `approvalRunId` check is the idempotency/staleness guard from the origin
 app — copy it.
+
+For branch callbacks, `decision.evidence` contains
+`{ stepKey, actorRef, decision, reason?, decidedAt }` items. Use the exported
+`approvalCallbackArgs` validator instead of duplicating that protocol boundary.
+
+### Paginated inboxes
+
+Expose the configured workflow through a host query; component pagination uses
+`convex-helpers` internally because Convex's built-in `.paginate()` is not
+available inside components:
+
+```ts
+export const approvalInbox = authQuery({
+  args: {
+    state: z.enum(['pending', 'approved', 'rejected', 'expired', 'canceled']).optional(),
+    paginationOpts: convexToZod(paginationOptsValidator),
+  },
+  handler: (ctx, args) => publishApproval.list(ctx, {
+    scopeRef: ctx.org.organizationId,
+    ...args,
+  }),
+})
+```
+
+The result keeps Convex's standard pagination shape, so React consumers can
+call `usePaginatedQuery(api.approvals.approvalInbox, { state: 'pending' },
+{ initialNumItems: 20 })`. Pass each returned cursor only back to the same
+scope/state query.
 
 ## Rules and footguns
 

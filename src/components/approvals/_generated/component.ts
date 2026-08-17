@@ -76,6 +76,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         Name
       >;
     };
+    health: {
+      check: FunctionReference<
+        "query",
+        "internal",
+        Record<string, never>,
+        {
+          requiredIndexes: Array<string>;
+          schemaVersion: 1;
+          status: "ready";
+        },
+        Name
+      >;
+    };
     requests: {
       cancel: FunctionReference<
         "mutation",

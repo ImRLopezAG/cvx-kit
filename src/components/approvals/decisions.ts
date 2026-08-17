@@ -12,6 +12,8 @@ import {
 } from './_generated/server'
 import { logApprovalTransition } from './audit'
 import {
+	APPROVAL_ACTOR_DECISION_INDEX,
+	APPROVAL_DECISION_HISTORY_INDEX,
 	APPROVAL_DECISIONS,
 	APPROVAL_RUN_STATES,
 	type ApprovalRunState,
@@ -53,7 +55,7 @@ export const decide = mutation({
 
 		const prior = await ctx.db
 			.query('approvalDecisions')
-			.withIndex('by_runId_and_stepKey_and_actor_actorRef', (query) =>
+			.withIndex(APPROVAL_ACTOR_DECISION_INDEX, (query) =>
 				query
 					.eq('runId', run._id)
 					.eq('stepKey', step.key)
@@ -330,7 +332,9 @@ async function listDecisionEvidence(
 ) {
 	const decisions = await ctx.db
 		.query('approvalDecisions')
-		.withIndex('by_runId_and_decidedAt', (query) => query.eq('runId', runId))
+		.withIndex(APPROVAL_DECISION_HISTORY_INDEX, (query) =>
+			query.eq('runId', runId),
+		)
 		.collect()
 	return decisions.map((decision) => ({
 		stepKey: decision.stepKey,

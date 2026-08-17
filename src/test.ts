@@ -6,8 +6,8 @@
  * registers the COMPILED component modules from dist, so dist is the only
  * code the package ships.
  */
-import approvalsSchema from '../dist/components/approvals/schema.mjs'
-import foundationSchema from '../dist/components/foundation/schema.mjs'
+import approvalsSchema from '../dist/components/approvals/schema.js'
+import foundationSchema from '../dist/components/foundation/schema.js'
 
 const foundationModules = import.meta.glob(
 	'../dist/components/foundation/**/*.mjs',

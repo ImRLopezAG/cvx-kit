@@ -44,12 +44,21 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: Verify packed package contents
+        run: bunx vp test run test/package-contents.test.mjs
+
       - name: Typecheck
         run: bun run typecheck
 
       - name: Test
         run: bun run test
 
+      - name: Smoke packed components with Bun
+        run: bun run test:package:smoke:bun
+
+      - name: Smoke packed components with npm
+        run: bun run test:package:smoke:npm
 
       - name: Publish to npm
         run: npm publish --access public

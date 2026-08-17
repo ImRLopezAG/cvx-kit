@@ -20,9 +20,44 @@ jobs:
 
       - name: Build (vp pack + publint)
         run: bun run build
+
+      - name: Verify packed package contents
+        run: bunx vp test run test/package-contents.test.mjs
+
       - name: Typecheck
         run: bun run typecheck
 
       - name: Test
         run: bun run test
 
+  packed-component-smoke:
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        installer: [bun, npm]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build packed component artifact
+        run: bun run build
+
+      - name: Deploy and exercise packed components (${{ matrix.installer }})
+        run: |
+          if [ "${{ matrix.installer }}" = "bun" ]; then
+            bun scripts/smoke-packed-components.mjs bun
+          else
+            node scripts/smoke-packed-components.mjs npm
+          fi

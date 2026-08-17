@@ -237,7 +237,8 @@ export const status = query({
 `,
 	)
 
-	if (installer === 'bun') step('install with bun', () => run('bun', ['install']))
+	if (installer === 'bun')
+		step('install with bun', () => run('bun', ['install', '--ignore-scripts']))
 	else
 		step('install with npm', () => run('npm', ['install', '--ignore-scripts']))
 	if (installer === 'bun')

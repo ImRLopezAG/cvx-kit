@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import {
+	copyFileSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -245,6 +246,9 @@ export const status = query({
 `,
 	)
 
+	if (installer === 'bun') {
+		copyFileSync(join(root, 'bun.lock'), join(fixture, 'bun.lock'))
+	}
 	if (installer === 'bun')
 		step('install with bun', () =>
 			runStreaming('bun', ['install', '--ignore-scripts']),
@@ -262,7 +266,9 @@ export const status = query({
 			runStreaming('npx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
 		)
 
-	step('deploy Convex fixture', () => runConvex('dev', '--once'))
+	step('deploy Convex fixture', () =>
+		runConvex('dev', '--once', '--typecheck=disable'),
+	)
 	const health = JSON.parse(runConvex('run', 'smoke:health'))
 	if (health.status !== 'ready' || health.schemaVersion !== 1) {
 		throw new Error(

@@ -337,6 +337,13 @@ export const status = query({
 			break
 		} catch (error) {
 			lastError = error
+			const currentStatus = JSON.parse(
+				runConvex('run', 'smoke:status', JSON.stringify({ runId })),
+			)
+			if (currentStatus.state === 'approved') {
+				decision = currentStatus
+				break
+			}
 			await new Promise((resolve) => setTimeout(resolve, 500))
 		}
 	}

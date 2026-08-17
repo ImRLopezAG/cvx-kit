@@ -55,4 +55,9 @@ jobs:
         run: bun run build
 
       - name: Deploy and exercise packed components (${{ matrix.installer }})
-        run: node scripts/smoke-packed-components.mjs ${{ matrix.installer }}
+        run: |
+          if [ "${{ matrix.installer }}" = "bun" ]; then
+            bun scripts/smoke-packed-components.mjs bun
+          else
+            node scripts/smoke-packed-components.mjs npm
+          fi

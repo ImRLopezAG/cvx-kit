@@ -40,7 +40,7 @@ function runStreaming(command, args, cwd = fixture) {
 }
 
 function runConvex(...args) {
-	return run(process.execPath, [
+	return run('node', [
 		join(fixture, 'node_modules', 'convex', 'bin', 'main.js'),
 		...args,
 	])

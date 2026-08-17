@@ -92,7 +92,7 @@
 		"typecheck": "tsc --noEmit",
 		"test": "vp test run --exclude test/package-contents.test.mjs",
 		"test:package": "bun run build && vp test run test/package-contents.test.mjs",
-		"test:package:smoke:bun": "node scripts/smoke-packed-components.mjs bun",
+		"test:package:smoke:bun": "bun scripts/smoke-packed-components.mjs bun",
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
 		"docs:sync": "rm -f docs/*.md && cp src/docs/*.md docs/",
 		"prepublishOnly": "bun run build && bun run typecheck && bun run test && bun run docs:sync",

@@ -12,6 +12,17 @@ are this file's matching section.
 
 ## [Unreleased]
 
+### Added
+
+- `resolveOrganization` hook on `createAuthFunctions`: identity providers
+  whose tokens carry no org claims (custom credentials, magic codes,
+  memberships in app tables) can resolve organization and role from the
+  database. When configured, the hook overrides claim-based resolution and
+  fails closed — `null` or an error rejects with `FORBIDDEN`; its `roleSlug`
+  still passes `mapRole`, tenancy derives from the hook's organization, and
+  `verifyMembership` for actions is unchanged. Hook-less configurations are
+  unaffected. ([#8](https://github.com/ImRLopezAG/cvx-kit/issues/8))
+
 ## [0.1.1] - 2026-08-17
 
 ### Fixed

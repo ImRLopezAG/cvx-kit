@@ -1,6 +1,6 @@
 {
 	"name": "cvx-kit",
-	"version": "0.2.0",
+	"version": "0.1.2",
 	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
 	"type": "module",
 	"license": "MIT",

@@ -61,7 +61,10 @@ jobs:
         run: bun run test:package:smoke:npm
 
       - name: Publish to npm
-        run: npm publish --access public
+        # --tag latest is explicit so a corrective release lower than a
+        # mistakenly published higher version can still become latest
+        # (npm refuses implicit latest for lower versions).
+        run: npm publish --access public --tag latest
 
       - name: Create GitHub Release with CHANGELOG notes
         if: startsWith(github.ref, 'refs/tags/v')

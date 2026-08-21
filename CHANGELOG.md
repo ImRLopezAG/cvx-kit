@@ -12,7 +12,7 @@ are this file's matching section.
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-08-21
+## [0.1.2] - 2026-08-21
 
 ### Added
 

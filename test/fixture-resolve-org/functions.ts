@@ -61,36 +61,17 @@ export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
 	mapRole: (slug) =>
 		FIXTURE_ROLES.includes(slug as FixtureRole) ? (slug as FixtureRole) : null,
 	adminRoles: ['owner'],
-	// The feature under test (U1): resolves organization + role from the
-	// memberships table instead of claims.
-	resolveOrganization: async ({
-		ctx,
-		user,
-	}: {
-		ctx: unknown
-		user: { id: string }
-	}) => {
+	// Resolves organization + role from the memberships table instead of
+	// claims. Actions have no ctx.db, so the hook narrows on its presence.
+	resolveOrganization: async ({ ctx, user }) => {
 		if (user.id === 'user_boom') throw new Error('membership lookup exploded')
-		const context = ctx as {
-			db?: {
-				query: (table: string) => {
-					withIndex: (
-						index: string,
-						range: (q: {
-							eq: (field: string, value: string) => unknown
-						}) => unknown,
-					) => { first: () => Promise<MembershipRow | null> }
-				}
-			}
-			runQuery: (ref: unknown, args: unknown) => Promise<MembershipRow | null>
-		}
-		const membership =
-			context.db !== undefined
-				? await context.db
+		const membership: MembershipRow | null =
+			'db' in ctx
+				? await ctx.db
 						.query('memberships')
 						.withIndex('by_user', (q) => q.eq('userId', user.id))
 						.first()
-				: await context.runQuery(internal.functions.membershipByUser, {
+				: await ctx.runQuery(internal.functions.membershipByUser, {
 						userId: user.id,
 					})
 		if (!membership || !membership.active) return null

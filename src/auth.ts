@@ -123,6 +123,17 @@ export type AuthFunctionsConfig<
 		userId: string
 		organizationId: string
 	}) => Promise<{ organizationId: string; roleSlug: string } | null>
+	/**
+	 * Resolves organization authority from the app's own data for identity
+	 * providers whose tokens carry no org claims. When configured, its result
+	 * overrides claim-based resolution; null or an error rejects with FORBIDDEN
+	 * (fail closed). In actions the ctx has no db — resolve via ctx.runQuery.
+	 */
+	resolveOrganization?: (input: {
+		ctx: AnyAuthContext<DataModel>
+		identity: UserIdentity
+		user: { id: string }
+	}) => Promise<{ organizationId: string; roleSlug: string } | null>
 	/** Host error policy; defaults to throwing KitError. */
 	errors?: ErrorFactory
 	/**
@@ -282,26 +293,45 @@ export function createAuthFunctions<
 		const identity = await ctx.auth.getUserIdentity()
 		const user = identity ? await config.getAuthUser(ctx) : null
 		if (!identity || !user) return errors.throw({ code: 'UNAUTHENTICATED' })
-		const organization = identity.organization
-		const organizationId =
-			organization &&
-			typeof organization === 'object' &&
-			'organizationId' in organization &&
-			typeof organization.organizationId === 'string'
-				? organization.organizationId
-				: typeof identity.org_id === 'string'
-					? identity.org_id
-					: null
-		if (!organizationId) return errors.throw({ code: 'UNAUTHENTICATED' })
-		const organizationRole =
-			organization &&
-			typeof organization === 'object' &&
-			'role' in organization &&
-			typeof organization.role === 'string'
-				? organization.role
-				: typeof identity.role === 'string'
-					? identity.role
-					: undefined
+		let organizationId: string
+		let organizationRole: string | undefined
+		if (config.resolveOrganization) {
+			// The hook is the organization authority — claims are skipped
+			// entirely. Authentication fails closed when it errors or abstains.
+			let resolved: { organizationId: string; roleSlug: string } | null = null
+			try {
+				resolved = await config.resolveOrganization({ ctx, identity, user })
+			} catch {
+				// Authentication fails closed when the hook cannot resolve.
+			}
+			if (!resolved) return errors.throw({ code: 'FORBIDDEN' })
+			organizationId = resolved.organizationId
+			organizationRole = resolved.roleSlug
+		} else {
+			const organization = identity.organization
+			const claimedOrganizationId =
+				organization &&
+				typeof organization === 'object' &&
+				'organizationId' in organization &&
+				typeof organization.organizationId === 'string'
+					? organization.organizationId
+					: typeof identity.org_id === 'string'
+						? identity.org_id
+						: null
+			if (!claimedOrganizationId) {
+				return errors.throw({ code: 'UNAUTHENTICATED' })
+			}
+			organizationId = claimedOrganizationId
+			organizationRole =
+				organization &&
+				typeof organization === 'object' &&
+				'role' in organization &&
+				typeof organization.role === 'string'
+					? organization.role
+					: typeof identity.role === 'string'
+						? identity.role
+						: undefined
+		}
 		const role = config.mapRole(organizationRole)
 		if (!role) return errors.throw({ code: 'FORBIDDEN' })
 		const base = {

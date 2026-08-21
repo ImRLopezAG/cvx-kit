@@ -34,6 +34,10 @@ const VERIFY_DIRECTORY: Record<
 	{ organizationId: string; roleSlug: string } | undefined
 > = {
 	user_action: { organizationId: 'org_action', roleSlug: 'editor' },
+	user_claims_action: {
+		organizationId: 'org_membership_action',
+		roleSlug: 'editor',
+	},
 	user_verify: { organizationId: 'org_db_verify', roleSlug: 'editor' },
 	// Deliberate mismatch: hook resolves org_db_bad, directory says org_other.
 	user_verify_bad: { organizationId: 'org_other', roleSlug: 'editor' },

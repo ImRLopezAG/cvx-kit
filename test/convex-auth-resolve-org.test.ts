@@ -143,10 +143,43 @@ describe('resolveOrganization hook on the real Convex runtime', () => {
 		const calls = await t.query(api.recordedVerifyCalls, {
 			userId: 'user_verify',
 		})
-		expect(calls).toContainEqual({
-			userId: 'user_verify',
-			organizationId: 'org_db_verify',
+		expect(calls).toEqual([
+			{
+				userId: 'user_verify',
+				organizationId: 'org_db_verify',
+			},
+		])
+	})
+
+	it('actions prefer the hook-resolved organization over conflicting claims', async () => {
+		const t = harness()
+		await seed(t, {
+			userId: 'user_claims_action',
+			organizationId: 'org_membership_action',
+			roleSlug: 'editor',
 		})
+		// Identity carries conflicting-but-plausible claims: a different org_id
+		// and a role that maps to a valid role. The hook result must win.
+		const asUser = t.withIdentity({
+			subject: 'user_claims_action',
+			org_id: 'org_claims_action',
+			role: 'viewer',
+		})
+		const actor = await asUser.action(api.whoamiAction, {})
+		expect(actor.organizationId).toBe('org_membership_action')
+		expect(actor.role).toBe('editor')
+
+		// verifyMembership must have been called with the hook-resolved org,
+		// never the claims org. Calls are scoped to this test's unique userId.
+		const calls = await t.query(api.recordedVerifyCalls, {
+			userId: 'user_claims_action',
+		})
+		expect(calls).toEqual([
+			{
+				userId: 'user_claims_action',
+				organizationId: 'org_membership_action',
+			},
+		])
 	})
 
 	it('rejects actions with FORBIDDEN when verifyMembership mismatches the hook org', async () => {

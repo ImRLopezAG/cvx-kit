@@ -113,6 +113,8 @@ The handler must be **action-safe**: in actions the ctx has no `db`, so branch
 on its presence and fall back to an internal query:
 
 ```ts
+import { internal } from './_generated/api'
+
 resolveOrganization: async ({ ctx, user }) => {
   const membership =
     'db' in ctx

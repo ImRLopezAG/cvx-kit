@@ -114,6 +114,7 @@ export const { authQuery, authMutation, authAction, adminQuery, adminMutation,
   adminRoles: ['admin'],
   triggers,
   verifyMembership: async ({ userId, organizationId }) => { /* live check; actions only */ },
+  resolveOrganization: async ({ ctx, identity, user }) => { /* org+role from app tables; overrides claims; null/throw ⇒ FORBIDDEN */ },
 })
 
 // convex/foundation.ts

@@ -97,6 +97,53 @@ role/organization from that check replaces the JWT's. Verification **fails
 closed**: any error or org mismatch throws `FORBIDDEN`. Omit
 `verifyMembership` to let actions trust the JWT like queries do.
 
+## Resolving org/role from the database (`resolveOrganization`)
+
+Some identity providers issue tokens that carry **no org claims** — custom
+credentials, magic codes, or apps that keep memberships in their own tables.
+For those, configure `resolveOrganization` to derive organization authority
+from the app's own data instead of the JWT.
+
+When configured, the hook is the organization authority — claim parsing is
+skipped entirely. Returning `null` **or throwing** rejects with `FORBIDDEN`
+(fail closed); a missing identity or user is still `UNAUTHENTICATED`; the
+returned `roleSlug` still passes through `mapRole` like a claim would.
+
+The handler must be **action-safe**: in actions the ctx has no `db`, so branch
+on its presence and fall back to an internal query:
+
+```ts
+resolveOrganization: async ({ ctx, user }) => {
+  const membership =
+    'db' in ctx
+      ? await ctx.db
+          .query('companyUsers')
+          .withIndex('by_user', (q) => q.eq('userId', user.id))
+          .first()
+      : await ctx.runQuery(internal.memberships.byUser, { userId: user.id })
+  if (!membership || !membership.active) return null   // revoked ⇒ FORBIDDEN
+  return { organizationId: membership.orgId, roleSlug: membership.roleSlug }
+},
+```
+
+Resolver obligations:
+
+- Bind the lookup to the **verified** user — `user.id` (or
+  `identity.subject`), never a caller-influenced or non-unique attribute.
+- Resolve revoked/inactive/expired memberships to `null`, so revocation
+  actually takes effect fail-closed.
+
+Composition: `mapRole` still applies to the returned slug; with tenancy
+configured, `ctx.tenant` derives from the hook's org
+(`security.tenancy.resolve` is unchanged); `verifyMembership` for actions is
+unchanged and receives the hook-resolved `organizationId` — in actions its
+live result supersedes the hook's role/org, exactly as it supersedes claims.
+
+Cost: one DB read per authenticated call (claims are free); actions with
+`verifyMembership` configured also pay the live check. When debugging, note
+that a misconfigured hook surfaces as blanket `FORBIDDEN` — errors are
+swallowed fail-closed, never rethrown.
+
 ## Mutations are structurally trigger-wrapped
 
 When `triggers` (or `wrapDB`) is configured, every `authMutation`,

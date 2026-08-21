@@ -101,12 +101,15 @@ export const { authQuery, authMutation, authAction, adminQuery, adminMutation,
       const m = memberships.data.find((c) => c.userId === userId)
       return m ? { organizationId: m.organizationId, roleSlug: m.role.slug } : null
     },
+    // resolveOrganization: async ({ ctx, user }) => { /* org+role from app tables */ },
     wrapDB: (ctx) => triggers.wrapDB(ctx),
   })
 ```
 
 Actions re-verify membership live and fail closed; mutations get the trigger
 registry structurally; `include()` bounds every read (default 100 rows).
+`resolveOrganization` derives org and role from your own tables, enabling
+identity providers whose tokens carry no org claims.
 
 ### `cvx-kit/components/foundation`
 

@@ -1,6 +1,7 @@
 import {
 	Command as CommandKernelClass,
 	type CommandExecution,
+	type CommandHandlerResult,
 	type CommandInput,
 	type CommandRegistry,
 	type CommandResult,
@@ -12,6 +13,12 @@ import {
 import { Query } from './modules/query/query'
 import { executeResultBoundary, projectResult } from './result'
 import { emitSemanticEvent } from './telemetry'
+import {
+	operationFactory,
+	type CommandPreparation,
+	type OperationExtension,
+	type OperationHostContext,
+} from './operation'
 
 /** Shape handed to the injected audit writer; classification comes from the operation. */
 export type AuditEntryInput = {
@@ -43,6 +50,11 @@ export type AuditedOperation = Readonly<{
 	 * declaring a permission without injecting a checker fails closed.
 	 */
 	permission?: string
+	prepare?: (
+		context: never,
+		command: never,
+	) => MaybePromise<CommandPreparation<never>>
+	replayResult?: Readonly<{ parse: (value: unknown) => unknown }>
 	/**
 	 * Per-operation precondition, after the permission check and the registry
 	 * default guard, before the handler. Throw to deny — nothing has run yet.
@@ -89,6 +101,7 @@ export type CommandMiddleware<
 // unknown). Definition sites stay typed via Command.middleware.
 export type AnyCommandMiddleware = (input: {
 	operation: string
+	definition?: AuditedOperation
 	command: unknown
 	context: never
 	next: (options?: { context?: unknown }) => Promise<unknown>
@@ -138,6 +151,7 @@ type FoundationComponentApi = Readonly<{
  * Obtain it by destructuring the Foundation: `const { Command } = new Foundation(...)`.
  */
 class BoundCommand<Context, const Operations extends AuditedRegistry> {
+	static withContext = operationFactory
 	readonly #kernel: CommandKernelClass<Context, Operations>
 	readonly #observability: Observability
 	readonly #writeAudit: AuditWriter
@@ -201,11 +215,18 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 	exec<const Key extends OperationKey<Operations>>(executor: {
 		operation: Key
 		handler: (
-			context: Context,
+			context: Context & OperationExtension<Operations[Key]>,
 			command: CommandInput<Operations, Key>,
-		) => MaybePromise<CommandResult<Operations, Key>>
+		) => MaybePromise<CommandHandlerResult<Operations, Key>>
 	}) {
-		return this.#kernel.exec(executor)
+		return this.#kernel.exec({
+			operation: executor.operation,
+			handler: (context, command) =>
+				executor.handler(
+					context as Context & OperationExtension<Operations[Key]>,
+					command,
+				),
+		})
 	}
 
 	async #execute<Key extends OperationKey<Operations>>(
@@ -228,6 +249,17 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 						operation: execution.operation,
 					})
 				}
+				const preparation = await execution.definition.prepare?.(
+					execution.context as never,
+					execution.command as never,
+				)
+				if (preparation?.kind === 'replay') {
+					return execution.definition.replayResult
+						? (execution.definition.replayResult.parse(
+								preparation.result,
+							) as CommandResult<Operations, Key>)
+						: execution.parseResult(preparation.result)
+				}
 				const middleware = [
 					...(this.#defaults.middleware ?? []),
 					...(execution.definition.middleware ?? []),
@@ -238,7 +270,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 						context as never,
 						execution.command as never,
 					)
-					return execution.run(context as never)
+					return execution.runUnparsed(context as never)
 				}
 				let deepest = -1
 				const dispatch = async (
@@ -253,19 +285,23 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 					if (!layer) return terminal(context)
 					return layer({
 						operation: execution.operation,
+						definition: execution.definition,
 						command: execution.command,
 						context: context as never,
 						next: (options) =>
 							dispatch(
 								index + 1,
 								options?.context
-									? { ...(context as object), ...(options.context as object) }
+									? {
+											...(context as object),
+											...(options.context as object),
+										}
 									: context,
 							),
 					})
 				}
 				// Middleware may transform the return value, so the strict
-				// result schema re-parses whatever leaves the chain.
+				// result schema parses whatever leaves the chain exactly once.
 				const result = execution.parseResult(
 					await dispatch(0, execution.context),
 				)
@@ -286,6 +322,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 						classification: execution.definition.classification,
 					})
 				}
+				await preparation?.complete?.(result as never)
 				return result
 			},
 		)
@@ -340,10 +377,13 @@ export type ApplicationCommand<
  */
 export type CommandConstructor = {
 	new <Context, const Operations extends AuditedRegistry>(
-		operations: Operations,
+		operations: Operations & {
+			readonly [Key in keyof Operations]: OperationHostContext<Context>
+		},
 		defaults?: CommandDefaults,
 	): BoundCommand<Context, Operations>
 	operation: (typeof BoundCommand)['operation']
+	withContext: (typeof BoundCommand)['withContext']
 	middleware: (typeof BoundCommand)['middleware']
 }
 
@@ -370,7 +410,7 @@ export class Foundation<
 		this.observability = observability
 		const writeAudit = options.observability.writeAudit ?? (() => undefined)
 		const checkPermission = options.checkPermission
-		this.Command = class <
+		this.Command = class<
 			Context,
 			const Operations extends AuditedRegistry,
 		> extends BoundCommand<Context, Operations> {
@@ -391,8 +431,11 @@ export class Foundation<
 // `const { Command, Query, observability } = new Foundation(...)`. A loose
 // import would construct kernels without the injected observability, audit
 // writer, and permission checker. Types stay exported for signatures.
+export type { CommandPreparation, TypedOperation } from './operation'
 export type {
+	CommandArgument,
 	CommandExecution,
+	CommandHandlerResult,
 	CommandInput,
 	CommandRegistry,
 	CommandResult,

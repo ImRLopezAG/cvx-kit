@@ -1,6 +1,20 @@
-export type Parseable<Output> = Readonly<{ parse: (value: unknown) => Output }>
+export type Parseable<Output> = Readonly<{
+	parse: (value: unknown) => Output
+}>
+
+/** Zod exposes input separately for transforms; plain parsers retain their output contract. */
+export type SchemaInput<Schema> = Schema extends { _input: infer Input }
+	? Input
+	: Parsed<Schema>
+export type CommandHandlerResult<
+	Registry extends CommandRegistry,
+	Key extends Operation<Registry>,
+> = SchemaInput<Registry[Key]['result']>
 
 export type CommandRegistry = Readonly<Record<string, CommandDefinition>>
+
+/** Values accepted from callers before the command schema parses them. */
+export type CommandArgument<Registry extends CommandRegistry, Key extends Operation<Registry>> = SchemaInput<Registry[Key]['command']>
 
 export type CommandInput<
 	Registry extends CommandRegistry,
@@ -24,6 +38,10 @@ export type CommandExecution<
 	parseResult: (value: unknown) => CommandResult<Registry, Key>
 	/** Runs the handler (result-parsed). Accepts a middleware-enriched context. */
 	run: (context?: Context) => Promise<CommandResult<Registry, Key>>
+	/** Runs without parsing for owners that validate after their middleware chain. */
+	runUnparsed: (
+		context?: Context,
+	) => Promise<CommandHandlerResult<Registry, Key>>
 }>
 
 type CommandDefinition = Readonly<{
@@ -35,7 +53,8 @@ type Operation<Registry extends CommandRegistry> = Extract<
 	keyof Registry,
 	string
 >
-type Parsed<Schema> = Schema extends Parseable<infer Output> ? Output : never
+type Parsed<Schema> =
+	Schema extends Parseable<infer Output> ? Output : never
 type MaybePromise<Value> = Value | Promise<Value>
 type Execute<Context, Registry extends CommandRegistry> = <
 	Key extends Operation<Registry>,
@@ -52,7 +71,7 @@ type FixedExecutor<
 	handler: (
 		context: Context,
 		command: CommandInput<Registry, Key>,
-	) => MaybePromise<CommandResult<Registry, Key>>
+	) => MaybePromise<CommandHandlerResult<Registry, Key>>
 }>
 
 type DynamicExecutor<
@@ -66,7 +85,7 @@ type DynamicExecutor<
 	handler: (
 		context: Context,
 		command: CommandInput<Registry, Key>,
-	) => MaybePromise<CommandResult<Registry, Key>>
+	) => MaybePromise<CommandHandlerResult<Registry, Key>>
 }>
 
 class CommandConfigurationError extends Error {
@@ -95,7 +114,7 @@ export class Command<Context, const Registry extends CommandRegistry> {
 		executor: FixedExecutor<Context, Registry, Key>,
 	): (
 		context: Context,
-		command: CommandInput<Registry, Key>,
+		command: CommandArgument<Registry, Key>,
 	) => Promise<CommandResult<Registry, Key>>
 	exec<Dispatcher, const Key extends Operation<Registry>>(
 		executor: DynamicExecutor<Context, Registry, Dispatcher, Key>,
@@ -129,10 +148,9 @@ export class Command<Context, const Registry extends CommandRegistry> {
 			}
 			const operation = selected.operation as Operation<Registry>
 			const definition = this.#operations[operation]
-			const command = definition.command.parse(selected.value) as CommandInput<
-				Registry,
-				Operation<Registry>
-			>
+			const command = definition.command.parse(
+				selected.value,
+			) as CommandInput<Registry, Operation<Registry>>
 			const parseResult = (result: unknown) =>
 				definition.result.parse(result) as CommandResult<
 					Registry,
@@ -141,13 +159,15 @@ export class Command<Context, const Registry extends CommandRegistry> {
 			const handler = executor.handler as (
 				context: Context,
 				command: CommandInput<Registry, Operation<Registry>>,
-			) => MaybePromise<CommandResult<Registry, Operation<Registry>>>
+			) => MaybePromise<CommandHandlerResult<Registry, Operation<Registry>>>
 			return this.#execute({
 				context,
 				operation,
 				definition,
 				command,
 				parseResult,
+				runUnparsed: async (contextOverride?: Context) =>
+					handler(contextOverride ?? context, command),
 				run: async (contextOverride?: Context) =>
 					parseResult(await handler(contextOverride ?? context, command)),
 			})

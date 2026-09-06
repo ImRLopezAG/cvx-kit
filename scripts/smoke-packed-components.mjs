@@ -18,9 +18,10 @@ if (installer !== 'bun' && installer !== 'npm') {
 const root = join(import.meta.dirname, '..')
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'cvx-kit-smoke-'))
 const fixture = join(temporaryRoot, 'fixture')
-const packageVersion = JSON.parse(
+const packageManifest = JSON.parse(
 	readFileSync(join(root, 'package.json'), 'utf8'),
-).version
+)
+const packageVersion = packageManifest.version
 const tarball = join(temporaryRoot, `cvx-kit-${packageVersion}.tgz`)
 
 function run(command, args, cwd = fixture) {
@@ -72,11 +73,12 @@ try {
 				type: 'module',
 				dependencies: {
 					'cvx-kit': `file:${tarball}`,
-					convex: '1.43.0',
-					zod: '4.4.3',
+					convex: packageManifest.devDependencies.convex,
+					zod: packageManifest.devDependencies.zod,
+					'convex-helpers': packageManifest.devDependencies['convex-helpers'],
 				},
 				devDependencies: {
-					'vite-plus': '0.2.8',
+					'vite-plus': packageManifest.devDependencies['vite-plus'],
 				},
 			},
 			null,

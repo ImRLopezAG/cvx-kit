@@ -51,9 +51,13 @@ operation** — auditing is type-enforced, not opt-in.
 import { z } from 'zod'
 import { Command } from '../../foundation'
 import { documents } from './schema'
+import { zid } from 'cvx-kit/zod-table'
+import type { MutationCtx } from '../../_generated/server'
+
+const typed = Command.withContext<MutationCtx>()
 
 const operations = {
-  'documents.rename': Command.operation({
+  'documents.rename': typed.operation({
     command: documents.commandInput.extend({ id: zid('documents') }),
     result: z.object({ ok: z.literal(true) }).strict(),
     classification: 'business',
@@ -89,14 +93,20 @@ The public API layer then wraps the executor in an `authMutation` and passes
    Foundation's injected `checkPermission(ctx, { permission, operation })`
    runs; throw to deny. Declaring a permission with no injected checker
    **fails closed** (`COMMAND_PERMISSION_NOT_CONFIGURED`).
-4. **Default guard** — the registry-wide guard passed as the Command's second
+4. **Prepare**, when configured: obtain an invocation-local replay decision
+   or completion closure. Replay validates its durable result, then goes
+   directly to observation, skipping middleware, both guards, handler and audit.
+5. **Middleware and guards** — registry middleware wraps operation middleware,
+   which wraps both guards and the handler. The default guard is the
+   registry-wide guard passed as the Command's second
    argument (`new Command(operations, { guard })`), if any.
-5. **Operation guard** — the operation's own `guard(ctx, command)`:
+   Then the operation's own `guard(ctx, command)` checks
    preconditions like state-machine legality, ownership beyond roles, or
    invariants over the parsed command. Throw to deny — nothing has run yet,
    so a denial is always clean.
-6. **Run the handler**; its return value is parsed through the `result` schema
-   — outputs are validated too.
+6. **Run the handler and unwind middleware**; parse the final chain output
+   through the `result` schema exactly once. Middleware sees schema inputs;
+   audit, completion, and the executor receive validated schema outputs.
 7. **Audit**: call the operation's `audit({ command, result }, ctx)`. If it
    returns non-null, the entry (plus the operation's `classification`) is
    written through the injected `writeAudit` — **in the same transaction** as
@@ -106,7 +116,9 @@ The public API layer then wraps the executor in an `authMutation` and passes
    allowlist throws (`COMMAND_AGGREGATE_NOT_DECLARED`) — the audit
    vocabulary is enforced, not advisory. The per-operation catalog is
    introspectable as `commands.aggregates` for tests.
-8. **Emit the observation**: `{ operation, classification, outcome,
+8. **Complete**: await the closure returned by `prepare`, including when audit
+   returns null. A failure propagates inside the observation boundary.
+9. **Emit the observation**: `{ operation, classification, outcome,
    errorCode?, durationMs }` — completed, denied, or failed per
    `classifyError`.
 
@@ -150,11 +162,11 @@ a handler in disguise.
 
 ### Middleware — composable, next()-based
 
-For wrap-around concerns (timing, tracing, context enrichment, replay
-wrappers) that two disconnected callbacks can't express, both kernels take
+For wrap-around concerns (timing, tracing, context enrichment) that two
+disconnected callbacks can't express, both kernels take
 Express/TanStack-style middleware. The chain runs **inside** the pipeline's
 invariants: after the permission check, around [guards → handler], before the
-result-schema re-parse, aggregate allowlist, and audit — so middleware can
+result-schema parse, aggregate allowlist, and audit — so middleware can
 never skip authorization, return an invalid result, or desynchronize audit
 from effects.
 
@@ -188,16 +200,119 @@ guard → operation guard → handler. `next()` returns the downstream result;
 middleware, guards, and the handler. Skipping `next()` short-circuits
 (guards and handler never run — the returned value still must satisfy the
 result schema); calling it twice throws `COMMAND_MIDDLEWARE_NEXT_REUSED`.
-Whatever leaves the chain is re-parsed through the operation's strict result
+Whatever leaves the chain is parsed through the operation's strict result
 schema — a middleware cannot fabricate an invalid result.
+
+### Schema-inferred callbacks and context extensions (0.1.3)
+
+`Command.withContext<Ctx>()` binds the host context for operation definitions.
+Its `operation()` infers parsed command fields, validated audit result fields,
+and the declared aggregate vocabulary. Operation middleware is contextual:
+write inline callbacks without `Command.middleware`, whose legacy low-level
+command and result boundary intentionally remains unknown.
+
+```ts
+const typed = Command.withContext<Ctx>()
+const operations = {
+  rename: typed.operation({
+    command: z.object({ title: z.string().transform(value => value.length) }),
+    result: z.object({ ok: z.boolean() }),
+    classification: 'business',
+    aggregates: ['document'],
+    guard: (ctx, command) => requireTitleLength(ctx, command.title), // number
+    middleware: [async ({ command, next }) => {
+      const result = await next() // { ok: boolean }, before validation
+      logLength(command.title)
+      return result
+    }],
+    audit: ({ command, result }, ctx) => ({
+      operation: 'rename', actorId: ctx.actorId,
+      aggregate: { type: 'document', id: String(command.title) },
+      metadata: { ok: result.ok },
+    }),
+  }),
+}
+const middleware = typed.registryMiddleware(operations, async input => {
+  if (input.operation === 'rename') {
+    input.command.title.toFixed() // discriminator retains schema correlation
+  }
+  return input.next()
+})
+const commands = new Command<Ctx, typeof operations>(operations, {
+  middleware: [middleware],
+})
+```
+
+Bind registry middleware to the same registry it describes. A heterogeneous
+registry callback returns a union; narrowing `input.operation` preserves
+the matching `input.command` and `input.next()` result type.
+Reusing it with a different operation definition throws
+`COMMAND_MIDDLEWARE_REGISTRY_MISMATCH` before the typed callback runs.
+
+To propagate a required middleware extension to guards and handlers, use
+`Command.withContext<Ctx, { traceId: string }>()`. Its operations require a
+nonempty middleware tuple; the first layer must pass the declared extension
+to `next({ context: { traceId } })` whenever it runs the downstream chain.
+Later layers, guards and handlers see `Ctx & { traceId: string }`.
+Audit and prepare receive the original context. The original context object
+is not mutated. Short circuits still undergo final result validation.
+
+### Transactional completion and replay (0.1.3)
+
+Use `prepare(ctx, parsedCommand)` for host-owned idempotency. It runs after
+permission and returns either `{ kind: 'replay', result: durableValue }` or
+`{ kind: 'execute', complete: async validatedResult => { ... } }`.
+The completion closure captures per-invocation state, including a fingerprint
+derived from the parsed command and authenticated actor. Do not cache that
+state in a shared context or module variable.
+
+```ts
+prepare: async (ctx, command) => {
+  const key = scopedKey(ctx.actorId, command.idempotencyKey)
+  const fingerprint = fingerprintOf(command)
+  const receipt = await loadReceipt(ctx, key)
+  if (receipt) {
+    if (receipt.fingerprint !== fingerprint) throw new Error('KEY_REUSED')
+    return { kind: 'replay', result: receipt.result }
+  }
+  return {
+    kind: 'execute',
+    complete: async result => {
+      await saveReceipt(ctx, { key, fingerprint, result })
+    },
+  }
+},
+```
+
+Storage, actor/tenant scoping, fingerprint comparison, retention, and conflict
+policy remain host responsibilities. Put authorization required on replay in
+the injected permission checker or prepare lookup; both guards are skipped
+on replay. A permission slug without a checker still fails closed. Ordinary
+middleware short-circuiting is not this replay path and still audits.
+
+Replays are parsed through `result` by default. If that schema transforms its
+input, store the completion callback's validated output and supply
+`replayResult` with an output validator (for example `z.number().int()` when
+`result` transforms a string into a number). This prevents reapplying an input
+transform to an already transformed durable result. An invalid replay fails
+inside observation; successful replay does not invoke completion again.
+
+Completion is awaited after result validation, audit resolution, aggregate
+validation, and audit writing, even on audit-null paths. Errors from prepare,
+replay validation, audit, or completion propagate and are passed to the host's
+error classifier. Observation success means this command finished; the
+enclosing mutation has not necessarily committed yet.
 
 The Query kernel takes the same shape: `new Query({ defaults, middleware,
 execute })` plus per-executor `middleware: [...]`, with `Query.middleware`
 as the typing helper. Kernel middleware runs before executor middleware,
 inside the host's injected `execute` policy.
 
-If any step throws, the Convex transaction rolls back — handler writes and
-audit entry together. Audit and effects can never disagree.
+For atomic rollback, let failures escape the enclosing Convex mutation.
+Catching and swallowing a failure inside that mutation can commit earlier
+business, audit, and completion writes. Rethrow after effects, or use the
+effect-aware `executeResultBoundary` below. External I/O in actions is not
+rolled back; these transaction guarantees concern Convex mutation writes.
 
 ### Dynamic dispatch
 
@@ -269,9 +384,9 @@ knowing. Metadata defaults are set at construction and merged per-executor.
    else destructures from it.
 2. Never deep-import the component's `modules/*` or `result.ts` paths from app
    code — the `client.ts` facade is the contract.
-3. The audit callback receives the ctx untyped (`never`); wiring a query ctx
-   into an audited command fails at runtime, not compile time. Commands run in
-   mutations.
+3. Use `Command.withContext<MutationCtx>()` for typed callbacks and construct
+   the Command with a compatible host context. Legacy `Command.operation`
+   keeps its low-level callback signature. Commands with writes run in mutations.
 4. Name operations `domain.verb` and error codes `UPPER_SNAKE` or your
    telemetry silently disappears (see regexes above).
 5. Keep operation registries frozen (`as const`) in the domain's

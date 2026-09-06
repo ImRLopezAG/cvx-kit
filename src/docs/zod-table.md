@@ -27,6 +27,28 @@ export const documents = zodTable(
 
 ## What you get back
 
+### Shared ID validation (0.1.3)
+
+Install one compatible `convex-helpers` peer (`>=0.1.123 <0.2.0`) alongside
+cvx-kit. ID metadata lives in a helper-instance registry: copying schemas
+between separately installed helper instances can silently turn an ID into
+`v.any()`. An exact nested dependency previously caused that failure even
+when both helper versions were compatible. Fresh npm and Bun consumer tests
+now exercise storage, command, DTO, and nested ID conversion with a different
+compatible host version.
+
+Prefer the matching kit exports when deriving validators from kit schemas:
+
+```ts
+import { zid, zodToConvex, convexToZod } from 'cvx-kit/zod-table'
+```
+
+Do not force conflicting nested helper copies with overrides or reuse schema
+objects across separate bundles. The upstream converter cannot recognize an
+unregistered foreign ID and does not throw; peer installation prevents the
+supported package graph from creating that ambiguity. Verify critical ID
+validators retain `kind === 'id'` and the expected `tableName` after installation.
+
 | Property | What it is | Where you use it |
 |---|---|---|
 | `table` | `defineTable(...)` from the storage shape | `convex/schema.ts` |

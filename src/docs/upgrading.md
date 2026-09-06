@@ -1,5 +1,48 @@
 # Upgrading to 0.1.0 — the new way of things
 
+## 0.1.3 candidate
+
+Install `convex-helpers` as a direct peer, using one compatible instance:
+
+```sh
+bun add cvx-kit@0.1.3 convex-helpers@0.1.124
+```
+
+This is the target command after publication; 0.1.3 is currently a local
+candidate. The peer range is `>=0.1.123 <0.2.0`. Remove overrides that force a
+separate helper copy and regenerate the installation without discarding
+unrelated dependency choices. The candidate is validated with Convex 1.45.0,
+Zod 4.5.4, and convex-test 0.0.56.
+
+Existing `Command.operation` and `Command.middleware` remain available.
+For callback inference, use `Command.withContext<MutationCtx>().operation`;
+see `commands.md` for typed middleware and transactional completion.
+
+Result transforms now run once, after middleware. A handler and middleware
+return the result schema's **input** type; audit, completion, and the executor
+receive its **output**. Middleware reading `await next()` sees the unparsed
+handler result. Remove workarounds that compensate for double transforms.
+When storing transformed outputs for replay, supply an output validator as
+`replayResult`; otherwise replay uses the ordinary result schema.
+Executor callers supply the command schema's input type; guards, prepare,
+middleware, and handlers receive its parsed output. For example, a string
+transformed to a number is passed as a string to the executor and observed
+as a number by its callbacks.
+
+Test registration no longer needs a registrar adapter or assertion:
+
+```ts
+import { convexTest } from 'convex-test'
+import { registerFoundation, registerApprovals } from 'cvx-kit/test'
+import schema from './schema'
+
+const t = convexTest(schema, import.meta.glob('./**/*.ts'))
+registerFoundation(t)
+registerApprovals(t)
+```
+
+Both helpers accept an optional custom component path as their second argument.
+
 ## Approvals packaging repair (0.1.x patch)
 
 `cvx-kit@0.1.0` published component schemas as `schema.mjs`, which Convex does

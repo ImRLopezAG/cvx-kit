@@ -13,3 +13,6 @@
 
 # repo-internal explainers; the shipped docs/ mirrors src/docs only
 /docs/explain
+/docs/ideation
+/docs/plans
+/docs/reproductions

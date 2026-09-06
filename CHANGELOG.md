@@ -12,7 +12,9 @@ are this file's matching section.
 
 ## [Unreleased]
 
-### 0.1.3 candidate — not published
+## [0.1.3] - 2026-09-06
+
+### Fixed
 
 - Fix Convex ID validation across package boundaries by sharing `convex-helpers`
   as a peer dependency. Export `zid`, `zodToConvex`, and `convexToZod` from

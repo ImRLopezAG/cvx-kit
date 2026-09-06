@@ -12,6 +12,22 @@ are this file's matching section.
 
 ## [Unreleased]
 
+### 0.1.3 candidate — not published
+
+- Fix Convex ID validation across package boundaries by sharing `convex-helpers`
+  as a peer dependency. Export `zid`, `zodToConvex`, and `convexToZod` from
+  `cvx-kit/zod-table`; verify differing compatible host versions under npm and Bun (#10).
+- Add `Command.withContext<Context, Extension>()` for schema-inferred guards,
+  audit callbacks, operation middleware, and correlated registry middleware (#11).
+- Add invocation-local `prepare` hooks with authorized, validated replay and
+  completion after audit, inside observation. Durable storage remains host-owned (#12).
+- Accept concrete and generic `convex-test` backends directly in registration helpers (#13).
+- Parse command results once after middleware; handler and middleware result types
+  describe schema inputs, while audit, completion, and executor results describe outputs.
+- Accept raw command schema inputs at executor call sites while inferring parsed
+  outputs for callbacks; reject incompatible typed host contexts and registry middleware.
+- See `docs/upgrading.md` for helper peer installation and transformed-result migration.
+
 ## [0.1.2] - 2026-08-21
 
 ### Added

@@ -12,6 +12,10 @@ import {
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 
+// Use this entry point when deriving validators from kit-owned schemas so
+// the producer and converter consult the same convex-helpers ID registry.
+export { zid, zodToConvex, convexToZod } from 'convex-helpers/server/zod4'
+
 type Shape = Record<string, z.ZodType>
 type ShapeKey<Fields extends Shape> = Extract<keyof Fields, string>
 

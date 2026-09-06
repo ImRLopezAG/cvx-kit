@@ -25,6 +25,9 @@ const packedFiles = (() => {
 })()
 
 describe('packed Convex components', () => {
+	it('excludes internal planning and reproduction artifacts', () => {
+		expect(packedFiles.filter(file => /^docs\/(explain|ideation|plans|reproductions)\//.test(file))).toEqual([])
+	})
 	it.each(['approvals', 'foundation'])(
 		'publishes one discoverable schema module for %s',
 		(component) => {

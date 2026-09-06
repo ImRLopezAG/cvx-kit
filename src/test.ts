@@ -6,6 +6,7 @@
  * registers the COMPILED component modules from dist, so dist is the only
  * code the package ships.
  */
+import type { GenericSchema, SchemaDefinition } from 'convex/server'
 import approvalsSchema from '../dist/components/approvals/schema.js'
 import foundationSchema from '../dist/components/foundation/schema.js'
 
@@ -19,7 +20,7 @@ const approvalsModules = import.meta.glob(
 type RegistersComponents = {
 	registerComponent: (
 		name: string,
-		schema: unknown,
+		schema: SchemaDefinition<GenericSchema, boolean>,
 		modules: Record<string, () => Promise<unknown>>,
 	) => void
 }

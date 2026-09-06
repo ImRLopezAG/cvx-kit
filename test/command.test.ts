@@ -18,7 +18,10 @@ function foundationHarness() {
 		{
 			observability: {
 				enabled: true,
-				classifyError: () => ({ outcome: 'failed', errorCode: 'UNEXPECTED' }),
+				classifyError: () => ({
+					outcome: 'failed',
+					errorCode: 'UNEXPECTED',
+				}),
 				emit: (event) => {
 					events.push(event)
 				},
@@ -50,6 +53,142 @@ function harness() {
 }
 
 describe('Foundation Command protocol', () => {
+	it('accepts raw schema input and passes transformed output to callbacks', async () => {
+		const { Command } = foundationHarness()
+		let parses = 0
+		const operations = {
+			measure: Command.withContext<Context>().operation({
+				command: z.object({
+					title: z.string().transform((value) => {
+						parses++
+						return value.length
+					}),
+				}),
+				result: z.number(),
+				classification: 'business',
+				guard: (_ctx, command) => {
+					expect(command.title).toBe(5)
+				},
+				audit: ({ command, result }) => {
+					expect(command.title).toBe(result)
+					return null
+				},
+			}),
+		}
+		const execute = new Command<Context, typeof operations>(
+			operations,
+		).exec({
+			operation: 'measure',
+			handler: (_ctx, command) => command.title,
+		})
+		expect(await execute({ actorId: 'actor' }, { title: 'hello' })).toBe(5)
+		expect(parses).toBe(1)
+	})
+	it('rejects typed registry middleware reused with a different operation definition', async () => {
+		const { Command } = foundationHarness()
+		const typed = Command.withContext<Context>()
+		const first = {
+			save: typed.operation({
+				command: z.object({ title: z.string() }),
+				result: z.string(),
+				classification: 'business',
+				audit: () => null,
+			}),
+		}
+		const second = {
+			save: typed.operation({
+				command: z.object({ count: z.number() }),
+				result: z.number(),
+				classification: 'business',
+				audit: () => null,
+			}),
+		}
+		let called = false
+		const middleware = typed.registryMiddleware(
+			first,
+			async ({ command, next }) => {
+				called = true
+				command.title.toUpperCase()
+				return next()
+			},
+		)
+		const execute = new Command<Context, typeof second>(second, {
+			middleware: [middleware],
+		}).exec({
+			operation: 'save',
+			handler: (_ctx, command) => command.count,
+		})
+		await expect(
+			execute({ actorId: 'actor' }, { count: 1 }),
+		).rejects.toMatchObject({
+			code: 'COMMAND_MIDDLEWARE_REGISTRY_MISMATCH',
+		})
+		expect(called).toBe(false)
+	})
+	it('delivers middleware extensions to downstream guards and handlers only', async () => {
+		const { Command } = foundationHarness()
+		const contexts: unknown[] = []
+		const operations = {
+			touch: Command.withContext<Context, { traceId: string }>().operation({
+				command: z.object({}),
+				result: z.string(),
+				classification: 'business',
+				middleware: [
+					async ({ next }) => next({ context: { traceId: 'trace' } }),
+					async ({ context, next }) => {
+						contexts.push(context)
+						return next()
+					},
+				],
+				guard: (context) => {
+					contexts.push(context)
+				},
+				audit: (_resolution, context) => {
+					contexts.push(context)
+					return null
+				},
+			}),
+		}
+		const execute = new Command<Context, typeof operations>(
+			operations,
+		).exec({
+			operation: 'touch',
+			handler: (context) => {
+				contexts.push(context)
+				return context.traceId
+			},
+		})
+		const context = { actorId: 'actor' }
+		expect(await execute(context, {})).toBe('trace')
+		expect(contexts).toEqual([
+			{ actorId: 'actor', traceId: 'trace' },
+			{ actorId: 'actor', traceId: 'trace' },
+			{ actorId: 'actor', traceId: 'trace' },
+			context,
+		])
+		expect(context).toEqual({ actorId: 'actor' })
+	})
+	it('applies result transforms once, after middleware', async () => {
+		const { Command } = foundationHarness()
+		const operations = {
+			transform: Command.withContext<Context>().operation({
+				command: z.object({}),
+				result: z.string().transform((value) => `parsed:${value}`),
+				classification: 'business',
+				audit: () => null,
+				middleware: [async ({ next }) => `${await next()}:middleware`],
+			}),
+		}
+		const execute = new Command<Context, typeof operations>(
+			operations,
+		).exec({
+			operation: 'transform',
+			handler: () => 'hello',
+		})
+		expect(await execute({ actorId: 'actor' }, {})).toBe(
+			'parsed:hello:middleware',
+		)
+	})
 	it('validates input, executes, audits, and observes', async () => {
 		const { commands, events, auditEntries } = harness()
 		const rename = commands.exec({
@@ -294,18 +433,22 @@ describe('Foundation Command middleware', () => {
 
 	it('runs registry middleware → operation middleware → guards → handler, with context enrichment', async () => {
 		const { Command, calls } = middlewareHarness()
-		const registryLayer = Command.middleware<{ actorId: string }, { traceId: string }>(async ({ next }) => {
+		const registryLayer = Command.middleware<
+			{ actorId: string },
+			{ traceId: string }
+		>(async ({ next }) => {
 			calls.push('registry:before')
 			const result = await next({ context: { traceId: 't_1' } })
 			calls.push('registry:after')
 			return result
 		})
-		const operationLayer = Command.middleware<{ traceId?: string }, { vendor: string }>(
-			async ({ context, next }) => {
-				calls.push(`operation:${context.traceId}`)
-				return next({ context: { vendor: 'acme' } })
-			},
-		)
+		const operationLayer = Command.middleware<
+			{ traceId?: string },
+			{ vendor: string }
+		>(async ({ context, next }) => {
+			calls.push(`operation:${context.traceId}`)
+			return next({ context: { vendor: 'acme' } })
+		})
 		const operations = {
 			'documents.touch': Command.operation({
 				command: z.object({}).strict(),

@@ -329,27 +329,26 @@ export const status = query({
 		)
 	}
 
-	let decision
-	let lastError
-	for (let attempt = 0; attempt < 10; attempt += 1) {
-		try {
-			decision = JSON.parse(
-				runConvex('run', 'smoke:decide', JSON.stringify({ runId })),
-			)
-			break
-		} catch (error) {
-			lastError = error
-			const currentStatus = JSON.parse(
-				runConvex('run', 'smoke:status', JSON.stringify({ runId })),
-			)
-			if (currentStatus.state === 'approved') {
-				decision = currentStatus
-				break
-			}
-			await new Promise((resolve) => setTimeout(resolve, 500))
+	// start schedules the workflow; a successful start is not decision readiness.
+	let readyStatus
+	const readyDeadline = Date.now() + 60_000
+	while (Date.now() < readyDeadline) {
+		readyStatus = JSON.parse(
+			runConvex('run', 'smoke:status', JSON.stringify({ runId })),
+		)
+		if (readyStatus?.run.state !== 'pending' ||
+			['failed', 'canceled', 'completed'].includes(readyStatus?.execution?.type)) {
+			throw new Error(`Approval ended before decision readiness: ${JSON.stringify(readyStatus)}`)
 		}
+		if (readyStatus.run.currentStepKey === 'releaseDecision') break
+		await new Promise((resolve) => setTimeout(resolve, 500))
 	}
-	if (!decision) throw lastError
+	if (readyStatus?.run.currentStepKey !== 'releaseDecision') {
+		throw new Error(`Approval did not become decision-ready: ${JSON.stringify(readyStatus)}`)
+	}
+	const decision = JSON.parse(
+		runConvex('run', 'smoke:decide', JSON.stringify({ runId })),
+	)
 	if (decision.state !== 'approved') {
 		throw new Error(`Unexpected decision response: ${JSON.stringify(decision)}`)
 	}

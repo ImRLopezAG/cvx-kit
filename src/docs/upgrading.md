@@ -1,6 +1,6 @@
 # Upgrading to 0.1.0 — the new way of things
 
-## 0.1.3 candidate
+## 0.1.3
 
 Install `convex-helpers` as a direct peer, using one compatible instance:
 
@@ -8,10 +8,9 @@ Install `convex-helpers` as a direct peer, using one compatible instance:
 bun add cvx-kit@0.1.3 convex-helpers@0.1.124
 ```
 
-This is the target command after publication; 0.1.3 is currently a local
-candidate. The peer range is `>=0.1.123 <0.2.0`. Remove overrides that force a
+The peer range is `>=0.1.123 <0.2.0`. Remove overrides that force a
 separate helper copy and regenerate the installation without discarding
-unrelated dependency choices. The candidate is validated with Convex 1.45.0,
+unrelated dependency choices. This release is validated with Convex 1.45.0,
 Zod 4.5.4, and convex-test 0.0.56.
 
 Existing `Command.operation` and `Command.middleware` remain available.

@@ -11,7 +11,7 @@ if (!version) {
 }
 const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8')
 const pattern = new RegExp(
-	String.raw`^## \[${version.replace(/\./g, String.raw`\.`)}\][^\n]*\n([\s\S]*?)(?=^## \[|\Z)`,
+	String.raw`^## \[${version.replace(/\./g, String.raw`\.`)}\][^\n]*\n([\s\S]*?)(?=^## \[|(?![\s\S]))`,
 	'm',
 )
 const match = changelog.match(pattern)

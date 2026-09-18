@@ -5,10 +5,15 @@ custom rule tests in a separate job. `bun run check` also checks formatting;
 `bun run typecheck` checks the library and its TypeScript tests.
 
 All 15 generic rules in `anti-slop/` are enabled as errors. That directory is
-vendored from the install-anti-slop skill. The custom plugin is TypeScript in
-`src/oxlint.ts`, built and published as `cvx-kit/oxlint`; `cvx/` holds its tests.
-The generic anti-slop plugin remains repository tooling. Consumer configuration
-is documented in the root README.
+vendored from the install-anti-slop skill. The repository's six library rules
+live in `cvx/index.ts` and are loaded by `vite.config.ts`. These checks target
+this package's `src/` layout and export map; they are not published.
+
+The separate consumer plugin in `src/oxlint.ts` is built and published as
+`cvx-kit/oxlint`. Its 15 rules target applications under `convex/`, following
+the kit's documented API/domain/facade conventions. Both plugins are tested
+in `cvx/index.test.mjs`. Consumer setup is in the root README and coverage is
+documented in [`src/docs/oxlint.md`](../../src/docs/oxlint.md).
 Oxlint and `@oxlint/plugins` are pinned to 1.79.0, matching Vite+ 0.3.0's
 embedded lint dependencies. Upgrade them together. No manifest declares
 Effect, so its optional plugin is not enabled.
@@ -63,7 +68,8 @@ Format owned files with `vp fmt`; do not bulk-format unrelated untracked work.
 `vp check` accepts explicit file paths when a checkout includes personal drafts.
 
 `bun run test:package:oxlint` installs the tarball with npm and Bun, loads
-`cvx-kit/oxlint` in the real Oxlint CLI, checks that all six rules report, and
+`cvx-kit/oxlint` in the real Oxlint CLI, checks valid consumer adapters and all
+15 consumer rule diagnostics, and
 typechecks the published declarations. CI runs this after building. The
 `@oxlint/plugins` type dependency is shipped so consumers can resolve those
 declarations; the Oxlint executable remains a development dependency.

@@ -9,13 +9,15 @@ const root = join(import.meta.dirname, '..')
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-oxlint-'))
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const ruleNames = Object.keys(rules)
-assert.equal(ruleNames.length, 6)
+assert.equal(ruleNames.length, 15)
 
 try {
 	run('bun', ['pm', 'pack', '--destination', temporary, '--ignore-scripts'], root)
 	for (const installer of ['npm', 'bun']) {
 		const fixture = join(temporary, installer)
-		mkdirSync(join(fixture, 'src/components/example'), { recursive: true })
+		mkdirSync(join(fixture, 'convex/components/example'), { recursive: true })
+		mkdirSync(join(fixture, 'convex/api'), { recursive: true })
+		mkdirSync(join(fixture, 'convex/domain/orders'), { recursive: true })
 		writeFileSync(
 			join(fixture, 'package.json'),
 			JSON.stringify({
@@ -35,24 +37,21 @@ try {
 			join(fixture, '.oxlintrc.json'),
 			JSON.stringify({
 				jsPlugins: [{ name: 'cvx', specifier: 'cvx-kit/oxlint' }],
-				rules: {
-					...Object.fromEntries(ruleNames.map((name) => [`cvx/${name}`, 'error'])),
-					'cvx/no-internal-reexports': ['error', { entryPoints: ['src/public.ts'] }],
-				},
+				rules: Object.fromEntries(ruleNames.map((name) => [`cvx/${name}`, 'error'])),
 			}),
 		)
 		writeFileSync(
-			join(fixture, 'src/public.ts'),
-			"export { run } from './components/example/client'\n",
+			join(fixture, 'convex/api/orders.ts'),
+			"import { authMutation } from '../functions'; import { executeSaveOrder } from '../domain/orders/commands'; export const save = authMutation({ handler: (ctx, args) => executeSaveOrder(ctx, args) })\n",
 		)
 		writeFileSync(
-			join(fixture, 'src/components/example/client.ts'),
+			join(fixture, 'convex/components/example/client.ts'),
 			'export function run() { return 1 }\n',
 		)
 		const oxlint = join(fixture, 'node_modules/.bin/oxlint')
-		run(oxlint, ['--config', '.oxlintrc.json', 'src'], fixture)
+		run(oxlint, ['--config', '.oxlintrc.json', 'convex'], fixture)
 		writeFileSync(
-			join(fixture, 'src/components/example/bad.ts'),
+			join(fixture, 'convex/components/example/bad.ts'),
 			`
 import { defineTable } from 'convex/server'
 import { host } from '../../host'
@@ -64,13 +63,34 @@ export const value = privateHelper()
 `,
 		)
 		writeFileSync(
-			join(fixture, 'src/host.ts'),
-			"export const host = 1\nimport './components/example/bad'\n",
+			join(fixture, 'convex/host.ts'),
+			"import { authMutation } from './functions'; export const save = authMutation({}); export const host = 1; import './components/example/bad'\n",
 		)
-		const invalid = spawnSync(oxlint, ['--config', '.oxlintrc.json', '--format', 'json', 'src'], {
-			cwd: fixture,
-			encoding: 'utf8',
-		})
+		writeFileSync(
+			join(fixture, 'convex/api/orders.ts'),
+			`import { mutation } from '../_generated/server'
+import { makeFunctionReference as ref } from 'convex/server'
+import { z } from 'zod'
+import { createAuthFunctions } from 'cvx-kit/auth'
+import { other } from '../domain/users/commands'
+export const save = mutation({ handler: async (ctx) => {
+  await ctx.db.insert('orders', { updatedAt: Date.now() })
+  return ctx.db.query('orders').collect()
+}})
+export const constructors = createAuthFunctions({})
+export const state = z.enum(['draft'])
+export const target = ref('orders:save')
+export const value = other
+`,
+		)
+		const invalid = spawnSync(
+			oxlint,
+			['--config', '.oxlintrc.json', '--format', 'json', 'convex'],
+			{
+				cwd: fixture,
+				encoding: 'utf8',
+			},
+		)
 		assert.ifError(invalid.error)
 		assert.equal(invalid.status, 1, invalid.stderr)
 		const diagnostics = JSON.parse(invalid.stdout).diagnostics
@@ -109,7 +129,7 @@ void rule
 			fixture,
 		)
 		console.log(
-			`${installer}: packed Oxlint plugin loads, all six rules report, and declarations typecheck`,
+			`${installer}: packed Oxlint plugin loads, all consumer rules report, and declarations typecheck`,
 		)
 	}
 } finally {

@@ -185,37 +185,49 @@ import approvals from 'cvx-kit/components/approvals/convex.config'
 app.use(approvals)
 ```
 
-## Component authoring conventions
+## Application lint rules
 
-The TypeScript Oxlint plugin ships as `cvx-kit/oxlint`. Load it in your
-`.oxlintrc.json`:
+The TypeScript plugin `cvx-kit/oxlint` checks applications using the kit against
+[`conventions.md`](./src/docs/conventions.md). It targets `convex/`, including
+public adapters, domain modules, root facades, and locally authored components.
+Load it in your application's `.oxlintrc.json` and select rules:
 
 ```json
 {
 	"jsPlugins": [{ "name": "cvx", "specifier": "cvx-kit/oxlint" }],
 	"rules": {
+		"cvx/no-raw-builders": "error",
+		"cvx/no-handwritten-references": "error",
+		"cvx/domain-import-boundaries": "error",
+		"cvx/public-functions-in-api": "error",
+		"cvx/thin-api-adapters": "error",
+		"cvx/root-facade-ownership": "error",
+		"cvx/no-inline-enums": "error",
+		"cvx/no-unbounded-reads": "error",
+		"cvx/no-manual-timestamps": "error",
 		"cvx/component-boundaries": "error",
 		"cvx/no-component-env": "error",
 		"cvx/schema-file-boundaries": "error",
-		"cvx/no-internal-reexports": ["error", { "entryPoints": ["src/index.ts"] }],
+		"cvx/no-internal-reexports": "error",
 		"cvx/public-api-first": "error",
 		"cvx/named-private-helpers": "error"
 	}
 }
 ```
 
-With Vite+, put those fields under `lint` in `vite.config.ts`. Component
-rules target `src/components/<name>/`; set your public files in `entryPoints`
-(paths relative to the linter's working directory). To block imports back
-into your own package, configure `component-boundaries` with
-`["error", { "packageName": "your-package" }]`. The plugin exports its default
-plugin object, named `rules`, and the `RuleName` type. Verified with Oxlint
-1.79.0 and Vite+ 0.3.0.
+With Vite+, put those fields under `lint` in `vite.config.ts`. Each rule accepts
+`{ "convexDir": "path/to/convex" }` when your backend directory differs from
+`convex/`. Generated files and tests are excluded. The plugin exports its
+default plugin object, named `rules`, and the `RuleName` type. Verified with
+Oxlint 1.79.0 and Vite+ 0.3.0. See [rule coverage and limitations](./src/docs/oxlint.md)
+and the [migration from the initial 0.1.4 plugin](./src/docs/upgrading.md).
 
 Repository checks and the enforced library rules are documented in
 [`tools/oxlint/README.md`](./tools/oxlint/README.md). Run `bun run lint` for
 anti-slop and architecture checks, `bun run test:lint` to test the custom
 rules, and `bun run check` for the full Vite+ lint and formatting check.
+
+## Component authoring conventions
 
 This package follows the official Convex component template
 (`get-convex/templates/template-component`; see

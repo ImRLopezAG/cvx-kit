@@ -16,9 +16,7 @@ describe('createStateMachine', () => {
 		expect(machine.can('published', 'draft')).toBe(false)
 		machine.assert('draft', 'archived')
 		expect(() => machine.assert('published', 'draft')).toThrow(KitError)
-		expect(() => machine.assert('published', 'draft')).toThrow(
-			/INVALID_TRANSITION|not legal/,
-		)
+		expect(() => machine.assert('published', 'draft')).toThrow(/INVALID_TRANSITION|not legal/)
 	})
 
 	it('a state with no outgoing transitions rejects everything', () => {
@@ -28,17 +26,19 @@ describe('createStateMachine', () => {
 
 	it('routes through a custom ErrorFactory', () => {
 		const codes: string[] = []
-		const custom = createStateMachine(DOCUMENT_STATES, { draft: [] }, {
-			errors: {
-				throw: (input) => {
-					codes.push(input.code)
-					throw new Error(`custom:${input.code}`)
+		const custom = createStateMachine(
+			DOCUMENT_STATES,
+			{ draft: [] },
+			{
+				errors: {
+					throw: (input) => {
+						codes.push(input.code)
+						throw new Error(`custom:${input.code}`)
+					},
 				},
 			},
-		})
-		expect(() => custom.assert('draft', 'published')).toThrow(
-			'custom:INVALID_TRANSITION',
 		)
+		expect(() => custom.assert('draft', 'published')).toThrow('custom:INVALID_TRANSITION')
 		expect(codes).toEqual(['INVALID_TRANSITION'])
 	})
 

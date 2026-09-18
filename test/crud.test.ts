@@ -36,12 +36,11 @@ describe('createCrudCommands on the real Convex runtime', () => {
 		const id = await asOne.mutation(api.crudCreate, { name: 'Doc' })
 		await asOne.mutation(api.crudUpdate, { id, name: 'Renamed' })
 		await asOne.mutation(api.crudArchive, { id })
-		const row = (await t.query(api.getProject, { id })) as {
-			name: string
-			archivedAt?: number
-		}
+		const row = z
+			.object({ name: z.string(), archivedAt: z.number().optional() })
+			.parse(await t.query(api.getProject, { id }))
 		expect(row.name).toBe('Renamed')
-		expect(typeof row.archivedAt).toBe('number')
+		expect(row.archivedAt).toEqual(expect.any(Number))
 		expect(await t.query(api.auditCount, {})).toEqual([
 			'projects.create',
 			'projects.update',
@@ -51,16 +50,11 @@ describe('createCrudCommands on the real Convex runtime', () => {
 
 	it('rejects cross-tenant update and archive (RLS)', async () => {
 		const t = harness()
-		const id = await t
-			.withIdentity(orgOneOwner)
-			.mutation(api.crudCreate, { name: 'Mine' })
+		const id = await t.withIdentity(orgOneOwner).mutation(api.crudCreate, { name: 'Mine' })
 		const asTwo = t.withIdentity(orgTwoOwner)
-		await expect(
-			asTwo.mutation(api.crudUpdate, { id, name: 'stolen' }),
-		).rejects.toThrow()
+		await expect(asTwo.mutation(api.crudUpdate, { id, name: 'stolen' })).rejects.toThrow()
 		await expect(asTwo.mutation(api.crudArchive, { id })).rejects.toThrow()
 	})
-
 })
 
 describe('createCrudCommands construction', () => {
@@ -105,34 +99,34 @@ describe('createCrudCommands construction', () => {
 			actor: () => 'user',
 		})
 		expect(crud.commands.aggregates['notes.create']).toEqual(['note'])
-		expect(
-			(crud.operations as Record<string, { classification: string }>)[
-				'notes.update'
-			].classification,
-		).toBe('business')
+		expect(crud.operations['notes.update'].classification).toBe('business')
 	})
 
 	it('strict update input rejects fields outside commandFields', async () => {
-		const table = zodTable(
-			'notes',
-			() => ({ text: z.string(), secret: z.string() }),
-			{ commandFields: ['text'] },
-		)
+		const table = zodTable('notes', () => ({ text: z.string(), secret: z.string() }), {
+			commandFields: ['text'],
+		})
 		const fakeDb = {
-			insert: async () => 'id_1',
+			insert: async () => {
+				throw new Error('Invalid input must not insert')
+			},
 			patch: async () => undefined,
 		}
-		const crud = createCrudCommands<{ db: never }>({
+		const crud = createCrudCommands<{ db: typeof fakeDb }, typeof table>({
 			Command: makeCommand(),
 			table,
 			aggregateType: 'note',
 			actor: () => 'user',
 		})
 		await expect(
-			crud.executeUpdate({ db: fakeDb } as never, {
-				id: 'id_1',
-				data: { secret: 'leak' },
-			} as never),
+			crud.executeUpdate(
+				{ db: fakeDb },
+				{
+					id: table.tools.id.parse({ id: 'id_1' }).id,
+					// Deliberately send a field excluded by commandFields.
+					data: { secret: 'leak' },
+				},
+			),
 		).rejects.toThrow()
 	})
 })

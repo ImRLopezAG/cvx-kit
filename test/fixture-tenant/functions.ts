@@ -1,3 +1,6 @@
+import { zid } from 'convex-helpers/server/zod4'
+import type schema from './schema'
+type FixtureDataModel = DataModelFromSchemaDefinition<typeof schema>
 import {
 	actionGeneric,
 	internalActionGeneric,
@@ -5,7 +8,8 @@ import {
 	internalMutationGeneric,
 	mutationGeneric,
 	queryGeneric,
-	type GenericDataModel,
+	type DataModelFromSchemaDefinition,
+	type GenericMutationCtx,
 } from 'convex/server'
 import { z } from 'zod'
 import { createAuthFunctions } from '../../src/auth'
@@ -22,11 +26,11 @@ const FIXTURE_ROLES = ['viewer', 'editor', 'owner'] as const
 // One registry drives schema guards and row-level security alike.
 const TENANT_TABLES = ['projects'] as const
 
-export const triggers = createTriggers<GenericDataModel>()
+export const triggers = createTriggers<FixtureDataModel>()
 timestamps(triggers, 'projects')
 tenantOwnership(triggers, ...TENANT_TABLES)
 
-export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
+export const auth = createAuthFunctions<FixtureDataModel, FixtureRole>({
 	triggers,
 	query: queryGeneric,
 	mutation: mutationGeneric,
@@ -38,8 +42,7 @@ export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
 		const identity = await ctx.auth.getUserIdentity()
 		return identity ? { id: identity.subject } : null
 	},
-	mapRole: (slug) =>
-		FIXTURE_ROLES.includes(slug as FixtureRole) ? (slug as FixtureRole) : null,
+	mapRole: (slug) => FIXTURE_ROLES.find((role) => role === slug) ?? null,
 	adminRoles: ['owner'],
 	security: {
 		tenancy: { tables: TENANT_TABLES },
@@ -86,7 +89,7 @@ export const listAll = auth.authQuery({
 	args: {},
 	handler: async (ctx) => {
 		const rows = await ctx.db.query('projects').collect()
-		return rows.map((row) => projects.toPublicDto(row as never))
+		return rows.map((row) => projects.toPublicDto(row))
 	},
 })
 
@@ -95,7 +98,7 @@ export const rename = auth.authMutation({
 	handler: async (ctx, args) => {
 		const first = await ctx.db.query('projects').first()
 		if (!first) throw new Error('nothing to rename')
-		await ctx.db.patch(first._id as never, { name: args.name })
+		await ctx.db.patch(first._id, { name: args.name })
 		return null
 	},
 })
@@ -105,7 +108,7 @@ export const steal = auth.authMutation({
 	handler: async (ctx) => {
 		const first = await ctx.db.query('projects').first()
 		if (!first) throw new Error('nothing to steal')
-		await ctx.db.patch(first._id as never, { tenant: 'org_thief' } as never)
+		await ctx.db.patch(first._id, { tenant: 'org_thief' })
 		return null
 	},
 })
@@ -125,7 +128,7 @@ export const listPage = auth.authQuery({
 			.include(ctx.db.query('projects'))
 			.matching('by_tenant', (ix) => ix.eq('tenant', ctx.tenant))
 			.paginate({ numItems: args.numItems, cursor: args.cursor }, (rows) =>
-				rows.map((row) => projects.toPublicDto(row as never)),
+				rows.map((row) => projects.toPublicDto(row)),
 			),
 })
 
@@ -136,7 +139,7 @@ export const listPageUnscoped = auth.authQuery({
 		ctx
 			.include(ctx.db.query('projects'))
 			.paginate({ numItems: args.numItems, cursor: args.cursor }, (rows) =>
-				rows.map((row) => projects.toPublicDto(row as never)),
+				rows.map((row) => projects.toPublicDto(row)),
 			),
 })
 
@@ -153,17 +156,14 @@ export const seedGlobal = auth.systemMutation({
 	args: {},
 	handler: async (ctx) => {
 		// system* stays unwrapped: trusted internal paths reach every table.
-		await ctx.db.insert('globals', { note: 'platform state' } as never)
+		await ctx.db.insert('globals', { note: 'platform state' })
 		return null
 	},
 })
 
 // ── CRUD factory under the real pipeline ────────────────────────────────────
 type CrudCtx = {
-	db: {
-		insert: (table: never, value: never) => Promise<unknown>
-		patch: (id: never, value: never) => Promise<unknown>
-	}
+	db: GenericMutationCtx<FixtureDataModel>['db']
 	actor: { userId: string }
 	tenant: string
 }
@@ -174,16 +174,13 @@ const { Command } = new Foundation(
 		observability: {
 			enabled: false,
 			classifyError: () => ({ outcome: 'failed', errorCode: 'UNEXPECTED' }),
-			writeAudit: async (context, entry) => {
-				await (context as unknown as CrudCtx).db.insert(
-					'audits' as never,
-					{
-						operation: entry.operation,
-						actorId: entry.actorId,
-						aggregateType: entry.aggregate.type,
-						aggregateId: entry.aggregate.id,
-					} as never,
-				)
+			writeAudit: async (context: CrudCtx, entry) => {
+				await context.db.insert('audits', {
+					operation: entry.operation,
+					actorId: entry.actorId,
+					aggregateType: entry.aggregate.type,
+					aggregateId: entry.aggregate.id,
+				})
 			},
 		},
 	},
@@ -200,26 +197,23 @@ const projectCrud = createCrudCommands<CrudCtx>({
 export const crudCreate = auth.authMutation({
 	args: { name: z.string() },
 	handler: async (ctx, args) => {
-		const result = await projectCrud.executeCreate(ctx as never, args as never)
-		return (result as { id: unknown }).id
+		const result = await projectCrud.executeCreate(ctx, args)
+		return result.id
 	},
 })
 
 export const crudUpdate = auth.authMutation({
-	args: { id: z.string(), name: z.string() },
+	args: { id: zid('projects'), name: z.string() },
 	handler: async (ctx, args) => {
-		await projectCrud.executeUpdate(
-			ctx as never,
-			{ id: args.id, data: { name: args.name } } as never,
-		)
+		await projectCrud.executeUpdate(ctx, { id: args.id, data: { name: args.name } })
 		return null
 	},
 })
 
 export const crudArchive = auth.authMutation({
-	args: { id: z.string() },
+	args: { id: zid('projects') },
 	handler: async (ctx, args) => {
-		await projectCrud.executeArchive(ctx as never, { id: args.id } as never)
+		await projectCrud.executeArchive(ctx, { id: args.id })
 		return null
 	},
 })
@@ -228,27 +222,27 @@ export const auditCount = auth.systemQuery({
 	args: {},
 	handler: async (ctx) => {
 		const rows = await ctx.db.query('audits').collect()
-		return rows.map((row) => (row as never as { operation: string }).operation)
+		return rows.map((row) => row.operation)
 	},
 })
 
 export const getProject = auth.systemQuery({
-	args: { id: z.string() },
+	args: { id: zid('projects') },
 	handler: async (ctx, args) => {
-		const row = await ctx.db.get(args.id as never)
-		return row as never
+		const row = await ctx.db.get(args.id)
+		return row
 	},
 })
 
 export const receiveEvent = auth.systemMutation({
 	args: { eventKey: z.string(), payload: z.string(), source: z.string() },
 	handler: async (ctx, args) => {
-		const dedup = await recordWebhookEvent(ctx as never, {
+		const dedup = await recordWebhookEvent(ctx, {
 			key: args.eventKey,
 			source: args.source,
 		})
 		if (dedup.duplicate) return { duplicate: true, applied: false }
-		await ctx.db.insert('globals', { note: `event:${args.eventKey}` } as never)
+		await ctx.db.insert('globals', { note: `event:${args.eventKey}` })
 		return { duplicate: false, applied: true }
 	},
 })

@@ -1,3 +1,4 @@
+import type { GenericTableInfo, QueryInitializer } from 'convex/server'
 import { describe, expect, it } from 'vite-plus/test'
 
 import { createInclude, defaultRoleMap } from '../src/auth'
@@ -20,20 +21,29 @@ type Row = { _id: string }
 
 function fakeQueryInitializer(rows: Row[]) {
 	const calls: string[] = []
-	const query = {
-		take: async (limit: number) => rows.slice(0, limit),
+	function unsupported(): never {
+		throw new Error('Unexpected query operation in include test')
 	}
-	const initializer = {
-		withIndex: (indexName: string) => {
+	const initializer: QueryInitializer<GenericTableInfo> = {
+		take: async (limit) => rows.slice(0, limit),
+		collect: unsupported,
+		first: unsupported,
+		unique: unsupported,
+		paginate: unsupported,
+		order: unsupported,
+		filter: unsupported,
+		withSearchIndex: unsupported,
+		[Symbol.asyncIterator]: unsupported,
+		withIndex: (indexName) => {
 			calls.push(`withIndex:${indexName}`)
-			return query
+			return initializer
 		},
 		fullTableScan: () => {
 			calls.push('fullTableScan')
-			return query
+			return initializer
 		},
 	}
-	return { initializer: initializer as never, calls }
+	return { initializer, calls }
 }
 
 describe('createInclude', () => {
@@ -44,10 +54,7 @@ describe('createInclude', () => {
 	it('selects the first matching index and bounds the read', async () => {
 		const { initializer, calls } = fakeQueryInitializer(rows)
 		const include = createInclude()
-		const data = await include(initializer)
-			.matching('by_owner' as never)
-			.matching('by_state' as never)
-			.execute(3)
+		const data = await include(initializer).matching('by_owner').matching('by_state').execute(3)
 		expect(calls).toEqual(['withIndex:by_owner'])
 		expect(data).toHaveLength(3)
 	})
@@ -56,7 +63,7 @@ describe('createInclude', () => {
 		const { initializer, calls } = fakeQueryInitializer(rows)
 		const include = createInclude()
 		await include(initializer)
-			.when(null, (query) => query as never)
+			.when(null, (query) => query)
 			.execute(2)
 		expect(calls).toEqual(['fullTableScan'])
 	})
@@ -65,9 +72,7 @@ describe('createInclude', () => {
 		const { initializer } = fakeQueryInitializer(rows)
 		const include = createInclude({ maxRows: 10 })
 		await expect(include(initializer).execute(0)).rejects.toThrow(KitError)
-		await expect(include(initializer).execute(11)).rejects.toThrow(
-			/bounded query limit/,
-		)
+		await expect(include(initializer).execute(11)).rejects.toThrow(/bounded query limit/)
 		await expect(include(initializer).execute(2.5)).rejects.toThrow(KitError)
 	})
 })

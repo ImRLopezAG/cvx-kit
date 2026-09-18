@@ -1,3 +1,4 @@
+import type { GenericMutationCtx, GenericDataModel, FunctionReference } from 'convex/server'
 import { z } from 'zod'
 import { defaultErrors, type ErrorFactory } from './errors'
 import { zodTable } from './zod-table'
@@ -20,17 +21,7 @@ export function webhookEventsTable() {
 	}))
 }
 
-type DedupContext = {
-	db: {
-		query: (table: never) => {
-			withIndex: (
-				index: never,
-				range: (builder: { eq: (field: never, value: never) => unknown }) => unknown,
-			) => { first: () => Promise<unknown | null> }
-		}
-		insert: (table: never, value: never) => Promise<unknown>
-	}
-}
+type DedupContext = Pick<GenericMutationCtx<GenericDataModel>, 'db'>
 
 /**
  * Transactional insert-if-absent dedup guard. Call this FIRST inside the
@@ -42,19 +33,17 @@ export async function recordWebhookEvent(
 	ctx: DedupContext,
 	input: { key: string; source?: string; table?: string },
 ): Promise<{ duplicate: boolean }> {
-	const table = (input.table ?? 'webhookEvents') as never
+	const table = input.table ?? 'webhookEvents'
 	const existing = await ctx.db
 		.query(table)
-		.withIndex('by_eventKey' as never, (builder) =>
-			builder.eq('eventKey' as never, input.key as never),
-		)
+		.withIndex('by_eventKey', (builder) => builder.eq('eventKey', input.key))
 		.first()
 	if (existing) return { duplicate: true }
 	await ctx.db.insert(table, {
 		eventKey: input.key,
 		source: input.source ?? 'unknown',
 		receivedAt: Date.now(),
-	} as never)
+	})
 	return { duplicate: false }
 }
 
@@ -90,12 +79,15 @@ export type WebhookBoundaryConfig = {
 export function createWebhookBoundary(config: WebhookBoundaryConfig) {
 	const errors = config.errors ?? defaultErrors
 
-	async function handle(
+	async function handle<Result>(
 		ctx: {
-			runMutation: (target: never, args: never) => Promise<unknown>
+			runMutation: (
+				target: FunctionReference<'mutation', 'internal', WebhookDelivery, Result>,
+				args: WebhookDelivery,
+			) => Promise<Result>
 		},
 		request: Request,
-		target: unknown,
+		target: FunctionReference<'mutation', 'internal', WebhookDelivery, Result>,
 	): Promise<Response> {
 		const raw = await request.text()
 		let verified = false
@@ -111,13 +103,15 @@ export function createWebhookBoundary(config: WebhookBoundaryConfig) {
 			})
 		}
 		const key = await config.eventKey(raw, request)
-		await ctx.runMutation(target as never, {
+		await ctx.runMutation(target, {
 			eventKey: key,
 			payload: raw,
 			source: config.source ?? 'unknown',
-		} as never)
+		})
 		return new Response(null, { status: 200 })
 	}
 
 	return { handle }
 }
+
+export type WebhookDelivery = { eventKey: string; payload: string; source: string }

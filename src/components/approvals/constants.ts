@@ -8,20 +8,9 @@ export const APPROVAL_RUN_STATES = [
 
 export const APPROVAL_DECISIONS = ['approved', 'rejected'] as const
 
-export const APPROVAL_EXECUTION_STATES = [
-	'inProgress',
-	'completed',
-	'canceled',
-	'failed',
-] as const
+export const APPROVAL_EXECUTION_STATES = ['inProgress', 'completed', 'canceled', 'failed'] as const
 
-export const APPROVAL_STEP_KINDS = [
-	'mutation',
-	'action',
-	'notify',
-	'decision',
-	'branch',
-] as const
+export const APPROVAL_STEP_KINDS = ['mutation', 'action', 'notify', 'decision', 'branch'] as const
 
 export const APPROVAL_QUORUM_KINDS = ['count'] as const
 
@@ -33,10 +22,8 @@ export const APPROVAL_DESCRIPTOR_SCHEMA_VERSION = 1 as const
 export const APPROVAL_COMPONENT_SCHEMA_VERSION = 1 as const
 
 /** Indexes required by approval evidence reads and decision writes. */
-export const APPROVAL_DECISION_HISTORY_INDEX =
-	'by_runId_and_decidedAt' as const
-export const APPROVAL_ACTOR_DECISION_INDEX =
-	'by_runId_and_stepKey_and_actor_actorRef' as const
+export const APPROVAL_DECISION_HISTORY_INDEX = 'by_runId_and_decidedAt' as const
+export const APPROVAL_ACTOR_DECISION_INDEX = 'by_runId_and_stepKey_and_actor_actorRef' as const
 export const APPROVAL_REQUIRED_DECISION_INDEXES = [
 	APPROVAL_DECISION_HISTORY_INDEX,
 	APPROVAL_ACTOR_DECISION_INDEX,

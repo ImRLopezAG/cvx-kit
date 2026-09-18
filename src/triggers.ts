@@ -1,12 +1,6 @@
-import {
-	Triggers,
-	type Change,
-	type Trigger,
-} from 'convex-helpers/server/triggers'
-import type {
-	GenericDataModel,
-	TableNamesInDataModel,
-} from 'convex/server'
+import { z } from 'zod'
+import { Triggers, type Change, type Trigger } from 'convex-helpers/server/triggers'
+import type { GenericDataModel, TableNamesInDataModel } from 'convex/server'
 
 export { Triggers }
 export type { Change, Trigger }
@@ -17,9 +11,7 @@ export type { Change, Trigger }
  * systemMutation runs writes through it — trigger enforcement becomes
  * structural, not a convention.
  */
-export function createTriggers<
-	DataModel extends GenericDataModel,
->(): Triggers<DataModel> {
+export function createTriggers<DataModel extends GenericDataModel>(): Triggers<DataModel> {
 	return new Triggers<DataModel>()
 }
 
@@ -68,18 +60,15 @@ export function tenantOwnership<DataModel extends GenericDataModel>(
 	for (const table of tables) {
 		triggers.register(table, async (_ctx, change) => {
 			if (change.operation === 'insert') {
-				const document = change.newDoc as { tenant?: unknown }
-				if (
-					typeof document.tenant !== 'string' ||
-					document.tenant.length === 0
-				) {
+				const ownership = tenantDocument.safeParse(change.newDoc)
+				if (!ownership.success) {
 					throw new Error(`${table} rows require a tenant`)
 				}
 				return
 			}
 			if (change.operation === 'update') {
-				const previous = change.oldDoc as { tenant?: unknown }
-				const current = change.newDoc as { tenant?: unknown }
+				const previous = change.oldDoc
+				const current = change.newDoc
 				if (previous.tenant !== current.tenant) {
 					throw new Error(`${table} tenant ownership cannot be reassigned`)
 				}
@@ -103,8 +92,9 @@ export function timestamps<DataModel extends GenericDataModel>(
 			if (change.operation === 'delete') return
 			const now = Date.now()
 			if (change.operation === 'insert') {
-				const document = change.newDoc as { createdAt?: number }
+				const document = change.newDoc
 				if (document.createdAt === undefined) {
+					// SAFETY: registration requires zod-table lifecycle fields; Convex validates this numeric timestamp patch.
 					await ctx.innerDb.patch(change.id, {
 						createdAt: now,
 						updatedAt: now,
@@ -112,13 +102,16 @@ export function timestamps<DataModel extends GenericDataModel>(
 				}
 				return
 			}
-			const previous = change.oldDoc as { updatedAt?: number }
-			const current = change.newDoc as { updatedAt?: number }
+			const previous = change.oldDoc
+			const current = change.newDoc
 			// A write that already moved updatedAt (including our own patch)
 			// is left alone — this is the recursion guard.
 			if (current.updatedAt === previous.updatedAt) {
+				// SAFETY: registration requires zod-table lifecycle fields; Convex validates this numeric timestamp patch.
 				await ctx.innerDb.patch(change.id, { updatedAt: now } as never)
 			}
 		})
 	}
 }
+
+const tenantDocument = z.object({ tenant: z.string().min(1) })

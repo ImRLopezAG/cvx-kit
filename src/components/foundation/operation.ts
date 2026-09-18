@@ -35,13 +35,8 @@ type MiddlewareInput<Context, Input, Output, Extension> = {
 		? (options?: { context?: Extension }) => Promise<Output>
 		: (options: { context: Extension }) => Promise<Output>
 }
-type LocalMiddleware<C, I, O, E> = (
-	input: MiddlewareInput<C, I, O, E>,
-) => Promise<O>
-type AuditFor<Aggregate extends string> = Omit<
-	AuditEntryInput,
-	'classification' | 'aggregate'
-> & {
+type LocalMiddleware<C, I, O, E> = (input: MiddlewareInput<C, I, O, E>) => Promise<O>
+type AuditFor<Aggregate extends string> = Omit<AuditEntryInput, 'classification' | 'aggregate'> & {
 	aggregate: { type: Aggregate; id: string }
 }
 export type TypedOperation<
@@ -63,10 +58,7 @@ export type TypedOperation<
 	/** Validates stored outputs when result transforms accept a different input shape. */
 	readonly replayResult?: Parseable<Parsed<Output>>
 	readonly aggregates?: Aggregates
-	readonly guard?: (
-		context: Context & Extension,
-		command: Parsed<Input>,
-	) => MaybePromise<void>
+	readonly guard?: (context: Context & Extension, command: Parsed<Input>) => MaybePromise<void>
 	readonly audit: (
 		resolution: { command: Parsed<Input>; result: Parsed<Output> },
 		context: Context,
@@ -83,12 +75,7 @@ export type TypedOperation<
 			}
 		: {
 				readonly middleware: readonly [
-					LocalMiddleware<
-						Context,
-						Parsed<Input>,
-						SchemaInput<Output>,
-						Extension
-					>,
+					LocalMiddleware<Context, Parsed<Input>, SchemaInput<Output>, Extension>,
 					...LocalMiddleware<
 						Context & Extension,
 						Parsed<Input>,
@@ -114,10 +101,7 @@ type StoredOperation<
 	Output extends Parseable<unknown>,
 	Aggregates extends readonly string[],
 	Extension,
-> = Omit<
-	TypedOperation<Context, Input, Output, Aggregates, Extension>,
-	'middleware'
-> &
+> = Omit<TypedOperation<Context, Input, Output, Aggregates, Extension>, 'middleware'> &
 	Pick<AuditedOperation, 'middleware'>
 
 /** Binds host context once; each operation infers its own parsed schemas. */
@@ -131,40 +115,27 @@ export function operationFactory<
 			const Output extends Parseable<unknown>,
 			const Aggregates extends readonly string[] = readonly string[],
 		>(
-			definition: TypedOperation<
-				Context,
-				Input,
-				Output,
-				Aggregates,
-				Extension
-			>,
+			definition: TypedOperation<Context, Input, Output, Aggregates, Extension>,
 		): StoredOperation<Context, Input, Output, Aggregates, Extension> {
-			// The kernel selects this definition and parses its input before
+			// SAFETY: the kernel selects this definition and parses its input before
 			// invoking the heterogeneous middleware registry. Erase only that
 			// storage seam; callbacks were checked against these schemas above.
-			return definition as StoredOperation<
-				Context,
-				Input,
-				Output,
-				Aggregates,
-				Extension
-			>
+			return definition as StoredOperation<Context, Input, Output, Aggregates, Extension>
 		},
 		registryMiddleware<const Operations extends AuditedRegistry>(
-			operations: Operations & { readonly [Key in keyof Operations]: OperationHostContext<Context> },
+			operations: Operations & {
+				readonly [Key in keyof Operations]: OperationHostContext<Context>
+			},
 			middleware: (
 				input: RegistryInput<Context, Operations>,
-			) => Promise<unknown>,
+			) => Promise<CommandHandlerResult<Operations, Extract<keyof Operations, string>>>,
 		): AnyCommandMiddleware {
 			function ownsDefinition(
 				input: Parameters<AnyCommandMiddleware>[0],
-			): input is Parameters<AnyCommandMiddleware>[0] &
-				RegistryInput<Context, Operations> {
+			): input is Parameters<AnyCommandMiddleware>[0] & RegistryInput<Context, Operations> {
 				return (
-					Object.prototype.hasOwnProperty.call(
-						operations,
-						input.operation,
-					) && operations[input.operation] === input.definition
+					Object.prototype.hasOwnProperty.call(operations, input.operation) &&
+					operations[input.operation] === input.definition
 				)
 			}
 			return (input) => {
@@ -180,9 +151,7 @@ export function operationFactory<
 class CommandMiddlewareRegistryError extends Error {
 	readonly code = 'COMMAND_MIDDLEWARE_REGISTRY_MISMATCH'
 	constructor(operation: string) {
-		super(
-			`Typed middleware does not own the definition of operation "${operation}"`,
-		)
+		super(`Typed middleware does not own the definition of operation "${operation}"`)
 		this.name = 'CommandMiddlewareRegistryError'
 	}
 }

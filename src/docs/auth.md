@@ -12,30 +12,52 @@ host. The kit provides the structure; the app provides the policy.
 // convex/functions.ts (the single place constructors are built)
 import { createAuthFunctions, defaultRoleMap } from 'cvx-kit/auth'
 import {
-  action, internalAction, internalMutation, internalQuery, mutation, query,
+	action,
+	internalAction,
+	internalMutation,
+	internalQuery,
+	mutation,
+	query,
 } from './_generated/server'
 import type { DataModel } from './_generated/dataModel'
 import { triggers } from './triggers'
 import { authKit } from './auth'
 
 export const {
-  authQuery, authMutation, authAction,
-  roleQuery, roleMutation, roleAction,
-  adminQuery, adminMutation, adminAction,
-  systemQuery, systemMutation, systemAction,
-  include, authenticatedUser,
+	authQuery,
+	authMutation,
+	authAction,
+	roleQuery,
+	roleMutation,
+	roleAction,
+	adminQuery,
+	adminMutation,
+	adminAction,
+	systemQuery,
+	systemMutation,
+	systemAction,
+	include,
+	authenticatedUser,
 } = createAuthFunctions<DataModel>({
-  query, mutation, action, internalQuery, internalMutation, internalAction,
-  getAuthUser: (ctx) => authKit.getAuthUser(ctx),
-  mapRole: defaultRoleMap,          // or your own vocabulary (see below)
-  adminRoles: ['admin'],
-  triggers,                          // every mutation write runs through wrapDB
-  verifyMembership: async ({ userId, organizationId }) => {
-    const memberships = await authKit.workos.userManagement
-      .listOrganizationMemberships({ organizationId, userId, statuses: ['active'] })
-    const m = memberships.data.find((c) => c.userId === userId)
-    return m ? { organizationId: m.organizationId, roleSlug: m.role.slug } : null
-  },
+	query,
+	mutation,
+	action,
+	internalQuery,
+	internalMutation,
+	internalAction,
+	getAuthUser: (ctx) => authKit.getAuthUser(ctx),
+	mapRole: defaultRoleMap, // or your own vocabulary (see below)
+	adminRoles: ['admin'],
+	triggers, // every mutation write runs through wrapDB
+	verifyMembership: async ({ userId, organizationId }) => {
+		const memberships = await authKit.workos.userManagement.listOrganizationMemberships({
+			organizationId,
+			userId,
+			statuses: ['active'],
+		})
+		const m = memberships.data.find((c) => c.userId === userId)
+		return m ? { organizationId: m.organizationId, roleSlug: m.role.slug } : null
+	},
 })
 ```
 
@@ -44,14 +66,14 @@ imports from `_generated/server` appear **only** in this file.
 
 ## The constructor families
 
-| Constructor | Visibility | Auth | Extra |
-|---|---|---|---|
-| `authQuery` / `authMutation` / `authAction` | public | any authenticated org member | actions live-verify membership |
-| `roleQuery(...roles)` / `roleMutation(...)` / `roleAction(...)` | public | listed roles only | factory — call with your roles |
-| `adminQuery` / `adminMutation` / `adminAction` | public | `config.adminRoles` | pre-built `role*(...adminRoles)` |
-| `systemQuery` | internal | none (trusted caller) | include-equipped, RLS-unwrapped |
-| `systemMutation` | internal | none (trusted caller) | still trigger-wrapped |
-| `systemAction` | internal | none | plain internal action |
+| Constructor                                                     | Visibility | Auth                         | Extra                            |
+| --------------------------------------------------------------- | ---------- | ---------------------------- | -------------------------------- |
+| `authQuery` / `authMutation` / `authAction`                     | public     | any authenticated org member | actions live-verify membership   |
+| `roleQuery(...roles)` / `roleMutation(...)` / `roleAction(...)` | public     | listed roles only            | factory — call with your roles   |
+| `adminQuery` / `adminMutation` / `adminAction`                  | public     | `config.adminRoles`          | pre-built `role*(...adminRoles)` |
+| `systemQuery`                                                   | internal   | none (trusted caller)        | include-equipped, RLS-unwrapped  |
+| `systemMutation`                                                | internal   | none (trusted caller)        | still trigger-wrapped            |
+| `systemAction`                                                  | internal   | none                         | plain internal action            |
 
 All are `zCustom*` constructors from convex-helpers, so `args` and `returns`
 take zod schemas directly and compose with `zodTable` masks.
@@ -164,14 +186,16 @@ rejects limits outside `1..maxRows` (default 100, configurable via
 
 ```ts
 export const list = authQuery({
-  args: { ownerId: zid('users').optional(), limit: z.number() },
-  returns: z.array(documents.publicDto),
-  handler: (ctx, args) =>
-    ctx.include(ctx.db.query('documents'))
-      .when(args.ownerId, (q, ownerId) =>
-        q.withIndex('by_owner', (ix) => ix.eq('ownerId', ownerId)))
-      .otherwise((q) => q.withIndex('by_owner'))
-      .execute(args.limit, (rows) => rows.map(documents.toPublicDto)),
+	args: { ownerId: zid('users').optional(), limit: z.number() },
+	returns: z.array(documents.publicDto),
+	handler: (ctx, args) =>
+		ctx
+			.include(ctx.db.query('documents'))
+			.when(args.ownerId, (q, ownerId) =>
+				q.withIndex('by_owner', (ix) => ix.eq('ownerId', ownerId)),
+			)
+			.otherwise((q) => q.withIndex('by_owner'))
+			.execute(args.limit, (rows) => rows.map(documents.toPublicDto)),
 })
 ```
 

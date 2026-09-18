@@ -22,12 +22,8 @@ describe('tenancy security on the real Convex runtime', () => {
 		await t.withIdentity(orgOneOwner).mutation(api.create, { name: 'One' })
 		await t.withIdentity(orgTwoOwner).mutation(api.create, { name: 'Two' })
 
-		expect(await t.withIdentity(orgOneOwner).query(api.listAll, {})).toEqual([
-			{ name: 'One' },
-		])
-		expect(await t.withIdentity(orgTwoOwner).query(api.listAll, {})).toEqual([
-			{ name: 'Two' },
-		])
+		expect(await t.withIdentity(orgOneOwner).query(api.listAll, {})).toEqual([{ name: 'One' }])
+		expect(await t.withIdentity(orgTwoOwner).query(api.listAll, {})).toEqual([{ name: 'Two' }])
 	})
 
 	it('rejects inserts stamped with a foreign tenant', async () => {
@@ -47,17 +43,13 @@ describe('tenancy security on the real Convex runtime', () => {
 		).rejects.toThrow()
 		// Owner passes both tenant and role rules.
 		await t.withIdentity(orgOneOwner).mutation(api.rename, { name: 'yep' })
-		expect(await t.withIdentity(orgOneOwner).query(api.listAll, {})).toEqual([
-			{ name: 'yep' },
-		])
+		expect(await t.withIdentity(orgOneOwner).query(api.listAll, {})).toEqual([{ name: 'yep' }])
 	})
 
 	it('blocks tenant reassignment via the post-image trigger', async () => {
 		const t = harness()
 		await t.withIdentity(orgOneOwner).mutation(api.create, { name: 'One' })
-		await expect(
-			t.withIdentity(orgOneOwner).mutation(api.steal, {}),
-		).rejects.toThrow(/reassigned/)
+		await expect(t.withIdentity(orgOneOwner).mutation(api.steal, {})).rejects.toThrow(/reassigned/)
 	})
 
 	it('default-deny hides tables outside the tenancy registry', async () => {
@@ -77,12 +69,8 @@ describe('pagination bridge under tenancy', () => {
 	async function seed(t: ReturnType<typeof harness>) {
 		// Interleave tenants so RLS rejects rows mid-page on full scans.
 		for (let index = 0; index < 4; index++) {
-			await t
-				.withIdentity(orgOneOwner)
-				.mutation(api.create, { name: `one-${index}` })
-			await t
-				.withIdentity(orgTwoOwner)
-				.mutation(api.create, { name: `two-${index}` })
+			await t.withIdentity(orgOneOwner).mutation(api.create, { name: `one-${index}` })
+			await t.withIdentity(orgTwoOwner).mutation(api.create, { name: `two-${index}` })
 		}
 	}
 
@@ -94,11 +82,7 @@ describe('pagination bridge under tenancy', () => {
 			numItems: 3,
 			cursor: null,
 		})
-		expect(first.page.map((p: { name: string }) => p.name)).toEqual([
-			'one-0',
-			'one-1',
-			'one-2',
-		])
+		expect(first.page.map((p: { name: string }) => p.name)).toEqual(['one-0', 'one-1', 'one-2'])
 		expect(first.isDone).toBe(false)
 		const second = await asOne.query(api.listPage, {
 			numItems: 3,
@@ -134,9 +118,7 @@ describe('pagination bridge under tenancy', () => {
 	it('rejects page sizes above the bound', async () => {
 		const t = harness()
 		await expect(
-			t
-				.withIdentity(orgOneOwner)
-				.query(api.listPage, { numItems: 101, cursor: null }),
+			t.withIdentity(orgOneOwner).query(api.listPage, { numItems: 101, cursor: null }),
 		).rejects.toThrow(/INVALID_REQUEST_BOUNDARY|1 to 100/)
 	})
 })

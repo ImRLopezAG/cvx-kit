@@ -15,18 +15,21 @@ const packedFiles = (() => {
 		env,
 	})
 	const result = JSON.parse(output)
-	const pack = Array.isArray(result)
-		? result[0]
-		: result.files
-			? result
-			: Object.values(result)[0]
+	const pack = Array.isArray(result) ? result[0] : result.files ? result : Object.values(result)[0]
 	if (!pack?.files) throw new Error('npm pack returned no package manifest')
 	return pack.files.map((file) => file.path)
 })()
 
 describe('packed Convex components', () => {
 	it('excludes internal planning and reproduction artifacts', () => {
-		expect(packedFiles.filter(file => /^docs\/(explain|ideation|plans|reproductions)\//.test(file))).toEqual([])
+		expect(
+			packedFiles.filter((file) => /^docs\/(explain|ideation|plans|reproductions)\//.test(file)),
+		).toEqual([])
+	})
+	it('ships the compiled plugin and types without repository tooling', () => {
+		expect(packedFiles).toContain('dist/oxlint.mjs')
+		expect(packedFiles).toContain('dist/oxlint.d.mts')
+		expect(packedFiles.filter((file) => file.startsWith('tools/'))).toEqual([])
 	})
 	it.each(['approvals', 'foundation'])(
 		'publishes one discoverable schema module for %s',
@@ -51,14 +54,7 @@ describe('packed Convex components', () => {
 		'keeps generated data-model types aligned with the %s schema filename',
 		(component) => {
 			const declaration = readFileSync(
-				join(
-					process.cwd(),
-					'dist',
-					'components',
-					component,
-					'_generated',
-					'dataModel.d.mts',
-				),
+				join(process.cwd(), 'dist', 'components', component, '_generated', 'dataModel.d.mts'),
 				'utf8',
 			)
 			expect(declaration).toContain('../schema.js')
@@ -68,13 +64,7 @@ describe('packed Convex components', () => {
 
 	it('rewrites runtime imports to the discoverable approvals schema', () => {
 		const requests = readFileSync(
-			join(
-				process.cwd(),
-				'dist',
-				'components',
-				'approvals',
-				'requests.mjs',
-			),
+			join(process.cwd(), 'dist', 'components', 'approvals', 'requests.mjs'),
 			'utf8',
 		)
 		expect(requests).toContain('./schema.js')

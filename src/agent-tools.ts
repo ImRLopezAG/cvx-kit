@@ -8,11 +8,11 @@ import { z } from 'zod'
  * adaptable to ai-sdk tool(). The kit imports neither framework — checked
  * against registry snapshots on 2026-08-14; re-verify at install time.
  */
-export type AgentToolRecord = {
+export type AgentToolRecord<Result = unknown, Context = never, Input = never> = {
 	name: string
 	description: string
 	args: z.ZodType
-	handler: (ctx: never, input: never) => Promise<unknown>
+	handler: (ctx: Context, input: Input) => Promise<Result>
 }
 
 type ToolTable = {
@@ -24,21 +24,19 @@ type ToolTable = {
 	}
 }
 
-type ToolHandler = (ctx: never, input: never) => Promise<unknown>
+type ToolHandler<Result> = (ctx: never, input: never) => Promise<Result>
 
-export type AgentToolHandlers = {
+export type AgentToolHandlers<Result = unknown> = {
 	/** Mutations: route through command executors — agents get audited commands. */
-	create?: ToolHandler
-	update?: ToolHandler
-	archive?: ToolHandler
+	create?: ToolHandler<Result>
+	update?: ToolHandler<Result>
+	archive?: ToolHandler<Result>
 	/** Reads: caller-supplied query handlers (reads do not route through commands). */
-	get?: ToolHandler
-	list?: ToolHandler
+	get?: ToolHandler<Result>
+	list?: ToolHandler<Result>
 }
 
-const listArgs = z
-	.object({ paginationOpts: convexToZod(paginationOptsValidator) })
-	.strict()
+const listArgs = z.object({ paginationOpts: convexToZod(paginationOptsValidator) }).strict()
 
 /**
  * Emits agent tool definitions from the existing table tool masks: args are
@@ -47,11 +45,11 @@ const listArgs = z
  * are emitted. Wire mutation handlers to createCrudCommands executors (or
  * your own) so every agent action is an audited command.
  */
-export function createAgentTools(
-	table: ToolTable,
-	handlers: AgentToolHandlers,
+export function createAgentTools<Table extends ToolTable, Handlers extends AgentToolHandlers>(
+	table: Table,
+	handlers: Handlers,
 	options?: { descriptions?: Partial<Record<keyof AgentToolHandlers, string>> },
-): Record<string, AgentToolRecord> {
+) {
 	const name = table.tableName
 	const masks: Record<keyof AgentToolHandlers, z.ZodType> = {
 		create: table.tools.insert,
@@ -68,7 +66,7 @@ export function createAgentTools(
 		list: `List ${name} records, paginated`,
 	}
 	const tools: Record<string, AgentToolRecord> = {}
-	for (const verb of Object.keys(masks) as (keyof AgentToolHandlers)[]) {
+	for (const verb of ['create', 'update', 'archive', 'get', 'list'] as const) {
 		const handler = handlers[verb]
 		if (!handler) continue
 		tools[`${name}_${verb}`] = {
@@ -78,5 +76,21 @@ export function createAgentTools(
 			handler,
 		}
 	}
-	return tools
+	// SAFETY: each emitted key combines this table name with a supplied verb; its handler and schema come from those same inputs.
+	return tools as AgentTools<Table, Handlers>
 }
+
+export type AgentTools<Table extends ToolTable, Handlers extends AgentToolHandlers> = Partial<{
+	[Verb in keyof Handlers & keyof AgentToolHandlers as `${Table['tableName']}_${Verb}`]: {
+		name: string
+		description: string
+		args: Verb extends 'create'
+			? Table['tools']['insert']
+			: Verb extends 'update'
+				? Table['tools']['update']
+				: Verb extends 'list'
+					? typeof listArgs
+					: Table['tools']['id']
+		handler: NonNullable<Handlers[Verb]>
+	}
+}>

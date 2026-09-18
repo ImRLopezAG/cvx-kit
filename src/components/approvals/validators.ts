@@ -25,11 +25,7 @@ export const approvalStepKind = z.enum(APPROVAL_STEP_KINDS)
 export const approvalCallbackKind = z.enum(APPROVAL_CALLBACK_KINDS)
 export const approvalQuorumKind = z.enum(APPROVAL_QUORUM_KINDS)
 
-export const approvalReference = z
-	.string()
-	.trim()
-	.min(1)
-	.max(MAX_APPROVAL_REFERENCE_LENGTH)
+export const approvalReference = z.string().trim().min(1).max(MAX_APPROVAL_REFERENCE_LENGTH)
 
 export const approvalName = z
 	.string()
@@ -38,11 +34,7 @@ export const approvalName = z
 	.max(MAX_APPROVAL_NAME_LENGTH)
 	.regex(/^[A-Za-z][A-Za-z0-9._-]*$/)
 
-export const approvalReason = z
-	.string()
-	.trim()
-	.min(1)
-	.max(MAX_APPROVAL_REASON_LENGTH)
+export const approvalReason = z.string().trim().min(1).max(MAX_APPROVAL_REASON_LENGTH)
 
 export const approvalMetadata = z
 	.record(
@@ -159,10 +151,7 @@ export const approvalDecisionStep = z
 	.object({
 		kind: z.literal('decision'),
 		key: approvalName,
-		decisions: z
-			.array(approvalDecision)
-			.min(1)
-			.max(MAX_APPROVAL_DECISIONS_PER_STEP),
+		decisions: z.array(approvalDecision).min(1).max(MAX_APPROVAL_DECISIONS_PER_STEP),
 		quorum: approvalQuorum,
 		makerChecker: z.boolean(),
 		expiresAfterMs: z.number().int().positive().optional(),
@@ -190,17 +179,12 @@ export const approvalWorkflowDescriptor = z
 		schemaVersion: z.literal(APPROVAL_DESCRIPTOR_SCHEMA_VERSION),
 		compatibilityKey: approvalName,
 		name: approvalName,
-		steps: z
-			.array(approvalWorkflowStep)
-			.min(1)
-			.max(MAX_APPROVAL_WORKFLOW_STEPS),
+		steps: z.array(approvalWorkflowStep).min(1).max(MAX_APPROVAL_WORKFLOW_STEPS),
 	})
 	.strict()
 	.superRefine((descriptor, context) => {
 		const keys = new Set<string>()
-		const stepsByKey = new Map(
-			descriptor.steps.map((step) => [step.key, step] as const),
-		)
+		const stepsByKey = new Map(descriptor.steps.map((step) => [step.key, step] as const))
 		const branchTargetOwners = new Map<string, number>()
 		for (const [index, step] of descriptor.steps.entries()) {
 			if (keys.has(step.key))
@@ -210,10 +194,7 @@ export const approvalWorkflowDescriptor = z
 					path: ['steps', index, 'key'],
 				})
 			keys.add(step.key)
-			if (
-				step.kind === 'decision' &&
-				new Set(step.decisions).size !== step.decisions.length
-			)
+			if (step.kind === 'decision' && new Set(step.decisions).size !== step.decisions.length)
 				context.addIssue({
 					code: 'custom',
 					message: `Duplicate decision value in step: ${step.key}`,
@@ -230,9 +211,7 @@ export const approvalWorkflowDescriptor = z
 				})
 			for (const target of [step.approvedStepKey, step.rejectedStepKey]) {
 				const targetStep = stepsByKey.get(target)
-				const targetIndex = descriptor.steps.findIndex(
-					(candidate) => candidate.key === target,
-				)
+				const targetIndex = descriptor.steps.findIndex((candidate) => candidate.key === target)
 				if (!targetStep)
 					context.addIssue({
 						code: 'custom',
@@ -255,10 +234,7 @@ export const approvalWorkflowDescriptor = z
 						message: `Branch target must be declared after its branch: ${target}`,
 						path: ['steps', index],
 					})
-				branchTargetOwners.set(
-					target,
-					(branchTargetOwners.get(target) ?? 0) + 1,
-				)
+				branchTargetOwners.set(target, (branchTargetOwners.get(target) ?? 0) + 1)
 			}
 		}
 		for (const [target, owners] of branchTargetOwners) {
@@ -301,11 +277,7 @@ export const approvalDecisionDocument = z
 	})
 	.strict()
 
-export type ApprovalWorkflowDescriptor = z.infer<
-	typeof approvalWorkflowDescriptor
->
+export type ApprovalWorkflowDescriptor = z.infer<typeof approvalWorkflowDescriptor>
 export type ApprovalActor = z.infer<typeof approvalActor>
 export type ApprovalMetadata = z.infer<typeof approvalMetadata>
-export type ApprovalCallbackInput = Readonly<
-	z.infer<typeof approvalCallbackInput>
->
+export type ApprovalCallbackInput = Readonly<z.infer<typeof approvalCallbackInput>>

@@ -6,30 +6,21 @@
  * registers the COMPILED component modules from dist, so dist is the only
  * code the package ships.
  */
+import type { TestConvex } from 'convex-test'
 import type { GenericSchema, SchemaDefinition } from 'convex/server'
 import approvalsSchema from '../dist/components/approvals/schema.js'
 import foundationSchema from '../dist/components/foundation/schema.js'
 
-const foundationModules = import.meta.glob(
-	'../dist/components/foundation/**/*.mjs',
-)
-const approvalsModules = import.meta.glob(
-	'../dist/components/approvals/**/*.mjs',
-)
+const foundationModules = import.meta.glob('../dist/components/foundation/**/*.mjs')
+const approvalsModules = import.meta.glob('../dist/components/approvals/**/*.mjs')
 
-type RegistersComponents = {
-	registerComponent: (
-		name: string,
-		schema: SchemaDefinition<GenericSchema, boolean>,
-		modules: Record<string, () => Promise<unknown>>,
-	) => void
-}
+type RegistersComponents = Pick<
+	TestConvex<SchemaDefinition<GenericSchema, boolean>>,
+	'registerComponent'
+>
 
 /** Registers the foundation component under its default install name. */
-export function registerFoundation(
-	t: RegistersComponents,
-	name = 'foundation',
-) {
+export function registerFoundation(t: RegistersComponents, name = 'foundation') {
 	t.registerComponent(name, foundationSchema, foundationModules)
 }
 

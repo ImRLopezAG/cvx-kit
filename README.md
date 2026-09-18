@@ -57,16 +57,16 @@ One zod shape per entity, masked into every boundary it crosses:
 import { zodTable } from 'cvx-kit/zod-table'
 
 export const documents = zodTable(
-  'documents',
-  (id) => ({
-    title: z.string(),
-    ownerId: id('users'),
-    secretNote: z.string(),
-  }),
-  {
-    commandFields: ['title'],           // what a command may say
-    publicFields: ['title', 'ownerId'], // the DTO allowlist
-  },
+	'documents',
+	(id) => ({
+		title: z.string(),
+		ownerId: id('users'),
+		secretNote: z.string(),
+	}),
+	{
+		commandFields: ['title'], // what a command may say
+		publicFields: ['title', 'ownerId'], // the DTO allowlist
+	},
 )
 // documents.table → defineTable(...) for schema.ts
 // documents.toPublicDto(row) → projects AND re-parses (runtime redaction)
@@ -90,20 +90,35 @@ policy — nothing in the kit imports your app's singletons:
 import { createAuthFunctions } from 'cvx-kit/auth'
 import { action, internalAction, internalMutation, mutation, query } from './_generated/server'
 
-export const { authQuery, authMutation, authAction, adminQuery, adminMutation,
-  adminAction, systemMutation, systemAction, include } =
-  createAuthFunctions<DataModel>({
-    query, mutation, action, internalMutation, internalAction,
-    getAuthUser: (ctx) => authKit.getAuthUser(ctx),
-    verifyMembership: async ({ userId, organizationId }) => {
-      const memberships = await authKit.workos.userManagement
-        .listOrganizationMemberships({ organizationId, userId, statuses: ['active'] })
-      const m = memberships.data.find((c) => c.userId === userId)
-      return m ? { organizationId: m.organizationId, roleSlug: m.role.slug } : null
-    },
-    // resolveOrganization: async ({ ctx, user }) => { /* org+role from app tables */ },
-    wrapDB: (ctx) => triggers.wrapDB(ctx),
-  })
+export const {
+	authQuery,
+	authMutation,
+	authAction,
+	adminQuery,
+	adminMutation,
+	adminAction,
+	systemMutation,
+	systemAction,
+	include,
+} = createAuthFunctions<DataModel>({
+	query,
+	mutation,
+	action,
+	internalMutation,
+	internalAction,
+	getAuthUser: (ctx) => authKit.getAuthUser(ctx),
+	verifyMembership: async ({ userId, organizationId }) => {
+		const memberships = await authKit.workos.userManagement.listOrganizationMemberships({
+			organizationId,
+			userId,
+			statuses: ['active'],
+		})
+		const m = memberships.data.find((c) => c.userId === userId)
+		return m ? { organizationId: m.organizationId, roleSlug: m.role.slug } : null
+	},
+	// resolveOrganization: async ({ ctx, user }) => { /* org+role from app tables */ },
+	wrapDB: (ctx) => triggers.wrapDB(ctx),
+})
 ```
 
 Actions re-verify membership live and fail closed; mutations get the trigger
@@ -171,6 +186,36 @@ app.use(approvals)
 ```
 
 ## Component authoring conventions
+
+The TypeScript Oxlint plugin ships as `cvx-kit/oxlint`. Load it in your
+`.oxlintrc.json`:
+
+```json
+{
+	"jsPlugins": [{ "name": "cvx", "specifier": "cvx-kit/oxlint" }],
+	"rules": {
+		"cvx/component-boundaries": "error",
+		"cvx/no-component-env": "error",
+		"cvx/schema-file-boundaries": "error",
+		"cvx/no-internal-reexports": ["error", { "entryPoints": ["src/index.ts"] }],
+		"cvx/public-api-first": "error",
+		"cvx/named-private-helpers": "error"
+	}
+}
+```
+
+With Vite+, put those fields under `lint` in `vite.config.ts`. Component
+rules target `src/components/<name>/`; set your public files in `entryPoints`
+(paths relative to the linter's working directory). To block imports back
+into your own package, configure `component-boundaries` with
+`["error", { "packageName": "your-package" }]`. The plugin exports its default
+plugin object, named `rules`, and the `RuleName` type. Verified with Oxlint
+1.79.0 and Vite+ 0.3.0.
+
+Repository checks and the enforced library rules are documented in
+[`tools/oxlint/README.md`](./tools/oxlint/README.md). Run `bun run lint` for
+anti-slop and architecture checks, `bun run test:lint` to test the custom
+rules, and `bun run check` for the full Vite+ lint and formatting check.
 
 This package follows the official Convex component template
 (`get-convex/templates/template-component`; see

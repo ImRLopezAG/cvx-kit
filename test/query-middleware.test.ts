@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { describe, expect, it } from 'vite-plus/test'
 
 import { Foundation } from '../src/components/foundation/client'
@@ -24,7 +25,7 @@ describe('Foundation Query middleware', () => {
 			defaults: { surface: 'reports' },
 			middleware: [
 				Query.middleware<Ctx>(async ({ metadata, next }) => {
-					calls.push(`kernel:${(metadata as { surface: string }).surface}`)
+					calls.push(`kernel:${z.object({ surface: z.string() }).parse(metadata).surface}`)
 					return next({ context: { traceId: 't_9' } })
 				}),
 			],

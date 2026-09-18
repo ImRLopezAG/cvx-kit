@@ -1,3 +1,4 @@
+import type { ApprovalCallbackInput } from './validators'
 import { WorkflowManager, type WorkflowCtx } from '@convex-dev/workflow'
 import { v } from 'convex/values'
 
@@ -8,7 +9,6 @@ import {
 	approvalDecisionEventName,
 	callbackReference,
 	resolveWorkflowStepIndex,
-	type ApprovalCallbackInput,
 } from './workflow_steps'
 
 export const approvalWorkflow = new WorkflowManager(components.workflow)
@@ -29,9 +29,7 @@ export const run = approvalWorkflow.define({
 				throw new Error('Approval workflow linkage is incomplete')
 
 			const callbackInput = buildCallbackInput(run)
-			const stepKeys = run.workflow.steps.map(
-				(workflowStep) => workflowStep.key,
-			)
+			const stepKeys = run.workflow.steps.map((workflowStep) => workflowStep.key)
 			const branchTargets = new Set(
 				run.workflow.steps.flatMap((workflowStep) =>
 					workflowStep.kind === 'branch'
@@ -74,9 +72,7 @@ export const run = approvalWorkflow.define({
 							runId: run._id,
 							stepKey: workflowStep.key,
 							workflowId: step.workflowId,
-							...(workflowStep.expiresAfterMs === undefined
-								? {}
-								: { expiresAfterMs: workflowStep.expiresAfterMs }),
+							expiresAfterMs: workflowStep.expiresAfterMs,
 						},
 						{ name: `enter:${workflowStep.key}` },
 					)
@@ -104,27 +100,16 @@ export const run = approvalWorkflow.define({
 					lastDecision = event.outcome
 					terminalEvidence = event.terminalEvidence
 					lastDecisionStepKey = workflowStep.key
-					if (
-						lastDecision !== 'approved' &&
-						run.workflow.steps[index + 1]?.kind !== 'branch'
-					)
-						break
+					if (lastDecision !== 'approved' && run.workflow.steps[index + 1]?.kind !== 'branch') break
 					index += 1
 					continue
 				}
-				if (!lastDecision)
-					throw new Error('Branch requires a preceding decision step')
+				if (!lastDecision) throw new Error('Branch requires a preceding decision step')
 				const targetKey =
-					lastDecision === 'approved'
-						? workflowStep.approvedStepKey
-						: workflowStep.rejectedStepKey
+					lastDecision === 'approved' ? workflowStep.approvedStepKey : workflowStep.rejectedStepKey
 				const targetIndex = resolveWorkflowStepIndex(stepKeys, targetKey)
 				const target = run.workflow.steps[targetIndex]
-				if (
-					target.kind !== 'mutation' &&
-					target.kind !== 'action' &&
-					target.kind !== 'notify'
-				)
+				if (target.kind !== 'mutation' && target.kind !== 'action' && target.kind !== 'notify')
 					throw new Error('Approval branch target must be a callback step')
 				const evidence = await step.runQuery(
 					internal.decisions.listForWorkflow,
@@ -138,7 +123,7 @@ export const run = approvalWorkflow.define({
 						stepKey: lastDecisionStepKey ?? workflowStep.key,
 						outcome: lastDecision,
 						evidence,
-						...(terminalEvidence === undefined ? {} : { terminalEvidence }),
+						terminalEvidence: terminalEvidence,
 					},
 				})
 				failedStepKey = undefined
@@ -159,7 +144,7 @@ export const run = approvalWorkflow.define({
 				{
 					runId: input.runId,
 					outcome: 'failed',
-					...(failedStepKey === undefined ? {} : { failedStepKey }),
+					failedStepKey: failedStepKey,
 				},
 				{ name: 'recordExecutionFailed' },
 			)
@@ -179,7 +164,7 @@ function buildCallbackInput(run: Doc<'approvalRuns'>): ApprovalCallbackInput {
 		scopeRef: run.scopeRef,
 		resourceType: run.resourceType,
 		resourceRef: run.resourceRef,
-		...(run.metadata === undefined ? {} : { metadata: run.metadata }),
+		metadata: run.metadata,
 	}
 }
 
@@ -189,16 +174,13 @@ async function executeCallback(
 	input: ApprovalCallbackInput,
 ): Promise<void> {
 	if (workflowStep.callback.kind === 'mutation') {
-		await step.runMutation(
-			callbackReference<'mutation'>(workflowStep.callback.handle),
-			input,
-			{ name: workflowStep.key },
-		)
+		await step.runMutation(callbackReference<'mutation'>(workflowStep.callback.handle), input, {
+			name: workflowStep.key,
+		})
 		return
 	}
-	await step.runAction(
-		callbackReference<'action'>(workflowStep.callback.handle),
-		input,
-		{ name: workflowStep.key, retry: workflowStep.callback.retry },
-	)
+	await step.runAction(callbackReference<'action'>(workflowStep.callback.handle), input, {
+		name: workflowStep.key,
+		retry: workflowStep.callback.retry,
+	})
 }

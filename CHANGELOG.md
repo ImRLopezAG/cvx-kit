@@ -12,6 +12,26 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-18
+
+### Added
+
+- Publish the TypeScript Oxlint plugin as `cvx-kit/oxlint`, with six rules for
+  component isolation, environment access, schema placement, public facades,
+  API ordering, and named private helpers. Consumer entry points and package
+  self-import boundaries are configurable.
+- Enforce all 15 generic anti-slop rules in the repository and verify the
+  published plugin through fresh npm and Bun installations in CI.
+
+### Changed
+
+- Replace cast-heavy command, CRUD, tenancy, auth, webhook, and tool boundaries
+  with schema-derived types and validation. Preserve distinct agent-tool result
+  types and validate the emitted declarations in packed consumers.
+- Tighten TypeScript contracts for query middleware, include transforms, audit
+  metadata, and webhook targets. See `docs/upgrading.md` for migration details.
+- Format owned source, tests, scripts, and documentation consistently.
+
 ## [0.1.3] - 2026-09-06
 
 ### Fixed

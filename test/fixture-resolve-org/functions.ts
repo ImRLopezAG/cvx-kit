@@ -1,3 +1,5 @@
+import type schema from './schema'
+type FixtureDataModel = DataModelFromSchemaDefinition<typeof schema>
 import {
 	actionGeneric,
 	internalActionGeneric,
@@ -5,7 +7,7 @@ import {
 	internalQueryGeneric,
 	mutationGeneric,
 	queryGeneric,
-	type GenericDataModel,
+	type DataModelFromSchemaDefinition,
 } from 'convex/server'
 import { z } from 'zod'
 import { createAuthFunctions } from '../../src/auth'
@@ -29,28 +31,27 @@ type MembershipRow = {
  * a live WorkOS-style lookup). Keyed by userId. Calls are recorded so tests
  * can assert which organizationId the pipeline passed in.
  */
-const VERIFY_DIRECTORY: Record<
-	string,
-	{ organizationId: string; roleSlug: string } | undefined
-> = {
-	user_action: { organizationId: 'org_action', roleSlug: 'editor' },
-	user_claims_action: {
-		organizationId: 'org_membership_action',
-		roleSlug: 'editor',
-	},
-	user_verify: { organizationId: 'org_db_verify', roleSlug: 'editor' },
-	// Deliberate mismatch: hook resolves org_db_bad, directory says org_other.
-	user_verify_bad: { organizationId: 'org_other', roleSlug: 'editor' },
-	user_t1: { organizationId: 'org_t1', roleSlug: 'editor' },
-	user_t2: { organizationId: 'org_t2', roleSlug: 'editor' },
-	user_happy: { organizationId: 'org_happy', roleSlug: 'editor' },
-	user_override: { organizationId: 'org_db', roleSlug: 'editor' },
-	user_bypass: { organizationId: 'org_db_bypass', roleSlug: 'editor' },
-}
+const VERIFY_DIRECTORY = new Map(
+	Object.entries({
+		user_action: { organizationId: 'org_action', roleSlug: 'editor' },
+		user_claims_action: {
+			organizationId: 'org_membership_action',
+			roleSlug: 'editor',
+		},
+		user_verify: { organizationId: 'org_db_verify', roleSlug: 'editor' },
+		// Deliberate mismatch: hook resolves org_db_bad, directory says org_other.
+		user_verify_bad: { organizationId: 'org_other', roleSlug: 'editor' },
+		user_t1: { organizationId: 'org_t1', roleSlug: 'editor' },
+		user_t2: { organizationId: 'org_t2', roleSlug: 'editor' },
+		user_happy: { organizationId: 'org_happy', roleSlug: 'editor' },
+		user_override: { organizationId: 'org_db', roleSlug: 'editor' },
+		user_bypass: { organizationId: 'org_db_bypass', roleSlug: 'editor' },
+	}),
+)
 
 export const verifyCalls: { userId: string; organizationId: string }[] = []
 
-export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
+export const auth = createAuthFunctions<FixtureDataModel, FixtureRole>({
 	query: queryGeneric,
 	mutation: mutationGeneric,
 	action: actionGeneric,
@@ -62,8 +63,7 @@ export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
 		const identity = await ctx.auth.getUserIdentity()
 		return identity ? { id: identity.subject } : null
 	},
-	mapRole: (slug) =>
-		FIXTURE_ROLES.includes(slug as FixtureRole) ? (slug as FixtureRole) : null,
+	mapRole: (slug) => FIXTURE_ROLES.find((role) => role === slug) ?? null,
 	adminRoles: ['owner'],
 	// Resolves organization + role from the memberships table instead of
 	// claims. Actions have no ctx.db, so the hook narrows on its presence.
@@ -86,7 +86,7 @@ export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
 	},
 	verifyMembership: async (input) => {
 		verifyCalls.push({ ...input })
-		const entry = VERIFY_DIRECTORY[input.userId]
+		const entry = VERIFY_DIRECTORY.get(input.userId)
 		if (!entry) return null
 		return { organizationId: entry.organizationId, roleSlug: entry.roleSlug }
 	},
@@ -96,7 +96,7 @@ export const auth = createAuthFunctions<GenericDataModel, FixtureRole>({
 })
 
 // A second, hook-less config: proves existing claim-less behavior is unchanged.
-export const authNoHook = createAuthFunctions<GenericDataModel, FixtureRole>({
+export const authNoHook = createAuthFunctions<FixtureDataModel, FixtureRole>({
 	query: queryGeneric,
 	mutation: mutationGeneric,
 	action: actionGeneric,
@@ -107,8 +107,7 @@ export const authNoHook = createAuthFunctions<GenericDataModel, FixtureRole>({
 		const identity = await ctx.auth.getUserIdentity()
 		return identity ? { id: identity.subject } : null
 	},
-	mapRole: (slug) =>
-		FIXTURE_ROLES.includes(slug as FixtureRole) ? (slug as FixtureRole) : null,
+	mapRole: (slug) => FIXTURE_ROLES.find((role) => role === slug) ?? null,
 	adminRoles: ['owner'],
 })
 
@@ -127,7 +126,7 @@ export const seedMembership = auth.systemMutation({
 			organizationId: args.organizationId,
 			roleSlug: args.roleSlug,
 			active: args.active,
-		} as never)
+		})
 		return null
 	},
 })
@@ -141,7 +140,7 @@ export const membershipByUser = auth.systemQuery({
 			.withIndex('by_user', (q) => q.eq('userId', args.userId))
 			.first()
 		if (!row) return null
-		const membership = row as never as MembershipRow
+		const membership = row
 		return {
 			userId: membership.userId,
 			organizationId: membership.organizationId,
@@ -153,8 +152,7 @@ export const membershipByUser = auth.systemQuery({
 
 export const recordedVerifyCalls = auth.systemQuery({
 	args: { userId: z.string() },
-	handler: async (_ctx, args) =>
-		verifyCalls.filter((call) => call.userId === args.userId),
+	handler: async (_ctx, args) => verifyCalls.filter((call) => call.userId === args.userId),
 })
 
 // ── functions under test (hook-configured auth) ─────────────────────────────
@@ -181,7 +179,7 @@ export const createItem = auth.authMutation({
 			name: args.name,
 			ownerId: ctx.actor.userId,
 			tenant: ctx.tenant,
-		} as never)
+		})
 		return null
 	},
 })
@@ -190,7 +188,7 @@ export const listItems = auth.authQuery({
 	args: {},
 	handler: async (ctx) => {
 		const rows = await ctx.db.query('items').collect()
-		return rows.map((row) => (row as never as { name: string }).name)
+		return rows.map((row) => row.name)
 	},
 })
 

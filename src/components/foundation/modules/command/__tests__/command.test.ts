@@ -35,12 +35,7 @@ describe('Foundation Command', () => {
 		await expect(execute({}, { name: 'assignment-1' })).resolves.toEqual({
 			id: 'assignment-1',
 		})
-		expect(order).toEqual([
-			'parse-input',
-			'policy:create',
-			'handler',
-			'parse-output',
-		])
+		expect(order).toEqual(['parse-input', 'policy:create', 'handler', 'parse-output'])
 	})
 
 	it('rejects invalid input before the handler', async () => {
@@ -60,7 +55,8 @@ describe('Foundation Command', () => {
 		})
 
 		await expect(
-			execute({}, { name: 42 } as unknown as { name: string }),
+			// @ts-expect-error Deliberately send malformed input to exercise runtime validation.
+			execute({}, { name: 42 }),
 		).rejects.toThrow()
 		expect(ran).toBe(false)
 	})
@@ -77,7 +73,8 @@ describe('Foundation Command', () => {
 		})
 		const execute = command.exec({
 			operation: 'create',
-			handler: () => ({ id: 42 }) as unknown as { id: string },
+			// @ts-expect-error Deliberately violate the handler output contract.
+			handler: () => ({ id: 42 }),
 		})
 
 		await expect(execute({}, { name: 'assignment-1' })).rejects.toThrow()
@@ -95,7 +92,8 @@ describe('Foundation Command', () => {
 		})
 		const execute = command.exec({
 			dispatcher: z.object({ operation: z.string() }),
-			select: (input) => input.operation as 'create',
+			// @ts-expect-error Exercise an unregistered selector result from an untyped caller.
+			select: (input) => input.operation,
 			handler: (_context, input) => input.operation,
 		})
 

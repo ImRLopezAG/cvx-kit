@@ -99,16 +99,16 @@ another file's function to shorten an import.
 
 ### Root files
 
-| File | Contains | Never contains |
-|---|---|---|
-| `convex.config.ts` | `defineApp()`, one `app.use(...)` per component, `defineApp({ env })` declarations, `export default app` | anything else |
-| `schema.ts` | `defineSchema(domainTables)` | table definitions, validators |
-| `functions.ts` | the single `createAuthFunctions<DataModel>()` call and its exported constructors | handlers, business policy beyond the injected config |
-| `triggers.ts` | `createTriggers()`, `timestamps`/`appendOnly`/`noDelete` registrations, calls to per-entity `register<Entity>Triggers` | trigger *logic* for a specific entity (that lives in the entity) |
-| `foundation.ts` | the single `new Foundation(...)`, destructured exports | command definitions |
-| `<component>.ts` | `new <Client>(components.<name>)` + minimal admin plumbing | workflow/business definitions |
-| `http.ts` | routes: verify signature → parse payload → delegate to a domain function | webhook business logic |
-| `crons.ts` | `cronJobs()` declarations targeting `internal.domain.<entity>...` | handler logic |
+| File               | Contains                                                                                                               | Never contains                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `convex.config.ts` | `defineApp()`, one `app.use(...)` per component, `defineApp({ env })` declarations, `export default app`               | anything else                                                    |
+| `schema.ts`        | `defineSchema(domainTables)`                                                                                           | table definitions, validators                                    |
+| `functions.ts`     | the single `createAuthFunctions<DataModel>()` call and its exported constructors                                       | handlers, business policy beyond the injected config             |
+| `triggers.ts`      | `createTriggers()`, `timestamps`/`appendOnly`/`noDelete` registrations, calls to per-entity `register<Entity>Triggers` | trigger _logic_ for a specific entity (that lives in the entity) |
+| `foundation.ts`    | the single `new Foundation(...)`, destructured exports                                                                 | command definitions                                              |
+| `<component>.ts`   | `new <Client>(components.<name>)` + minimal admin plumbing                                                             | workflow/business definitions                                    |
+| `http.ts`          | routes: verify signature → parse payload → delegate to a domain function                                               | webhook business logic                                           |
+| `crons.ts`         | `cronJobs()` declarations targeting `internal.domain.<entity>...`                                                      | handler logic                                                    |
 
 ### `api/<entity>.ts` — the adapter file
 
@@ -176,7 +176,7 @@ compile. Numeric limits and durations the entity owns also live here.
 ### `domain/<entity>/commands.ts` — every state change
 
 1. The frozen operation registry: `Command.operation({ command, result,
-   classification, audit })` per operation, keys `'<entity>.<verb>'`.
+classification, audit })` per operation, keys `'<entity>.<verb>'`.
 2. One `new Command<Ctx, typeof operations>(operations)`.
 3. Exported executors: `export const execute<Verb><Entity> = commands.exec(...)`.
 4. Private handler helpers at the bottom.
@@ -197,7 +197,7 @@ Handlers call rules; rules never call handlers.
 
 ### `domain/<entity>/shared.ts` — entity-private helpers
 
-Code shared by two or more files *of this entity*. If a second entity needs
+Code shared by two or more files _of this entity_. If a second entity needs
 it, it moves to `domain/shared/` — never a sibling import.
 
 ### `domain/<entity>/actions.ts` — external side effects
@@ -234,25 +234,25 @@ ground: code with one consumer moves back to that consumer.
 
 ## 3. Naming grammar
 
-| Thing | Convention | Example shape |
-|---|---|---|
-| Entity directory | plural camelCase, matches table name | `domain/<entities>/` |
-| Table | plural camelCase | `<entities>` |
-| Fields | camelCase; foreign keys `<other>Id`; timestamps only via the kit | `ownerId`, `archivedAt` |
-| Index | `by_<field>` / `by_<field>_and_<field>`, declaration order, nested paths flattened with `_` | `by_ownerId_and_state_status` |
-| Command operation | `<entity>.<verb>` lowercase dotted; must match `/^[A-Za-z][A-Za-z0-9_.-]{0,159}$/` | `<entities>.approve` |
-| Error code | `UPPER_SNAKE`, matching `/^[A-Z][A-Z0-9_]{0,95}$/`, defined in one owner | `INVALID_REQUEST_BOUNDARY` |
-| Vocabulary tuple | `UPPER_SNAKE_CASE` `as const`; derived type PascalCase singular | `<ENTITY>_STATES` / `<Entity>State` |
-| Domain executor | `execute<Verb><Entity>` | `executeApprove<Entity>` |
-| Rule predicate | `can<Verb>` / `is<Condition>` | `canApprove`, `isTransitionLegal` |
-| Trigger registration | `register<Entity>Triggers(triggers)` | exported from the entity, called in root `triggers.ts` |
-| Internal-callback file | `<purpose>_functions.ts`, sibling of `<purpose>.ts` | `approval_functions.ts` |
-| zodTable export | camelCase plural, same as table | `export const <entities> = zodTable(...)` |
-| DTO schema | `<entity><Purpose>Dto` | `<entity>SummaryDto` |
-| Zod schema value | camelCase noun | `commandInput`, `publicDto` |
-| Type | PascalCase; no `I`/`T` prefixes | `<Entity>State` |
-| Test file | `<subject>.test.ts` in `__tests__/` | `commands.test.ts` |
-| Public function path | `api/<entity>:<fn>` — clients never call a root path | — |
+| Thing                  | Convention                                                                                  | Example shape                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Entity directory       | plural camelCase, matches table name                                                        | `domain/<entities>/`                                   |
+| Table                  | plural camelCase                                                                            | `<entities>`                                           |
+| Fields                 | camelCase; foreign keys `<other>Id`; timestamps only via the kit                            | `ownerId`, `archivedAt`                                |
+| Index                  | `by_<field>` / `by_<field>_and_<field>`, declaration order, nested paths flattened with `_` | `by_ownerId_and_state_status`                          |
+| Command operation      | `<entity>.<verb>` lowercase dotted; must match `/^[A-Za-z][A-Za-z0-9_.-]{0,159}$/`          | `<entities>.approve`                                   |
+| Error code             | `UPPER_SNAKE`, matching `/^[A-Z][A-Z0-9_]{0,95}$/`, defined in one owner                    | `INVALID_REQUEST_BOUNDARY`                             |
+| Vocabulary tuple       | `UPPER_SNAKE_CASE` `as const`; derived type PascalCase singular                             | `<ENTITY>_STATES` / `<Entity>State`                    |
+| Domain executor        | `execute<Verb><Entity>`                                                                     | `executeApprove<Entity>`                               |
+| Rule predicate         | `can<Verb>` / `is<Condition>`                                                               | `canApprove`, `isTransitionLegal`                      |
+| Trigger registration   | `register<Entity>Triggers(triggers)`                                                        | exported from the entity, called in root `triggers.ts` |
+| Internal-callback file | `<purpose>_functions.ts`, sibling of `<purpose>.ts`                                         | `approval_functions.ts`                                |
+| zodTable export        | camelCase plural, same as table                                                             | `export const <entities> = zodTable(...)`              |
+| DTO schema             | `<entity><Purpose>Dto`                                                                      | `<entity>SummaryDto`                                   |
+| Zod schema value       | camelCase noun                                                                              | `commandInput`, `publicDto`                            |
+| Type                   | PascalCase; no `I`/`T` prefixes                                                             | `<Entity>State`                                        |
+| Test file              | `<subject>.test.ts` in `__tests__/`                                                         | `commands.test.ts`                                     |
+| Public function path   | `api/<entity>:<fn>` — clients never call a root path                                        | —                                                      |
 
 The two regexes are enforced at runtime: observability silently drops events
 whose operation/classification/errorCode don't match. The rest is enforced by
@@ -264,14 +264,14 @@ the architecture tests — a naming rule without a test is a wish.
 
 Allowed, per zone (anything not listed is forbidden):
 
-| From | May import |
-|---|---|
-| `api/<entity>.ts` | `functions.ts`, `domain/<entity>/*`, `domain/shared/*`, zod |
-| `domain/<entity>/*` | `functions.ts`, `foundation.ts`, component facades, `domain/shared/*`, own directory, generated `internal`/`api` (references only), kit modules |
-| `domain/shared/*` | kit modules, vendor SDKs (this is the ONLY home for vendor clients) |
-| root facades | kit modules, `components` from generated api |
-| `functions.ts` | `_generated/server` (the only file allowed to) |
-| `components/<name>/**` | its own directory + npm deps only — no host imports, no `process.env` |
+| From                   | May import                                                                                                                                      |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api/<entity>.ts`      | `functions.ts`, `domain/<entity>/*`, `domain/shared/*`, zod                                                                                     |
+| `domain/<entity>/*`    | `functions.ts`, `foundation.ts`, component facades, `domain/shared/*`, own directory, generated `internal`/`api` (references only), kit modules |
+| `domain/shared/*`      | kit modules, vendor SDKs (this is the ONLY home for vendor clients)                                                                             |
+| root facades           | kit modules, `components` from generated api                                                                                                    |
+| `functions.ts`         | `_generated/server` (the only file allowed to)                                                                                                  |
+| `components/<name>/**` | its own directory + npm deps only — no host imports, no `process.env`                                                                           |
 
 Forbidden everywhere: sibling-entity imports, `api/` from `domain/`,
 component internals (anything below a component's client facade),
@@ -286,6 +286,6 @@ component internals (anything below a component's client facade),
 - Zod objects that cross a boundary are `.strict()` — always.
 - `Object.freeze` for registries and long-lived configuration objects.
 - Comments state constraints the code can't (`// Optional only for rows
-  created before <epoch>.`) — never narration of the next line.
+created before <epoch>.`) — never narration of the next line.
 - One entity concept per file; when a file serves two purposes, split it
   along the anatomy in §2.

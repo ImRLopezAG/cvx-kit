@@ -2,7 +2,7 @@
 
 The core idea: an entity's shape is declared **once** as a zod object, and every
 boundary that shape crosses — storage, insert, update, command input, public
-DTO, LLM tool input — is a *derived mask* of that single declaration. There is
+DTO, LLM tool input — is a _derived mask_ of that single declaration. There is
 no second source of truth to drift.
 
 ```ts
@@ -10,18 +10,18 @@ import { z } from 'zod'
 import { zodTable } from 'cvx-kit/zod-table'
 
 export const documents = zodTable(
-  'documents',
-  (id) => ({
-    title: z.string(),
-    ownerId: id('users'),        // `id` is convex-helpers' zid — typed Id<'users'>
-    secretNote: z.string(),
-    reviewState: z.enum(['draft', 'published']),
-  }),
-  {
-    serverFields: ['reviewState'],       // excluded from inserts — server assigns it
-    commandFields: ['title'],            // the ONLY fields a command may carry
-    publicFields: ['title', 'ownerId'],  // the DTO allowlist — everything else is redacted
-  },
+	'documents',
+	(id) => ({
+		title: z.string(),
+		ownerId: id('users'), // `id` is convex-helpers' zid — typed Id<'users'>
+		secretNote: z.string(),
+		reviewState: z.enum(['draft', 'published']),
+	}),
+	{
+		serverFields: ['reviewState'], // excluded from inserts — server assigns it
+		commandFields: ['title'], // the ONLY fields a command may carry
+		publicFields: ['title', 'ownerId'], // the DTO allowlist — everything else is redacted
+	},
 )
 ```
 
@@ -49,19 +49,19 @@ unregistered foreign ID and does not throw; peer installation prevents the
 supported package graph from creating that ambiguity. Verify critical ID
 validators retain `kind === 'id'` and the expected `tableName` after installation.
 
-| Property | What it is | Where you use it |
-|---|---|---|
-| `table` | `defineTable(...)` from the storage shape | `convex/schema.ts` |
-| `storage` | zod object of the raw row (no `_id`/`_creationTime`) | validating rows |
-| `schema` | `storage` + `_id` + `_creationTime` | full-document validation |
-| `insertSchema` | storage minus timestamps minus `serverFields` | mutation args |
-| `updateSchema` | `insertSchema.partial()` | patch mutation args |
-| `commandInput` | strict pick of `commandFields` | command protocol inputs |
-| `publicDto` | strict pick of `publicFields` | query return validators |
-| `toPublicDto(row)` | projects **and re-parses** a row into the DTO | query handlers |
-| `insert(omit?)` / `update(omit?)` | schema with per-callsite field omission | specialized mutations |
-| `tools.insert` / `tools.update` / `tools.id` | ready-made LLM tool input schemas | agent tool definitions |
-| `tableName` | the literal table name | indexes, triggers registration |
+| Property                                     | What it is                                           | Where you use it               |
+| -------------------------------------------- | ---------------------------------------------------- | ------------------------------ |
+| `table`                                      | `defineTable(...)` from the storage shape            | `convex/schema.ts`             |
+| `storage`                                    | zod object of the raw row (no `_id`/`_creationTime`) | validating rows                |
+| `schema`                                     | `storage` + `_id` + `_creationTime`                  | full-document validation       |
+| `insertSchema`                               | storage minus timestamps minus `serverFields`        | mutation args                  |
+| `updateSchema`                               | `insertSchema.partial()`                             | patch mutation args            |
+| `commandInput`                               | strict pick of `commandFields`                       | command protocol inputs        |
+| `publicDto`                                  | strict pick of `publicFields`                        | query return validators        |
+| `toPublicDto(row)`                           | projects **and re-parses** a row into the DTO        | query handlers                 |
+| `insert(omit?)` / `update(omit?)`            | schema with per-callsite field omission              | specialized mutations          |
+| `tools.insert` / `tools.update` / `tools.id` | ready-made LLM tool input schemas                    | agent tool definitions         |
+| `tableName`                                  | the literal table name                               | indexes, triggers registration |
 
 ## Redaction is runtime, not just types
 
@@ -72,13 +72,13 @@ row a public query returns:
 
 ```ts
 export const get = authQuery({
-  args: { id: zid('documents') },
-  returns: documents.publicDto,
-  handler: async (ctx, { id }) => {
-    const row = await ctx.db.get(id)
-    if (!row) throw new KitError({ code: 'NOT_FOUND' })
-    return documents.toPublicDto(row) // secretNote can never leak
-  },
+	args: { id: zid('documents') },
+	returns: documents.publicDto,
+	handler: async (ctx, { id }) => {
+		const row = await ctx.db.get(id)
+		if (!row) throw new KitError({ code: 'NOT_FOUND' })
+		return documents.toPublicDto(row) // secretNote can never leak
+	},
 })
 ```
 
@@ -91,7 +91,7 @@ Every `zodTable` bakes in three optional, **server-owned** fields:
 - `archivedAt` — soft-delete marker, under application control
 
 They are always excluded from `insertSchema`, `updateSchema`, and
-`commandInput` — a client or command can never write them. They are *not* in
+`commandInput` — a client or command can never write them. They are _not_ in
 `publicFields` by default; list them explicitly when a DTO needs them
 (`publicFields: ['title', 'createdAt']`).
 
@@ -105,11 +105,11 @@ vocabulary is yours; `_creationTime` remains available for index ordering.
 
 Think of the options as three independent allowlists over the same shape:
 
-- `serverFields` — *the server assigns these.* Excluded from `insertSchema`
+- `serverFields` — _the server assigns these._ Excluded from `insertSchema`
   and `updateSchema`. Example: `reviewState`, denormalized counters.
-- `commandFields` — *a command may say these.* The command protocol's input
+- `commandFields` — _a command may say these._ The command protocol's input
   is exactly this pick, strict. Everything else must be derived by the handler.
-- `publicFields` — *a client may see these.* The DTO is exactly this pick;
+- `publicFields` — _a client may see these._ The DTO is exactly this pick;
   may include timestamp fields.
 
 All derived objects are `.strict()` — unknown keys are rejected, in both
@@ -146,10 +146,13 @@ keeps the same "one owner per table" convention while accepting any zod type
 as storage:
 
 ```ts
-const events = zodVariantTable('events', z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('created'), by: zid('users') }),
-  z.object({ kind: z.literal('archived'), reason: z.string() }),
-]))
+const events = zodVariantTable(
+	'events',
+	z.discriminatedUnion('kind', [
+		z.object({ kind: z.literal('created'), by: zid('users') }),
+		z.object({ kind: z.literal('archived'), reason: z.string() }),
+	]),
+)
 // events.table → defineTable, events.insertSchema → the union itself
 ```
 
@@ -165,7 +168,7 @@ the type level:
 
 ```ts
 const assignInput = z.object({
-  documentId: jsonSafeZid('documents'), // LLM sees: string, "Convex document id for table \"documents\""
+	documentId: jsonSafeZid('documents'), // LLM sees: string, "Convex document id for table \"documents\""
 })
 ```
 
@@ -177,9 +180,9 @@ import { defineSchema } from 'convex/server'
 import { documents } from './tables/documents'
 
 export default defineSchema({
-  documents: documents.table
-    .index('by_owner', ['ownerId'])
-    .index('by_owner_archived', ['ownerId', 'archivedAt']),
+	documents: documents.table
+		.index('by_owner', ['ownerId'])
+		.index('by_owner_archived', ['ownerId', 'archivedAt']),
 })
 ```
 

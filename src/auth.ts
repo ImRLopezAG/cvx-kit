@@ -1,8 +1,5 @@
-import {
-	zCustomAction,
-	zCustomMutation,
-	zCustomQuery,
-} from 'convex-helpers/server/zod4'
+import { z } from 'zod'
+import { zCustomAction, zCustomMutation, zCustomQuery } from 'convex-helpers/server/zod4'
 import type {
 	ActionBuilder,
 	DocumentByInfo,
@@ -59,10 +56,7 @@ export type AuthBundle<Role extends string> = Readonly<{
  * compose (AND) onto the same wrapped database: queries get a wrapped
  * reader, mutations get triggers first, then a wrapped writer.
  */
-export type SecurityConfig<
-	DataModel extends GenericDataModel,
-	Role extends string,
-> = {
+export type SecurityConfig<DataModel extends GenericDataModel, Role extends string> = {
 	/**
 	 * Tenant isolation. `tables` is THE registry: every listed table gets
 	 * read/insert/modify gated on row.tenant === ctx.tenant. Pair with
@@ -92,10 +86,7 @@ type AnyAuthContext<DataModel extends GenericDataModel> =
 	| GenericMutationCtx<DataModel>
 	| GenericActionCtx<DataModel>
 
-export type AuthFunctionsConfig<
-	DataModel extends GenericDataModel,
-	Role extends string,
-> = {
+export type AuthFunctionsConfig<DataModel extends GenericDataModel, Role extends string> = {
 	/** The consumer's generated function builders (from ./_generated/server). */
 	query: QueryBuilder<DataModel, 'public'>
 	mutation: MutationBuilder<DataModel, 'public'>
@@ -104,9 +95,7 @@ export type AuthFunctionsConfig<
 	internalMutation: MutationBuilder<DataModel, 'internal'>
 	internalAction: ActionBuilder<DataModel, 'internal'>
 	/** Resolves the synchronized principal, e.g. (ctx) => authKit.getAuthUser(ctx). */
-	getAuthUser: (
-		ctx: AnyAuthContext<DataModel>,
-	) => Promise<{ id: string } | null>
+	getAuthUser: (ctx: AnyAuthContext<DataModel>) => Promise<{ id: string } | null>
 	/**
 	 * Maps an identity role slug onto the app's role vocabulary. Returning
 	 * null rejects the caller with FORBIDDEN — unknown roles never pass.
@@ -143,9 +132,7 @@ export type AuthFunctionsConfig<
 	 */
 	triggers?: Triggers<DataModel>
 	/** Lower-level alternative to `triggers`: a custom ctx wrapper. */
-	wrapDB?: (
-		ctx: GenericMutationCtx<DataModel>,
-	) => GenericMutationCtx<DataModel>
+	wrapDB?: (ctx: GenericMutationCtx<DataModel>) => GenericMutationCtx<DataModel>
 	/** Upper bound for include() reads. */
 	maxIncludedQueryRows?: number
 	/**
@@ -160,9 +147,7 @@ export type AuthFunctionsConfig<
 export function defaultRoleMap(roleSlug?: string): DefaultRole | null {
 	const normalized = roleSlug?.trim().toLowerCase()
 	if (normalized === 'member') return 'writer'
-	return normalized === 'reader' ||
-		normalized === 'writer' ||
-		normalized === 'admin'
+	return normalized === 'reader' || normalized === 'writer' || normalized === 'admin'
 		? normalized
 		: null
 }
@@ -175,22 +160,16 @@ export type IncludedQuery<Table extends GenericTableInfo> = {
 	matching<IndexName extends IndexNames<Table>>(
 		indexName: IndexName,
 		indexRange?: (
-			query: IndexRangeBuilder<
-				DocumentByInfo<Table>,
-				NamedIndex<Table, IndexName>
-			>,
+			query: IndexRangeBuilder<DocumentByInfo<Table>, NamedIndex<Table, IndexName>>,
 		) => IndexRange,
 		shouldMatch?: boolean,
 	): IncludedQuery<Table>
-	otherwise(
-		select: (query: QueryInitializer<Table>) => Query<Table>,
-	): Query<Table>
+	otherwise(select: (query: QueryInitializer<Table>) => Query<Table>): Query<Table>
 	resolve(): Query<Table>
-	execute<Result = Awaited<ReturnType<Query<Table>['take']>>>(
+	execute(limit: number): Promise<DocumentByInfo<Table>[]>
+	execute<Result>(
 		limit: number,
-		transform?: (
-			data: Awaited<ReturnType<Query<Table>['take']>>,
-		) => Result | Promise<Result>,
+		transform: (data: Awaited<ReturnType<Query<Table>['take']>>) => Result | Promise<Result>,
 	): Promise<Result>
 	/**
 	 * Cursor pagination over the selected indexed query. numItems is bounded
@@ -199,11 +178,10 @@ export type IncludedQuery<Table extends GenericTableInfo> = {
 	 * pagination); cursors remain correct. Pair with paginated(dto) from
 	 * cvx-kit/zod-table for the boundary schemas.
 	 */
-	paginate<Item = DocumentByInfo<Table>>(
+	paginate(opts: PaginationOptions): Promise<PaginationResult<DocumentByInfo<Table>>>
+	paginate<Item>(
 		opts: PaginationOptions,
-		transform?: (
-			page: DocumentByInfo<Table>[],
-		) => Item[] | Promise<Item[]>,
+		transform: (page: DocumentByInfo<Table>[]) => Item[] | Promise<Item[]>,
 	): Promise<PaginationResult<Item>>
 }
 
@@ -212,10 +190,7 @@ export type Include = <Table extends GenericTableInfo>(
 ) => IncludedQuery<Table>
 
 /** Builds an include() that selects the first matching indexed query and bounds the read. */
-export function createInclude(options?: {
-	errors?: ErrorFactory
-	maxRows?: number
-}): Include {
+export function createInclude(options?: { errors?: ErrorFactory; maxRows?: number }): Include {
 	const errors = options?.errors ?? defaultErrors
 	const maxRows = options?.maxRows ?? 100
 
@@ -223,6 +198,42 @@ export function createInclude(options?: {
 		query: QueryInitializer<Table>,
 		selected?: Query<Table>,
 	): IncludedQuery<Table> {
+		function execute(limit: number): Promise<DocumentByInfo<Table>[]>
+		function execute<Result>(
+			limit: number,
+			transform: (data: DocumentByInfo<Table>[]) => Result | Promise<Result>,
+		): Promise<Result>
+		async function execute<Result>(
+			limit: number,
+			transform?: (data: DocumentByInfo<Table>[]) => Result | Promise<Result>,
+		) {
+			if (!Number.isSafeInteger(limit) || limit < 1 || limit > maxRows) {
+				return errors.throw({
+					code: 'INVALID_REQUEST_BOUNDARY',
+					message: `A bounded query limit must be from 1 to ${maxRows}`,
+				})
+			}
+			const data = await (selected ?? query.fullTableScan()).take(limit)
+			return transform ? transform(data) : data
+		}
+		function paginate(opts: PaginationOptions): Promise<PaginationResult<DocumentByInfo<Table>>>
+		function paginate<Item>(
+			opts: PaginationOptions,
+			transform: (page: DocumentByInfo<Table>[]) => Item[] | Promise<Item[]>,
+		): Promise<PaginationResult<Item>>
+		async function paginate<Item>(
+			opts: PaginationOptions,
+			transform?: (page: DocumentByInfo<Table>[]) => Item[] | Promise<Item[]>,
+		) {
+			if (!Number.isSafeInteger(opts.numItems) || opts.numItems < 1 || opts.numItems > maxRows) {
+				return errors.throw({
+					code: 'INVALID_REQUEST_BOUNDARY',
+					message: `A page size must be from 1 to ${maxRows}`,
+				})
+			}
+			const result = await (selected ?? query.fullTableScan()).paginate(opts)
+			return transform ? { ...result, page: await transform(result.page) } : result
+		}
 		return {
 			when: (value, select) =>
 				selected || value === undefined || value === null
@@ -234,31 +245,8 @@ export function createInclude(options?: {
 					: attach(query, query.withIndex(indexName, indexRange)),
 			otherwise: (select) => selected ?? select(query),
 			resolve: () => selected ?? query.fullTableScan(),
-			execute: async (limit, transform) => {
-				if (!Number.isSafeInteger(limit) || limit < 1 || limit > maxRows) {
-					return errors.throw({
-						code: 'INVALID_REQUEST_BOUNDARY',
-						message: `A bounded query limit must be from 1 to ${maxRows}`,
-					})
-				}
-				const data = await (selected ?? query.fullTableScan()).take(limit)
-				return transform ? transform(data) : (data as never)
-			},
-			paginate: async (opts, transform) => {
-				if (
-					!Number.isSafeInteger(opts.numItems) ||
-					opts.numItems < 1 ||
-					opts.numItems > maxRows
-				) {
-					return errors.throw({
-						code: 'INVALID_REQUEST_BOUNDARY',
-						message: `A page size must be from 1 to ${maxRows}`,
-					})
-				}
-				const result = await (selected ?? query.fullTableScan()).paginate(opts)
-				if (!transform) return result as never
-				return { ...result, page: await transform(result.page) } as never
-			},
+			execute,
+			paginate,
 		}
 	}
 
@@ -278,18 +266,16 @@ export function createAuthFunctions<
 	const Role extends string = DefaultRole,
 >(config: AuthFunctionsConfig<DataModel, Role>) {
 	const errors = config.errors ?? defaultErrors
-	const wrapDB = config.triggers
-		? (ctx: GenericMutationCtx<DataModel>) =>
-				(config.triggers as Triggers<DataModel>).wrapDB(ctx)
+	const triggers = config.triggers
+	const wrapDB = triggers
+		? (ctx: GenericMutationCtx<DataModel>) => triggers.wrapDB(ctx)
 		: (config.wrapDB ?? ((ctx) => ctx))
 	const include = createInclude({
 		errors,
 		maxRows: config.maxIncludedQueryRows,
 	})
 
-	async function authenticatedUser(
-		ctx: AnyAuthContext<DataModel>,
-	): Promise<AuthBundle<Role>> {
+	async function authenticatedUser(ctx: AnyAuthContext<DataModel>): Promise<AuthBundle<Role>> {
 		const identity = await ctx.auth.getUserIdentity()
 		const user = identity ? await config.getAuthUser(ctx) : null
 		if (!identity || !user) return errors.throw({ code: 'UNAUTHENTICATED' })
@@ -308,29 +294,11 @@ export function createAuthFunctions<
 			organizationId = resolved.organizationId
 			organizationRole = resolved.roleSlug
 		} else {
-			const organization = identity.organization
-			const claimedOrganizationId =
-				organization &&
-				typeof organization === 'object' &&
-				'organizationId' in organization &&
-				typeof organization.organizationId === 'string'
-					? organization.organizationId
-					: typeof identity.org_id === 'string'
-						? identity.org_id
-						: null
-			if (!claimedOrganizationId) {
-				return errors.throw({ code: 'UNAUTHENTICATED' })
-			}
+			const claims = organizationClaims.parse(identity)
+			const claimedOrganizationId = claims.organization?.organizationId ?? claims.org_id
+			if (!claimedOrganizationId) return errors.throw({ code: 'UNAUTHENTICATED' })
 			organizationId = claimedOrganizationId
-			organizationRole =
-				organization &&
-				typeof organization === 'object' &&
-				'role' in organization &&
-				typeof organization.role === 'string'
-					? organization.role
-					: typeof identity.role === 'string'
-						? identity.role
-						: undefined
+			organizationRole = claims.organization?.role ?? claims.role
 		}
 		const role = config.mapRole(organizationRole)
 		if (!role) return errors.throw({ code: 'FORBIDDEN' })
@@ -350,21 +318,16 @@ export function createAuthFunctions<
 	const securityConfig: RLSConfig | undefined = config.security
 		? {
 				defaultPolicy:
-					config.security.defaultPolicy ??
-					(config.security.tenancy ? 'deny' : 'allow'),
+					config.security.defaultPolicy ?? (config.security.tenancy ? 'deny' : 'allow'),
 			}
 		: undefined
 
-	function securityRules(
-		bundle: AuthBundle<Role>,
-	): Rules<unknown, DataModel> | undefined {
+	function securityRules(bundle: AuthBundle<Role>): Rules<unknown, DataModel> | undefined {
 		const security = config.security
 		if (!security) return undefined
 		const sets: Rules<unknown, DataModel>[] = []
 		if (security.tenancy) {
-			sets.push(
-				createTenantRules<DataModel>(bundle.tenant, security.tenancy.tables),
-			)
+			sets.push(createTenantRules<DataModel>(bundle.tenant, security.tenancy.tables))
 		}
 		if (security.rules) sets.push(security.rules(bundle))
 		return sets.length === 1 ? sets[0] : composeRules(...sets)
@@ -378,7 +341,7 @@ export function createAuthFunctions<
 		if (!rules) return ctx
 		return {
 			...ctx,
-			db: wrapDatabaseReader({}, ctx.db, rules as never, securityConfig),
+			db: wrapDatabaseReader({}, ctx.db, rules, securityConfig),
 		}
 	}
 
@@ -392,7 +355,7 @@ export function createAuthFunctions<
 		// then row-level security wraps the triggered db — order matters.
 		return {
 			...ctx,
-			db: wrapDatabaseWriter({}, ctx.db, rules as never, securityConfig),
+			db: wrapDatabaseWriter({}, ctx.db, rules, securityConfig),
 		}
 	}
 
@@ -460,9 +423,7 @@ export function createAuthFunctions<
 				...ctx,
 				...verified,
 				// Tenant re-derives from the live-verified organization.
-				tenant:
-					config.security?.tenancy?.resolve?.(verified) ??
-					membership.organizationId,
+				tenant: config.security?.tenancy?.resolve?.(verified) ?? membership.organizationId,
 			},
 			args: {},
 		}
@@ -536,3 +497,15 @@ export function createAuthFunctions<
 		}),
 	}
 }
+
+const organizationClaims = z.object({
+	organization: z
+		.object({
+			organizationId: z.string().optional().catch(undefined),
+			role: z.string().optional().catch(undefined),
+		})
+		.optional()
+		.catch(undefined),
+	org_id: z.string().optional().catch(undefined),
+	role: z.string().optional().catch(undefined),
+})

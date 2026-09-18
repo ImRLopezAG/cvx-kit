@@ -16,14 +16,10 @@ import {
 	APPROVAL_DECISION_HISTORY_INDEX,
 	APPROVAL_DECISIONS,
 	APPROVAL_RUN_STATES,
-	type ApprovalRunState,
 } from './constants'
 import { canTransitionApprovalRun, classifyPendingRunAt } from './functions'
 import { approvalActor, approvalDecision, approvalReason } from './validators'
-import {
-	approvalDecisionEventName,
-	evaluateDecisionOutcome,
-} from './workflow_steps'
+import { approvalDecisionEventName, evaluateDecisionOutcome } from './workflow_steps'
 
 export const decide = mutation({
 	args: {
@@ -47,8 +43,7 @@ export const decide = mutation({
 		if (!run) throw new Error('Approval request not found')
 		assertCompatible(run.workflow.compatibilityKey, input.compatibilityKey)
 		const step = run.workflow.steps.find(
-			(candidate) =>
-				candidate.kind === 'decision' && candidate.key === run.currentStepKey,
+			(candidate) => candidate.kind === 'decision' && candidate.key === run.currentStepKey,
 		)
 		if (!step || step.kind !== 'decision')
 			throw new Error('Approval request is not waiting for a decision')
@@ -66,11 +61,10 @@ export const decide = mutation({
 			if (prior.decision !== input.decision)
 				throw new Error('Actor already submitted a contradictory decision')
 			return {
-				state: run.state as 'pending' | 'approved' | 'rejected' | 'expired',
+				state: run.state,
 			}
 		}
-		if (run.state !== 'pending')
-			throw new Error(`Approval request is already ${run.state}`)
+		if (run.state !== 'pending') throw new Error(`Approval request is already ${run.state}`)
 		if (
 			run.expiresAt !== undefined &&
 			classifyPendingRunAt(Date.now(), run.expiresAt) === 'expired'
@@ -87,7 +81,7 @@ export const decide = mutation({
 			stepKey: step.key,
 			actor: input.actor,
 			decision: input.decision,
-			...(input.reason === undefined ? {} : { reason: input.reason }),
+			reason: input.reason,
 			decidedAt,
 		})
 		const evidence = await ctx.db
@@ -116,7 +110,7 @@ export const decide = mutation({
 		await finishDecision(ctx, run, step.key, outcome, terminal, {
 			actorRef: input.actor.actorRef,
 			decision: input.decision,
-			...(input.reason === undefined ? {} : { reason: input.reason }),
+			reason: input.reason,
 			decidedAt,
 		})
 		return terminal ? { state: outcome } : { state: 'pending' as const }
@@ -148,8 +142,7 @@ export const listForWorkflow = internalQuery({
 			decidedAt: v.number(),
 		}),
 	),
-	handler: (ctx, input) =>
-		listDecisionEvidenceForStep(ctx, input.runId, input.stepKey),
+	handler: (ctx, input) => listDecisionEvidenceForStep(ctx, input.runId, input.stepKey),
 })
 
 export const enter = internalMutation({
@@ -176,7 +169,7 @@ export const enter = internalMutation({
 			throw new Error('Approval workflow linkage is incomplete')
 		if (run.state !== 'pending')
 			return {
-				state: run.state as ApprovalRunState,
+				state: run.state,
 				expiresAt: run.expiresAt,
 			}
 		const configuredExpiresAt = Number(run.metadata?.approvalExpiresAt)
@@ -204,7 +197,7 @@ export const enter = internalMutation({
 			})
 		return {
 			state: 'pending' as const,
-			...(expiresAt === undefined ? {} : { expiresAt }),
+			expiresAt: expiresAt,
 		}
 	},
 })
@@ -230,7 +223,7 @@ export const expire = internalMutation({
 			run.expiresAt === undefined ||
 			classifyPendingRunAt(Date.now(), run.expiresAt) === 'pending'
 		)
-			return { state: run.state as ApprovalRunState }
+			return { state: run.state }
 		return claimExpiry(ctx, run, input.stepKey)
 	},
 })
@@ -260,6 +253,7 @@ async function claimExpiry(
 	})
 	if (!run.workflowId) throw new Error('Approval workflow is not linked')
 	await approvalWorkflow.sendEvent(ctx, {
+		// SAFETY: workflowId was persisted from approvalWorkflow.start when this run was created.
 		workflowId: run.workflowId as WorkflowId,
 		name: approvalDecisionEventName(run._id, stepKey),
 		validator: v.object({ outcome: v.literal(APPROVAL_RUN_STATES[3]) }),
@@ -301,13 +295,11 @@ async function finishDecision(
 	}
 	if (!run.workflowId) throw new Error('Approval workflow is not linked')
 	await approvalWorkflow.sendEvent(ctx, {
+		// SAFETY: workflowId was persisted from approvalWorkflow.start when this run was created.
 		workflowId: run.workflowId as WorkflowId,
 		name: approvalDecisionEventName(run._id, stepKey),
 		validator: v.object({
-			outcome: v.union(
-				v.literal(APPROVAL_DECISIONS[0]),
-				v.literal(APPROVAL_DECISIONS[1]),
-			),
+			outcome: v.union(v.literal(APPROVAL_DECISIONS[0]), v.literal(APPROVAL_DECISIONS[1])),
 			terminalEvidence: v.object({
 				actorRef: v.string(),
 				decision: zodToConvex(approvalDecision),
@@ -332,15 +324,13 @@ async function listDecisionEvidence(
 ) {
 	const decisions = await ctx.db
 		.query('approvalDecisions')
-		.withIndex(APPROVAL_DECISION_HISTORY_INDEX, (query) =>
-			query.eq('runId', runId),
-		)
+		.withIndex(APPROVAL_DECISION_HISTORY_INDEX, (query) => query.eq('runId', runId))
 		.collect()
 	return decisions.map((decision) => ({
 		stepKey: decision.stepKey,
 		actorRef: decision.actor.actorRef,
 		decision: decision.decision,
-		...(decision.reason === undefined ? {} : { reason: decision.reason }),
+		reason: decision.reason,
 		decidedAt: decision.decidedAt,
 	}))
 }
@@ -360,7 +350,7 @@ async function listDecisionEvidenceForStep(
 		stepKey: decision.stepKey,
 		actorRef: decision.actor.actorRef,
 		decision: decision.decision,
-		...(decision.reason === undefined ? {} : { reason: decision.reason }),
+		reason: decision.reason,
 		decidedAt: decision.decidedAt,
 	}))
 }
@@ -374,7 +364,5 @@ function isTerminalDecision(
 	const currentIndex = run.workflow.steps.findIndex(
 		(step) => step.kind === 'decision' && step.key === stepKey,
 	)
-	return !run.workflow.steps
-		.slice(currentIndex + 1)
-		.some((step) => step.kind === 'decision')
+	return !run.workflow.steps.slice(currentIndex + 1).some((step) => step.kind === 'decision')
 }

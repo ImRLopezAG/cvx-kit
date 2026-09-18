@@ -45,6 +45,12 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Enforce anti-slop and library conventions
+        run: bun run lint
+
+      - name: Verify published Oxlint plugin in npm and Bun consumers
+        run: node scripts/test-packed-oxlint.mjs
+
       - name: Verify packed package contents
         run: bunx vp test run test/package-contents.test.mjs
 

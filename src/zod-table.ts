@@ -1,14 +1,10 @@
 import {
-	type ConvexValidatorFromZod,
 	convexToZod,
 	zid,
 	zodToConvex,
+	type ConvexValidatorFromZod,
 } from 'convex-helpers/server/zod4'
-import {
-	defineTable,
-	paginationOptsValidator,
-	type TableDefinition,
-} from 'convex/server'
+import { defineTable, paginationOptsValidator, type TableDefinition } from 'convex/server'
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 
@@ -16,89 +12,121 @@ import { z } from 'zod'
 // the producer and converter consult the same convex-helpers ID registry.
 export { zid, zodToConvex, convexToZod } from 'convex-helpers/server/zod4'
 
-type Shape = Record<string, z.ZodType>
-type ShapeKey<Fields extends Shape> = Extract<keyof Fields, string>
+type FieldSchemas = Record<string, z.ZodType>
+type FieldKey<Fields extends FieldSchemas> = Extract<keyof Fields, string>
 
 /**
  * Opinionated lifecycle timestamps — every table has them, server-owned,
  * always excluded from insert/command boundaries. Maintained by the
  * `timestamps` trigger helper (see cvx-kit/triggers).
  */
-const timestampShape = {
+const timestampFields = {
 	createdAt: z.number().optional(),
 	updatedAt: z.number().optional(),
 	archivedAt: z.number().optional(),
-} satisfies Shape
+} satisfies FieldSchemas
 
-type TimestampShape = typeof timestampShape
+type TimestampFields = typeof timestampFields
 
-export const TIMESTAMP_FIELDS = [
-	'createdAt',
-	'updatedAt',
-	'archivedAt',
-] as const
+export const TIMESTAMP_FIELDS = ['createdAt', 'updatedAt', 'archivedAt'] as const
 
 export type TableBoundaryOptions<
-	Fields extends Shape,
-	ServerFields extends readonly ShapeKey<Fields>[],
-	CommandFields extends readonly ShapeKey<Fields>[],
-	PublicFields extends readonly ShapeKey<Fields & TimestampShape>[],
+	Fields extends FieldSchemas,
+	ServerFields extends readonly FieldKey<Fields>[],
+	CommandFields extends readonly FieldKey<Fields>[],
+	PublicFields extends readonly FieldKey<Fields & TimestampFields>[],
 > = {
 	serverFields?: ServerFields
 	commandFields?: CommandFields
 	publicFields?: PublicFields
 }
 
+type StrictObject<Fields extends FieldSchemas> = z.ZodObject<Fields, z.core.$strict>
+type WriteFields<
+	Fields extends FieldSchemas,
+	ServerFields extends readonly FieldKey<Fields>[],
+> = Omit<Fields & TimestampFields, ServerFields[number] | (typeof TIMESTAMP_FIELDS)[number]>
+type PartialFields<Fields extends FieldSchemas> = {
+	[Key in keyof Fields]: z.ZodOptional<Fields[Key]>
+}
+
+/** Named schema relationships keep generated declarations bounded and consumers fully typed. */
+export type TableBoundary<
+	Table extends string,
+	Fields extends FieldSchemas,
+	ServerFields extends readonly FieldKey<Fields>[],
+	CommandFields extends readonly FieldKey<Fields>[],
+	PublicFields extends readonly FieldKey<Fields & TimestampFields>[],
+> = {
+	tableName: Table
+	storage: StrictObject<Fields & TimestampFields>
+	schema: ReturnType<typeof documentSchema<Fields & TimestampFields, Table>>
+	insertSchema: StrictObject<WriteFields<Fields, ServerFields>>
+	updateSchema: StrictObject<PartialFields<WriteFields<Fields, ServerFields>>>
+	commandInput: StrictObject<Pick<Fields & TimestampFields, CommandFields[number]>>
+	publicDto: StrictObject<Pick<Fields & TimestampFields, PublicFields[number]>>
+	toPublicDto: (
+		row: z.input<StrictObject<Fields & TimestampFields>>,
+	) => z.output<StrictObject<Pick<Fields & TimestampFields, PublicFields[number]>>>
+	table: TableDefinition<ConvexValidatorFromZod<StrictObject<Fields & TimestampFields>, 'required'>>
+	insert(): StrictObject<WriteFields<Fields, ServerFields>>
+	insert<Mask extends z.util.Mask<keyof WriteFields<Fields, ServerFields>>>(
+		omit: Mask,
+	): ZodObjectOmit<StrictObject<WriteFields<Fields, ServerFields>>, Mask>
+	update(): StrictObject<PartialFields<WriteFields<Fields, ServerFields>>>
+	update<Mask extends z.util.Mask<keyof WriteFields<Fields, ServerFields>>>(
+		omit: Mask,
+	): ZodObjectOmit<StrictObject<PartialFields<WriteFields<Fields, ServerFields>>>, Mask>
+	tools: {
+		insert: StrictObject<Pick<Fields & TimestampFields, CommandFields[number]>>
+		update: StrictObject<{
+			data: StrictObject<PartialFields<Pick<Fields & TimestampFields, CommandFields[number]>>>
+			id: z.ZodType<GenericId<Table>, string>
+		}>
+		id: StrictObject<{ id: z.ZodType<GenericId<Table>, string> }>
+	}
+}
+
 /** Defines one table and derives its storage, document, write, and DTO boundaries. */
 export function zodTable<
 	Table extends string,
-	Fields extends Shape,
-	const ServerFields extends readonly ShapeKey<Fields>[] = readonly [],
-	const CommandFields extends readonly ShapeKey<Fields>[] = readonly [],
-	const PublicFields extends readonly ShapeKey<
-		Fields & TimestampShape
-	>[] = readonly [],
+	Fields extends FieldSchemas,
+	const ServerFields extends readonly FieldKey<Fields>[] = readonly [],
+	const CommandFields extends readonly FieldKey<Fields>[] = readonly [],
+	const PublicFields extends readonly FieldKey<Fields & TimestampFields>[] = readonly [],
 >(
 	tableName: Table,
 	fields: (id: typeof zid) => Fields,
-	options: TableBoundaryOptions<
-		Fields,
-		ServerFields,
-		CommandFields,
-		PublicFields
-	> = {},
-) {
-	const shape = { ...fields(zid), ...timestampShape } as Fields &
-		TimestampShape
-	const storage = z.object(shape).strict()
-	const schema = storage.extend({
-		_id: zid(tableName),
-		_creationTime: z.number(),
-	})
-	const insertSchema = z
-		.object(
-			omitShape(shape, [
-				...TIMESTAMP_FIELDS,
-				...(options.serverFields ?? ([] as never)),
-			] as never),
-		)
-		.strict() as z.ZodObject<
-		Omit<Fields, ServerFields[number] | (typeof TIMESTAMP_FIELDS)[number]>
-	>
+	options: TableBoundaryOptions<Fields, ServerFields, CommandFields, PublicFields> = {},
+): TableBoundary<Table, Fields, ServerFields, CommandFields, PublicFields> {
+	const columns: Fields & TimestampFields = { ...fields(zid), ...timestampFields }
+	const storage: z.ZodObject<Fields & TimestampFields, z.core.$strict> = z.object(columns).strict()
+	const schema = documentSchema(storage, tableName)
+	const omittedKeys: readonly (ServerFields[number] | (typeof TIMESTAMP_FIELDS)[number])[] = [
+		...TIMESTAMP_FIELDS,
+		...(options.serverFields ?? []),
+	]
+	const commandKeys: readonly CommandFields[number][] = options.commandFields ?? []
+	const publicKeys: readonly PublicFields[number][] = options.publicFields ?? []
+	const insertSchema: z.ZodObject<WriteFields<Fields, ServerFields>, z.core.$strict> = z
+		.object(omitFields(columns, omittedKeys))
+		.strict()
 	const updateSchema = insertSchema.partial()
-	const commandInput = z
-		.object(pickShape(shape, options.commandFields ?? ([] as never)))
-		.strict()
-	const publicDto = z
-		.object(pickShape(shape, options.publicFields ?? ([] as never)))
-		.strict()
+	const commandInput: z.ZodObject<
+		Pick<Fields & TimestampFields, CommandFields[number]>,
+		z.core.$strict
+	> = z.object(pickFields(columns, commandKeys)).strict()
+	const publicDto: z.ZodObject<
+		Pick<Fields & TimestampFields, PublicFields[number]>,
+		z.core.$strict
+	> = z.object(pickFields(columns, publicKeys)).strict()
 	const toPublicDto = (row: z.input<typeof storage>) =>
 		publicDto.parse(
 			Object.fromEntries(
-				Object.keys(publicDto.shape).map((key) => [
-					key,
-					(row as Record<string, unknown>)[key],
-				]),
+				Object.keys(publicDto.shape).map((key) => {
+					// SAFETY: publicDto contains only keys selected from the storage fields.
+					return [key, row[key as keyof typeof row]]
+				}),
 			),
 		)
 
@@ -112,6 +140,7 @@ export function zodTable<
 		omit: OmitMask,
 	): ZodObjectOmit<InsertSchema, OmitMask>
 	function insert(omit?: InsertMask) {
+		// SAFETY: InsertMask contains only insertSchema keys; the overload retains Zod's exact mask relationship.
 		return omit ? insertSchema.omit(omit as never) : insertSchema
 	}
 
@@ -120,9 +149,13 @@ export function zodTable<
 		omit: OmitMask,
 	): ZodObjectOmit<UpdateSchema, OmitMask>
 	function update(omit?: UpdateMask) {
+		// SAFETY: UpdateMask contains only updateSchema keys; the overload retains Zod's exact mask relationship.
 		return omit ? updateSchema.omit(omit as never) : updateSchema
 	}
 
+	const table: TableDefinition<ConvexValidatorFromZod<typeof storage, 'required'>> = defineTable(
+		zodToConvex(storage),
+	)
 	return {
 		tableName,
 		schema,
@@ -132,28 +165,24 @@ export function zodTable<
 		commandInput,
 		publicDto,
 		toPublicDto,
-		table: defineTable(zodToConvex(storage)) as TableDefinition<
-			ConvexValidatorFromZod<typeof storage, 'required'>
-		>,
+		table,
 		insert,
 		update,
 		tools: {
 			// jsonSafeZid (not zid): tool masks feed generated JSON schemas, so
 			// ids must present as plain strings while keeping the Id<...> type.
 			insert: commandInput,
-			update: z
-				.object({ data: commandInput.partial(), id: jsonSafeZid(tableName) })
-				.strict(),
+			update: z.object({ data: commandInput.partial(), id: jsonSafeZid(tableName) }).strict(),
 			id: z.object({ id: jsonSafeZid(tableName) }).strict(),
 		},
 	}
 }
 
-const tenantShape = {
+const tenantFields = {
 	tenant: z.string().min(1),
-} satisfies Shape
+} satisfies FieldSchemas
 
-type TenantShape = typeof tenantShape
+type TenantFields = typeof tenantFields
 
 /**
  * A zodTable whose rows are tenant-owned: injects the server-owned `tenant`
@@ -165,44 +194,31 @@ type TenantShape = typeof tenantShape
  */
 export function tenantTable<
 	Table extends string,
-	Fields extends Shape,
-	const ServerFields extends readonly ShapeKey<Fields>[] = readonly [],
-	const CommandFields extends readonly ShapeKey<Fields>[] = readonly [],
-	const PublicFields extends readonly ShapeKey<
-		Fields & TenantShape & TimestampShape
-	>[] = readonly [],
+	Fields extends FieldSchemas,
+	const ServerFields extends readonly FieldKey<Fields>[] = readonly [],
+	const CommandFields extends readonly FieldKey<Fields>[] = readonly [],
+	const PublicFields extends readonly FieldKey<Fields & TenantFields & TimestampFields>[] =
+		readonly [],
 >(
 	tableName: Table,
 	fields: (id: typeof zid) => Fields,
 	options: TableBoundaryOptions<
-		Fields & TenantShape,
+		Fields & TenantFields,
 		readonly (ServerFields[number] | 'tenant')[],
 		CommandFields,
 		PublicFields
 	> = {},
 ) {
-	return zodTable(
-		tableName,
-		(id) => ({ ...fields(id), ...tenantShape }),
-		{
-			...options,
-			serverFields: [
-				...((options.serverFields ?? []) as readonly (
-					| ServerFields[number]
-					| 'tenant'
-				)[]),
-				'tenant',
-			] as never,
-		} as never,
-	) as ReturnType<
-		typeof zodTable<
-			Table,
-			Fields & TenantShape,
-			readonly (ServerFields[number] | 'tenant')[],
-			CommandFields,
-			PublicFields
-		>
-	>
+	return zodTable<
+		Table,
+		Fields & TenantFields,
+		readonly (ServerFields[number] | 'tenant')[],
+		CommandFields,
+		PublicFields
+	>(tableName, (id) => ({ ...fields(id), ...tenantFields }), {
+		...options,
+		serverFields: [...(options.serverFields ?? []), 'tenant'],
+	})
 }
 
 /**
@@ -210,27 +226,24 @@ export function tenantTable<
  * duplicate table names across modules — the module-registry combinator for
  * domain/table.ts: `defineSchema(createModule(catalogTables, salesTables))`.
  */
-export function createModule<
-	const Maps extends readonly Record<string, TableDefinition<any>>[],
->(...maps: Maps): UnionToIntersection<Maps[number]> {
+export function createModule<const Maps extends readonly Record<string, TableDefinition<any>>[]>(
+	...maps: Maps
+): UnionToIntersection<Maps[number]> {
 	const combined: Record<string, TableDefinition<any>> = {}
 	for (const map of maps) {
 		for (const [tableName, definition] of Object.entries(map)) {
 			if (tableName in combined) {
-				throw new Error(
-					`Table "${tableName}" is declared by more than one module`,
-				)
+				throw new Error(`Table "${tableName}" is declared by more than one module`)
 			}
 			combined[tableName] = definition
 		}
 	}
+	// SAFETY: every input entry is copied, and duplicate keys are rejected above.
 	return combined as UnionToIntersection<Maps[number]>
 }
 
 type UnionToIntersection<Union> = (
-	Union extends unknown
-		? (member: Union) => void
-		: never
+	Union extends unknown ? (member: Union) => void : never
 ) extends (member: infer Intersection) => void
 	? Intersection
 	: never
@@ -252,10 +265,7 @@ export function paginated<Dto extends z.ZodType>(dto: Dto) {
 			isDone: z.boolean(),
 			continueCursor: z.string(),
 			splitCursor: z.string().nullable().optional(),
-			pageStatus: z
-				.enum(['SplitRecommended', 'SplitRequired'])
-				.nullable()
-				.optional(),
+			pageStatus: z.enum(['SplitRecommended', 'SplitRequired']).nullable().optional(),
 		}),
 	}
 }
@@ -277,43 +287,50 @@ export function zodVariantTable<Table extends string, Schema extends z.ZodType>(
  * A zid that presents as a plain string in generated JSON schemas so
  * LLM-tool inputs stay primitive, while keeping the Id type at compile time.
  */
-export function jsonSafeZid<Table extends string>(tableName: Table) {
+export function jsonSafeZid<Table extends string>(
+	tableName: Table,
+): z.ZodType<GenericId<Table>, string> {
+	const id = zid(tableName)
 	return z
 		.string()
-		.describe(
-			`Convex document id for table "${tableName}"`,
-		) as unknown as z.ZodType<GenericId<Table>, string>
+		.refine((value): value is GenericId<Table> => id.safeParse(value).success)
+		.describe(`Convex document id for table "${tableName}"; validated against the table by Convex`)
 }
 
 type ZodObjectOmit<
 	Schema extends z.ZodObject<any, any>,
 	OmitMask extends z.util.Mask<keyof Schema['shape']>,
 > =
-	Schema extends z.ZodObject<infer ObjectShape, infer Config>
+	Schema extends z.ZodObject<infer ObjectFields, infer Config>
 		? z.ZodObject<
-				z.util.Flatten<
-					Omit<ObjectShape, Extract<keyof ObjectShape, keyof OmitMask>>
-				>,
+				z.util.Flatten<Omit<ObjectFields, Extract<keyof ObjectFields, keyof OmitMask>>>,
 				Config
 			>
 		: never
 
-function pickShape<
-	Fields extends Shape,
-	const Keys extends readonly ShapeKey<Fields>[],
->(fields: Fields, keys: Keys) {
-	return Object.fromEntries(keys.map((key) => [key, fields[key]])) as Pick<
+function documentSchema<Fields extends FieldSchemas, Table extends string>(
+	storage: StrictObject<Fields>,
+	tableName: Table,
+) {
+	return storage.extend({ _id: zid(tableName), _creationTime: z.number() })
+}
+
+function pickFields<Fields extends FieldSchemas, const Keys extends readonly FieldKey<Fields>[]>(
+	fields: Fields,
+	keys: Keys,
+) {
+	// SAFETY: each entry uses a requested key and its original validator, preserving Pick.
+	return Object.fromEntries(keys.map((key) => [key, fields[key]])) as Pick<Fields, Keys[number]>
+}
+
+function omitFields<Fields extends FieldSchemas, const Keys extends readonly FieldKey<Fields>[]>(
+	fields: Fields,
+	keys: Keys,
+) {
+	const omitted = new Set<string>(keys)
+	// SAFETY: filtering removes exactly the supplied keys and keeps every remaining validator.
+	return Object.fromEntries(Object.entries(fields).filter(([key]) => !omitted.has(key))) as Omit<
 		Fields,
 		Keys[number]
 	>
-}
-
-function omitShape<
-	Fields extends Shape,
-	const Keys extends readonly ShapeKey<Fields>[],
->(fields: Fields, keys: Keys) {
-	const omitted = new Set<string>(keys)
-	return Object.fromEntries(
-		Object.entries(fields).filter(([key]) => !omitted.has(key)),
-	) as Omit<Fields, Keys[number]>
 }

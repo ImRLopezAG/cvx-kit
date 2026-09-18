@@ -65,7 +65,7 @@ convex/
 ### The root rule
 
 **The root of `convex/` contains configuration and facades only.** Every root
-file is a *declaration point* — the single place one piece of infrastructure
+file is a _declaration point_ — the single place one piece of infrastructure
 is configured — and none of them exports a public function or contains
 business logic. If a client can call it, it lives in `api/`. If it decides
 anything about the business, it lives in `domain/`. If `ls convex/*.ts` shows
@@ -76,19 +76,19 @@ anything else, the migration is not done.
 These patterns must not exist anywhere after migration — each one is a hole in
 a structural guarantee:
 
-| Forbidden | Where it's allowed instead | What it breaks otherwise |
-|---|---|---|
-| `query(`, `mutation(`, `action(`, `internalMutation(`, `internalAction(` from `_generated/server` | `functions.ts` only | auth, triggers, bounded reads |
-| `defineTable(` | `domain/<entity>/table.ts` via `<zodTable>.table` | single source of truth per entity |
-| `defineSchema(` | root `schema.ts` only | schema assembly |
-| inline `z.enum([...])` / repeated literal unions | tuple in `constants.ts` | vocabulary ownership |
-| `.collect()` / unbounded reads in public paths | `ctx.include(...).execute(limit)` | read bounds |
-| `makeFunctionReference` | generated `internal` / `api` | refactoring safety |
-| deep imports of a component's internals | the component's client facade | component boundary |
-| sibling-domain imports (`domain/a` → `domain/b`) | `domain/shared/` or the public API | ownership |
-| `ctx.db.insert/patch/delete` on a mounted component's tables | the component's client methods | component persistence |
-| vendor SDK instantiation inside a domain | one shared client in `domain/shared/<provider>.ts` | connection discipline |
-| `new Date().toISOString()` / hand-written timestamp fields | the `timestamps` trigger | server-owned lifecycle |
+| Forbidden                                                                                         | Where it's allowed instead                         | What it breaks otherwise          |
+| ------------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------- |
+| `query(`, `mutation(`, `action(`, `internalMutation(`, `internalAction(` from `_generated/server` | `functions.ts` only                                | auth, triggers, bounded reads     |
+| `defineTable(`                                                                                    | `domain/<entity>/table.ts` via `<zodTable>.table`  | single source of truth per entity |
+| `defineSchema(`                                                                                   | root `schema.ts` only                              | schema assembly                   |
+| inline `z.enum([...])` / repeated literal unions                                                  | tuple in `constants.ts`                            | vocabulary ownership              |
+| `.collect()` / unbounded reads in public paths                                                    | `ctx.include(...).execute(limit)`                  | read bounds                       |
+| `makeFunctionReference`                                                                           | generated `internal` / `api`                       | refactoring safety                |
+| deep imports of a component's internals                                                           | the component's client facade                      | component boundary                |
+| sibling-domain imports (`domain/a` → `domain/b`)                                                  | `domain/shared/` or the public API                 | ownership                         |
+| `ctx.db.insert/patch/delete` on a mounted component's tables                                      | the component's client methods                     | component persistence             |
+| vendor SDK instantiation inside a domain                                                          | one shared client in `domain/shared/<provider>.ts` | connection discipline             |
+| `new Date().toISOString()` / hand-written timestamp fields                                        | the `timestamps` trigger                           | server-owned lifecycle            |
 
 ---
 
@@ -96,19 +96,19 @@ a structural guarantee:
 
 A raw project's root files usually mix several kinds of code. Pull them apart:
 
-| You have today | It becomes |
-|---|---|
-| `export const get/list = query({...})` at root | adapter in `api/<entity>.ts` + read logic in `domain/<entity>/queries.ts` |
-| `export const create/update = mutation({...})` at root | adapter in `api/<entity>.ts` + operation in `domain/<entity>/commands.ts` |
-| `internalMutation`/`internalAction` helpers | `system*` functions in `domain/<entity>/<purpose>_functions.ts` |
-| inline `defineTable({...})` in `schema.ts` | `zodTable` in `domain/<entity>/schema.ts` + indexes in `domain/<entity>/table.ts` |
-| `v.union(v.literal(...))` / inline `z.enum` repeated around | one `UPPER_SNAKE` tuple in `domain/<entity>/constants.ts` |
-| validation/business `if`-chains inside handlers | pure predicates in `domain/<entity>/rules.ts` |
-| shared grab-bag (`helpers.ts`, `utils.ts`, `lib.ts`) | split by owner into `domain/<entity>/shared.ts`; only genuinely cross-entity code into `domain/shared/` |
-| ad-hoc vendor clients (HTTP SDKs, caches, SQL) | one configured client per provider in `domain/shared/<provider>.ts` |
-| webhook handlers with logic in `http.ts` | route in `http.ts`, logic in `domain/<entity>/actions.ts` |
-| cron handlers with logic in `crons.ts` | declaration in `crons.ts`, target `system*` function in the domain |
-| audit/log/history tables mirroring component state | the component's own persistence via its facade |
+| You have today                                              | It becomes                                                                                              |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `export const get/list = query({...})` at root              | adapter in `api/<entity>.ts` + read logic in `domain/<entity>/queries.ts`                               |
+| `export const create/update = mutation({...})` at root      | adapter in `api/<entity>.ts` + operation in `domain/<entity>/commands.ts`                               |
+| `internalMutation`/`internalAction` helpers                 | `system*` functions in `domain/<entity>/<purpose>_functions.ts`                                         |
+| inline `defineTable({...})` in `schema.ts`                  | `zodTable` in `domain/<entity>/schema.ts` + indexes in `domain/<entity>/table.ts`                       |
+| `v.union(v.literal(...))` / inline `z.enum` repeated around | one `UPPER_SNAKE` tuple in `domain/<entity>/constants.ts`                                               |
+| validation/business `if`-chains inside handlers             | pure predicates in `domain/<entity>/rules.ts`                                                           |
+| shared grab-bag (`helpers.ts`, `utils.ts`, `lib.ts`)        | split by owner into `domain/<entity>/shared.ts`; only genuinely cross-entity code into `domain/shared/` |
+| ad-hoc vendor clients (HTTP SDKs, caches, SQL)              | one configured client per provider in `domain/shared/<provider>.ts`                                     |
+| webhook handlers with logic in `http.ts`                    | route in `http.ts`, logic in `domain/<entity>/actions.ts`                                               |
+| cron handlers with logic in `crons.ts`                      | declaration in `crons.ts`, target `system*` function in the domain                                      |
+| audit/log/history tables mirroring component state          | the component's own persistence via its facade                                                          |
 
 ---
 
@@ -132,7 +132,7 @@ codebase greppable.
   the full set once (one owner), not per callsite.
 - **Vocabulary tuples**: `UPPER_SNAKE_CASE` exported `as const`; derived type
   `PascalCase` singular (`const <ENTITY>_STATES = [...] as const;
-  type <Entity>State = (typeof <ENTITY>_STATES)[number]`).
+type <Entity>State = (typeof <ENTITY>_STATES)[number]`).
 - **Domain executors**: `execute<Verb><Entity>` (`executeApproveInvoice`) —
   the grep-able seam between adapters and domain.
 - **Internal callback files**: `<purpose>_functions.ts` next to the
@@ -199,8 +199,8 @@ For each public function at the root:
 
 1. **Extract the domain logic.** Reads → `domain/<entity>/queries.ts`.
    Writes → an operation in the entity's command registry with
-   classification and audit derivation (see `commands.md`) — deciding *what
-   gets audited and as what* is a product decision; make it explicitly, not
+   classification and audit derivation (see `commands.md`) — deciding _what
+   gets audited and as what_ is a product decision; make it explicitly, not
    as an afterthought. Pure conditions the handler checks
    (state-transition legality, permission-beyond-role predicates) →
    `rules.ts`, so they're unit-testable without a ctx.
@@ -225,7 +225,7 @@ in the domain.
   `<purpose>_functions.ts`. Scheduled and callback writes now run under the
   same trigger regime as user writes.
 - `crons.ts` becomes declarations only, targeting `internal.domain.<entity>.
-  <purpose>_functions.*`.
+<purpose>_functions.*`.
 - `http.ts` becomes routing only: verify the webhook signature, parse the
   payload at the boundary, delegate to a domain action/function.
 
@@ -267,11 +267,11 @@ substantially changed; don't mechanically rewrite untouched files.
 import { parseInput } from './schema'
 
 export async function createProjection(input: unknown) {
-  return buildProjection(parseInput(input))
+	return buildProjection(parseInput(input))
 }
 
 function buildProjection(input: ProjectionInput) {
-  // implementation
+	// implementation
 }
 ```
 

@@ -160,11 +160,11 @@ Actions then proceed through `actionInput` → `verifiedMembership` exactly as t
 
 ## Verification Contract
 
-| Gate | Command | Applies to |
-|---|---|---|
-| Types | `bun run typecheck` | U1 |
-| Runtime test suite | `bun run test` | U1, U2 |
-| Full release gate | `bun run prepublishOnly` | U4 (final) |
+| Gate               | Command                  | Applies to |
+| ------------------ | ------------------------ | ---------- |
+| Types              | `bun run typecheck`      | U1         |
+| Runtime test suite | `bun run test`           | U1, U2     |
+| Full release gate  | `bun run prepublishOnly` | U4 (final) |
 
 All new tests run on the real Convex runtime via `convex-test`, matching the existing suite; no mocked auth paths.
 

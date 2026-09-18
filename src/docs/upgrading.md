@@ -1,5 +1,27 @@
 # Upgrading to 0.1.0 — the new way of things
 
+## 0.1.4
+
+The optional Oxlint plugin is available through `cvx-kit/oxlint`; the root
+README shows consumer configuration. Loading the plugin does not enable rules
+automatically. Select rules in your lint configuration and list your public
+entry points in `cvx/no-internal-reexports`.
+
+This patch tightens several TypeScript contracts during the anti-slop cleanup:
+
+- Query middleware preserves the handler's result type. Return `next()` or
+  throw; middleware that fabricates an unrelated result no longer typechecks.
+- `include().execute` and `.paginate` require a transform callback when
+  requesting a different output type through an explicit type argument.
+- Audit metadata values must be serializable Convex `Value` values.
+- Webhook targets must be internal mutation references accepting
+  `{ eventKey: string, payload: string, source: string }`.
+- CRUD enrichment derives from the table storage schema. Agent tools retain
+  each supplied handler's input and result types.
+
+Run your application's typecheck after upgrading and update affected callbacks.
+No storage migration is required.
+
 ## 0.1.3
 
 Install `convex-helpers` as a direct peer, using one compatible instance:
@@ -135,8 +157,8 @@ New way:
 import { createStateMachine } from 'cvx-kit/state-machine'
 
 const machine = createStateMachine(<ENTITY>_STATES, {
-  draft: ['published', 'archived'],
-  published: ['archived'],
+	draft: ['published', 'archived'],
+	published: ['archived'],
 })
 // in a command guard:
 guard: async (ctx, command) => machine.assert(row.state, command.to)
@@ -151,7 +173,7 @@ dependency-free — it receives the instance):
 import { rateLimit } from 'cvx-kit/middleware'
 
 const commands = new Command(operations, {
-  middleware: [rateLimit({ limiter, name: '<entities>.write' })],
+	middleware: [rateLimit({ limiter, name: '<entities>.write' })],
 })
 ```
 
@@ -167,8 +189,11 @@ import { createWebhookBoundary, recordWebhookEvent, webhookEventsTable } from 'c
 
 // schema: webhookEvents: webhookEventsTable().table.index('by_eventKey', ['eventKey'])
 const boundary = createWebhookBoundary({
-  verify: async (raw, request) => timingSafeHmacVerify(raw, request), // RAW body, constant-time, secret from env
-  eventKey: (raw) => { const e = JSON.parse(raw); return `${e.event}:${e.id}:${e.updatedAt}` },
+	verify: async (raw, request) => timingSafeHmacVerify(raw, request), // RAW body, constant-time, secret from env
+	eventKey: (raw) => {
+		const e = JSON.parse(raw)
+		return `${e.event}:${e.id}:${e.updatedAt}`
+	},
 })
 // http.ts routes to boundary.handle(ctx, request, internal.<module>.functions.applyEvent)
 // applyEvent (systemMutation) calls recordWebhookEvent FIRST — transactional dedup.
@@ -200,8 +225,8 @@ Shape-compatible, dependency-free; checked against `@convex-dev/agent@0.6.x`
 New way:
 
 ```ts
-const withVendor = Command.middleware<Ctx, { vendor: Vendor }>(
-  async ({ context, next }) => next({ context: { vendor: await load(context) } }),
+const withVendor = Command.middleware<Ctx, { vendor: Vendor }>(async ({ context, next }) =>
+	next({ context: { vendor: await load(context) } }),
 )
 // registries/operations accept typed middleware without casts
 ```

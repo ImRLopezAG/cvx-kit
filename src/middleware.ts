@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { defaultErrors, type ErrorFactory } from './errors'
 
 /**
@@ -24,26 +25,21 @@ export type RateLimiterLike = {
  * The returned middleware is shape-compatible with both AnyCommandMiddleware
  * and AnyQueryMiddleware.
  */
-export function rateLimit(config: {
+export function rateLimit<Context = never>(config: {
 	limiter: RateLimiterLike
 	name: string
 	/** Defaults to ctx.tenant. */
-	key?: (context: never) => string
+	key?: (context: Context) => string
 	/** Observe a rejection before the throw (metrics, headers). */
-	onLimit?: (
-		status: { ok: boolean; retryAfter?: number },
-		context: never,
-	) => void | Promise<void>
+	onLimit?: (status: { ok: boolean; retryAfter?: number }, context: Context) => void | Promise<void>
 	errors?: ErrorFactory
 }) {
 	const errors = config.errors ?? defaultErrors
-	return async (input: {
+	return async <Result>(input: {
 		context: never
-		next: (options?: { context?: unknown }) => Promise<unknown>
-	}): Promise<unknown> => {
-		const key = config.key
-			? config.key(input.context)
-			: (input.context as { tenant?: string }).tenant
+		next: (options?: { context?: object }) => Promise<Result>
+	}): Promise<Result> => {
+		const key = config.key ? config.key(input.context) : tenantContext.parse(input.context).tenant
 		if (key === undefined) {
 			return errors.throw({
 				code: 'RATE_LIMIT_KEY_MISSING',
@@ -58,12 +54,12 @@ export function rateLimit(config: {
 			return errors.throw({
 				code: 'RATE_LIMITED',
 				message: `Rate limit "${config.name}" exceeded${
-					status.retryAfter === undefined
-						? ''
-						: `; retry after ${Math.ceil(status.retryAfter)}ms`
+					status.retryAfter === undefined ? '' : `; retry after ${Math.ceil(status.retryAfter)}ms`
 				}`,
 			})
 		}
 		return input.next()
 	}
 }
+
+const tenantContext = z.object({ tenant: z.string().optional() })

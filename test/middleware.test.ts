@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
 	Foundation,
 	type AuditEntryInput,
+	type AnyCommandMiddleware,
 } from '../src/components/foundation/client'
 import { KitError } from '../src/errors'
 import { rateLimit, type RateLimiterLike } from '../src/middleware'
@@ -21,7 +22,7 @@ function fakeLimiter(allow: boolean, retryAfter?: number) {
 	return { limiter, calls }
 }
 
-function commandHarness(middleware: never[]) {
+function commandHarness(middleware: AnyCommandMiddleware[]) {
 	const auditEntries: AuditEntryInput[] = []
 	const calls: string[] = []
 	const { Command } = new Foundation(
@@ -63,9 +64,7 @@ function commandHarness(middleware: never[]) {
 describe('rateLimit middleware', () => {
 	it('passes through under the limit, keyed by ctx.tenant by default', async () => {
 		const { limiter, calls } = fakeLimiter(true)
-		const { touch, calls: run } = commandHarness([
-			rateLimit({ limiter, name: 'touch' }) as never,
-		])
+		const { touch, calls: run } = commandHarness([rateLimit({ limiter, name: 'touch' })])
 		await touch({ actorId: 'u', tenant: 'org_1' }, {})
 		expect(run).toEqual(['handler'])
 		expect(calls).toEqual([{ name: 'touch', key: 'org_1' }])
@@ -73,12 +72,10 @@ describe('rateLimit middleware', () => {
 
 	it('over the limit: handler never runs, audit skipped, RATE_LIMITED thrown', async () => {
 		const { limiter } = fakeLimiter(false, 1200)
-		const { touch, calls, auditEntries } = commandHarness([
-			rateLimit({ limiter, name: 'touch' }) as never,
-		])
-		await expect(
-			touch({ actorId: 'u', tenant: 'org_1' }, {}),
-		).rejects.toThrow(/RATE_LIMITED|exceeded/)
+		const { touch, calls, auditEntries } = commandHarness([rateLimit({ limiter, name: 'touch' })])
+		await expect(touch({ actorId: 'u', tenant: 'org_1' }, {})).rejects.toThrow(
+			/RATE_LIMITED|exceeded/,
+		)
 		expect(calls).toEqual([])
 		expect(auditEntries).toEqual([])
 	})
@@ -89,8 +86,8 @@ describe('rateLimit middleware', () => {
 			rateLimit({
 				limiter,
 				name: 'touch',
-				key: (ctx) => `actor:${(ctx as Ctx).actorId}`,
-			}) as never,
+				key: (ctx: Ctx) => `actor:${ctx.actorId}`,
+			}),
 		])
 		await touch({ actorId: 'u_7' }, {})
 		expect(calls[0]?.key).toBe('actor:u_7')
@@ -98,13 +95,9 @@ describe('rateLimit middleware', () => {
 
 	it('no key fn and no ctx.tenant is a configuration error, not a shared bucket', async () => {
 		const { limiter, calls } = fakeLimiter(true)
-		const { touch, calls: run } = commandHarness([
-			rateLimit({ limiter, name: 'touch' }) as never,
-		])
+		const { touch, calls: run } = commandHarness([rateLimit({ limiter, name: 'touch' })])
 		await expect(touch({ actorId: 'u' }, {})).rejects.toThrow(KitError)
-		await expect(touch({ actorId: 'u' }, {})).rejects.toThrow(
-			/RATE_LIMIT_KEY_MISSING|no key/,
-		)
+		await expect(touch({ actorId: 'u' }, {})).rejects.toThrow(/RATE_LIMIT_KEY_MISSING|no key/)
 		expect(calls).toEqual([])
 		expect(run).toEqual([])
 	})
@@ -119,11 +112,9 @@ describe('rateLimit middleware', () => {
 				onLimit: (status) => {
 					seen.push(status.retryAfter ?? -1)
 				},
-			}) as never,
+			}),
 		])
-		await expect(
-			touch({ actorId: 'u', tenant: 'org_1' }, {}),
-		).rejects.toThrow(/exceeded/)
+		await expect(touch({ actorId: 'u', tenant: 'org_1' }, {})).rejects.toThrow(/exceeded/)
 		expect(seen).toEqual([500])
 	})
 
@@ -154,7 +145,7 @@ describe('rateLimit middleware', () => {
 			}),
 		} as const
 		const commands = new Command<Ctx, typeof operations>(operations, {
-			middleware: [rateLimit({ limiter, name: 'global' }) as never],
+			middleware: [rateLimit({ limiter, name: 'global' })],
 		})
 		const touch = commands.exec({
 			operation: 'notes.touch',

@@ -1,19 +1,11 @@
 import { WorkflowManager, type WorkflowId } from '@convex-dev/workflow'
 import { zodToConvex } from 'convex-helpers/server/zod4'
 import { paginator } from 'convex-helpers/server/pagination'
-import {
-	paginationOptsValidator,
-	paginationResultValidator,
-} from 'convex/server'
+import { paginationOptsValidator, paginationResultValidator } from 'convex/server'
 import { v } from 'convex/values'
 
 import { components, internal } from './_generated/api'
-import {
-	internalMutation,
-	internalQuery,
-	mutation,
-	query,
-} from './_generated/server'
+import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { logApprovalTransition } from './audit'
 import schema from './schema'
 import { APPROVAL_EXECUTION_STATES, APPROVAL_RUN_STATES } from './constants'
@@ -81,6 +73,7 @@ export const cancel = mutation({
 			throw new Error(`Approval request is already ${run.state}`)
 		}
 		if (!run.workflowId) throw new Error('Approval workflow is not linked')
+		// SAFETY: this run stores the id returned by approvalWorkflow.start.
 		await approvalWorkflow.cancel(ctx, run.workflowId as WorkflowId)
 		if (!canTransitionApprovalRun(run.state, 'canceled'))
 			throw new Error(`Approval request cannot transition from ${run.state}`)
@@ -113,6 +106,7 @@ export const restart = mutation({
 		if (!run.workflowId) throw new Error('Approval workflow is not linked')
 		if (!run.executionFailedStepKey)
 			throw new Error('Approval workflow has no failed step to restart')
+		// SAFETY: this run stores the id returned by approvalWorkflow.start.
 		await approvalWorkflow.restart(ctx, run.workflowId as WorkflowId, {
 			from: run.executionFailedStepKey,
 			startAsync: true,
@@ -128,6 +122,7 @@ export const status = query({
 		const run = await ctx.db.get(input.runId)
 		if (!run) return null
 		assertCompatible(run.workflow.compatibilityKey, input.compatibilityKey)
+		// SAFETY: workflowId is the id persisted from approvalWorkflow.start for this run.
 		const workflowStatus = run.workflowId
 			? await approvalWorkflow.status(ctx, run.workflowId as WorkflowId)
 			: null
@@ -175,8 +170,7 @@ export const recordExecutionTerminal = internalMutation({
 		const run = await ctx.db.get(input.runId)
 		if (!run) throw new Error('Approval request not found')
 		await ctx.db.patch(run._id, {
-			executionFailedStepKey:
-				input.outcome === 'failed' ? input.failedStepKey : undefined,
+			executionFailedStepKey: input.outcome === 'failed' ? input.failedStepKey : undefined,
 			updatedAt: Date.now(),
 		})
 		await logApprovalTransition(ctx, {

@@ -34,9 +34,7 @@ const projectTables = {
 const platformTables = {
 	globals: globals.table,
 	audits: audits.table,
-	webhookEvents: webhookEventsTable().table.index('by_eventKey', [
-		'eventKey',
-	]),
+	webhookEvents: webhookEventsTable().table.index('by_eventKey', ['eventKey']),
 }
 
 export default defineSchema(createModule(projectTables, platformTables))

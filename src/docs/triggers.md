@@ -27,7 +27,9 @@ noDelete(triggers, 'documents')
 
 // Domain triggers register on the same instance
 triggers.register('documents', async (ctx, change) => {
-  if (change.operation === 'insert') { /* denormalize, validate, cascade */ }
+	if (change.operation === 'insert') {
+		/* denormalize, validate, cascade */
+	}
 })
 ```
 
@@ -65,7 +67,7 @@ createAuthFunctions<DataModel>({ ..., triggers })
    (useful for seeding, dangerous for assertions about trigger behavior).
 2. **Wrapper spread order matters** if you compose ctx manually:
    `{ ...wrapDB(ctx), ...otherStuff }` — `wrapDB` returns a full ctx, so
-   spreading it *after* anything that carries `db` restores the raw database.
+   spreading it _after_ anything that carries `db` restores the raw database.
    The kit's constructors already order this correctly
    (`{ ...wrapDB(ctx), include, ...authBundle }`).
 3. **A throwing trigger aborts the transaction.** That is the point for

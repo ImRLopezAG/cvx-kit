@@ -126,11 +126,10 @@ security: {
 
 ```ts
 rules: (bundle) => ({
-  '<entities>': {
-    modify: async (_ctx, doc) =>
-      bundle.role === 'admin' || doc.ownerId === bundle.actor.userId,
-  },
-  '<evidence>': { modify: async () => false },   // frozen via RLS as well as trigger
+	'<entities>': {
+		modify: async (_ctx, doc) => bundle.role === 'admin' || doc.ownerId === bundle.actor.userId,
+	},
+	'<evidence>': { modify: async () => false }, // frozen via RLS as well as trigger
 })
 ```
 
@@ -171,9 +170,7 @@ the schema and rejects a table declared by two modules:
 
 ```ts
 // convex/domain/table.ts
-export const domainTables = createModule(
-  <moduleA>Tables, <moduleB>Tables, <moduleC>Tables,
-)
+export const domainTables = createModule(<moduleA>Tables, <moduleB>Tables, <moduleC>Tables)
 // convex/schema.ts
 export default defineSchema(domainTables)
 ```

@@ -1,12 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import {
-	copyFileSync,
-	mkdirSync,
-	mkdtempSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -18,9 +11,7 @@ if (installer !== 'bun' && installer !== 'npm') {
 const root = join(import.meta.dirname, '..')
 const temporaryRoot = mkdtempSync(join(tmpdir(), 'cvx-kit-smoke-'))
 const fixture = join(temporaryRoot, 'fixture')
-const packageManifest = JSON.parse(
-	readFileSync(join(root, 'package.json'), 'utf8'),
-)
+const packageManifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const packageVersion = packageManifest.version
 const tarball = join(temporaryRoot, `cvx-kit-${packageVersion}.tgz`)
 
@@ -42,10 +33,7 @@ function runStreaming(command, args, cwd = fixture) {
 }
 
 function runConvex(...args) {
-	return run('node', [
-		join(fixture, 'node_modules', 'convex', 'bin', 'main.js'),
-		...args,
-	])
+	return run('node', [join(fixture, 'node_modules', 'convex', 'bin', 'main.js'), ...args])
 }
 
 function write(relativePath, contents) {
@@ -59,11 +47,7 @@ function step(label, callback) {
 }
 
 try {
-	run(
-		'bun',
-		['pm', 'pack', '--destination', temporaryRoot, '--ignore-scripts'],
-		root,
-	)
+	run('bun', ['pm', 'pack', '--destination', temporaryRoot, '--ignore-scripts'], root)
 	mkdirSync(join(fixture, 'convex'), { recursive: true })
 	write(
 		'package.json',
@@ -252,13 +236,8 @@ export const status = query({
 		copyFileSync(join(root, 'bun.lock'), join(fixture, 'bun.lock'))
 	}
 	if (installer === 'bun')
-		step('install with bun', () =>
-			runStreaming('bun', ['install', '--ignore-scripts']),
-		)
-	else
-		step('install with npm', () =>
-			runStreaming('npm', ['install', '--ignore-scripts']),
-		)
+		step('install with bun', () => runStreaming('bun', ['install', '--ignore-scripts']))
+	else step('install with npm', () => runStreaming('npm', ['install', '--ignore-scripts']))
 	if (installer === 'bun')
 		step('test helper with bun', () =>
 			runStreaming('bunx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
@@ -268,30 +247,18 @@ export const status = query({
 			runStreaming('npx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
 		)
 
-	step('deploy Convex fixture', () =>
-		runConvex('dev', '--once', '--typecheck=disable'),
-	)
+	step('deploy Convex fixture', () => runConvex('dev', '--once', '--typecheck=disable'))
 	const health = JSON.parse(runConvex('run', 'smoke:health'))
 	if (health.status !== 'ready' || health.schemaVersion !== 1) {
-		throw new Error(
-			`Unexpected approvals health response: ${JSON.stringify(health)}`,
-		)
+		throw new Error(`Unexpected approvals health response: ${JSON.stringify(health)}`)
 	}
-	const foundationHealth = JSON.parse(
-		runConvex('run', 'smoke:foundationHealth'),
-	)
+	const foundationHealth = JSON.parse(runConvex('run', 'smoke:foundationHealth'))
 	if (foundationHealth !== 'ready') {
-		throw new Error(
-			`Unexpected foundation health response: ${JSON.stringify(foundationHealth)}`,
-		)
+		throw new Error(`Unexpected foundation health response: ${JSON.stringify(foundationHealth)}`)
 	}
 	const { runId } = JSON.parse(runConvex('run', 'smoke:start'))
 	const { runId: secondRunId } = JSON.parse(
-		runConvex(
-			'run',
-			'smoke:start',
-			JSON.stringify({ resourceRef: 'packed-component-2' }),
-		),
+		runConvex('run', 'smoke:start', JSON.stringify({ resourceRef: 'packed-component-2' })),
 	)
 	const firstPage = JSON.parse(
 		runConvex(
@@ -324,20 +291,18 @@ export const status = query({
 		secondPage.page[0]._id !== runId ||
 		secondPage.page[0]._id === firstPage.page[0]._id
 	) {
-		throw new Error(
-			`Unexpected continuation approval page: ${JSON.stringify(secondPage)}`,
-		)
+		throw new Error(`Unexpected continuation approval page: ${JSON.stringify(secondPage)}`)
 	}
 
 	// start schedules the workflow; a successful start is not decision readiness.
 	let readyStatus
 	const readyDeadline = Date.now() + 60_000
 	while (Date.now() < readyDeadline) {
-		readyStatus = JSON.parse(
-			runConvex('run', 'smoke:status', JSON.stringify({ runId })),
-		)
-		if (readyStatus?.run.state !== 'pending' ||
-			['failed', 'canceled', 'completed'].includes(readyStatus?.execution?.type)) {
+		readyStatus = JSON.parse(runConvex('run', 'smoke:status', JSON.stringify({ runId })))
+		if (
+			readyStatus?.run.state !== 'pending' ||
+			['failed', 'canceled', 'completed'].includes(readyStatus?.execution?.type)
+		) {
 			throw new Error(`Approval ended before decision readiness: ${JSON.stringify(readyStatus)}`)
 		}
 		if (readyStatus.run.currentStepKey === 'releaseDecision') break
@@ -346,23 +311,17 @@ export const status = query({
 	if (readyStatus?.run.currentStepKey !== 'releaseDecision') {
 		throw new Error(`Approval did not become decision-ready: ${JSON.stringify(readyStatus)}`)
 	}
-	const decision = JSON.parse(
-		runConvex('run', 'smoke:decide', JSON.stringify({ runId })),
-	)
+	const decision = JSON.parse(runConvex('run', 'smoke:decide', JSON.stringify({ runId })))
 	if (decision.state !== 'approved') {
 		throw new Error(`Unexpected decision response: ${JSON.stringify(decision)}`)
 	}
-	const history = JSON.parse(
-		runConvex('run', 'smoke:history', JSON.stringify({ runId })),
-	)
+	const history = JSON.parse(runConvex('run', 'smoke:history', JSON.stringify({ runId })))
 	if (history.length !== 1 || history[0].decision !== 'approved') {
 		throw new Error(`Unexpected approval history: ${JSON.stringify(history)}`)
 	}
 	let status
 	for (let attempt = 0; attempt < 20; attempt += 1) {
-		status = JSON.parse(
-			runConvex('run', 'smoke:status', JSON.stringify({ runId })),
-		)
+		status = JSON.parse(runConvex('run', 'smoke:status', JSON.stringify({ runId })))
 		if (status.execution?.type === 'completed') break
 		await new Promise((resolve) => setTimeout(resolve, 500))
 	}

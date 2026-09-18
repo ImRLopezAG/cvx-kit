@@ -2,6 +2,7 @@ import {
 	createFunctionHandle,
 	type FunctionReference,
 	type FunctionType,
+	type FunctionHandle,
 } from 'convex/server'
 
 import type { ApprovalDecision } from './constants'
@@ -10,8 +11,6 @@ import {
 	type ApprovalCallbackInput,
 	type ApprovalWorkflowDescriptor,
 } from './validators'
-
-export type { ApprovalCallbackInput } from './validators'
 
 export type ApprovalMutationStep = Readonly<{
 	kind: 'mutation'
@@ -72,10 +71,7 @@ export type ApprovalDecisionEvidence = Readonly<{
 	decision: ApprovalDecision
 }>
 
-export function approvalDecisionEventName(
-	runId: string,
-	stepKey: string,
-): string {
+export function approvalDecisionEventName(runId: string, stepKey: string): string {
 	return `approval:${runId}:${stepKey}`
 }
 
@@ -83,33 +79,24 @@ export function evaluateDecisionOutcome(
 	decisions: readonly ApprovalDecisionEvidence[],
 	approvalsRequired: number,
 ): ApprovalDecision | null {
-	if (decisions.some((decision) => decision.decision === 'rejected'))
-		return 'rejected'
-	return decisions.filter((decision) => decision.decision === 'approved')
-		.length >= approvalsRequired
+	if (decisions.some((decision) => decision.decision === 'rejected')) return 'rejected'
+	return decisions.filter((decision) => decision.decision === 'approved').length >=
+		approvalsRequired
 		? 'approved'
 		: null
 }
 
-export function resolveWorkflowStepIndex(
-	stepKeys: readonly string[],
-	targetKey: string,
-): number {
+export function resolveWorkflowStepIndex(stepKeys: readonly string[], targetKey: string): number {
 	const index = stepKeys.indexOf(targetKey)
-	if (index === -1)
-		throw new Error(`Unknown approval workflow step: ${targetKey}`)
+	if (index === -1) throw new Error(`Unknown approval workflow step: ${targetKey}`)
 	return index
 }
 
 export function callbackReference<Type extends FunctionType>(
 	handle: string,
 ): FunctionReference<Type, 'internal', ApprovalCallbackInput, unknown> {
-	return handle as unknown as FunctionReference<
-		Type,
-		'internal',
-		ApprovalCallbackInput,
-		unknown
-	>
+	// SAFETY: descriptors persist handles produced by createFunctionHandle; Convex resolves them on invocation.
+	return handle as FunctionHandle<Type, ApprovalCallbackInput, unknown>
 }
 
 export async function compileApprovalDescriptor(
@@ -159,10 +146,16 @@ export async function compileApprovalDescriptor(
 	return deepFreeze(descriptor)
 }
 
-function deepFreeze<Value>(value: Value): Readonly<Value> {
-	if (value && typeof value === 'object') {
-		Object.freeze(value)
-		for (const nested of Object.values(value)) deepFreeze(nested)
+function deepFreeze(descriptor: ApprovalWorkflowDescriptor): Readonly<ApprovalWorkflowDescriptor> {
+	for (const step of descriptor.steps) {
+		if (step.kind === 'decision') {
+			Object.freeze(step.decisions)
+			Object.freeze(step.quorum)
+		} else if ('callback' in step) {
+			Object.freeze(step.callback)
+		}
+		Object.freeze(step)
 	}
-	return value
+	Object.freeze(descriptor.steps)
+	return Object.freeze(descriptor)
 }

@@ -13,7 +13,7 @@ describe('Foundation Query', () => {
 			},
 		})
 		const execute = query.exec({
-			handler: (_context: unknown, id: string) => {
+			handler: (_context, id: string) => {
 				order.push('handler')
 				return id
 			},

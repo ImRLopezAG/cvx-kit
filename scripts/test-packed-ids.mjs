@@ -1,19 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import {
-	mkdtempSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const root = join(import.meta.dirname, '..')
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-ids-'))
-const manifest = JSON.parse(
-	readFileSync(join(root, 'package.json'), 'utf8'),
-)
+const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 function run(command, args, cwd) {
 	return execFileSync(command, args, {
 		cwd,
@@ -22,11 +14,7 @@ function run(command, args, cwd) {
 	})
 }
 try {
-	run(
-		'bun',
-		['pm', 'pack', '--destination', temporary, '--ignore-scripts'],
-		root,
-	)
+	run('bun', ['pm', 'pack', '--destination', temporary, '--ignore-scripts'], root)
 	for (const installer of ['npm', 'bun']) {
 		const fixture = join(temporary, installer)
 		mkdirSync(fixture)
@@ -75,19 +63,19 @@ for (const validator of [
 `,
 		)
 		run('node', ['probe.mjs'], fixture)
-		for (const testFile of [
-			'command.test.ts',
-			'command-lifecycle.test.ts',
-		]) {
+		for (const testFile of ['command.test.ts', 'command-lifecycle.test.ts']) {
 			const source = readFileSync(join(root, 'test', testFile), 'utf8')
-				.replace(
-					'../src/components/foundation/client',
-					'cvx-kit/components/foundation',
-				)
+				.replace('../src/components/foundation/client', 'cvx-kit/components/foundation')
 				.replace(
 					"const modules = import.meta.glob('./fixture/**/*.ts')",
 					"const modules = { './_generated/server.ts': async () => ({}) }",
 				)
+			writeFileSync(join(fixture, testFile), source)
+		}
+		for (const testFile of ['zod-table.test.ts', 'agent-tools.test.ts']) {
+			const source = readFileSync(join(root, 'test', testFile), 'utf8')
+				.replaceAll('../src/zod-table', 'cvx-kit/zod-table')
+				.replaceAll('../src/agent-tools', 'cvx-kit/agent-tools')
 			writeFileSync(join(fixture, testFile), source)
 		}
 		writeFileSync(
@@ -134,6 +122,8 @@ it('registers concrete and generic backends from the packed package', () => {
 				'vite/client',
 				'command-types.ts',
 				'registration.test.ts',
+				'zod-table.test.ts',
+				'agent-tools.test.ts',
 			],
 			fixture,
 		)
@@ -145,11 +135,13 @@ it('registers concrete and generic backends from the packed package', () => {
 				'registration.test.ts',
 				'command.test.ts',
 				'command-lifecycle.test.ts',
+				'zod-table.test.ts',
+				'agent-tools.test.ts',
 			],
 			fixture,
 		)
 		console.log(
-			`${installer}: packed IDs, strict declarations, registration, and command lifecycle pass with host convex-helpers 0.1.123`,
+			`${installer}: packed IDs, table/tool types, registration, and command lifecycle pass with host convex-helpers 0.1.123`,
 		)
 	}
 } finally {

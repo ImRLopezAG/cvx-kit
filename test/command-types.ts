@@ -1,14 +1,7 @@
 import { z } from 'zod'
-import {
-	Foundation,
-	type AnyCommandMiddleware,
-} from '../src/components/foundation/client'
+import { Foundation, type AnyCommandMiddleware } from '../src/components/foundation/client'
 
-const legacyMiddleware: AnyCommandMiddleware = async ({
-	operation,
-	command,
-	next,
-}) => {
+const legacyMiddleware: AnyCommandMiddleware = async ({ operation, command, next }) => {
 	operation.toUpperCase()
 	const boundary: unknown = command
 	void boundary
@@ -94,9 +87,7 @@ const operations = {
 		},
 	}),
 }
-const commands = new Command<{ actorId: string }, typeof operations>(
-	operations,
-)
+const commands = new Command<{ actorId: string }, typeof operations>(operations)
 // @ts-expect-error operation callbacks require the declared host context
 new Command<{ wrong: string }, typeof operations>(operations)
 const rename = commands.exec({
@@ -122,45 +113,37 @@ typed.operation({
 		aggregate: { type: 'wrong', id: '1' },
 	}),
 })
-const registryMiddleware = typed.registryMiddleware(
-	operations,
-	async (input) => {
-		if (input.operation === 'rename') {
-			input.command.title.toFixed()
-			const result = await input.next()
-			result.ok.valueOf()
-			return result
-		}
-		input.command.count.toFixed()
-		return input.next()
-	},
-)
+const registryMiddleware = typed.registryMiddleware(operations, async (input) => {
+	if (input.operation === 'rename') {
+		input.command.title.toFixed()
+		const result = await input.next()
+		result.ok.valueOf()
+		return result
+	}
+	input.command.count.toFixed()
+	return input.next()
+})
 // @ts-expect-error registry callbacks must use a compatible host context
-Command.withContext<{ wrong: string }>().registryMiddleware(operations, async input => input.next())
+Command.withContext<{ wrong: string }>().registryMiddleware(operations, async (input) =>
+	input.next(),
+)
 new Command<{ actorId: string }, typeof operations>(operations, {
 	middleware: [registryMiddleware],
 })
-const enriched = Command.withContext<
-	{ actorId: string },
-	{ traceId: string }
->()
+const enriched = Command.withContext<{ actorId: string }, { traceId: string }>()
 const enrichedOperations = {
 	touch: enriched.operation({
 		command: z.object({}),
 		result: z.string(),
 		classification: 'business',
-		middleware: [
-			async ({ next }) => next({ context: { traceId: 'trace' } }),
-		],
+		middleware: [async ({ next }) => next({ context: { traceId: 'trace' } })],
 		guard: (context) => {
 			context.traceId.toUpperCase()
 		},
 		audit: () => null,
 	}),
 }
-new Command<{ actorId: string }, typeof enrichedOperations>(
-	enrichedOperations,
-).exec({
+new Command<{ actorId: string }, typeof enrichedOperations>(enrichedOperations).exec({
 	operation: 'touch',
 	handler: (context) => context.traceId.toUpperCase(),
 })

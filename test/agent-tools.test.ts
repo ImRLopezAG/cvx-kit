@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vite-plus/test'
+import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 import { z } from 'zod'
 
 import { createAgentTools } from '../src/agent-tools'
@@ -15,6 +15,19 @@ const documents = zodTable(
 )
 
 describe('createAgentTools', () => {
+	it('retains distinct result types for each handler', async () => {
+		const tools = createAgentTools(documents, {
+			create: async () => ({ id: 'doc_1' }),
+			archive: async () => true,
+		})
+		const created = await tools.documents_create!.handler()
+		const archived = await tools.documents_archive!.handler()
+		expectTypeOf(created).toEqualTypeOf<{ id: string }>()
+		expectTypeOf(archived).toEqualTypeOf<boolean>()
+		expect(created).toEqual({ id: 'doc_1' })
+		expect(archived).toBe(true)
+	})
+
 	it('reuses the table tool masks with no drift', () => {
 		const tools = createAgentTools(documents, {
 			create: async () => null,
@@ -29,17 +42,17 @@ describe('createAgentTools', () => {
 			create: async () => null,
 			get: async () => null,
 		})
-		expect(Object.keys(tools).sort()).toEqual([
-			'documents_create',
-			'documents_get',
-		])
+		expect(Object.keys(tools).sort()).toEqual(['documents_create', 'documents_get'])
 		expect(tools.documents_get?.description).toContain('documents')
 	})
 
 	it('routes invocations to the supplied handler with the input', async () => {
 		const received: unknown[] = []
 		const tools = createAgentTools(documents, {
-			create: async (_ctx, input) => {
+			create: async (
+				_ctx: Record<never, never>,
+				input: z.output<typeof documents.tools.insert>,
+			) => {
 				received.push(input)
 				return { id: 'doc_1' }
 			},
@@ -47,7 +60,7 @@ describe('createAgentTools', () => {
 		const record = tools.documents_create
 		if (!record) throw new Error('missing tool')
 		const parsed = record.args.parse({ title: 'Plan' })
-		expect(await record.handler({} as never, parsed as never)).toEqual({
+		expect(await record.handler({}, parsed)).toEqual({
 			id: 'doc_1',
 		})
 		expect(received).toEqual([{ title: 'Plan' }])
@@ -58,32 +71,26 @@ describe('createAgentTools', () => {
 			update: async () => null,
 			get: async () => null,
 		})
-		const getSchema = z.toJSONSchema(tools.documents_get?.args as z.ZodType)
-		expect(
-			(getSchema.properties as Record<string, { type?: string }>).id?.type,
-		).toBe('string')
-		const updateSchema = z.toJSONSchema(
-			tools.documents_update?.args as z.ZodType,
-		)
-		expect(
-			(updateSchema.properties as Record<string, { type?: string }>).id?.type,
-		).toBe('string')
+		const getSchema = z.toJSONSchema(tools.documents_get!.args)
+		expect(getSchema.properties?.id).toMatchObject({ type: 'string' })
+		const updateSchema = z.toJSONSchema(tools.documents_update!.args)
+		expect(updateSchema.properties?.id).toMatchObject({ type: 'string' })
 	})
 
 	it('list args are the pagination opts boundary', () => {
 		const tools = createAgentTools(documents, { list: async () => null })
-		const parsed = tools.documents_list?.args.parse({
+		const parsed = tools.documents_list!.args.parse({
 			paginationOpts: { numItems: 10, cursor: null },
-		}) as { paginationOpts: { numItems: number } }
+		})
 		expect(parsed.paginationOpts.numItems).toBe(10)
 	})
 
 	it('is shape-compatible with a createTool-style consumer', () => {
 		// Structural stand-in for @convex-dev/agent's createTool signature.
-		function createToolStub(definition: {
+		function createToolStub<Result>(definition: {
 			description: string
 			args: z.ZodType
-			handler: (ctx: never, input: never) => Promise<unknown>
+			handler: (ctx: never, input: never) => Promise<Result>
 		}) {
 			return definition
 		}

@@ -190,9 +190,7 @@ describe('resolveOrganization hook on the real Convex runtime', () => {
 			roleSlug: 'editor',
 		})
 		const asUser = t.withIdentity(claimless('user_verify_bad'))
-		await expect(asUser.action(api.whoamiAction, {})).rejects.toThrow(
-			/FORBIDDEN/,
-		)
+		await expect(asUser.action(api.whoamiAction, {})).rejects.toThrow(/FORBIDDEN/)
 	})
 
 	it('never hands user A the membership of user B (identity binding)', async () => {
@@ -223,9 +221,7 @@ describe('resolveOrganization hook on the real Convex runtime', () => {
 		})
 		const asUser = t.withIdentity(claimless('user_revoked'))
 		await expect(asUser.query(api.whoami, {})).rejects.toThrow(/FORBIDDEN/)
-		await expect(asUser.mutation(api.whoamiMutation, {})).rejects.toThrow(
-			/FORBIDDEN/,
-		)
+		await expect(asUser.mutation(api.whoamiMutation, {})).rejects.toThrow(/FORBIDDEN/)
 	})
 
 	it('isolates hook-resolved tenants end-to-end through the RLS-wrapped db', async () => {
@@ -253,8 +249,6 @@ describe('resolveOrganization hook on the real Convex runtime', () => {
 	it('hook-less config: a claim-less identity stays UNAUTHENTICATED (regression)', async () => {
 		const t = harness()
 		const asUser = t.withIdentity(claimless('user_plain'))
-		await expect(asUser.query(api.noHookWhoami, {})).rejects.toThrow(
-			/UNAUTHENTICATED/,
-		)
+		await expect(asUser.query(api.noHookWhoami, {})).rejects.toThrow(/UNAUTHENTICATED/)
 	})
 })

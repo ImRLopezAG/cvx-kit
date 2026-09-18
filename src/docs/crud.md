@@ -36,11 +36,11 @@ export const create = authMutation({
 
 ## What gets generated
 
-| Operation | Input | Effect | Audit aggregate id |
-|---|---|---|---|
-| `<table>.create` | `commandInput` (strict) + `enrich` stamps | insert | the new row id |
-| `<table>.update` | `{ id, data: commandInput.partial() }` (strict) | patch | the row id |
-| `<table>.archive` | `{ id }` | sets `archivedAt` (soft delete ONLY) | the row id |
+| Operation         | Input                                           | Effect                               | Audit aggregate id |
+| ----------------- | ----------------------------------------------- | ------------------------------------ | ------------------ |
+| `<table>.create`  | `commandInput` (strict) + `enrich` stamps       | insert                               | the new row id     |
+| `<table>.update`  | `{ id, data: commandInput.partial() }` (strict) | patch                                | the row id         |
+| `<table>.archive` | `{ id }`                                        | sets `archivedAt` (soft delete ONLY) | the row id         |
 
 No hard-delete operation is generated — kit doctrine (`noDelete` +
 `archivedAt`).

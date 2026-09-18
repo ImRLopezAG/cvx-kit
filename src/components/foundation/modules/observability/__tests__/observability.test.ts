@@ -40,12 +40,9 @@ describe('Foundation Observability', () => {
 		})
 
 		await expect(
-			observability.observe(
-				{ operation: 'assignments.assign', classification: 'admin' },
-				() => {
-					throw original
-				},
-			),
+			observability.observe({ operation: 'assignments.assign', classification: 'admin' }, () => {
+				throw original
+			}),
 		).rejects.toBe(original)
 		expect(JSON.stringify(emit.mock.calls)).not.toContain('sensitive reason')
 	})

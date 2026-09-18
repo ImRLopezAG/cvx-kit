@@ -1,8 +1,8 @@
 # Maintaining a Convex application built on cvx-kit
 
 Practices that keep a cvx-kit backend maintainable over years, taken from the
-origin application. The theme throughout: make every rule either *structural*
-(the code can't be written any other way) or *executable* (a test fails when
+origin application. The theme throughout: make every rule either _structural_
+(the code can't be written any other way) or _executable_ (a test fails when
 it's violated). Conventions that live only in documentation decay.
 
 ## Schema and indexes
@@ -14,7 +14,7 @@ it's violated). Conventions that live only in documentation decay.
 - **Index naming**: `by_<field>_and_<field>...`, camelCase field names in
   declaration order, nested paths flattened with `_`
   (`by_assignedToUserId_and_state_status` for `['assignedToUserId',
-  'state.status']`). A reader should reconstruct the index definition from its
+'state.status']`). A reader should reconstruct the index definition from its
   name.
 - Every read goes through `ctx.include(...)` with an explicit limit ≤ 100.
   If a query can't be served by an index, that's a schema problem, not a
@@ -119,6 +119,6 @@ test modules the same way (`@convex-dev/workflow/test`,
    any `appendOnly`/`noDelete` discipline.
 4. `constants.ts` — vocabularies as readonly tuples.
 5. `commands.ts` — operation registry (`domain.verb`, classification, audit)
-   + executors.
+   - executors.
 6. `api/<entity>.ts` — thin `auth*` adapters, DTO projection.
 7. Tests: behavior + add the entity to the architecture globs.

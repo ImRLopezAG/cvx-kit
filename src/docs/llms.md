@@ -33,7 +33,7 @@ function constructors, a trigger registry, an audited command protocol
 3. **Every public query returns DTOs** via `<table>.toPublicDto(row)` —
    runtime redaction, not just types.
 4. **Every read is bounded**: `ctx.include(ctx.db.query('t')).matching(...)
-   .execute(limit)` with `1 ≤ limit ≤ 100`. `.resolve()` falls back to a full
+.execute(limit)` with `1 ≤ limit ≤ 100`. `.resolve()` falls back to a full
    table scan — avoid it.
 5. **State changes are commands**: an operations registry with mandatory
    `classification` and `audit()` per operation, executed via
@@ -60,31 +60,31 @@ function constructors, a trigger registry, an audited command protocol
 9. **Operation names are `domain.verb` lowercase-dotted; error codes are
    UPPER_SNAKE** — otherwise observability silently drops the events.
 10. **Row-level security is configured, not hand-rolled**: the optional
-   `security` config on `createAuthFunctions` takes role-level `rules`
-   (works standalone) and/or `tenancy` (a table registry; adds
-   `ctx.tenant`, deny-default isolation, and pairs with `tenantTable` +
-   `tenantOwnership`). Multi-tenant apps stamp inserts with
-   `tenant: ctx.tenant` and re-verify client ids with
-   `requireTenantReference`. See `tenancy.md`.
+    `security` config on `createAuthFunctions` takes role-level `rules`
+    (works standalone) and/or `tenancy` (a table registry; adds
+    `ctx.tenant`, deny-default isolation, and pairs with `tenantTable` +
+    `tenantOwnership`). Multi-tenant apps stamp inserts with
+    `tenant: ctx.tenant` and re-verify client ids with
+    `requireTenantReference`. See `tenancy.md`.
 
 ## Exports map
 
-| Import | Provides |
-|---|---|
-| `cvx-kit` | everything below re-exported (except components' defaults) |
-| `cvx-kit/zod-table` | `zodTable`, `tenantTable`, `createModule`, `paginated`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS` |
-| `cvx-kit/auth` | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap` |
-| `cvx-kit/tenancy` | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD` |
-| `cvx-kit/crud` | `createCrudCommands` — create/update/archive from a zodTable, inside the command pipeline; `enrich` REQUIRED for tenantTables |
-| `cvx-kit/state-machine` | `createStateMachine` — typed transitions from constants tuples; `assert` drops into command guards |
-| `cvx-kit/middleware` | `rateLimit` — packaged middleware over an injected rate-limiter instance; keyed by `ctx.tenant`, missing key = config error |
-| `cvx-kit/webhooks` | `createWebhookBoundary`, `recordWebhookEvent`, `webhookEventsTable` — raw-body verify, natural-key dedup in the mutation |
-| `cvx-kit/agent-tools` | `createAgentTools` — tool records from table masks; mutation handlers route through command executors |
-| `cvx-kit/triggers` | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers` |
-| `cvx-kit/errors` | `KitError`, `defaultErrors`, `ErrorFactory` |
+| Import                          | Provides                                                                                                                                                                                                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cvx-kit`                       | everything below re-exported (except components' defaults)                                                                                                                                                                                                              |
+| `cvx-kit/zod-table`             | `zodTable`, `tenantTable`, `createModule`, `paginated`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS`                                                                                                                                                            |
+| `cvx-kit/auth`                  | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap`                                                                                                                                                                         |
+| `cvx-kit/tenancy`               | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD`                                                                                                                                                                      |
+| `cvx-kit/crud`                  | `createCrudCommands` — create/update/archive from a zodTable, inside the command pipeline; `enrich` REQUIRED for tenantTables                                                                                                                                           |
+| `cvx-kit/state-machine`         | `createStateMachine` — typed transitions from constants tuples; `assert` drops into command guards                                                                                                                                                                      |
+| `cvx-kit/middleware`            | `rateLimit` — packaged middleware over an injected rate-limiter instance; keyed by `ctx.tenant`, missing key = config error                                                                                                                                             |
+| `cvx-kit/webhooks`              | `createWebhookBoundary`, `recordWebhookEvent`, `webhookEventsTable` — raw-body verify, natural-key dedup in the mutation                                                                                                                                                |
+| `cvx-kit/agent-tools`           | `createAgentTools` — tool records from table masks; mutation handlers route through command executors                                                                                                                                                                   |
+| `cvx-kit/triggers`              | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers`                                                                                                                                                                                 |
+| `cvx-kit/errors`                | `KitError`, `defaultErrors`, `ErrorFactory`                                                                                                                                                                                                                             |
 | `cvx-kit/components/foundation` | `Foundation` — the ONLY runtime export besides the default component config for `app.use`. Everything (`Command`, `Query`, `observability`, `executeResultBoundary`, `projectResult`, `emitSemanticEvent`) destructures from the instance; nothing is importable loose. |
-| `cvx-kit/components/approvals` | `Approvals` client; default export = component config for `app.use` |
-| `cvx-kit/test` | `registerFoundation(t)`, `registerApprovals(t)` for convex-test |
+| `cvx-kit/components/approvals`  | `Approvals` client; default export = component config for `app.use`                                                                                                                                                                                                     |
+| `cvx-kit/test`                  | `registerFoundation(t)`, `registerApprovals(t)` for convex-test                                                                                                                                                                                                         |
 
 ## Minimal app wiring (the five root files)
 
@@ -105,27 +105,47 @@ timestamps(triggers, 'documents')
 appendOnly(triggers, 'history')
 
 // convex/functions.ts
-export const { authQuery, authMutation, authAction, adminQuery, adminMutation,
-  adminAction, roleQuery, roleMutation, roleAction, systemQuery, systemMutation,
-  systemAction, include } = createAuthFunctions<DataModel>({
-  query, mutation, action, internalQuery, internalMutation, internalAction,   // from ./_generated/server
-  getAuthUser: (ctx) => authKit.getAuthUser(ctx),
-  mapRole: defaultRoleMap,          // 'member'→'writer'; reader|writer|admin pass
-  adminRoles: ['admin'],
-  triggers,
-  verifyMembership: async ({ userId, organizationId }) => { /* live check; actions only */ },
-  resolveOrganization: async ({ ctx, identity, user }) => { /* org+role from app tables; overrides claims; null/throw ⇒ FORBIDDEN */ },
+export const {
+	authQuery,
+	authMutation,
+	authAction,
+	adminQuery,
+	adminMutation,
+	adminAction,
+	roleQuery,
+	roleMutation,
+	roleAction,
+	systemQuery,
+	systemMutation,
+	systemAction,
+	include,
+} = createAuthFunctions<DataModel>({
+	query,
+	mutation,
+	action,
+	internalQuery,
+	internalMutation,
+	internalAction, // from ./_generated/server
+	getAuthUser: (ctx) => authKit.getAuthUser(ctx),
+	mapRole: defaultRoleMap, // 'member'→'writer'; reader|writer|admin pass
+	adminRoles: ['admin'],
+	triggers,
+	verifyMembership: async ({ userId, organizationId }) => {
+		/* live check; actions only */
+	},
+	resolveOrganization: async ({ ctx, identity, user }) => {
+		/* org+role from app tables; overrides claims; null/throw ⇒ FORBIDDEN */
+	},
 })
 
 // convex/foundation.ts
-export const { Command, Query, observability } = new Foundation(
-  components.foundation,
-  { observability: {
-      enabled: () => process.env.OBS === 'true',
-      classifyError,                                  // → { outcome: 'denied'|'failed', errorCode }
-      writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
-  } },
-)
+export const { Command, Query, observability } = new Foundation(components.foundation, {
+	observability: {
+		enabled: () => process.env.OBS === 'true',
+		classifyError, // → { outcome: 'denied'|'failed', errorCode }
+		writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
+	},
+})
 
 // convex/approvals.ts
 export const approvals = new Approvals(components.approvals)
@@ -135,43 +155,58 @@ export const approvals = new Approvals(components.approvals)
 
 ```ts
 // domain/documents/schema.ts
-export const documents = zodTable('documents', (id) => ({
-  title: z.string(), ownerId: id('users'), secretNote: z.string(),
-}), {
-  commandFields: ['title'],            // what a command may say
-  publicFields: ['title', 'ownerId'],  // the DTO allowlist
-})
+export const documents = zodTable(
+	'documents',
+	(id) => ({
+		title: z.string(),
+		ownerId: id('users'),
+		secretNote: z.string(),
+	}),
+	{
+		commandFields: ['title'], // what a command may say
+		publicFields: ['title', 'ownerId'], // the DTO allowlist
+	},
+)
 
 // convex/schema.ts (via domain/table.ts)
 defineSchema({ documents: documents.table.index('by_owner', ['ownerId']) })
 
 // domain/documents/commands.ts
 const operations = {
-  'documents.rename': Command.operation({
-    command: documents.commandInput.extend({ id: zid('documents'), actorId: z.string() }),
-    result: z.object({ ok: z.literal(true) }).strict(),
-    classification: 'business',
-    audit: ({ command }) => ({ operation: 'documents.rename', actorId: command.actorId,
-      aggregate: { type: 'document', id: command.id } }),
-  }),
+	'documents.rename': Command.operation({
+		command: documents.commandInput.extend({ id: zid('documents'), actorId: z.string() }),
+		result: z.object({ ok: z.literal(true) }).strict(),
+		classification: 'business',
+		audit: ({ command }) => ({
+			operation: 'documents.rename',
+			actorId: command.actorId,
+			aggregate: { type: 'document', id: command.id },
+		}),
+	}),
 } as const
 const commands = new Command<MutationCtx, typeof operations>(operations)
-export const executeRename = commands.exec({ operation: 'documents.rename',
-  handler: async (ctx, cmd) => { await ctx.db.patch(cmd.id, { title: cmd.title }); return { ok: true } } })
+export const executeRename = commands.exec({
+	operation: 'documents.rename',
+	handler: async (ctx, cmd) => {
+		await ctx.db.patch(cmd.id, { title: cmd.title })
+		return { ok: true }
+	},
+})
 
 // api/documents.ts — thin public adapter
 export const rename = authMutation({
-  args: documents.commandInput.extend({ id: zid('documents') }),
-  returns: z.object({ ok: z.literal(true) }).strict(),
-  handler: (ctx, args) => executeRename(ctx, { ...args, actorId: ctx.actor.userId }),
+	args: documents.commandInput.extend({ id: zid('documents') }),
+	returns: z.object({ ok: z.literal(true) }).strict(),
+	handler: (ctx, args) => executeRename(ctx, { ...args, actorId: ctx.actor.userId }),
 })
 export const list = authQuery({
-  args: { limit: z.number() },
-  returns: z.array(documents.publicDto),
-  handler: (ctx, { limit }) =>
-    ctx.include(ctx.db.query('documents'))
-      .matching('by_owner', (ix) => ix.eq('ownerId', ctx.actor.userId))
-      .execute(limit, (rows) => rows.map(documents.toPublicDto)),
+	args: { limit: z.number() },
+	returns: z.array(documents.publicDto),
+	handler: (ctx, { limit }) =>
+		ctx
+			.include(ctx.db.query('documents'))
+			.matching('by_owner', (ix) => ix.eq('ownerId', ctx.actor.userId))
+			.execute(limit, (rows) => rows.map(documents.toPublicDto)),
 })
 ```
 
@@ -186,13 +221,24 @@ canonical actor for audits/approvals.
 ## Approvals in one block
 
 ```ts
-export const publishApproval = approvals.define({ name: 'documentPublish', steps: [
-  approvals.decision('managerDecision', { decisions: ['approved','rejected'],
-    quorum: { kind: 'count', approvals: 1 }, makerChecker: true, expiresAfterMs: 604_800_000 }),
-  approvals.branch('applyDecision', { approvedStepKey: 'publish', rejectedStepKey: 'notify' }),
-  approvals.mutation('publish', { handler: internal.domain.documents.approval_functions.applyDecision }),
-  approvals.notify('notify', { handler: internal.domain.documents.approval_functions.notifyRejected }),
-]})
+export const publishApproval = approvals.define({
+	name: 'documentPublish',
+	steps: [
+		approvals.decision('managerDecision', {
+			decisions: ['approved', 'rejected'],
+			quorum: { kind: 'count', approvals: 1 },
+			makerChecker: true,
+			expiresAfterMs: 604_800_000,
+		}),
+		approvals.branch('applyDecision', { approvedStepKey: 'publish', rejectedStepKey: 'notify' }),
+		approvals.mutation('publish', {
+			handler: internal.domain.documents.approval_functions.applyDecision,
+		}),
+		approvals.notify('notify', {
+			handler: internal.domain.documents.approval_functions.notifyRejected,
+		}),
+	],
+})
 // start(ctx, { scopeRef, resourceType, resourceRef, requester: ctx.actor, metadata? })
 // decide(ctx, { runId, decision, reason? }, ctx.actor) · status/evidence/list/cancel/restart
 ```

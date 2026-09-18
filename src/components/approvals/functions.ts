@@ -1,18 +1,10 @@
 import type { ApprovalRunState } from './constants'
 
-export function canTransitionApprovalRun(
-	from: ApprovalRunState,
-	to: ApprovalRunState,
-): boolean {
-	return (
-		LEGAL_APPROVAL_RUN_TRANSITIONS[from] as readonly ApprovalRunState[]
-	).includes(to)
+export function canTransitionApprovalRun(from: ApprovalRunState, to: ApprovalRunState): boolean {
+	return LEGAL_APPROVAL_RUN_TRANSITIONS[from].some((state) => state === to)
 }
 
-export function classifyPendingRunAt(
-	now: number,
-	expiresAt: number,
-): 'pending' | 'expired' {
+export function classifyPendingRunAt(now: number, expiresAt: number): 'pending' | 'expired' {
 	return now >= expiresAt ? 'expired' : 'pending'
 }
 
@@ -22,6 +14,4 @@ const LEGAL_APPROVAL_RUN_TRANSITIONS = {
 	rejected: [],
 	expired: [],
 	canceled: [],
-} as const satisfies Readonly<
-	Record<ApprovalRunState, readonly ApprovalRunState[]>
->
+} as const satisfies Readonly<Record<ApprovalRunState, readonly ApprovalRunState[]>>

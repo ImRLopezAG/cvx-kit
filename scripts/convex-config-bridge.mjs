@@ -2,13 +2,7 @@
 // is literally named `convex.config.js` (see DEFINITION_FILENAME_JS in the
 // convex CLI). vp pack emits .mjs, so this postbuild step materializes the
 // compiled definition as convex.config.js in each component's dist directory.
-import {
-	readFileSync,
-	readdirSync,
-	renameSync,
-	rmSync,
-	writeFileSync,
-} from 'node:fs'
+import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,8 +10,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 for (const component of ['foundation', 'approvals']) {
 	const directory = join(root, 'dist', 'components', component)
-	const config = readFileSync(join(directory, 'convex.config.mjs'), 'utf8')
-		.replace(/\/\/# sourceMappingURL=.*\n?/, '')
+	const config = readFileSync(join(directory, 'convex.config.mjs'), 'utf8').replace(
+		/\/\/# sourceMappingURL=.*\n?/,
+		'',
+	)
 	writeFileSync(join(directory, 'convex.config.js'), config)
 
 	// Component implementations are discovered from schema.ts/schema.js only.
@@ -36,17 +32,10 @@ for (const component of ['foundation', 'approvals']) {
 		if (bridged !== source) writeFileSync(path, bridged)
 	}
 	renameSync(join(directory, 'schema.d.mts'), join(directory, 'schema.d.ts'))
-	const dataModelDeclaration = join(
-		directory,
-		'_generated',
-		'dataModel.d.mts',
-	)
+	const dataModelDeclaration = join(directory, '_generated', 'dataModel.d.mts')
 	writeFileSync(
 		dataModelDeclaration,
-		readFileSync(dataModelDeclaration, 'utf8').replace(
-			'../schema.mjs',
-			'../schema.js',
-		),
+		readFileSync(dataModelDeclaration, 'utf8').replace('../schema.mjs', '../schema.js'),
 	)
 	rmSync(join(directory, 'schema.mjs'))
 	rmSync(join(directory, 'schema.mjs.map'))

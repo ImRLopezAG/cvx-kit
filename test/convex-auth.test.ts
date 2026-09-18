@@ -19,6 +19,30 @@ const editorIdentity = {
 }
 
 describe('createAuthFunctions on the real Convex runtime', () => {
+	it.each([null, 'invalid', { organizationId: 42, role: false }])(
+		'falls back to top-level claims for malformed organization claims: %j',
+		async (organization) => {
+			const t = harness().withIdentity({ ...editorIdentity, organization })
+			await expect(t.query(api.mine, {})).resolves.toEqual([])
+		},
+	)
+
+	it('keeps nested claims authoritative over top-level claims', async () => {
+		const t = harness().withIdentity({
+			...editorIdentity,
+			organization: { organizationId: 'org_nested', role: 'viewer' },
+		})
+		await expect(t.mutation(api.editorsRename, { title: 'nope' })).rejects.toThrow(/FORBIDDEN/)
+	})
+
+	it('rejects an empty nested organization without falling back', async () => {
+		const t = harness().withIdentity({
+			...editorIdentity,
+			organization: { organizationId: '', role: 'editor' },
+		})
+		await expect(t.query(api.mine, {})).rejects.toThrow(/UNAUTHENTICATED/)
+	})
+
 	it('rejects unauthenticated callers', async () => {
 		const t = harness()
 		await expect(t.query(api.mine, {})).rejects.toThrow(/UNAUTHENTICATED/)
@@ -74,9 +98,9 @@ describe('createAuthFunctions on the real Convex runtime', () => {
 		await asEditor.mutation(api.create, { title: 'Doc', secretNote: 's' })
 
 		await expect(asViewer.mutation(api.purge, {})).rejects.toThrow(/FORBIDDEN/)
-		await expect(
-			asViewer.mutation(api.editorsRename, { title: 'nope' }),
-		).rejects.toThrow(/FORBIDDEN/)
+		await expect(asViewer.mutation(api.editorsRename, { title: 'nope' })).rejects.toThrow(
+			/FORBIDDEN/,
+		)
 
 		await asEditor.mutation(api.editorsRename, { title: 'Renamed' })
 		expect(await asOwner.mutation(api.purge, {})).toBe(1)
@@ -101,17 +125,17 @@ describe('createAuthFunctions on the real Convex runtime', () => {
 		const stamped = await t.run(async (ctx) => {
 			return await ctx.db.query('documents').first()
 		})
-		expect(typeof (stamped as { createdAt?: number }).createdAt).toBe('number')
-		expect(typeof (stamped as { updatedAt?: number }).updatedAt).toBe('number')
+		expect(stamped?.createdAt).toEqual(expect.any(Number))
+		expect(stamped?.updatedAt).toEqual(expect.any(Number))
 	})
 
 	it('enforces append-only evidence tables registered via appendOnly()', async () => {
 		const t = harness()
 		const asEditor = t.withIdentity(editorIdentity)
 		await asEditor.mutation(api.create, { title: 'Doc', secretNote: 's' })
-		await expect(
-			asEditor.mutation(api.tamperHistory, { title: 'rewritten' }),
-		).rejects.toThrow(/append-only/)
+		await expect(asEditor.mutation(api.tamperHistory, { title: 'rewritten' })).rejects.toThrow(
+			/append-only/,
+		)
 	})
 
 	it('rejects viewers from admin (owner-gated) constructors but allows owners', async () => {

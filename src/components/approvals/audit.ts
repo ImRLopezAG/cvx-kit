@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { AuditLog, type AuditEventInput } from 'convex-audit-log'
 import { v } from 'convex/values'
 
@@ -88,12 +89,10 @@ export const cleanup = mutation({
 	},
 })
 
-export function approvalAuditEvent(
-	input: ApprovalAuditTransition,
-): AuditEventInput {
+export function approvalAuditEvent(input: ApprovalAuditTransition): AuditEventInput {
 	return {
 		action: input.action,
-		...(input.actorRef === undefined ? {} : { actorId: input.actorRef }),
+		actorId: input.actorRef,
 		resourceType: input.resourceType,
 		resourceId: input.resourceRef,
 		severity: input.severity ?? 'info',
@@ -114,35 +113,23 @@ export async function logApprovalTransition(
 	await approvalAudit.log(ctx, approvalAuditEvent(input))
 }
 
-function boundedInteger(
-	value: number,
-	minimum: number,
-	maximum: number,
-	name: string,
-): number {
+function boundedInteger(value: number, minimum: number, maximum: number, name: string): number {
 	if (!Number.isInteger(value) || value < minimum || value > maximum)
-		throw new Error(
-			`${name} must be an integer between ${minimum} and ${maximum}`,
-		)
+		throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`)
 	return value
 }
 
-function auditProjection(event: unknown): ApprovalAuditProjection | null {
-	if (!event || typeof event !== 'object') return null
-	const value = event as Record<string, unknown>
-	const metadata = value.metadata
-	if (!metadata || typeof metadata !== 'object') return null
-	const details = metadata as Record<string, unknown>
-	if (
-		typeof value.action !== 'string' ||
-		typeof details.correlationKey !== 'string' ||
-		typeof details.transition !== 'string'
-	)
-		return null
-	return {
-		action: value.action,
-		...(typeof value.actorId === 'string' ? { actorRef: value.actorId } : {}),
-		correlationKey: details.correlationKey,
-		transition: details.transition,
-	}
+const auditEventProjection = z.object({
+	action: z.string(),
+	actorId: z.string().optional().catch(undefined),
+	metadata: z.object({ correlationKey: z.string(), transition: z.string() }),
+})
+
+function auditProjection(
+	event: Awaited<ReturnType<typeof approvalAudit.queryByResource>>[number],
+): ApprovalAuditProjection | null {
+	const parsed = auditEventProjection.safeParse(event)
+	if (!parsed.success) return null
+	const { action, actorId, metadata } = parsed.data
+	return { action, actorRef: actorId, ...metadata }
 }

@@ -3,7 +3,7 @@
 cvx-kit was extracted from a production Convex application (~12k LOC backend).
 This document describes the architecture that application follows and that the
 kit is designed to reproduce: strict ownership boundaries, injected policy,
-portable components, and conventions that are *executable* (enforced by tests)
+portable components, and conventions that are _executable_ (enforced by tests)
 rather than aspirational.
 
 ## The layers

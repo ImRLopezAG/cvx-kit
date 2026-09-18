@@ -1,9 +1,24 @@
 {
 	"name": "cvx-kit",
-	"version": "0.1.3",
+	"version": "0.1.4",
 	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
-	"type": "module",
+	"keywords": [
+		"component",
+		"convex",
+		"workos",
+		"zod"
+	],
+	"homepage": "https://github.com/ImRLopezAG/cvx-kit#readme",
+	"bugs": {
+		"url": "https://github.com/ImRLopezAG/cvx-kit/issues"
+	},
 	"license": "MIT",
+	"author": "Angel Lopez",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ImRLopezAG/cvx-kit.git"
+	},
+	"type": "module",
 	"sideEffects": false,
 	"exports": {
 		"./package.json": "./package.json",
@@ -85,14 +100,22 @@
 		},
 		"./components/approvals/_generated/component": {
 			"types": "./dist/components/approvals/_generated/component.d.mts"
+		},
+		"./oxlint": {
+			"types": "./dist/oxlint.d.mts",
+			"import": "./dist/oxlint.mjs"
 		}
 	},
 	"scripts": {
+		"lint": "vp lint",
+		"check": "vp check",
+		"test:lint": "vp test run tools/oxlint/cvx/index.test.mjs",
 		"build": "vp pack && node scripts/convex-config-bridge.mjs && publint",
 		"typecheck": "tsc --noEmit",
 		"test": "vp test run --exclude test/package-contents.test.mjs",
 		"test:package": "bun run build && vp test run test/package-contents.test.mjs",
 		"test:package:ids": "bun run build && node scripts/test-packed-ids.mjs",
+		"test:package:oxlint": "bun run build && node scripts/test-packed-oxlint.mjs",
 		"test:package:smoke:bun": "bun scripts/smoke-packed-components.mjs bun",
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
 		"docs:sync": "rm -f docs/*.md && cp src/docs/*.md docs/",
@@ -103,36 +126,24 @@
 	},
 	"dependencies": {
 		"@convex-dev/workflow": "0.4.6",
+		"@oxlint/plugins": "1.79.0",
 		"convex-audit-log": "^0.2.0"
 	},
-	"peerDependencies": {
-		"convex-helpers": ">=0.1.123 <0.2.0",
-		"convex": "^1.45.0",
-		"zod": "^4.5.4"
-	},
 	"devDependencies": {
-		"convex-helpers": "0.1.124",
 		"@edge-runtime/vm": "^5.0.0",
+		"@types/node": "^26.6.1",
 		"convex": "1.45.0",
+		"convex-helpers": "0.1.124",
 		"convex-test": "^0.0.56",
+		"oxlint": "1.79.0",
 		"publint": "^0.3.24",
 		"typescript": "7.0.2",
 		"vite-plus": "0.3.0",
 		"zod": "4.5.4"
 	},
-	"keywords": [
-		"convex",
-		"component",
-		"workos",
-		"zod"
-	],
-	"author": "Angel Lopez",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/ImRLopezAG/cvx-kit.git"
-	},
-	"homepage": "https://github.com/ImRLopezAG/cvx-kit#readme",
-	"bugs": {
-		"url": "https://github.com/ImRLopezAG/cvx-kit/issues"
+	"peerDependencies": {
+		"convex": "^1.45.0",
+		"convex-helpers": ">=0.1.123 <0.2.0",
+		"zod": "^4.5.4"
 	}
 }

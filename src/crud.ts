@@ -1,9 +1,11 @@
 import { zid } from 'convex-helpers/server/zod4'
 import { z } from 'zod'
+import type { Value } from 'convex/values'
+import type { GenericDataModel, GenericMutationCtx } from 'convex/server'
 import type {
 	AnyCommandMiddleware,
 	ApplicationCommand,
-	AuditedRegistry,
+	AuditedOperation,
 	CommandConstructor,
 } from './components/foundation/client'
 import { defaultErrors, type ErrorFactory } from './errors'
@@ -14,24 +16,18 @@ import { defaultErrors, type ErrorFactory } from './errors'
  */
 type CrudTable = {
 	tableName: string
-	// biome-ignore format: structural zod surface
-	commandInput: z.ZodObject<Record<string, z.ZodType>>
-	storage: z.ZodObject<Record<string, z.ZodType>>
+	commandInput: z.ZodObject<Record<string, z.ZodType<Value | undefined>>>
+	storage: z.ZodObject<Record<string, z.ZodType<Value | undefined>>>
 }
 
-type CrudContext = {
-	db: {
-		insert: (table: never, value: never) => Promise<unknown>
-		patch: (id: never, value: never) => Promise<unknown>
-	}
-}
+type CrudContext = { db: Pick<GenericMutationCtx<GenericDataModel>['db'], 'insert' | 'patch'> }
 
 type MaybePromise<Value> = Value | Promise<Value>
 
-export type CrudConfig<Context extends CrudContext> = {
+export type CrudConfig<Context extends CrudContext, Table extends CrudTable = CrudTable> = {
 	/** The Foundation-bound Command class (destructured from the facade). */
 	Command: CommandConstructor
-	table: CrudTable
+	table: Table
 	/** Audit aggregate type; enforced by the aggregates allowlist. */
 	aggregateType: string
 	/** Observability/audit classification. Default 'business'. */
@@ -45,8 +41,8 @@ export type CrudConfig<Context extends CrudContext> = {
 	 */
 	enrich?: (
 		context: Context,
-		command: Record<string, unknown>,
-	) => Record<string, unknown> | Promise<Record<string, unknown>>
+		command: ReturnType<Table['commandInput']['parse']>,
+	) => MaybePromise<Partial<z.input<Table['storage']>>>
 	/** Per-operation preconditions; run before the handlers. */
 	guards?: {
 		create?: (context: Context, command: never) => MaybePromise<void>
@@ -69,26 +65,15 @@ export type CrudConfig<Context extends CrudContext> = {
  * used — it bypasses the command pipeline (no audits, no guards, and hard
  * deletes). See docs/crud.md.
  */
-export type CrudCommands<Context extends CrudContext> = {
-	commands: ApplicationCommand<Context, AuditedRegistry>
-	operations: AuditedRegistry
-	executeCreate: (
-		context: Context,
-		command: Record<string, unknown>,
-	) => Promise<{ id: string }>
-	executeUpdate: (
-		context: Context,
-		command: { id: string; data: Record<string, unknown> },
-	) => Promise<{ ok: true }>
-	executeArchive: (
-		context: Context,
-		command: { id: string },
-	) => Promise<{ ok: true }>
-}
+export type CrudCommands<
+	Context extends CrudContext,
+	Table extends CrudTable = CrudTable,
+> = ReturnType<typeof createCrudCommands<Context, Table>>
 
-export function createCrudCommands<Context extends CrudContext>(
-	config: CrudConfig<Context>,
-): CrudCommands<Context> {
+export function createCrudCommands<
+	Context extends CrudContext,
+	Table extends CrudTable = CrudTable,
+>(config: CrudConfig<Context, Table>) {
 	const errors = config.errors ?? defaultErrors
 	const name = config.table.tableName
 	const classification = config.classification ?? 'business'
@@ -100,108 +85,106 @@ export function createCrudCommands<Context extends CrudContext>(
 		})
 	}
 
+	const commandSchema: Table['commandInput'] = config.table.commandInput
 	const id = zid(name)
 	const createResult = z.object({ id }).strict()
 	const okResult = z.object({ ok: z.literal(true) }).strict()
-	const updateInput = z
-		.object({ id, data: config.table.commandInput.partial().strict() })
-		.strict()
+	const updateInput = z.object({ id, data: commandSchema.partial().strict() }).strict()
 	const archiveInput = z.object({ id }).strict()
 
-	const operations = {
-		[`${name}.create`]: {
-			command: config.table.commandInput,
+	const createName = `${name}.create` as const
+	const updateName = `${name}.update` as const
+	const archiveName = `${name}.archive` as const
+	const operations = Object.assign(
+		{},
+		namedOperation(createName, {
+			command: commandSchema,
 			result: createResult,
 			classification,
 			aggregates: [config.aggregateType],
-			...(config.middleware ? { middleware: config.middleware } : {}),
-			...(config.guards?.create ? { guard: config.guards.create } : {}),
-			audit: (
-				resolution: { command: unknown; result: { id: string } },
-				context: Context,
-			) => ({
-				operation: `${name}.create`,
+			middleware: config.middleware,
+			guard: config.guards?.create,
+			audit: (resolution: { result: z.output<typeof createResult> }, context: Context) => ({
+				operation: createName,
 				actorId: config.actor(context),
 				aggregate: { type: config.aggregateType, id: resolution.result.id },
 			}),
-		},
-		[`${name}.update`]: {
+		}),
+		namedOperation(updateName, {
 			command: updateInput,
 			result: okResult,
 			classification,
 			aggregates: [config.aggregateType],
-			...(config.middleware ? { middleware: config.middleware } : {}),
-			...(config.guards?.update ? { guard: config.guards.update } : {}),
-			audit: (
-				resolution: { command: { id: string }; result: unknown },
-				context: Context,
-			) => ({
-				operation: `${name}.update`,
+			middleware: config.middleware,
+			guard: config.guards?.update,
+			audit: (resolution: { command: z.output<typeof updateInput> }, context: Context) => ({
+				operation: updateName,
 				actorId: config.actor(context),
 				aggregate: { type: config.aggregateType, id: resolution.command.id },
 			}),
-		},
-		[`${name}.archive`]: {
+		}),
+		namedOperation(archiveName, {
 			command: archiveInput,
 			result: okResult,
 			classification,
 			aggregates: [config.aggregateType],
-			...(config.middleware ? { middleware: config.middleware } : {}),
-			...(config.guards?.archive ? { guard: config.guards.archive } : {}),
-			audit: (
-				resolution: { command: { id: string }; result: unknown },
-				context: Context,
-			) => ({
-				operation: `${name}.archive`,
+			middleware: config.middleware,
+			guard: config.guards?.archive,
+			audit: (resolution: { command: z.output<typeof archiveInput> }, context: Context) => ({
+				operation: archiveName,
 				actorId: config.actor(context),
 				aggregate: { type: config.aggregateType, id: resolution.command.id },
 			}),
-		},
-	} as never
-
-	const commands = new config.Command<Context, AuditedRegistry>(operations)
-
+		}),
+	)
+	const commands: ApplicationCommand<Context, typeof operations> = new config.Command<
+		Context,
+		typeof operations
+	>(operations)
 	const executeCreate = commands.exec({
-		operation: `${name}.create` as never,
-		handler: (async (context: Context, command: Record<string, unknown>) => {
-			const enrichment = config.enrich
-				? await config.enrich(context, command)
-				: {}
-			const inserted = await context.db.insert(
-				name as never,
-				{ ...command, ...enrichment } as never,
-			)
+		operation: createName,
+		handler: async (context, command) => {
+			const enrichment = config.enrich ? await config.enrich(context, command) : {}
+			const values: Record<string, Value> = {}
+			for (const [field, value] of Object.entries({ ...command, ...enrichment })) {
+				if (value !== undefined) values[field] = value
+			}
+			const inserted = await context.db.insert(name, values)
 			return { id: inserted }
-		}) as never,
+		},
 	})
-
 	const executeUpdate = commands.exec({
-		operation: `${name}.update` as never,
-		handler: (async (
-			context: Context,
-			command: { id: string; data: Record<string, unknown> },
-		) => {
-			await context.db.patch(command.id as never, command.data as never)
+		operation: updateName,
+		handler: async (context, command) => {
+			await context.db.patch(command.id, command.data)
 			return { ok: true }
-		}) as never,
+		},
 	})
-
 	const executeArchive = commands.exec({
-		operation: `${name}.archive` as never,
-		handler: (async (context: Context, command: { id: string }) => {
-			await context.db.patch(
-				command.id as never,
-				{ archivedAt: Date.now() } as never,
-			)
+		operation: archiveName,
+		handler: async (context, command) => {
+			await context.db.patch(command.id, { archivedAt: Date.now() })
 			return { ok: true }
-		}) as never,
+		},
 	})
 
 	return {
 		commands,
-		operations: operations as AuditedRegistry,
+		operations,
 		executeCreate,
 		executeUpdate,
 		executeArchive,
-	} as unknown as CrudCommands<Context>
+	}
+}
+
+function namedOperation<Name extends string, Definition extends AuditedOperation>(
+	name: Name,
+	definition: Definition,
+) {
+	// SAFETY: this object contains exactly the computed name and its corresponding definition.
+	return { [name]: definition } as NamedOperation<Name, Definition>
+}
+
+type NamedOperation<Name extends string, Definition extends AuditedOperation> = {
+	[Key in Name]: Definition
 }

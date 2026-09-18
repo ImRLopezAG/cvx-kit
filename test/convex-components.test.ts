@@ -17,10 +17,7 @@ import { registerApprovals, registerFoundation } from '../src/test'
 describe('public test registration helpers', () => {
 	it('accepts concrete and generic convex-test backends at default and custom paths', () => {
 		const modules = import.meta.glob('./fixture/**/*.ts')
-		const concrete = convexTest(
-			defineSchema({ items: defineTable({ name: v.string() }) }),
-			modules,
-		)
+		const concrete = convexTest(defineSchema({ items: defineTable({ name: v.string() }) }), modules)
 		const generic = convexTest(undefined, modules)
 		for (const backend of [concrete, generic]) {
 			registerFoundation(backend)
@@ -31,12 +28,8 @@ describe('public test registration helpers', () => {
 	})
 })
 
-const foundationModules = import.meta.glob(
-	'../src/components/foundation/**/*.ts',
-)
-const approvalsModules = import.meta.glob(
-	'../src/components/approvals/**/*.ts',
-)
+const foundationModules = import.meta.glob('../src/components/foundation/**/*.ts')
+const approvalsModules = import.meta.glob('../src/components/approvals/**/*.ts')
 type ApprovalsApiHasHealth = ApprovalsComponentApi extends {
 	health: { check: unknown }
 }
@@ -91,10 +84,7 @@ describe('approvals component contracts', () => {
 		expect(await t.query(anyApi.health.check, {})).toEqual({
 			status: 'ready',
 			schemaVersion: 1,
-			requiredIndexes: [
-				'by_runId_and_decidedAt',
-				'by_runId_and_stepKey_and_actor_actorRef',
-			],
+			requiredIndexes: ['by_runId_and_decidedAt', 'by_runId_and_stepKey_and_actor_actorRef'],
 		})
 	})
 
@@ -125,9 +115,7 @@ describe('approvals component contracts', () => {
 				{
 					kind: 'decision' as const,
 					key: 'review',
-					decisions: ['approved', 'rejected'] as (
-						'approved' | 'rejected'
-					)[],
+					decisions: ['approved', 'rejected'] satisfies ('approved' | 'rejected')[],
 					quorum: { kind: 'count' as const, approvals: 1 },
 					makerChecker: false,
 				},
@@ -157,9 +145,7 @@ describe('approvals component contracts', () => {
 			state: 'pending',
 			paginationOpts: { cursor: null, numItems: 1 },
 		})
-		expect(first.page.map((run: { _id: string }) => run._id)).toEqual([
-			newestPending,
-		])
+		expect(first.page.map((run: { _id: string }) => run._id)).toEqual([newestPending])
 
 		await insertRun('scope-a', 'pending')
 		const second = await t.query(anyApi.requests.list, {
@@ -167,9 +153,7 @@ describe('approvals component contracts', () => {
 			state: 'pending',
 			paginationOpts: { cursor: first.continueCursor, numItems: 10 },
 		})
-		expect(second.page.map((run: { _id: string }) => run._id)).toEqual([
-			oldestPending,
-		])
+		expect(second.page.map((run: { _id: string }) => run._id)).toEqual([oldestPending])
 		expect(second.isDone).toBe(true)
 	})
 

@@ -1,3 +1,4 @@
+import type { Value } from 'convex/values'
 import {
 	Command as CommandKernelClass,
 	type CommandExecution,
@@ -5,11 +6,9 @@ import {
 	type CommandInput,
 	type CommandRegistry,
 	type CommandResult,
+	type Parseable,
 } from './modules/command/command'
-import {
-	Observability,
-	type ObservabilityOptions,
-} from './modules/observability/observability'
+import { Observability, type ObservabilityOptions } from './modules/observability/observability'
 import { Query } from './modules/query/query'
 import { executeResultBoundary, projectResult } from './result'
 import { emitSemanticEvent } from './telemetry'
@@ -25,24 +24,21 @@ export type AuditEntryInput = {
 	operation: string
 	actorId: string
 	aggregate: { type: string; id: string }
-	metadata?: Record<string, unknown>
+	metadata?: Record<string, Value>
 	classification: string
 }
 
-export type AuditWriter = (
+export type AuditWriter<Result = unknown> = (
 	context: never,
 	entry: AuditEntryInput,
-) => Promise<unknown> | unknown
+) => MaybePromise<Result>
 
 type MaybePromise<Value> = Value | Promise<Value>
-type OperationKey<Operations extends CommandRegistry> = Extract<
-	keyof Operations,
-	string
->
+type OperationKey<Operations extends CommandRegistry> = Extract<keyof Operations, string>
 
 export type AuditedOperation = Readonly<{
-	command: Readonly<{ parse: (value: unknown) => unknown }>
-	result: Readonly<{ parse: (value: unknown) => unknown }>
+	command: Parseable<unknown>
+	result: Parseable<unknown>
 	classification: string
 	/**
 	 * Permission slug required to execute this operation. Checked through the
@@ -50,11 +46,8 @@ export type AuditedOperation = Readonly<{
 	 * declaring a permission without injecting a checker fails closed.
 	 */
 	permission?: string
-	prepare?: (
-		context: never,
-		command: never,
-	) => MaybePromise<CommandPreparation<never>>
-	replayResult?: Readonly<{ parse: (value: unknown) => unknown }>
+	prepare?: (context: never, command: never) => MaybePromise<CommandPreparation<never>>
+	replayResult?: Parseable<unknown>
 	/**
 	 * Per-operation precondition, after the permission check and the registry
 	 * default guard, before the handler. Throw to deny — nothing has run yet.
@@ -84,28 +77,30 @@ export type AuditedOperation = Readonly<{
  */
 export type CommandMiddleware<
 	Context = never,
-	Extension extends Record<string, unknown> = Record<string, unknown>,
+	Extension extends object = object,
+	Input = unknown,
+	Result = unknown,
 > = (input: {
 	operation: string
-	command: unknown
+	command: Input
 	context: Context
 	next: (options?: {
 		/** Merged into the context handed to inner middleware, guards, handler. */
 		context?: Extension
-	}) => Promise<unknown>
-}) => Promise<unknown>
+	}) => Promise<Result>
+}) => Promise<Result>
 
 /** Any-context middleware — what registries and operations accept. */
 // Contravariant seam: the supertype every typed CommandMiddleware<C, E>
-// assigns to (context contra-narrows to never; next's options widen to
-// unknown). Definition sites stay typed via Command.middleware.
-export type AnyCommandMiddleware = (input: {
+// assigns to. Context, command, and next are contravariant storage slots;
+// dispatch restores the selected operation's types before invocation.
+export type AnyCommandMiddleware<Input = never, Result = unknown, NextResult = never> = (input: {
 	operation: string
 	definition?: AuditedOperation
-	command: unknown
+	command: Input
 	context: never
-	next: (options?: { context?: unknown }) => Promise<unknown>
-}) => Promise<unknown>
+	next: (options?: { context?: object }) => Promise<NextResult>
+}) => Promise<Result>
 
 /** Registry-wide defaults applied to every operation of one Command. */
 export type CommandDefaults = Readonly<{
@@ -163,9 +158,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 		[Key in OperationKey<Operations>]: Operations[Key]['aggregates']
 	}>
 
-	static operation<const Definition extends AuditedOperation>(
-		definition: Definition,
-	): Definition {
+	static operation<const Definition extends AuditedOperation>(definition: Definition): Definition {
 		return definition
 	}
 
@@ -175,13 +168,12 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 	 */
 	static middleware<
 		Context = never,
-		const Extension extends Record<string, unknown> = Record<
-			string,
-			unknown
-		>,
+		const Extension extends object = object,
+		Input = unknown,
+		Result = unknown,
 	>(
-		middleware: CommandMiddleware<Context, Extension>,
-	): CommandMiddleware<Context, Extension> {
+		middleware: CommandMiddleware<Context, Extension, Input, Result>,
+	): CommandMiddleware<Context, Extension, Input, Result> {
 		return middleware
 	}
 
@@ -198,6 +190,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 		this.#writeAudit = deps.writeAudit
 		this.#checkPermission = deps.checkPermission
 		this.#defaults = deps.defaults ?? {}
+		// SAFETY: this map preserves every operations key and selects its aggregates property.
 		this.aggregates = Object.freeze(
 			Object.fromEntries(
 				Object.entries(operations).map(([operation, definition]) => [
@@ -223,6 +216,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 			operation: executor.operation,
 			handler: (context, command) =>
 				executor.handler(
+					// SAFETY: operationFactory requires enrichment middleware before this handler.
 					context as Context & OperationExtension<Operations[Key]>,
 					command,
 				),
@@ -244,57 +238,68 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 					if (!this.#checkPermission) {
 						throw new CommandPermissionError(execution.operation)
 					}
+					// SAFETY: the injected policy receives the host context used by this Command instance.
 					await this.#checkPermission(execution.context as never, {
 						permission,
 						operation: execution.operation,
 					})
 				}
+				// SAFETY: prepare belongs to this definition; its context and parsed command are paired by the kernel.
 				const preparation = await execution.definition.prepare?.(
 					execution.context as never,
 					execution.command as never,
 				)
 				if (preparation?.kind === 'replay') {
+					// SAFETY: replayResult validates the stored output for this selected operation.
 					return execution.definition.replayResult
-						? (execution.definition.replayResult.parse(
-								preparation.result,
-							) as CommandResult<Operations, Key>)
+						? (execution.definition.replayResult.parse(preparation.result) as CommandResult<
+								Operations,
+								Key
+							>)
 						: execution.parseResult(preparation.result)
 				}
 				const middleware = [
 					...(this.#defaults.middleware ?? []),
 					...(execution.definition.middleware ?? []),
 				]
-				const terminal = async (context: unknown) => {
+				const terminal = async (context: Context) => {
+					// SAFETY: registry guards receive the same host context, enriched by its middleware.
 					await this.#defaults.guard?.(context as never)
-					await execution.definition.guard?.(
-						context as never,
-						execution.command as never,
-					)
-					return execution.runUnparsed(context as never)
+					// SAFETY: guard is called with the selected operation's parsed command and middleware context.
+					await execution.definition.guard?.(context as never, execution.command as never)
+					return execution.runUnparsed(context)
 				}
 				let deepest = -1
 				const dispatch = async (
 					index: number,
-					context: unknown,
-				): Promise<unknown> => {
+					context: Context,
+				): Promise<CommandHandlerResult<Operations, Key>> => {
 					if (index <= deepest) {
 						throw new CommandMiddlewareError(execution.operation)
 					}
 					deepest = index
-					const layer = middleware[index]
+					// SAFETY: this chain belongs to the selected operation; parseResult validates its final output before audit.
+					const layer = middleware[index] as
+						| AnyCommandMiddleware<
+								CommandInput<Operations, Key>,
+								CommandHandlerResult<Operations, Key>,
+								CommandHandlerResult<Operations, Key>
+						  >
+						| undefined
 					if (!layer) return terminal(context)
 					return layer({
 						operation: execution.operation,
 						definition: execution.definition,
 						command: execution.command,
+						// SAFETY: middleware context is erased only in the heterogeneous registry.
 						context: context as never,
 						next: (options) =>
 							dispatch(
 								index + 1,
 								options?.context
 									? {
-											...(context as object),
-											...(options.context as object),
+											...context,
+											...options.context,
 										}
 									: context,
 							),
@@ -302,9 +307,8 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 				}
 				// Middleware may transform the return value, so the strict
 				// result schema parses whatever leaves the chain exactly once.
-				const result = execution.parseResult(
-					await dispatch(0, execution.context),
-				)
+				const result = execution.parseResult(await dispatch(0, execution.context))
+				// SAFETY: the selected audit callback receives its validated command/result and original host context.
 				const audit = await execution.definition.audit(
 					{ command: execution.command, result } as never,
 					execution.context as never,
@@ -312,16 +316,15 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 				if (audit) {
 					const allowed = execution.definition.aggregates
 					if (allowed && !allowed.includes(audit.aggregate.type)) {
-						throw new CommandAggregateError(
-							execution.operation,
-							audit.aggregate.type,
-						)
+						throw new CommandAggregateError(execution.operation, audit.aggregate.type)
 					}
+					// SAFETY: the host injected this writer for the context supplied to its Command.
 					await this.#writeAudit(execution.context as never, {
 						...audit,
 						classification: execution.definition.classification,
 					})
 				}
+				// SAFETY: complete comes from this invocation's prepare hook and receives its validated result.
 				await preparation?.complete?.(result as never)
 				return result
 			},
@@ -335,9 +338,7 @@ class CommandMiddlewareError extends Error {
 	readonly name = 'CommandMiddlewareError'
 
 	constructor(operation: string) {
-		super(
-			`A middleware for operation "${operation}" called next() more than once`,
-		)
+		super(`A middleware for operation "${operation}" called next() more than once`)
 	}
 }
 
@@ -365,10 +366,10 @@ class CommandPermissionError extends Error {
 	}
 }
 
-export type ApplicationCommand<
+export type ApplicationCommand<Context, Operations extends AuditedRegistry> = BoundCommand<
 	Context,
-	Operations extends AuditedRegistry,
-> = BoundCommand<Context, Operations>
+	Operations
+>
 
 /**
  * The constructor shape a Foundation instance exposes as `Command`.
@@ -392,9 +393,7 @@ export type CommandConstructor = {
  * Declared once; the sole source of the command protocol, query kernel, and
  * observability: `const { Command, Query, observability } = new Foundation(...)`.
  */
-export class Foundation<
-	Component extends FoundationComponentApi = FoundationComponentApi,
-> {
+export class Foundation<Component extends FoundationComponentApi = FoundationComponentApi> {
 	readonly status: Component['functions']['status']
 	readonly Command: CommandConstructor
 	readonly Query = Query
@@ -410,10 +409,10 @@ export class Foundation<
 		this.observability = observability
 		const writeAudit = options.observability.writeAudit ?? (() => undefined)
 		const checkPermission = options.checkPermission
-		this.Command = class<
+		class HostCommand<Context, const Operations extends AuditedRegistry> extends BoundCommand<
 			Context,
-			const Operations extends AuditedRegistry,
-		> extends BoundCommand<Context, Operations> {
+			Operations
+		> {
 			constructor(operations: Operations, defaults?: CommandDefaults) {
 				super(operations, {
 					observability,
@@ -423,6 +422,7 @@ export class Foundation<
 				})
 			}
 		}
+		this.Command = HostCommand
 	}
 }
 
@@ -445,16 +445,8 @@ export type {
 	CommandObservation,
 	ObservabilityOptions,
 } from './modules/observability/observability'
-export type {
-	AnyQueryMiddleware,
-	QueryExecution,
-	QueryMiddleware,
-} from './modules/query/query'
-export type {
-	Result,
-	ResultBoundary,
-	TransactionMetricsContext,
-} from './result'
+export type { AnyQueryMiddleware, QueryExecution, QueryMiddleware } from './modules/query/query'
+export type { Result, ResultBoundary, TransactionMetricsContext } from './result'
 
 // The component definition is deliberately NOT re-exported here: Convex's
 // CLI only discovers a component whose resolved file is convex.config.js,

@@ -25,16 +25,13 @@ import { Foundation } from 'cvx-kit/components/foundation'
 import { components } from './_generated/api'
 import { writeAuditEntry } from './audit'
 
-export const { Command, Query, observability } = new Foundation(
-  components.foundation,
-  {
-    observability: {
-      enabled: () => process.env.COMMAND_OBSERVABILITY_ENABLED === 'true',
-      classifyError: (error) => classify(error), // → { outcome: 'denied' | 'failed', errorCode }
-      writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
-    },
-  },
-)
+export const { Command, Query, observability } = new Foundation(components.foundation, {
+	observability: {
+		enabled: () => process.env.COMMAND_OBSERVABILITY_ENABLED === 'true',
+		classifyError: (error) => classify(error), // → { outcome: 'denied' | 'failed', errorCode }
+		writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
+	},
+})
 ```
 
 Host code consumes the Foundation **only through this facade** — never deep
@@ -57,27 +54,27 @@ import type { MutationCtx } from '../../_generated/server'
 const typed = Command.withContext<MutationCtx>()
 
 const operations = {
-  'documents.rename': typed.operation({
-    command: documents.commandInput.extend({ id: zid('documents') }),
-    result: z.object({ ok: z.literal(true) }).strict(),
-    classification: 'business',
-    audit: ({ command }) => ({
-      operation: 'documents.rename',
-      actorId: command.actorId,
-      aggregate: { type: 'document', id: command.id },
-      metadata: { title: command.title },
-    }),
-  }),
+	'documents.rename': typed.operation({
+		command: documents.commandInput.extend({ id: zid('documents') }),
+		result: z.object({ ok: z.literal(true) }).strict(),
+		classification: 'business',
+		audit: ({ command }) => ({
+			operation: 'documents.rename',
+			actorId: command.actorId,
+			aggregate: { type: 'document', id: command.id },
+			metadata: { title: command.title },
+		}),
+	}),
 } as const
 
 const commands = new Command<MutationCtx, typeof operations>(operations)
 
 export const executeRename = commands.exec({
-  operation: 'documents.rename',
-  handler: async (ctx, command) => {
-    await ctx.db.patch(command.id, { title: command.title })
-    return { ok: true }
-  },
+	operation: 'documents.rename',
+	handler: async (ctx, command) => {
+		await ctx.db.patch(command.id, { title: command.title })
+		return { ok: true }
+	},
 })
 ```
 
@@ -119,7 +116,7 @@ The public API layer then wraps the executor in an `authMutation` and passes
 8. **Complete**: await the closure returned by `prepare`, including when audit
    returns null. A failure propagates inside the observation boundary.
 9. **Emit the observation**: `{ operation, classification, outcome,
-   errorCode?, durationMs }` — completed, denied, or failed per
+errorCode?, durationMs }` — completed, denied, or failed per
    `classifyError`.
 
 ### Guards and permissions
@@ -214,32 +211,35 @@ command and result boundary intentionally remains unknown.
 ```ts
 const typed = Command.withContext<Ctx>()
 const operations = {
-  rename: typed.operation({
-    command: z.object({ title: z.string().transform(value => value.length) }),
-    result: z.object({ ok: z.boolean() }),
-    classification: 'business',
-    aggregates: ['document'],
-    guard: (ctx, command) => requireTitleLength(ctx, command.title), // number
-    middleware: [async ({ command, next }) => {
-      const result = await next() // { ok: boolean }, before validation
-      logLength(command.title)
-      return result
-    }],
-    audit: ({ command, result }, ctx) => ({
-      operation: 'rename', actorId: ctx.actorId,
-      aggregate: { type: 'document', id: String(command.title) },
-      metadata: { ok: result.ok },
-    }),
-  }),
+	rename: typed.operation({
+		command: z.object({ title: z.string().transform((value) => value.length) }),
+		result: z.object({ ok: z.boolean() }),
+		classification: 'business',
+		aggregates: ['document'],
+		guard: (ctx, command) => requireTitleLength(ctx, command.title), // number
+		middleware: [
+			async ({ command, next }) => {
+				const result = await next() // { ok: boolean }, before validation
+				logLength(command.title)
+				return result
+			},
+		],
+		audit: ({ command, result }, ctx) => ({
+			operation: 'rename',
+			actorId: ctx.actorId,
+			aggregate: { type: 'document', id: String(command.title) },
+			metadata: { ok: result.ok },
+		}),
+	}),
 }
-const middleware = typed.registryMiddleware(operations, async input => {
-  if (input.operation === 'rename') {
-    input.command.title.toFixed() // discriminator retains schema correlation
-  }
-  return input.next()
+const middleware = typed.registryMiddleware(operations, async (input) => {
+	if (input.operation === 'rename') {
+		input.command.title.toFixed() // discriminator retains schema correlation
+	}
+	return input.next()
 })
 const commands = new Command<Ctx, typeof operations>(operations, {
-  middleware: [middleware],
+	middleware: [middleware],
 })
 ```
 
@@ -320,9 +320,9 @@ rolled back; these transaction guarantees concern Convex mutation writes.
 
 ```ts
 export const executeAny = commands.exec({
-  dispatcher: z.object({ kind: z.enum(OPERATION_KINDS) /* from constants.ts */ }),
-  select: (input) => `documents.${input.kind}` as const,
-  handler,
+	dispatcher: z.object({ kind: z.enum(OPERATION_KINDS) /* from constants.ts */ }),
+	select: (input) => `documents.${input.kind}` as const,
+	handler,
 })
 ```
 

@@ -13,7 +13,7 @@ export type Result<Value, Failure> =
 export type ResultBoundary<Failure> = Readonly<{
 	ok: <Value>(value: Value) => Result<Value, Failure>
 	handledError: <Value = never>(failure: Failure) => Result<Value, Failure>
-	dataOf: (error: unknown) => Failure | undefined
+	dataOf: (cause: unknown) => Failure | undefined
 }>
 
 const metricNames = [

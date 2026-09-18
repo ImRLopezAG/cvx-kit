@@ -4,10 +4,7 @@ import {
 	type RLSConfig,
 	type Rules,
 } from 'convex-helpers/server/rowLevelSecurity'
-import type {
-	GenericDataModel,
-	TableNamesInDataModel,
-} from 'convex/server'
+import type { GenericDataModel, TableNamesInDataModel } from 'convex/server'
 import { defaultErrors, type ErrorFactory } from './errors'
 
 export { wrapDatabaseReader, wrapDatabaseWriter }
@@ -15,8 +12,6 @@ export type { RLSConfig, Rules }
 
 /** The server-owned tenancy field stamped on every tenant table row. */
 export const TENANT_FIELD = 'tenant' as const
-
-type TenantRow = { [TENANT_FIELD]?: unknown }
 
 /**
  * Deny-oriented row-level security rules generated mechanically from a table
@@ -28,14 +23,15 @@ export function createTenantRules<DataModel extends GenericDataModel>(
 	tenant: string,
 	tables: readonly TableNamesInDataModel<DataModel>[],
 ): Rules<unknown, DataModel> {
-	const owned = async (_ctx: unknown, doc: TenantRow) =>
-		doc[TENANT_FIELD] === tenant
-	return Object.fromEntries(
-		tables.map((table) => [
-			table,
-			{ read: owned, insert: owned, modify: owned },
-		]),
-	) as unknown as Rules<unknown, DataModel>
+	const rules: Rules<unknown, DataModel> = {}
+	for (const table of tables) {
+		rules[table] = {
+			read: async (_context, document) => document[TENANT_FIELD] === tenant,
+			insert: async (_context, document) => document[TENANT_FIELD] === tenant,
+			modify: async (_context, document) => document[TENANT_FIELD] === tenant,
+		}
+	}
+	return rules
 }
 
 /**
@@ -46,28 +42,34 @@ export function createTenantRules<DataModel extends GenericDataModel>(
 export function composeRules<Ctx, DataModel extends GenericDataModel>(
 	...sets: readonly Rules<Ctx, DataModel>[]
 ): Rules<Ctx, DataModel> {
-	const tables = new Set(sets.flatMap((set) => Object.keys(set)))
-	const composed: Record<string, Record<string, unknown>> = {}
+	// SAFETY: Rules keys are table names from DataModel; values come only from the supplied rule sets.
+	const tables = new Set(sets.flatMap((set) => Object.keys(set))) as Set<
+		TableNamesInDataModel<DataModel>
+	>
+	const composed: Rules<Ctx, DataModel> = {}
 	for (const table of tables) {
-		const operations: Record<string, unknown> = {}
-		for (const operation of ['read', 'insert', 'modify'] as const) {
-			const rules = sets
-				.map((set) => (set as Record<string, Record<string, unknown>>)[table])
-				.map((tableRules) => tableRules?.[operation])
-				.filter((rule): rule is (ctx: Ctx, doc: never) => Promise<boolean> =>
-					typeof rule === 'function',
-				)
-			if (rules.length === 0) continue
-			operations[operation] = async (ctx: Ctx, doc: never) => {
-				for (const rule of rules) {
-					if (!(await rule(ctx, doc))) return false
-				}
+		const reads = sets.flatMap((set) => set[table]?.read ?? [])
+		const inserts = sets.flatMap((set) => set[table]?.insert ?? [])
+		const modifies = sets.flatMap((set) => set[table]?.modify ?? [])
+		const rules: NonNullable<Rules<Ctx, DataModel>[typeof table]> = {}
+		if (reads.length)
+			rules.read = async (context, document) => {
+				for (const rule of reads) if (!(await rule(context, document))) return false
 				return true
 			}
-		}
-		composed[table] = operations
+		if (inserts.length)
+			rules.insert = async (context, document) => {
+				for (const rule of inserts) if (!(await rule(context, document))) return false
+				return true
+			}
+		if (modifies.length)
+			rules.modify = async (context, document) => {
+				for (const rule of modifies) if (!(await rule(context, document))) return false
+				return true
+			}
+		composed[table] = rules
 	}
-	return composed as Rules<Ctx, DataModel>
+	return composed
 }
 
 /**
@@ -75,9 +77,7 @@ export function composeRules<Ctx, DataModel extends GenericDataModel>(
  * disclosing existence: a missing row and a foreign row fail identically
  * with REFERENCE_NOT_FOUND. Use for every id argument a client supplies.
  */
-export async function requireTenantReference<
-	Document extends { [TENANT_FIELD]?: unknown },
->(
+export async function requireTenantReference<Document extends { [TENANT_FIELD]?: unknown }>(
 	tenant: string,
 	load: () => Promise<Document | null>,
 	errors: ErrorFactory = defaultErrors,
@@ -93,9 +93,7 @@ export async function requireTenantReference<
 }
 
 /** Asserts a loaded document belongs to the tenant; use on internal paths. */
-export function assertTenantOwned<
-	Document extends { [TENANT_FIELD]?: unknown },
->(
+export function assertTenantOwned<Document extends { [TENANT_FIELD]?: unknown }>(
 	tenant: string,
 	document: Document,
 	errors: ErrorFactory = defaultErrors,

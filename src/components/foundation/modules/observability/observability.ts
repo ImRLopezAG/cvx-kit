@@ -8,7 +8,7 @@ export type CommandObservation = Readonly<{
 
 export type ObservabilityOptions = Readonly<{
 	enabled?: boolean | (() => boolean)
-	classifyError: (error: unknown) => Readonly<{
+	classifyError: (cause: unknown) => Readonly<{
 		outcome: 'denied' | 'failed'
 		errorCode: string
 	}>
@@ -56,16 +56,14 @@ export class Observability {
 
 	#emit(observation: CommandObservation): void {
 		try {
+			const option = this.#options.enabled
 			const enabled =
-				typeof this.#options.enabled === 'function'
-					? this.#options.enabled()
-					: this.#options.enabled
+				option === undefined || option === true || option === false ? option : option()
 			if (
 				enabled !== true ||
 				!identifier.test(observation.operation) ||
 				!identifier.test(observation.classification) ||
-				(observation.errorCode !== undefined &&
-					!errorCode.test(observation.errorCode))
+				(observation.errorCode !== undefined && !errorCode.test(observation.errorCode))
 			) {
 				return
 			}
@@ -73,9 +71,7 @@ export class Observability {
 				this.#options.emit(Object.freeze(observation))
 				return
 			}
-			console.info(
-				JSON.stringify({ event: 'command.execution', ...observation }),
-			)
+			console.info(JSON.stringify({ event: 'command.execution', ...observation }))
 		} catch {
 			// Observability is intentionally behaviorally inert.
 		}

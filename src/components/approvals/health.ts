@@ -1,10 +1,7 @@
 import { v } from 'convex/values'
 
 import { query } from './_generated/server'
-import {
-	APPROVAL_COMPONENT_SCHEMA_VERSION,
-	APPROVAL_REQUIRED_DECISION_INDEXES,
-} from './constants'
+import { APPROVAL_COMPONENT_SCHEMA_VERSION, APPROVAL_REQUIRED_DECISION_INDEXES } from './constants'
 
 /**
  * Verifies that the package's component schema and required decision indexes

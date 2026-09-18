@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 
-import {
-	Foundation,
-	type AuditEntryInput,
-} from '../src/components/foundation/client'
+import { Foundation, type AuditEntryInput } from '../src/components/foundation/client'
 
 type Context = { actorId: string }
 
@@ -75,9 +72,7 @@ describe('Foundation Command protocol', () => {
 				},
 			}),
 		}
-		const execute = new Command<Context, typeof operations>(
-			operations,
-		).exec({
+		const execute = new Command<Context, typeof operations>(operations).exec({
 			operation: 'measure',
 			handler: (_ctx, command) => command.title,
 		})
@@ -104,23 +99,18 @@ describe('Foundation Command protocol', () => {
 			}),
 		}
 		let called = false
-		const middleware = typed.registryMiddleware(
-			first,
-			async ({ command, next }) => {
-				called = true
-				command.title.toUpperCase()
-				return next()
-			},
-		)
+		const middleware = typed.registryMiddleware(first, async ({ command, next }) => {
+			called = true
+			command.title.toUpperCase()
+			return next()
+		})
 		const execute = new Command<Context, typeof second>(second, {
 			middleware: [middleware],
 		}).exec({
 			operation: 'save',
 			handler: (_ctx, command) => command.count,
 		})
-		await expect(
-			execute({ actorId: 'actor' }, { count: 1 }),
-		).rejects.toMatchObject({
+		await expect(execute({ actorId: 'actor' }, { count: 1 })).rejects.toMatchObject({
 			code: 'COMMAND_MIDDLEWARE_REGISTRY_MISMATCH',
 		})
 		expect(called).toBe(false)
@@ -149,9 +139,7 @@ describe('Foundation Command protocol', () => {
 				},
 			}),
 		}
-		const execute = new Command<Context, typeof operations>(
-			operations,
-		).exec({
+		const execute = new Command<Context, typeof operations>(operations).exec({
 			operation: 'touch',
 			handler: (context) => {
 				contexts.push(context)
@@ -179,15 +167,11 @@ describe('Foundation Command protocol', () => {
 				middleware: [async ({ next }) => `${await next()}:middleware`],
 			}),
 		}
-		const execute = new Command<Context, typeof operations>(
-			operations,
-		).exec({
+		const execute = new Command<Context, typeof operations>(operations).exec({
 			operation: 'transform',
 			handler: () => 'hello',
 		})
-		expect(await execute({ actorId: 'actor' }, {})).toBe(
-			'parsed:hello:middleware',
-		)
+		expect(await execute({ actorId: 'actor' }, {})).toBe('parsed:hello:middleware')
 	})
 	it('validates input, executes, audits, and observes', async () => {
 		const { commands, events, auditEntries } = harness()
@@ -195,10 +179,7 @@ describe('Foundation Command protocol', () => {
 			operation: 'documents.rename',
 			handler: async () => ({ ok: true as const }),
 		})
-		const result = await rename(
-			{ actorId: 'user_1' },
-			{ id: 'doc_1', title: 'Renamed' },
-		)
+		const result = await rename({ actorId: 'user_1' }, { id: 'doc_1', title: 'Renamed' })
 		expect(result).toEqual({ ok: true })
 		expect(auditEntries).toEqual([
 			{
@@ -227,7 +208,8 @@ describe('Foundation Command protocol', () => {
 			},
 		})
 		await expect(
-			rename({ actorId: 'user_1' }, { id: 'doc_1' } as never),
+			// @ts-expect-error Deliberately omit the required title to test runtime validation.
+			rename({ actorId: 'user_1' }, { id: 'doc_1' }),
 		).rejects.toThrow()
 		expect(executed).toBe(false)
 		expect(auditEntries).toHaveLength(0)
@@ -256,10 +238,7 @@ describe('Foundation Command protocol', () => {
 
 describe('Foundation Command guards and permissions', () => {
 	function guardedHarness(options?: {
-		checkPermission?: (
-			context: never,
-			input: { permission: string; operation: string },
-		) => void
+		checkPermission?: (context: never, input: { permission: string; operation: string }) => void
 	}) {
 		const auditEntries: AuditEntryInput[] = []
 		const calls: string[] = []
@@ -276,7 +255,7 @@ describe('Foundation Command guards and permissions', () => {
 						auditEntries.push(entry)
 					},
 				},
-				checkPermission: options?.checkPermission as never,
+				checkPermission: options?.checkPermission,
 			},
 		)
 		const operations = {
@@ -285,10 +264,10 @@ describe('Foundation Command guards and permissions', () => {
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'business',
 				permission: 'documents.manage',
-				guard: (async (_ctx: Context, command: { state: string }) => {
+				guard: async (_ctx: Context, command: { state: string }) => {
 					calls.push('operation-guard')
 					if (command.state !== 'draft') throw new Error('NOT_DRAFT')
-				}) as never,
+				},
 				audit: () => ({
 					operation: 'documents.publish',
 					actorId: 'user_1',
@@ -297,9 +276,9 @@ describe('Foundation Command guards and permissions', () => {
 			}),
 		} as const
 		const commands = new Command<Context, typeof operations>(operations, {
-			guard: (async () => {
+			guard: async () => {
 				calls.push('default-guard')
-			}) as never,
+			},
 		})
 		const publish = commands.exec({
 			operation: 'documents.publish',
@@ -330,9 +309,9 @@ describe('Foundation Command guards and permissions', () => {
 		const { publish, calls, auditEntries } = guardedHarness({
 			checkPermission: () => {},
 		})
-		await expect(
-			publish({ actorId: 'user_1' }, { state: 'published' }),
-		).rejects.toThrow('NOT_DRAFT')
+		await expect(publish({ actorId: 'user_1' }, { state: 'published' })).rejects.toThrow(
+			'NOT_DRAFT',
+		)
 		expect(calls).not.toContain('handler')
 		expect(auditEntries).toEqual([])
 	})
@@ -343,17 +322,15 @@ describe('Foundation Command guards and permissions', () => {
 				throw new Error('FORBIDDEN')
 			},
 		})
-		await expect(
-			publish({ actorId: 'user_1' }, { state: 'draft' }),
-		).rejects.toThrow('FORBIDDEN')
+		await expect(publish({ actorId: 'user_1' }, { state: 'draft' })).rejects.toThrow('FORBIDDEN')
 		expect(calls).toEqual([])
 	})
 
 	it('fails closed when a permission is declared but no checker exists', async () => {
 		const { publish } = guardedHarness()
-		await expect(
-			publish({ actorId: 'user_1' }, { state: 'draft' }),
-		).rejects.toThrow(/checkPermission/)
+		await expect(publish({ actorId: 'user_1' }, { state: 'draft' })).rejects.toThrow(
+			/checkPermission/,
+		)
 	})
 })
 
@@ -405,9 +382,9 @@ describe('Foundation Command aggregate allowlist', () => {
 
 	it('throws when the audit names an undeclared aggregate type', async () => {
 		const { archive, auditEntries } = aggregateHarness('invoice')
-		await expect(
-			archive({ actorId: 'user_1' }, { id: 'doc_1' }),
-		).rejects.toThrow(/outside its declared aggregates/)
+		await expect(archive({ actorId: 'user_1' }, { id: 'doc_1' })).rejects.toThrow(
+			/outside its declared aggregates/,
+		)
 		expect(auditEntries).toEqual([])
 	})
 })
@@ -433,31 +410,29 @@ describe('Foundation Command middleware', () => {
 
 	it('runs registry middleware → operation middleware → guards → handler, with context enrichment', async () => {
 		const { Command, calls } = middlewareHarness()
-		const registryLayer = Command.middleware<
-			{ actorId: string },
-			{ traceId: string }
-		>(async ({ next }) => {
-			calls.push('registry:before')
-			const result = await next({ context: { traceId: 't_1' } })
-			calls.push('registry:after')
-			return result
-		})
-		const operationLayer = Command.middleware<
-			{ traceId?: string },
-			{ vendor: string }
-		>(async ({ context, next }) => {
-			calls.push(`operation:${context.traceId}`)
-			return next({ context: { vendor: 'acme' } })
-		})
+		const registryLayer = Command.middleware<{ actorId: string }, { traceId: string }>(
+			async ({ next }) => {
+				calls.push('registry:before')
+				const result = await next({ context: { traceId: 't_1' } })
+				calls.push('registry:after')
+				return result
+			},
+		)
+		const operationLayer = Command.middleware<{ traceId?: string }, { vendor: string }>(
+			async ({ context, next }) => {
+				calls.push(`operation:${context.traceId}`)
+				return next({ context: { vendor: 'acme' } })
+			},
+		)
 		const operations = {
 			'documents.touch': Command.operation({
 				command: z.object({}).strict(),
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'business',
 				middleware: [operationLayer],
-				guard: ((ctx: { vendor?: string }) => {
+				guard: (ctx: { vendor?: string }) => {
 					calls.push(`guard:${ctx.vendor}`)
-				}) as never,
+				},
 				audit: () => null,
 			}),
 		} as const
@@ -498,9 +473,7 @@ describe('Foundation Command middleware', () => {
 				audit: () => null,
 			}),
 		} as const
-		const commands = new Command<{ actorId: string }, typeof operations>(
-			operations,
-		)
+		const commands = new Command<{ actorId: string }, typeof operations>(operations)
 		const touch = commands.exec({
 			operation: 'documents.touch',
 			handler: async () => ({ ok: true as const }),
@@ -517,15 +490,13 @@ describe('Foundation Command middleware', () => {
 				result: z.object({ ok: z.literal(true) }).strict(),
 				classification: 'business',
 				middleware: [shortCircuit],
-				guard: (() => {
+				guard: () => {
 					calls.push('guard')
-				}) as never,
+				},
 				audit: () => null,
 			}),
 		} as const
-		const commands = new Command<{ actorId: string }, typeof operations>(
-			operations,
-		)
+		const commands = new Command<{ actorId: string }, typeof operations>(operations)
 		const touch = commands.exec({
 			operation: 'documents.touch',
 			handler: async () => {
@@ -552,15 +523,11 @@ describe('Foundation Command middleware', () => {
 				audit: () => null,
 			}),
 		} as const
-		const commands = new Command<{ actorId: string }, typeof operations>(
-			operations,
-		)
+		const commands = new Command<{ actorId: string }, typeof operations>(operations)
 		const touch = commands.exec({
 			operation: 'documents.touch',
 			handler: async () => ({ ok: true as const }),
 		})
-		await expect(touch({ actorId: 'user_1' }, {})).rejects.toThrow(
-			/more than once/,
-		)
+		await expect(touch({ actorId: 'user_1' }, {})).rejects.toThrow(/more than once/)
 	})
 })

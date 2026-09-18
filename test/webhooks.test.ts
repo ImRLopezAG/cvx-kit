@@ -1,3 +1,4 @@
+import { z } from 'zod'
 // @vitest-environment edge-runtime
 import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'
@@ -60,7 +61,9 @@ describe('createWebhookBoundary', () => {
 				return true
 			},
 			eventKey: (raw) => {
-				const parsed = JSON.parse(raw) as { event: string; id: string; updatedAt: string }
+				const parsed = z
+					.object({ event: z.string(), id: z.string(), updatedAt: z.string() })
+					.parse(JSON.parse(raw))
 				return `${parsed.event}:${parsed.id}:${parsed.updatedAt}`
 			},
 			source: 'vendor',
@@ -74,7 +77,7 @@ describe('createWebhookBoundary', () => {
 				},
 			},
 			fakeRequest(body),
-			'internal.vendor.applyEvent',
+			anyApi.vendor.applyEvent,
 		)
 		expect(response.status).toBe(200)
 		expect(seenRaw).toEqual([body])
@@ -102,7 +105,7 @@ describe('createWebhookBoundary', () => {
 					},
 				},
 				fakeRequest('{}'),
-				'x',
+				anyApi.vendor.applyEvent,
 			),
 		).rejects.toThrow(KitError)
 		expect(delegated).toEqual([])
@@ -119,7 +122,7 @@ describe('createWebhookBoundary', () => {
 			boundary.handle(
 				{ runMutation: async () => null },
 				fakeRequest('{}'),
-				'x',
+				anyApi.vendor.applyEvent,
 			),
 		).rejects.toThrow(/WEBHOOK_SIGNATURE_INVALID|verification failed/)
 	})

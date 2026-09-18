@@ -5,6 +5,7 @@
 /bun.lock
 /tsconfig.json
 /vite.config.ts
+/tools
 /.github
 /.omc
 /.claude

@@ -1,3 +1,4 @@
+import type { ApprovalCallbackInput } from './validators'
 import type {
 	FunctionArgs,
 	FunctionReference,
@@ -9,11 +10,7 @@ import type {
 
 import type { ComponentApi } from './_generated/component'
 import type { ApprovalDecision } from './constants'
-import type {
-	ApprovalActor,
-	ApprovalMetadata,
-	ApprovalWorkflowDescriptor,
-} from './validators'
+import type { ApprovalActor, ApprovalMetadata, ApprovalWorkflowDescriptor } from './validators'
 import {
 	compileApprovalDescriptor,
 	type ApprovalActionStep,
@@ -23,7 +20,6 @@ import {
 	type ApprovalMutationStep,
 	type ApprovalNotifyStep,
 	type ApprovalWorkflowStep,
-	type ApprovalCallbackInput,
 	type CreateApprovalHandle,
 } from './workflow_steps'
 
@@ -67,9 +63,7 @@ export type ApprovalAuditCleanupInput = Readonly<{
 	batchSize: number
 }>
 
-export type ApprovalStatus = FunctionReturnType<
-	ComponentApi['requests']['status']
->
+export type ApprovalStatus = FunctionReturnType<ComponentApi['requests']['status']>
 
 export class Approvals<Component extends ComponentApi = ComponentApi> {
 	private readonly component: Component
@@ -90,12 +84,7 @@ export class Approvals<Component extends ComponentApi = ComponentApi> {
 	mutation(
 		key: string,
 		options: Readonly<{
-			handler: FunctionReference<
-				'mutation',
-				'internal',
-				ApprovalCallbackInput,
-				unknown
-			>
+			handler: FunctionReference<'mutation', 'internal', ApprovalCallbackInput, unknown>
 			retry?: boolean
 		}>,
 	): ApprovalMutationStep {
@@ -110,12 +99,7 @@ export class Approvals<Component extends ComponentApi = ComponentApi> {
 	action(
 		key: string,
 		options: Readonly<{
-			handler: FunctionReference<
-				'action',
-				'internal',
-				ApprovalCallbackInput,
-				unknown
-			>
+			handler: FunctionReference<'action', 'internal', ApprovalCallbackInput, unknown>
 			retry?: boolean
 		}>,
 	): ApprovalActionStep {
@@ -130,12 +114,7 @@ export class Approvals<Component extends ComponentApi = ComponentApi> {
 	notify(
 		key: string,
 		options: Readonly<{
-			handler: FunctionReference<
-				'action',
-				'internal',
-				ApprovalCallbackInput,
-				unknown
-			>
+			handler: FunctionReference<'action', 'internal', ApprovalCallbackInput, unknown>
 			retry?: boolean
 		}>,
 	): ApprovalNotifyStep {
@@ -162,9 +141,7 @@ export class Approvals<Component extends ComponentApi = ComponentApi> {
 			decisions: Object.freeze([...options.decisions]),
 			quorum: Object.freeze({ ...options.quorum }),
 			makerChecker: options.makerChecker ?? false,
-			...(options.expiresAfterMs === undefined
-				? {}
-				: { expiresAfterMs: options.expiresAfterMs }),
+			expiresAfterMs: options.expiresAfterMs,
 		})
 	}
 
@@ -190,17 +167,11 @@ export class Approvals<Component extends ComponentApi = ComponentApi> {
 			compatibilityKey: input.compatibilityKey ?? input.name,
 			steps: input.steps,
 		})
-		return new ConfiguredApprovalWorkflow(
-			this.component,
-			definition,
-			this.createHandle,
-		)
+		return new ConfiguredApprovalWorkflow(this.component, definition, this.createHandle)
 	}
 }
 
-export class ConfiguredApprovalWorkflow<
-	Component extends ComponentApi = ComponentApi,
-> {
+export class ConfiguredApprovalWorkflow<Component extends ComponentApi = ComponentApi> {
 	readonly name: string
 	readonly compatibilityKey: string
 	readonly steps: readonly ApprovalWorkflowStep[]

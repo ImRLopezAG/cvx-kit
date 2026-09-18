@@ -13,12 +13,9 @@ import { Foundation } from '../src/components/foundation/client'
 const schema = defineSchema({
 	writes: defineTable({ kind: v.string(), key: v.string() }),
 })
-type Context = GenericMutationCtx<
-	DataModelFromSchemaDefinition<typeof schema>
->
+type Context = GenericMutationCtx<DataModelFromSchemaDefinition<typeof schema>>
 const modules = import.meta.glob('./fixture/**/*.ts')
-type Failure =
-	'result' | 'audit-resolution' | 'aggregate' | 'audit-write' | 'completion'
+type Failure = 'result' | 'audit-resolution' | 'aggregate' | 'audit-write' | 'completion'
 function harness(
 	options: {
 		fail?: Failure
@@ -56,16 +53,13 @@ function harness(
 	const operations = {
 		save: Command.withContext<Context>().operation({
 			command: z.object({ key: z.string().trim() }),
-			result: z
-				.object({ ok: z.literal(true) })
-				.refine(() => options.fail !== 'result'),
+			result: z.object({ ok: z.literal(true) }).refine(() => options.fail !== 'result'),
 			classification: 'business',
 			permission: 'save',
 			aggregates,
 			prepare: async (context, command) => {
 				events.push(`prepare:${command.key}`)
-				if ('replay' in options)
-					return { kind: 'replay', result: options.replay }
+				if ('replay' in options) return { kind: 'replay', result: options.replay }
 				return {
 					kind: 'execute',
 					complete: async (result) => {
@@ -84,8 +78,7 @@ function harness(
 			},
 			audit: ({ command }) => {
 				events.push('audit-resolution')
-				if (options.fail === 'audit-resolution')
-					throw Error('audit-resolution')
+				if (options.fail === 'audit-resolution') throw Error('audit-resolution')
 				if (options.auditNull) return null
 				return {
 					operation: 'save',
@@ -122,9 +115,7 @@ describe('transactional command completion', () => {
 				result: v.number(),
 			}).index('by_key', ['key']),
 		})
-		type ReceiptContext = GenericMutationCtx<
-			DataModelFromSchemaDefinition<typeof receiptSchema>
-		>
+		type ReceiptContext = GenericMutationCtx<DataModelFromSchemaDefinition<typeof receiptSchema>>
 		const t = convexTest(receiptSchema, modules)
 		let transforms = 0
 		let effects = 0
@@ -156,8 +147,7 @@ describe('transactional command completion', () => {
 						.withIndex('by_key', (q) => q.eq('key', command.key))
 						.unique()
 					if (receipt) {
-						if (receipt.fingerprint !== command.title)
-							throw Error('FINGERPRINT_CONFLICT')
+						if (receipt.fingerprint !== command.title) throw Error('FINGERPRINT_CONFLICT')
 						return { kind: 'replay', result: receipt.result }
 					}
 					return {
@@ -178,25 +168,15 @@ describe('transactional command completion', () => {
 				}),
 			}),
 		}
-		const execute = new Command<ReceiptContext, typeof operations>(
-			operations,
-		).exec({
+		const execute = new Command<ReceiptContext, typeof operations>(operations).exec({
 			operation: 'measure',
 			handler: (_ctx, command) => {
 				effects++
 				return command.title
 			},
 		})
-		expect(
-			await t.mutation((ctx) =>
-				execute(ctx, { key: 'key', title: ' hello ' }),
-			),
-		).toBe(5)
-		expect(
-			await t.mutation((ctx) =>
-				execute(ctx, { key: 'key', title: 'hello' }),
-			),
-		).toBe(5)
+		expect(await t.mutation((ctx) => execute(ctx, { key: 'key', title: ' hello ' }))).toBe(5)
+		expect(await t.mutation((ctx) => execute(ctx, { key: 'key', title: 'hello' }))).toBe(5)
 		expect({ transforms, effects, audits }).toEqual({
 			transforms: 1,
 			effects: 1,
@@ -232,9 +212,7 @@ describe('transactional command completion', () => {
 			'complete:key',
 			'observe:completed',
 		])
-		expect(
-			await t.run((ctx) => ctx.db.query('writes').collect()),
-		).toHaveLength(3)
+		expect(await t.run((ctx) => ctx.db.query('writes').collect())).toHaveLength(3)
 	})
 	for (const fail of [
 		'result',
@@ -246,15 +224,10 @@ describe('transactional command completion', () => {
 		it(`rolls back actual host writes and observes failure on ${fail}`, async () => {
 			const h = harness({ fail })
 			const t = convexTest(schema, modules)
-			await expect(
-				t.mutation((ctx) => h.execute(ctx, { key: 'key' })),
-			).rejects.toThrow()
-			expect(
-				await t.run((ctx) => ctx.db.query('writes').collect()),
-			).toEqual([])
+			await expect(t.mutation((ctx) => h.execute(ctx, { key: 'key' }))).rejects.toThrow()
+			expect(await t.run((ctx) => ctx.db.query('writes').collect())).toEqual([])
 			expect(h.events.at(-1)).toBe('observe:failed')
-			if (fail !== 'completion')
-				expect(h.events).not.toContain('complete:key')
+			if (fail !== 'completion') expect(h.events).not.toContain('complete:key')
 		})
 	}
 	it('completes audit-null work', async () => {
@@ -262,44 +235,25 @@ describe('transactional command completion', () => {
 		const t = convexTest(schema, modules)
 		await t.mutation((ctx) => h.execute(ctx, { key: 'key' }))
 		expect(h.events).not.toContain('audit-write')
-		expect(h.events.slice(-2)).toEqual([
-			'complete:key',
-			'observe:completed',
-		])
+		expect(h.events.slice(-2)).toEqual(['complete:key', 'observe:completed'])
 	})
 	it('validates replay and skips guards, business writes and audit', async () => {
 		const h = harness({ replay: { ok: true } })
 		const t = convexTest(schema, modules)
-		expect(
-			await t.mutation((ctx) => h.execute(ctx, { key: 'key' })),
-		).toEqual({ ok: true })
-		expect(h.events).toEqual([
-			'permission',
-			'prepare:key',
-			'observe:completed',
-		])
-		expect(await t.run((ctx) => ctx.db.query('writes').collect())).toEqual(
-			[],
-		)
+		expect(await t.mutation((ctx) => h.execute(ctx, { key: 'key' }))).toEqual({ ok: true })
+		expect(h.events).toEqual(['permission', 'prepare:key', 'observe:completed'])
+		expect(await t.run((ctx) => ctx.db.query('writes').collect())).toEqual([])
 	})
 	it('rejects invalid durable replay', async () => {
 		const h = harness({ replay: { ok: false } })
 		const t = convexTest(schema, modules)
-		await expect(
-			t.mutation((ctx) => h.execute(ctx, { key: 'key' })),
-		).rejects.toThrow()
-		expect(h.events).toEqual([
-			'permission',
-			'prepare:key',
-			'observe:failed',
-		])
+		await expect(t.mutation((ctx) => h.execute(ctx, { key: 'key' }))).rejects.toThrow()
+		expect(h.events).toEqual(['permission', 'prepare:key', 'observe:failed'])
 	})
 	it('checks permission before replay lookup', async () => {
 		const h = harness({ deny: true, replay: { ok: true } })
 		const t = convexTest(schema, modules)
-		await expect(
-			t.mutation((ctx) => h.execute(ctx, { key: 'key' })),
-		).rejects.toThrow('DENIED')
+		await expect(t.mutation((ctx) => h.execute(ctx, { key: 'key' }))).rejects.toThrow('DENIED')
 		expect(h.events).toEqual(['permission', 'observe:failed'])
 	})
 	it('isolates repeated and nested calls with the same context and key', async () => {
@@ -316,12 +270,8 @@ describe('transactional command completion', () => {
 			await nested(ctx, { key: 'key' })
 			await h.execute(ctx, { key: 'key' })
 		})
-		expect(
-			h.events.filter((event) => event === 'complete:key'),
-		).toHaveLength(3)
-		expect(
-			await t.run((ctx) => ctx.db.query('writes').collect()),
-		).toHaveLength(8)
+		expect(h.events.filter((event) => event === 'complete:key')).toHaveLength(3)
+		expect(await t.run((ctx) => ctx.db.query('writes').collect())).toHaveLength(8)
 	})
 	it('documents that swallowing a failure inside the mutation permits writes to commit', async () => {
 		const h = harness({ fail: 'completion' })
@@ -333,9 +283,7 @@ describe('transactional command completion', () => {
 				return null
 			}
 		})
-		expect(
-			await t.run((ctx) => ctx.db.query('writes').collect()),
-		).toHaveLength(3)
+		expect(await t.run((ctx) => ctx.db.query('writes').collect())).toHaveLength(3)
 		expect(h.events.at(-1)).toBe('observe:failed')
 	})
 })

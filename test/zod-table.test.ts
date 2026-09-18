@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vite-plus/test'
+import { zid } from 'convex-helpers/server/zod4'
+import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
 import { z } from 'zod'
 
-import { zodTable } from '../src/zod-table'
+import { jsonSafeZid, zodTable } from '../src/zod-table'
 
 const documents = zodTable(
 	'documents',
@@ -40,23 +41,18 @@ describe('zodTable', () => {
 		const archive = zodTable('archive', () => ({ name: z.string() }), {
 			publicFields: ['name', 'createdAt'],
 		})
-		expect(Object.keys(archive.publicDto.shape).sort()).toEqual([
-			'createdAt',
-			'name',
-		])
+		expect(Object.keys(archive.publicDto.shape).sort()).toEqual(['createdAt', 'name'])
 	})
 
 	it('narrows the command boundary to the declared fields', () => {
 		expect(Object.keys(documents.commandInput.shape)).toEqual(['title'])
-		expect(() =>
-			documents.commandInput.parse({ title: 't', secretNote: 'x' }),
-		).toThrow()
+		expect(() => documents.commandInput.parse({ title: 't', secretNote: 'x' })).toThrow()
 	})
 
 	it('redacts non-public fields at runtime through toPublicDto', () => {
 		const dto = documents.toPublicDto({
 			title: 'Quarterly report',
-			ownerId: 'users:1' as never,
+			ownerId: zid('users').parse('users:1'),
 			secretNote: 'do not leak',
 			createdAt: 1,
 			updatedAt: 1,
@@ -72,10 +68,20 @@ describe('zodTable', () => {
 	})
 
 	it('exposes id and update tools bound to the table name', () => {
-		expect(Object.keys(documents.tools.update.shape).sort()).toEqual([
-			'data',
-			'id',
-		])
+		expect(Object.keys(documents.tools.update.shape).sort()).toEqual(['data', 'id'])
 		expect(documents.tableName).toBe('documents')
+	})
+})
+
+describe('jsonSafeZid', () => {
+	it('validates primitive ids while retaining the owning table type', () => {
+		const schema = jsonSafeZid('documents')
+		expect(schema.safeParse('').success).toBe(zid('documents').safeParse('').success)
+		expect(schema.safeParse(42).success).toBe(false)
+		expect(schema.parse('documents:1')).toBe('documents:1')
+		expectTypeOf<z.output<typeof schema>>().toEqualTypeOf<
+			import('convex/values').GenericId<'documents'>
+		>()
+		expect(z.toJSONSchema(schema)).toMatchObject({ type: 'string' })
 	})
 })

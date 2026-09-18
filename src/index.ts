@@ -1,8 +1,4 @@
-export {
-	defaultErrors,
-	KitError,
-	type ErrorFactory,
-} from './errors'
+export { defaultErrors, KitError, type ErrorFactory } from './errors'
 export {
 	createModule,
 	jsonSafeZid,
@@ -34,11 +30,7 @@ export {
 	type IncludedQuery,
 	type SecurityConfig,
 } from './auth'
-export {
-	createAgentTools,
-	type AgentToolHandlers,
-	type AgentToolRecord,
-} from './agent-tools'
+export { createAgentTools, type AgentToolHandlers, type AgentToolRecord } from './agent-tools'
 export { createCrudCommands, type CrudConfig } from './crud'
 export { rateLimit, type RateLimiterLike } from './middleware'
 export {

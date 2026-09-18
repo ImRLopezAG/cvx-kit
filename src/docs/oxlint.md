@@ -5,7 +5,7 @@ checks applications using the kit against `conventions.md`, the authoritative
 source for folder structure and file anatomy. The package repository has a
 separate, unpublished plugin for its own `src/` layout.
 
-The correction described here is unreleased; the initial 0.1.4 plugin targeted
+These consumer rules are available from 0.1.5; the initial 0.1.4 plugin targeted
 library authoring. See `upgrading.md` when migrating that configuration.
 
 ## Configuration

@@ -1,6 +1,6 @@
 # Upgrading to 0.1.0 — the new way of things
 
-## Next release — consumer Oxlint rules
+## 0.1.5 — consumer Oxlint rules
 
 The initial 0.1.4 plugin incorrectly targeted this package's `src/` layout.
 `cvx-kit/oxlint` now targets consuming applications under `convex/`, following

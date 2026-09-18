@@ -12,6 +12,8 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-18
+
 ### Fixed
 
 - Correct `cvx-kit/oxlint` to enforce the documented consumer `convex/` layout

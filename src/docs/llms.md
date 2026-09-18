@@ -9,6 +9,9 @@
 > authoritative. Restructuring an existing raw project → `migration.md`.
 > Upgrading from 0.0.x → `upgrading.md`. New 0.1.0 helpers: `crud.md`,
 > `webhooks.md`, `agent-tools.md`; pagination in `zod-table.md`/`auth.md`.
+> Consumer lint configuration and coverage → `oxlint.md`. The optional
+> `cvx-kit/oxlint` plugin checks the statically detectable conventions;
+> behavioral guarantees still need architecture and runtime tests.
 
 > **Placeholders.** Names like `documents`, `users`, `history`, `title`,
 > `ownerId`, and `documentPublish` in the examples below are illustrative

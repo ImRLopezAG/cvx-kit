@@ -21,7 +21,7 @@ export default defineConfig({
 		],
 		jsPlugins: [
 			{ name: 'anti-slop', specifier: './tools/oxlint/anti-slop/index.ts' },
-			{ name: 'cvx', specifier: './src/oxlint.ts' },
+			{ name: 'cvx', specifier: './tools/oxlint/cvx/index.ts' },
 		],
 		rules: {
 			'anti-slop/no-chained-type-assertions': 'error',

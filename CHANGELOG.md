@@ -12,6 +12,19 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-18
+
+### Fixed
+
+- Correct `cvx-kit/oxlint` to enforce the documented consumer `convex/` layout
+  rather than this repository's `src/` layout. Keep the six library-authoring
+  rules in repository tooling and publish 15 consumer rules, with coverage for
+  domain boundaries, auth builders, thin adapters, facade ownership, table
+  placement, vocabularies, bounded read syntax, and trigger-owned timestamps.
+- Replace consumer `entryPoints`/`packageName` options with `convexDir`; document
+  migration, allowed exceptions, and the checks that still need runtime tests.
+  Validate the packaged plugin against consumer fixtures installed by npm and Bun.
+
 ## [0.1.4] - 2026-09-18
 
 ### Added

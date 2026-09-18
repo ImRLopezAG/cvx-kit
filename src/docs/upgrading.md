@@ -1,11 +1,26 @@
 # Upgrading to 0.1.0 — the new way of things
 
+## 0.1.5 — consumer Oxlint rules
+
+The initial 0.1.4 plugin incorrectly targeted this package's `src/` layout.
+`cvx-kit/oxlint` now targets consuming applications under `convex/`, following
+`conventions.md`. The six existing rule names remain, with consumer semantics;
+nine additional rules cover builders, generated references, domain imports,
+public adapters, facade ownership, vocabularies, reads, and timestamps.
+
+Remove `entryPoints` and `packageName` options from your consumer lint config.
+Applications have no barrel entry points inside `convex/`. Every rule now
+accepts only an optional `convexDir`, relative to the linter's working directory
+(default: `convex`). Enable the new rules explicitly; loading the plugin alone
+does not enable them. See `oxlint.md` for coverage and the root README for a
+complete configuration. Repository authoring checks remain local tooling.
+
+No runtime API or storage migration is part of this correction.
+
 ## 0.1.4
 
-The optional Oxlint plugin is available through `cvx-kit/oxlint`; the root
-README shows consumer configuration. Loading the plugin does not enable rules
-automatically. Select rules in your lint configuration and list your public
-entry points in `cvx/no-internal-reexports`.
+This release introduced the optional `cvx-kit/oxlint` export. Its original
+rules targeted library authoring; see the correction above for consumer use.
 
 This patch tightens several TypeScript contracts during the anti-slop cleanup:
 

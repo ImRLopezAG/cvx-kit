@@ -6,8 +6,7 @@ source for folder structure and file anatomy. The package repository has a
 separate, unpublished plugin for its own `src/` layout.
 
 The consumer plugin was introduced in 0.1.5; the initial 0.1.4 plugin targeted
-library authoring. The five architecture rules below are additions for the next
-release. See `upgrading.md` when migrating that configuration.
+library authoring. The five architecture rules below were added in 0.1.6. See `upgrading.md` when migrating that configuration.
 
 ## Configuration
 

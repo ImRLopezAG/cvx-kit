@@ -12,6 +12,24 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-19
+
+### Added
+
+- Add five opt-in consumer Oxlint rules for project structure, root wiring,
+  application orchestration, internal function ownership, and domain file
+  responsibilities. The packaged plugin now includes 20 rules.
+- Check colocated test presence, runtime import cycles, and shared-code ownership.
+  Export `checkArchitecture` for standalone checks without copying architecture
+  test suites into applications. These static checks do not replace behavior tests.
+
+### Fixed
+
+- Resolve tsconfig aliases when checking consumer import boundaries and reject
+  migration dependencies from application code.
+- Enforce documented ownership of domain implementations, table aggregation,
+  query side effects, and component boundaries.
+
 ## [0.1.5] - 2026-09-18
 
 ### Fixed

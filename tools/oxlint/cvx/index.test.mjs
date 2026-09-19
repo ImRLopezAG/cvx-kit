@@ -810,3 +810,307 @@ tester.run('consumer/root-facade-ownership', consumerRules['root-facade-ownershi
 		},
 	],
 })
+
+for (const [name, valid, invalid] of [
+	[
+		'root-wiring-only',
+		[
+			[
+				'convex/convex.config.ts',
+				"import { defineApp } from 'convex/server'; const app = defineApp(); export default app",
+			],
+			[
+				'convex/mail.ts',
+				"import { Resend } from '@convex-dev/resend'; import { components } from './_generated/api'; export const mail = new Resend(components.mail)",
+			],
+			[
+				'convex/http.ts',
+				"import { httpRouter } from 'convex/server'; import { receive } from './domain/orders/webhook'; const http = httpRouter(); http.route({path: '/orders', handler: receive}); export default http",
+			],
+		],
+		[
+			['convex/lib.ts', 'export function calculateTotal(x) { return x * 2 }'],
+			['convex/crons.ts', 'export function calculateTotal(x) { return x * 2 }'],
+			['convex/http.ts', 'export const handle = (ctx, req) => { if (req.ok) return 1; return 0 }'],
+			['convex/schema.ts', 'export const schema = z.object({ value: z.string() })'],
+			['convex/anything.ts', 'export const client = new Something()'],
+		],
+	],
+	[
+		'application-orchestration',
+		[
+			[
+				'convex/application/checkout.ts',
+				"import { save } from '../domain/orders/commands'; import { reserve } from '../domain/inventory/commands'; export async function checkout(ctx,args) { const result = await reserve(ctx,args); return save(ctx,result) }",
+			],
+		],
+		[
+			[
+				'convex/application/services.ts',
+				"import Stripe from 'stripe'; export const stripe = new Stripe('x')",
+			],
+			[
+				'convex/application/checkout.ts',
+				"import { save } from '../domain/orders/commands'; export const checkout = save",
+			],
+			[
+				'convex/application/checkout.ts',
+				"import { save } from '../domain/orders/commands'; import { reserve } from '../domain/inventory/commands'; export function checkout(ctx,args) { if (args.total > 100) return save(ctx,args); return reserve(ctx,args) }",
+			],
+			[
+				'convex/application/checkout.ts',
+				"import { save } from '../domain/orders/commands'; import { reserve } from '../domain/inventory/commands'; export function checkout(ctx,args) { return ctx.db.insert('orders', args) }",
+			],
+		],
+	],
+	[
+		'internal-function-ownership',
+		[
+			[
+				'convex/domain/orders/internal/callbacks.ts',
+				"import { systemMutation } from '../../../functions'; export const run = systemMutation({})",
+			],
+			[
+				'convex/migrations/backfill.ts',
+				"import { systemMutation } from '../functions'; export const run = systemMutation({})",
+			],
+			[
+				'convex/application/checkout.ts',
+				"import { systemMutation } from '../functions'; export const run = systemMutation({})",
+			],
+			[
+				'convex/components/demo/run.ts',
+				"import { internalMutation } from './_generated/server'; export const run = internalMutation({})",
+			],
+		],
+		[
+			[
+				'convex/api/orders.ts',
+				"import { systemMutation } from '../functions'; export const run = systemMutation({})",
+			],
+			[
+				'convex/jobs.ts',
+				"import { systemAction } from './functions'; export const run = systemAction({})",
+			],
+			[
+				'convex/domain/shared/run.ts',
+				"import { systemQuery } from '../../functions'; export const run = systemQuery({})",
+			],
+		],
+	],
+	[
+		'domain-file-responsibilities',
+		[
+			[
+				'convex/domain/table.ts',
+				"import { createModule } from 'cvx-kit/zod-table'; import { orderTables } from './orders/table'; export const domainTables = createModule(orderTables)",
+			],
+			['convex/domain/orders/rules.ts', 'export function canBuy(order) { return order.total > 0 }'],
+			[
+				'convex/domain/orders/queries.ts',
+				'export function load(ctx) { return ctx.db.query("orders").take(10) }',
+			],
+			[
+				'convex/domain/orders/actions.ts',
+				'export async function send() { return fetch("https://example.com") }',
+			],
+			[
+				'convex/domain/orders/integrations/github/client.ts',
+				'export async function load() { return fetch("https://example.com") }',
+			],
+			[
+				'convex/domain/orders/internal/callbacks.ts',
+				'export function call(ctx) { return ctx.runMutation(ref, {}) }',
+			],
+		],
+		[
+			[
+				'convex/domain/table.ts',
+				'export function calculateTotal(order) { return order.total * 2 }',
+			],
+			[
+				'convex/domain/table.ts',
+				"import { createModule } from 'cvx-kit/zod-table'; import { save } from './orders/commands'; export const domainTables = createModule(save())",
+			],
+			['convex/domain/orders/rules.ts', 'export function allowed(ctx) { return ctx.db.get("id") }'],
+			['convex/domain/orders/rules.ts', 'export function allowed() { return Date.now() > 0 }'],
+			[
+				'convex/domain/orders/queries.ts',
+				'export function save(ctx) { return ctx.db.insert("orders", {}) }',
+			],
+			[
+				'convex/domain/orders/queries.ts',
+				'export function save(ctx) { return ctx.runMutation(ref,{}) }',
+			],
+			[
+				'convex/domain/orders/commands.ts',
+				'export function save() { return fetch("https://example.com") }',
+			],
+			[
+				'convex/domain/orders/schema.ts',
+				'export function save(ctx) { return ctx.db.insert("orders", {}) }',
+			],
+			[
+				'convex/domain/orders/rules.ts',
+				"import { save } from './commands'; export const canBuy = save",
+			],
+			[
+				'convex/domain/orders/queries.ts',
+				"import Stripe from 'stripe'; export const client = new Stripe('x')",
+			],
+		],
+	],
+]) {
+	tester.run(name, consumerRules[name], {
+		valid: valid.map(([filename, code]) => ({ filename: resolve(filename), code })),
+		invalid: invalid.map(([filename, code]) => ({
+			filename: resolve(filename),
+			code,
+			errors: [{ messageId: 'ownership' }],
+		})),
+	})
+}
+
+// Real filesystem fixtures prove resolution rather than only matching import text.
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { afterAll } from 'vite-plus/test'
+const aliasCwd = realpathSync(mkdtempSync(resolve(tmpdir(), 'cvx-lint-aliases-')))
+for (const directory of [
+	'convex/domain/orders',
+	'convex/domain/users',
+	'convex/domain/shared',
+	'convex/api/orders',
+	'convex/migrations',
+	'convex/components/example',
+	'convex/_generated',
+])
+	mkdirSync(resolve(aliasCwd, directory), { recursive: true })
+writeFileSync(
+	resolve(aliasCwd, 'tsconfig.base.json'),
+	JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@cvx/*': ['convex/*'] } } }),
+)
+writeFileSync(
+	resolve(aliasCwd, 'tsconfig.json'),
+	'{ "extends": "./tsconfig.base.json", // JSONC supported\n "include": ["convex/**/*.ts"] }',
+)
+for (const file of [
+	'domain/orders/commands.ts',
+	'domain/users/commands.ts',
+	'domain/users/queries.ts',
+	'domain/shared/client.ts',
+	'migrations/backfill.ts',
+	'components/example/private.ts',
+	'functions.ts',
+	'_generated/server.ts',
+])
+	writeFileSync(resolve(aliasCwd, 'convex', file), 'export const value = 1')
+afterAll(() => rmSync(aliasCwd, { recursive: true, force: true }))
+const aliasTester = new RuleTester({
+	cwd: aliasCwd,
+	languageOptions: { parserOptions: { lang: 'ts' } },
+})
+aliasTester.run('resolved raw builders', consumerRules['no-raw-builders'], {
+	valid: [
+		{
+			filename: resolve(aliasCwd, 'convex/domain/orders/nested.ts'),
+			code: 'import type { QueryCtx } from "@cvx/_generated/server"',
+		},
+	],
+	invalid: [
+		{
+			filename: resolve(aliasCwd, 'convex/domain/orders/nested.ts'),
+			code: 'import { mutation } from "@cvx/_generated/server"',
+			errors: [{ messageId: 'builder' }],
+		},
+	],
+})
+aliasTester.run('resolved domain boundaries', consumerRules['domain-import-boundaries'], {
+	valid: [
+		{
+			filename: resolve(aliasCwd, 'convex/domain/table.ts'),
+			code: 'import { tables } from "./orders/table"',
+		},
+		{
+			filename: resolve(aliasCwd, 'convex/domain/orders/nested.ts'),
+			code: 'import { value } from "@cvx/domain/users/queries"',
+		},
+		{
+			filename: resolve(aliasCwd, 'convex/api/orders/list.ts'),
+			code: 'import { value } from "@cvx/domain/orders/commands"',
+		},
+	],
+	invalid: [
+		{
+			filename: resolve(aliasCwd, 'convex/domain/orders/nested.ts'),
+			code: 'import { value } from "@cvx/domain/users/commands"',
+			errors: [{ messageId: 'boundary' }],
+		},
+		{
+			filename: resolve(aliasCwd, 'convex/domain/orders/nested.ts'),
+			code: 'import("@cvx/migrations/backfill")',
+			errors: [{ messageId: 'boundary' }],
+		},
+		{
+			filename: resolve(aliasCwd, 'convex/domain/shared/client.ts'),
+			code: 'import { value } from "@cvx/domain/users/queries"',
+			errors: [{ messageId: 'boundary' }],
+		},
+		{
+			filename: resolve(aliasCwd, 'convex/api/orders/list.ts'),
+			code: 'import { value } from "@cvx/domain/users/commands"',
+			errors: [{ messageId: 'boundary' }],
+		},
+	],
+})
+aliasTester.run('resolved component boundaries', consumerRules['component-boundaries'], {
+	valid: [],
+	invalid: [
+		{
+			filename: resolve(aliasCwd, 'convex/domain/orders/nested.ts'),
+			code: 'import { value } from "@cvx/components/example/private"',
+			errors: [{ messageId: 'facade' }],
+		},
+		{
+			filename: resolve(aliasCwd, 'convex/components/example/private.ts'),
+			code: 'import { value } from "@cvx/domain/users/queries"',
+			errors: [{ messageId: 'boundary' }],
+		},
+	],
+})
+aliasTester.run('resolved constructor ownership', consumerRules['internal-function-ownership'], {
+	valid: [],
+	invalid: [
+		{
+			filename: resolve(aliasCwd, 'convex/api/orders/list.ts'),
+			code: 'import { systemMutation as mutation } from "@cvx/functions"; export const run = mutation({})',
+			errors: [{ messageId: 'ownership' }],
+		},
+	],
+})
+
+tester.run('query side-effect boundaries', consumerRules['domain-file-responsibilities'], {
+	valid: [
+		{
+			filename: resolve('convex/domain/orders/queries.ts'),
+			code: 'export function fail() { throw new Error("missing") }',
+		},
+	],
+	invalid: [
+		{
+			filename: resolve('convex/domain/orders/queries.ts'),
+			code: 'export function erase(ctx,id) { return ctx.storage.delete(id) }',
+			errors: [{ messageId: 'ownership' }],
+		},
+		{
+			filename: resolve('convex/domain/orders/queries.ts'),
+			code: 'import { systemMutation } from "../../functions"; export const save = systemMutation({})',
+			errors: [{ messageId: 'ownership' }],
+		},
+		{
+			filename: resolve('convex/domain/orders/rules.ts'),
+			code: 'export const allowed = process.env.FLAG',
+			errors: [{ messageId: 'ownership' }],
+		},
+	],
+})

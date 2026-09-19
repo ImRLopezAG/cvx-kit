@@ -9,7 +9,7 @@ const root = join(import.meta.dirname, '..')
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-oxlint-'))
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const ruleNames = Object.keys(rules)
-assert.equal(ruleNames.length, 15)
+assert.equal(ruleNames.length, 20)
 
 try {
 	run('bun', ['pm', 'pack', '--destination', temporary, '--ignore-scripts'], root)
@@ -48,6 +48,13 @@ try {
 			join(fixture, 'convex/components/example/client.ts'),
 			'export function run() { return 1 }\n',
 		)
+		for (const directory of ['api', 'components/example']) {
+			mkdirSync(join(fixture, 'convex', directory, '__tests__'), { recursive: true })
+			writeFileSync(
+				join(fixture, 'convex', directory, '__tests__/behavior.test.ts'),
+				'test("behavior", () => { expect(1).toBe(1) })',
+			)
+		}
 		const oxlint = join(fixture, 'node_modules/.bin/oxlint')
 		run(oxlint, ['--config', '.oxlintrc.json', 'convex'], fixture)
 		writeFileSync(
@@ -83,6 +90,19 @@ export const target = ref('orders:save')
 export const value = other
 `,
 		)
+		mkdirSync(join(fixture, 'convex/application'), { recursive: true })
+		writeFileSync(
+			join(fixture, 'convex/application/provider.ts'),
+			"import Stripe from 'stripe'; export const provider = new Stripe('key')",
+		)
+		writeFileSync(
+			join(fixture, 'convex/domain/orders/queries.ts'),
+			"export function save(ctx) { return ctx.db.insert('orders', {}) }",
+		)
+		writeFileSync(
+			join(fixture, 'convex/api/internal.ts'),
+			"import { systemMutation } from '../functions'; export const internal = systemMutation({})",
+		)
 		const invalid = spawnSync(
 			oxlint,
 			['--config', '.oxlintrc.json', '--format', 'json', 'convex'],
@@ -103,11 +123,13 @@ export const value = other
 		writeFileSync(
 			join(fixture, 'plugin-types.ts'),
 			`
-import plugin, { rules, type RuleName } from 'cvx-kit/oxlint'
+import plugin, { rules, checkArchitecture, type ArchitectureDiagnostic, type RuleName } from 'cvx-kit/oxlint'
 import type { Plugin, Rule } from '@oxlint/plugins'
 const compatible: Plugin = plugin
 const name: RuleName = 'component-boundaries'
 const rule: Rule = rules[name]
+const issues: ArchitectureDiagnostic[] = checkArchitecture()
+void issues
 void compatible
 void rule
 `,

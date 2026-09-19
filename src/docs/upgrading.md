@@ -1,5 +1,18 @@
 # Upgrading to 0.1.0 — the new way of things
 
+## 0.1.6 — stricter architecture checks
+
+Enable `project-structure`, `root-wiring-only`, `application-orchestration`,
+`internal-function-ownership`, and `domain-file-responsibilities` alongside the
+existing rules. These are opt-in additions; existing enabled boundary rules now
+also resolve tsconfig aliases and reject migration dependencies.
+
+Move root implementation folders into their owning domains. Keep `application/`
+limited to multi-domain coordination. Move centralized domain tests beside their
+owners and add real tests for nested executable directories. Do not create empty
+scaffold files. Replace copied structural architecture suites with the packaged
+checks; retain tests that exercise actual application behavior and wiring.
+
 ## 0.1.5 — consumer Oxlint rules
 
 The initial 0.1.4 plugin incorrectly targeted this package's `src/` layout.

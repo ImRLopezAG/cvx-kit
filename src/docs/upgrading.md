@@ -255,3 +255,16 @@ Unchanged: untyped middleware keeps compiling.
 plain strings (compile-time `Id<...>` preserved). If you relied on the masks
 producing `zid` runtime metadata, re-check; for LLM tool schemas this is the
 fix you wanted.
+
+## Stricter architecture checks (next release)
+
+Enable `project-structure`, `root-wiring-only`, `application-orchestration`,
+`internal-function-ownership`, and `domain-file-responsibilities` alongside the
+existing rules. These are opt-in additions; existing enabled boundary rules now
+also resolve tsconfig aliases and reject migration dependencies.
+
+Move root implementation folders into their owning domains. Keep `application/`
+limited to multi-domain coordination. Move centralized domain tests beside their
+owners and add real tests for nested executable directories. Do not create empty
+scaffold files. Replace copied structural architecture suites with the packaged
+checks; retain tests that exercise actual application behavior and wiring.

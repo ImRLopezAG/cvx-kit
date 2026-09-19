@@ -109,7 +109,7 @@
 	"scripts": {
 		"lint": "vp lint",
 		"check": "vp check",
-		"test:lint": "vp test run tools/oxlint/cvx/index.test.mjs",
+		"test:lint": "vp test run tools/oxlint/cvx",
 		"build": "vp pack && node scripts/convex-config-bridge.mjs && publint",
 		"typecheck": "tsc --noEmit",
 		"test": "vp test run --exclude test/package-contents.test.mjs",
@@ -127,7 +127,9 @@
 	"dependencies": {
 		"@convex-dev/workflow": "0.4.6",
 		"@oxlint/plugins": "1.79.0",
-		"convex-audit-log": "^0.2.0"
+		"convex-audit-log": "^0.2.0",
+		"oxc-parser": "0.150.0",
+		"oxc-resolver": "11.24.2"
 	},
 	"devDependencies": {
 		"@edge-runtime/vm": "^5.0.0",

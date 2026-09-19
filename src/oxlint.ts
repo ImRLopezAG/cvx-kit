@@ -1,19 +1,38 @@
-import { basename, dirname, relative, resolve, sep } from 'node:path'
-import type {
-	Context,
-	CreateRule,
-	ESTree,
-	Plugin,
-	Rule,
-	RuleMeta,
-	Scope,
-	Visitor,
-} from '@oxlint/plugins'
-import { z } from 'zod'
+import { basename, dirname, relative, sep } from 'node:path'
+import type { CreateRule, ESTree, Plugin, Rule } from '@oxlint/plugins'
+import {
+	inspectArchitecture,
+	createResolver,
+	resolveImport,
+	type ArchitectureOptions,
+	type ArchitectureDiagnostic,
+} from './oxlint/architecture'
+import { ownershipRules, type OwnershipRuleName } from './oxlint/ownership'
+import {
+	appFile,
+	imported,
+	sourceVisitors,
+	isFunctionsImport,
+	isTableChain,
+	isDbWrite,
+	hasCall,
+	metadata,
+	componentRoot,
+	staticString,
+	propertyName,
+	binding,
+	exportedNames,
+	exportName,
+} from './oxlint/ast'
 
-const options = z.object({ convexDir: z.string().min(1).default('convex') })
+export type { ArchitectureOptions, ArchitectureDiagnostic } from './oxlint/architecture'
+
+export function checkArchitecture(options: ArchitectureOptions = {}): ArchitectureDiagnostic[] {
+	return inspectArchitecture(options)
+}
 
 export type RuleName =
+	| OwnershipRuleName
 	| 'component-boundaries'
 	| 'no-component-env'
 	| 'schema-file-boundaries'
@@ -32,6 +51,7 @@ export type RuleName =
 
 /** Consumer application rules derived from docs/conventions.md. */
 const applicationRules: Record<RuleName, CreateRule> = {
+	...ownershipRules,
 	'root-facade-ownership': {
 		meta: metadata('Configure shared kit infrastructure once in its root facade.', {
 			facade: 'Configure {{name}} once in convex/{{file}}; import that facade elsewhere.',
@@ -67,10 +87,16 @@ const applicationRules: Record<RuleName, CreateRule> = {
 		}),
 		create(context) {
 			if (appFile(context) === 'functions.ts' || componentRoot(context, context.filename)) return {}
+			const resolver = createResolver()
 			return {
 				ImportDeclaration(node) {
 					if (node.importKind === 'type') return
-					const source = node.source.value
+					const importedSource = node.source.value
+					const target = resolveImport(resolver, context.filename, importedSource)
+					const source =
+						target && appFile(context, target)?.startsWith('_generated/')
+							? appFile(context, target)!
+							: importedSource
 					if (
 						!/(?:^|\/)_generated\/server(?:\.[cm]?[jt]s)?$/.test(source) &&
 						source !== 'convex/server'
@@ -127,18 +153,22 @@ const applicationRules: Record<RuleName, CreateRule> = {
 		}),
 		create(context) {
 			const file = appFile(context)
+			const resolver = createResolver()
 			return sourceVisitors(context, (node, source) => {
-				if (!file || !source.startsWith('.')) return
-				const target = appFile(context, resolve(dirname(context.filename), source))?.replace(
-					/\.[cm]?[jt]s$/,
-					'',
-				)
-				if (!target) return
+				if (!file) return
+				const resolved = resolveImport(resolver, context.filename, source)
+				if (!resolved) return
+				const target = appFile(context, resolved)?.replace(/\.[cm]?[jt]s$/, '')
+				if (!target) {
+					if (!resolved.split(sep).includes('node_modules'))
+						context.report({ node, messageId: 'boundary' })
+					return
+				}
 				const from = file.split('/')
 				const to = target.split('/')
 				let forbidden = false
 				if (from[0] === 'domain') {
-					forbidden = ['api', 'application'].includes(to[0])
+					forbidden = ['api', 'application', 'migrations'].includes(to[0])
 					if (
 						to[0] === 'domain' &&
 						from[1] !== to[1] &&
@@ -150,11 +180,20 @@ const applicationRules: Record<RuleName, CreateRule> = {
 					}
 				} else if (from[0] === 'api') {
 					forbidden =
-						to[0] === 'api' ||
+						['api', 'migrations'].includes(to[0]) ||
 						(to[0] === 'domain' &&
 							to[1] !== 'shared' &&
-							to[1] !== basename(file).replace(/\.[cm]?[jt]s$/, ''))
-				} else if (from[0] === 'application') forbidden = to[0] === 'api'
+							to[1] !== (from.length > 2 ? from[1] : basename(file).replace(/\.[cm]?[jt]s$/, '')))
+				} else if (from[0] === 'application') forbidden = ['api', 'migrations'].includes(to[0])
+				if (to[0] === 'migrations' && from[0] !== 'migrations') forbidden = true
+				if (
+					['api', 'domain', 'application'].includes(from[0]) &&
+					to.length > 1 &&
+					!['api', 'domain', 'application', '_generated', 'components', 'migrations'].includes(
+						to[0],
+					)
+				)
+					forbidden = true
 				if (forbidden) context.report({ node, messageId: 'boundary' })
 			})
 		},
@@ -295,6 +334,7 @@ const applicationRules: Record<RuleName, CreateRule> = {
 		}),
 		create(context) {
 			const owner = componentRoot(context, context.filename)
+			const resolver = createResolver()
 
 			return sourceVisitors(context, (node, specifier) => {
 				if (!specifier.startsWith('.')) {
@@ -304,9 +344,9 @@ const applicationRules: Record<RuleName, CreateRule> = {
 					) {
 						context.report({ node, messageId: 'facade' })
 					}
-					return
 				}
-				const target = resolve(dirname(context.filename), specifier)
+				const target = resolveImport(resolver, context.filename, specifier)
+				if (!target || target.split(sep).includes('node_modules')) return
 				if (
 					owner &&
 					(relative(owner, target).startsWith(`..${sep}`) || target === dirname(owner))
@@ -558,166 +598,4 @@ function scopeRules(source: Record<RuleName, CreateRule>): Record<RuleName, Rule
 		}
 	}
 	return scoped
-}
-
-function appFile(context: Context, filename = context.filename) {
-	const root = resolve(context.cwd, options.parse(context.options[0] ?? {}).convexDir)
-	const file = relative(root, filename).split(sep).join('/')
-	return file === '..' || file.startsWith('../') || file.startsWith('/') ? null : file
-}
-
-function imported(context: Context, node: ESTree.Node): { source: string; name: string } | null {
-	if (node.type === 'CallExpression') return imported(context, node.callee)
-	if (node.type === 'MemberExpression') {
-		const owner = imported(context, node.object)
-		const name = propertyName(node)
-		return owner && name && ['*', 'z', 'default'].includes(owner.name)
-			? { source: owner.source, name }
-			: null
-	}
-	if (node.type !== 'Identifier') return null
-	for (const def of binding(context, node)?.defs ?? []) {
-		if (
-			def.type !== 'ImportBinding' ||
-			def.parent?.type !== 'ImportDeclaration' ||
-			def.parent.importKind === 'type'
-		)
-			continue
-		const specifier = def.node
-		if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue
-		return {
-			source: def.parent.source.value,
-			name:
-				specifier.type === 'ImportSpecifier'
-					? (exportName(specifier.imported) ?? '')
-					: specifier.type === 'ImportDefaultSpecifier'
-						? 'default'
-						: '*',
-		}
-	}
-	return null
-}
-
-function sourceVisitors(
-	context: Context,
-	check: (node: ESTree.Node, source: string) => void,
-): Visitor {
-	function visit(node: ESTree.Node, source: ESTree.Node | null | undefined) {
-		const text = staticString(source)
-		if (text) check(node, text)
-	}
-	return {
-		ImportDeclaration(node) {
-			visit(node, node.source)
-		},
-		ExportNamedDeclaration(node) {
-			visit(node, node.source)
-		},
-		ExportAllDeclaration(node) {
-			visit(node, node.source)
-		},
-		ImportExpression(node) {
-			visit(node, node.source)
-		},
-		TSImportType(node) {
-			visit(node, node.source)
-		},
-		CallExpression(node) {
-			if (
-				node.callee.type === 'Identifier' &&
-				node.callee.name === 'require' &&
-				!binding(context, node.callee)?.defs.length
-			)
-				visit(node, node.arguments[0])
-		},
-	}
-}
-
-function isFunctionsImport(context: Context, source: string) {
-	return (
-		source.startsWith('.') &&
-		appFile(context, resolve(dirname(context.filename), source))?.replace(/\.[cm]?[jt]s$/, '') ===
-			'functions'
-	)
-}
-
-function isTableChain(node: ESTree.Node): boolean {
-	if (node.type === 'MemberExpression')
-		return propertyName(node) === 'table' || isTableChain(node.object)
-	return node.type === 'CallExpression' && isTableChain(node.callee)
-}
-
-function isDbWrite(node: ESTree.CallExpression) {
-	return (
-		node.callee.type === 'MemberExpression' &&
-		['insert', 'patch', 'replace', 'delete'].includes(propertyName(node.callee) ?? '') &&
-		node.callee.object.type === 'MemberExpression' &&
-		propertyName(node.callee.object) === 'db'
-	)
-}
-
-function hasCall(node: ESTree.Node, name: string): boolean {
-	if (node.type === 'CallExpression')
-		return (
-			(node.callee.type === 'MemberExpression' &&
-				propertyName(node.callee) === name &&
-				(name !== 'query' || propertyName(node.callee.object) === 'db')) ||
-			hasCall(node.callee, name)
-		)
-	if (node.type === 'MemberExpression') return hasCall(node.object, name)
-	return false
-}
-
-function metadata(description: string, messages: Record<string, string>): RuleMeta {
-	return { type: 'problem', docs: { description }, schema: [], messages }
-}
-
-function componentRoot(context: Context, filename: string) {
-	const root = resolve(context.cwd, options.parse(context.options[0] ?? {}).convexDir)
-	const file = relative(root, filename).split(sep).join('/')
-	const match = file.match(/^components\/([^/]+)(?:\/|$)/)
-	return match ? resolve(root, 'components', match[1]) : null
-}
-
-function staticString(node: ESTree.Node | null | undefined) {
-	if (node?.type === 'Literal' && 'value' in node && String(node.value) === node.value)
-		return String(node.value)
-	if (node?.type === 'TemplateLiteral' && node.expressions.length === 0)
-		return node.quasis[0].value.cooked
-	return null
-}
-
-function propertyName(node: ESTree.Node): string | null {
-	if (node.type !== 'MemberExpression') return null
-	return node.computed ? staticString(node.property) : node.property.name
-}
-
-function binding(context: Context, node: ESTree.Node) {
-	if (node.type !== 'Identifier') return null
-	let scope: Scope | null = context.sourceCode.getScope(node)
-	while (scope) {
-		const variable = scope.set.get(node.name)
-		if (variable) return variable
-		scope = scope.upper
-	}
-	return null
-}
-
-function exportedNames(program: ESTree.Program) {
-	const names = new Set<string>()
-	for (const statement of program.body) {
-		if (statement.type === 'ExportNamedDeclaration' && !statement.source) {
-			for (const specifier of statement.specifiers) names.add(exportName(specifier.local) ?? '')
-		} else if (
-			statement.type === 'ExportDefaultDeclaration' &&
-			statement.declaration.type === 'Identifier'
-		) {
-			names.add(statement.declaration.name)
-		}
-	}
-	return names
-}
-
-function exportName(node: ESTree.Node): string | null {
-	return node.type === 'Identifier' ? node.name : staticString(node)
 }

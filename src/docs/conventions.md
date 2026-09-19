@@ -2,7 +2,7 @@
 
 This is the kit's doctrine. Not a style suggestion: the structure below is
 what the kit's structural guarantees (auth, triggers, bounded reads, audited
-commands) assume, and what its recommended architecture tests enforce. Follow
+commands) assume, and what its packaged architecture rules enforce. Follow
 it as written; deviate only with a documented reason and a matching change to
 the tests.
 
@@ -33,10 +33,13 @@ convex/
       rules.ts  shared.ts  actions.ts
       <workflow>.ts  <workflow>_functions.ts
       __tests__/
+  application/              (optional cross-module orchestration only)
+  migrations/               (optional backfills and migrations)
+  _generated/               (generated; exempt)
   components/               (only if you author portable components)
     <name>/
   __tests__/
-    setup.ts  architecture.test.ts  facades.test.ts
+    setup.ts  facades.test.ts
 ```
 
 Three zones, three privileges:
@@ -49,7 +52,8 @@ Three zones, three privileges:
   helpers, or reads/writes beyond delegation.
 - **`domain/`** — all business logic. May import `functions.ts`,
   `foundation.ts`, facades, `domain/shared/`, and its own entity directory.
-  May NOT import `api/`, sibling entities, `_generated/server` builders, or
+  May NOT import `api/`, `application/`, migrations, sibling implementations
+  (except the rules/queries contract below), `_generated/server` builders, or
   component internals.
 
 Dependency direction is one-way: `api → domain → shared → kit`. Anything
@@ -75,6 +79,18 @@ Cross-module rules:
   `application/` layer above `domain/` (`application/<workflow>.ts`); `api/`
   adapters then import `application/*` and their own module, never a second
   module.
+- `application/` is not a service or helper layer. Each executable file must
+  coordinate at least two domain modules through their `commands.ts`, `queries.ts`,
+  or `rules.ts`, or generated `internal.domain` references. No direct database
+  access, provider construction, validators, private helpers, or business branches.
+  Keep a workflow owned by one module inside that module, including its integrations.
+- The root directory allowlist is exhaustive: `api`, `domain`, `application`,
+  `migrations`, `components`, `__tests__`, and `_generated`. Do not add root
+  `host`, `internal`, `lib`, `utils`, `services`, or `helpers` directories.
+- A module may contain nested `internal/`, `integrations/`, provider, or workflow
+  directories. Its responsibilities stay local. Do not create unused scaffold files.
+- Application code must not import migrations. Migrations can coordinate data
+  changes across modules, but remain isolated from ordinary execution.
 
 ---
 
@@ -107,7 +123,7 @@ another file's function to shorten an import.
 | `triggers.ts`      | `createTriggers()`, `timestamps`/`appendOnly`/`noDelete` registrations, calls to per-entity `register<Entity>Triggers` | trigger _logic_ for a specific entity (that lives in the entity) |
 | `foundation.ts`    | the single `new Foundation(...)`, destructured exports                                                                 | command definitions                                              |
 | `<component>.ts`   | `new <Client>(components.<name>)` + minimal admin plumbing                                                             | workflow/business definitions                                    |
-| `http.ts`          | routes: verify signature → parse payload → delegate to a domain function                                               | webhook business logic                                           |
+| `http.ts`          | route registration delegating request handling to the owning domain                                                    | webhook business logic                                           |
 | `crons.ts`         | `cronJobs()` declarations targeting `internal.domain.<entity>...`                                                      | handler logic                                                    |
 
 ### `api/<entity>.ts` — the adapter file
@@ -202,9 +218,11 @@ it, it moves to `domain/shared/` — never a sibling import.
 
 ### `domain/<entity>/actions.ts` — external side effects
 
-Action-side logic using the shared provider clients from
-`domain/shared/<provider>.ts`. Domains import the shared client; they never
-instantiate their own vendor SDK.
+Action-side logic owns external side effects. Put a provider used by one module
+in that module's `integrations/` or `providers/` directory. Share configured clients
+in `domain/shared/` only when multiple modules need them. Commands and queries
+must not perform network I/O; pure rules receive values instead of context or
+clock/random/environment dependencies.
 
 ### `domain/<entity>/<workflow>.ts` + `<workflow>_functions.ts`
 
@@ -214,21 +232,31 @@ targets built with `system*` constructors. Callbacks re-validate everything:
 
 ### `domain/shared/` — cross-entity, and only cross-entity
 
-One configured client per external provider (`<provider>.ts`), plus zod/util
-helpers genuinely used by multiple entities. This directory is not a dumping
+Configured provider clients and infrastructure genuinely used by multiple modules.
+Shared infrastructure cannot import business modules. This directory is not a dumping
 ground: code with one consumer moves back to that consumer.
 
 ### Tests
 
-- `domain/<entity>/__tests__/` — behavioral tests for the entity, driven
-  through the real constructors (`t.withIdentity(...)`).
-- `convex/__tests__/architecture.test.ts` — the executable conventions;
-  every rule proved against a synthetic violating fixture first.
-- `convex/__tests__/facades.test.ts` — every `app.use` exactly once; no
-  private-child access.
-- `convex/__tests__/setup.ts` — env stubs for `defineApp({ env })` vars.
-- Test files are named `<subject>.test.ts` and live in a `__tests__/`
-  directory beside the code they test — never in a parallel top-level tree.
+Every directory containing executable application source must have a direct
+`__tests__/` child with at least one `.test.ts` or `.spec.ts` file (JS variants
+also work). The same requirement covers `api/`, nested domain directories,
+`application/`, `migrations/`, and local components. Parent and child suites do
+not substitute for that directory's own tests.
+
+Generated code, declaration/type-only files, test fixtures inside `__tests__/`,
+and folders that only group child directories are exempt. `domain/table.ts` is
+an assembly exception; root wiring shares `convex/__tests__/`. Do not create
+empty directories or placeholder tests just to satisfy the checker.
+
+The package checks for a recognized, nonempty test callback outside skipped or
+TODO suites. It does not execute tests or prove coverage: run the application's
+behavioral tests in CI. Conditional test registration is not counted as the
+required runnable test. Keep fixtures and setup helpers under `__tests__/`.
+
+`cvx-kit/oxlint` supplies the structural checks. Consumers write behavioral tests,
+including meaningful facade/wiring tests where needed; they do not copy or
+maintain an architecture-testing framework.
 
 ---
 
@@ -255,8 +283,8 @@ ground: code with one consumer moves back to that consumer.
 | Public function path   | `api/<entity>:<fn>` — clients never call a root path                                        | —                                                      |
 
 The two regexes are enforced at runtime: observability silently drops events
-whose operation/classification/errorCode don't match. The rest is enforced by
-the architecture tests — a naming rule without a test is a wish.
+whose operation/classification/errorCode don't match. Other naming conventions remain review guidance unless a documented package
+lint rule explicitly enforces them.
 
 ---
 
@@ -268,7 +296,7 @@ Allowed, per zone (anything not listed is forbidden):
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `api/<entity>.ts`      | `functions.ts`, `domain/<entity>/*`, `domain/shared/*`, zod                                                                                     |
 | `domain/<entity>/*`    | `functions.ts`, `foundation.ts`, component facades, `domain/shared/*`, own directory, generated `internal`/`api` (references only), kit modules |
-| `domain/shared/*`      | kit modules, vendor SDKs (this is the ONLY home for vendor clients)                                                                             |
+| `domain/shared/*`      | kit modules and infrastructure shared by multiple modules; module-specific clients stay local                                                   |
 | root facades           | kit modules, `components` from generated api                                                                                                    |
 | `functions.ts`         | `_generated/server` (the only file allowed to)                                                                                                  |
 | `components/<name>/**` | its own directory + npm deps only — no host imports, no `process.env`                                                                           |

@@ -196,6 +196,11 @@ Load it in your application's `.oxlintrc.json` and select rules:
 {
 	"jsPlugins": [{ "name": "cvx", "specifier": "cvx-kit/oxlint" }],
 	"rules": {
+		"cvx/project-structure": "error",
+		"cvx/root-wiring-only": "error",
+		"cvx/application-orchestration": "error",
+		"cvx/internal-function-ownership": "error",
+		"cvx/domain-file-responsibilities": "error",
 		"cvx/no-raw-builders": "error",
 		"cvx/no-handwritten-references": "error",
 		"cvx/domain-import-boundaries": "error",
@@ -217,8 +222,12 @@ Load it in your application's `.oxlintrc.json` and select rules:
 
 With Vite+, put those fields under `lint` in `vite.config.ts`. Each rule accepts
 `{ "convexDir": "path/to/convex" }` when your backend directory differs from
-`convex/`. Generated files and tests are excluded. The plugin exports its
-default plugin object, named `rules`, and the `RuleName` type. Verified with
+`convex/`. Generated files and tests are excluded from source-code rules. `project-structure`
+inspects the whole backend for directory ownership, colocated runnable tests, and
+module cycles. Run Oxlint on the whole backend, including `convex.config.ts`;
+changed-file-only lint cannot guarantee a project scan. No application-owned
+architecture test framework is required. The plugin also exports `checkArchitecture()`
+for tools that need project diagnostics directly, named `rules`, and `RuleName`. Verified with
 Oxlint 1.79.0 and Vite+ 0.3.0. See [rule coverage and limitations](./src/docs/oxlint.md)
 and the [migration from the initial 0.1.4 plugin](./src/docs/upgrading.md).
 

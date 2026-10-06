@@ -16,3 +16,9 @@ export {
 	createEffectFoundation,
 	type EffectFoundationOptions,
 } from './components/foundation/modules/effect/client'
+export {
+	effectApiBuilder,
+	type EffectApiBuilder,
+	effectZodApiBuilder,
+	type EffectZodApiBuilder,
+} from './components/foundation/modules/effect/client'

@@ -13,3 +13,5 @@ export {
 	type EffectOperationRequirements,
 } from './operation'
 export { createEffectFoundation, type EffectFoundationOptions } from './foundation'
+export { effectApiBuilder, type EffectApiBuilder } from './api'
+export { effectZodApiBuilder, type EffectZodApiBuilder } from './api-zod'

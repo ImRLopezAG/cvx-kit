@@ -31,26 +31,38 @@ export class Observability {
 		activation: Readonly<{ operation: string; classification: string }>,
 		execute: () => Result | Promise<Result>,
 	): Promise<Result> {
-		const started = this.#now()
+		const observation = this.start(activation)
 		try {
 			const result = await execute()
-			this.#emit({
-				...activation,
-				outcome: 'completed',
-				durationMs: this.#duration(started),
-			})
+			observation.completed()
 			return result
 		} catch (error) {
-			try {
+			observation.failed(error)
+			throw error
+		}
+	}
+
+	/** Inert synchronous exit hooks for execution interpreters that own their runtime. */
+	start(activation: Readonly<{ operation: string; classification: string }>) {
+		const started = this.#now()
+		return {
+			completed: () =>
 				this.#emit({
 					...activation,
-					...this.#options.classifyError(error),
+					outcome: 'completed',
 					durationMs: this.#duration(started),
-				})
-			} catch {
-				// Preserve the original command failure when telemetry fails.
-			}
-			throw error
+				}),
+			failed: (cause: unknown) => {
+				try {
+					this.#emit({
+						...activation,
+						...this.#options.classifyError(cause),
+						durationMs: this.#duration(started),
+					})
+				} catch {
+					// Preserve the original command failure when telemetry fails.
+				}
+			},
 		}
 	}
 

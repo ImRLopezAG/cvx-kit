@@ -12,3 +12,4 @@ export {
 	type EffectOperationError,
 	type EffectOperationRequirements,
 } from './operation'
+export { createEffectFoundation, type EffectFoundationOptions } from './foundation'

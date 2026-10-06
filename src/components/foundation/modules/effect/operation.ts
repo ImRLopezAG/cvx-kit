@@ -28,7 +28,53 @@ export type CallbackRequirements<Value> = Value extends (...arguments_: never[])
 					: never
 
 export type EffectValue<Value> =
-	Value extends Effect.Effect<infer Success, unknown, unknown> ? Success : Awaited<Value>
+	Value extends Effect.Effect<infer Success, unknown, unknown>
+		? EffectValue<Success>
+		: Value extends PromiseLike<infer Awaited>
+			? EffectValue<Awaited>
+			: Value
+
+declare const checkedOperation: unique symbol
+/** Type-only evidence that the helper checked callbacks against the base context and schemas. */
+export type CheckedEffectOperation<Context> = {
+	readonly [checkedOperation]: {
+		context: (context: Context) => void
+		error: unknown
+		requirements: unknown
+		definition: unknown
+	}
+}
+type CheckedChannels<Context, Error, Requirements, Definition> = {
+	readonly [checkedOperation]: {
+		context: (context: Context) => void
+		error: Error
+		requirements: Requirements
+		definition: Definition
+	}
+}
+/** Reject stale helper evidence after callbacks or schemas are replaced. */
+export type ValidatedEffectOperations<Operations> = {
+	[Key in keyof Operations]: Operations[Key] extends {
+		readonly [checkedOperation]: { definition: infer Definition }
+	}
+		? Operations[Key] extends Definition
+			? Operations[Key]
+			: never
+		: never
+}
+/** Only middleware whose next contract captured a default policy can discharge its channels. */
+export type UnwrappedDefaultError<Definition, Guard> = Definition extends { middleware: Function }
+	? Definition extends CheckedChannels<never, infer Error, unknown, unknown>
+		? Exclude<CallbackError<Guard>, Error>
+		: CallbackError<Guard>
+	: CallbackError<Guard>
+export type UnwrappedDefaultRequirements<Definition, Guard> = Definition extends {
+	middleware: Function
+}
+	? Definition extends CheckedChannels<never, unknown, infer Requirements, unknown>
+		? Exclude<CallbackRequirements<Guard>, Requirements>
+		: CallbackRequirements<Guard>
+	: CallbackRequirements<Guard>
 export type EffectOperationArgument<Definition extends { input: Parseable<unknown> }> = SchemaInput<
 	Definition['input']
 >
@@ -103,6 +149,8 @@ type OperationDefinition<
 	AuditResult,
 	Middleware,
 	Metadata,
+	BaseError,
+	BaseRequirements,
 > = {
 	input: Input
 	result: Output
@@ -126,8 +174,8 @@ type OperationDefinition<
 					ReturnType<Input['parse']>,
 					SchemaInput<Output>,
 					Extension,
-					CallbackError<Handler | Guard>,
-					CallbackRequirements<Handler | Guard>
+					BaseError | CallbackError<Handler | Guard>,
+					BaseRequirements | CallbackRequirements<Handler | Guard>
 				>,
 			) => Middleware
 		}
@@ -138,16 +186,23 @@ type OperationDefinition<
 					ReturnType<Input['parse']>,
 					SchemaInput<Output>,
 					Extension,
-					CallbackError<Handler | Guard>,
-					CallbackRequirements<Handler | Guard>
+					BaseError | CallbackError<Handler | Guard>,
+					BaseRequirements | CallbackRequirements<Handler | Guard>
 				>,
 			) => Middleware
 		})
 
-/** Bind context once; middleware wraps the handler/guard channels and may discharge them. */
+/**
+ * Bind context once; middleware wraps the handler/guard channels and may discharge them.
+ * Declare contextual guards/handlers before middleware, or annotate their parameters
+ * and returned Effect channels when middleware comes first. TypeScript processes
+ * context-sensitive object callbacks in declaration order.
+ */
 export function effectOperationFactory<
 	Context,
 	Extension extends Record<string, unknown> = Record<never, never>,
+	BaseError = never,
+	BaseRequirements = never,
 >() {
 	function operation<
 		const Input extends Parseable<unknown>,
@@ -176,10 +231,19 @@ export function effectOperationFactory<
 				Preparation,
 				AuditResult,
 				Middleware,
-				Metadata
+				Metadata,
+				BaseError,
+				BaseRequirements
 			>,
 	) {
-		return definition
+		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
+		return definition as NoInfer<Omit<typeof definition, typeof checkedOperation>> &
+			CheckedChannels<
+				Context,
+				BaseError,
+				BaseRequirements,
+				Omit<typeof definition, typeof checkedOperation>
+			>
 	}
 	function command<
 		const Input extends Parseable<unknown>,
@@ -208,7 +272,9 @@ export function effectOperationFactory<
 				Preparation,
 				AuditResult,
 				Middleware,
-				Metadata
+				Metadata,
+				BaseError,
+				BaseRequirements
 			> & {
 				classification: string
 				audit: (
@@ -217,7 +283,54 @@ export function effectOperationFactory<
 				) => AuditResult
 			},
 	) {
-		return definition
+		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
+		return definition as NoInfer<Omit<typeof definition, typeof checkedOperation>> &
+			CheckedChannels<
+				Context,
+				BaseError,
+				BaseRequirements,
+				Omit<typeof definition, typeof checkedOperation>
+			>
 	}
-	return { operation, command, query: operation }
+	function query<
+		const Input extends Parseable<unknown>,
+		const Output extends Parseable<unknown>,
+		Handler extends Supported<SchemaInput<Output>>,
+		Guard extends Supported<void> = never,
+		Middleware extends Supported<SchemaInput<Output>> = never,
+		const Metadata extends object = Record<never, never>,
+		const Definition extends object = object,
+	>(
+		definition: Definition &
+			OperationDefinition<
+				Context,
+				Input,
+				Output,
+				Extension,
+				readonly string[],
+				Handler,
+				Guard,
+				never,
+				never,
+				Middleware,
+				Metadata,
+				BaseError,
+				BaseRequirements
+			> & {
+				prepare?: never
+				audit?: never
+				aggregates?: never
+				replayResult?: never
+			},
+	) {
+		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
+		return definition as NoInfer<Omit<typeof definition, typeof checkedOperation>> &
+			CheckedChannels<
+				Context,
+				BaseError,
+				BaseRequirements,
+				Omit<typeof definition, typeof checkedOperation>
+			>
+	}
+	return { operation, command, query }
 }

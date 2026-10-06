@@ -309,3 +309,66 @@ define.query({
 		return input.length
 	},
 })
+
+const guardedDefine = effectOperationFactory<
+	{ actorId: string },
+	Record<never, never>,
+	GuardFailure,
+	Repository
+>()
+const recoveredDefaultGuard = guardedDefine.query({
+	input: z.number(),
+	result: z.number(),
+	handler: (input) => input,
+	middleware: ({ next }) =>
+		next().pipe(
+			Effect.provideService(Repository, { load: () => 1 }),
+			Effect.catchTag('GuardFailure', () => Effect.succeed(1)),
+		),
+})
+type RecoveredDefaultGuardError = Assert<
+	Equal<EffectOperationError<typeof recoveredDefaultGuard>, never>
+>
+type RecoveredDefaultGuardRequirements = Assert<
+	Equal<EffectOperationRequirements<typeof recoveredDefaultGuard>, never>
+>
+const defaultGuardAssertions: [RecoveredDefaultGuardError, RecoveredDefaultGuardRequirements] = [
+	true,
+	true,
+]
+void defaultGuardAssertions
+
+// Fully annotated callbacks retain exact channels even when middleware is declared first.
+const middlewareFirstGuard = define.query({
+	input: z.number(),
+	result: z.number(),
+	middleware: ({ next }) =>
+		Effect.gen(function* () {
+			return yield* next()
+		}),
+	guard: (
+		_context: { actorId: string },
+		_input: number,
+	): Effect.Effect<void, GuardFailure, Policy> =>
+		Effect.gen(function* () {
+			if (!(yield* Policy).allowed) return yield* Effect.fail(new GuardFailure())
+		}),
+	handler: (
+		input: number,
+		context: { actorId: string },
+	): Effect.Effect<number, HandlerFailure, Repository> =>
+		Effect.gen(function* () {
+			yield* Repository
+			void context.actorId
+			if (input < 0) return yield* Effect.fail(new HandlerFailure())
+			return input
+		}),
+})
+type MiddlewareFirstRequirements = Assert<
+	Equal<EffectOperationRequirements<typeof middlewareFirstGuard>, Policy | Repository>
+>
+type MiddlewareFirstErrors = Assert<
+	Equal<EffectOperationError<typeof middlewareFirstGuard>, GuardFailure | HandlerFailure>
+>
+const middlewareFirstAssertions: [MiddlewareFirstRequirements, MiddlewareFirstErrors] = [true, true]
+void middlewareFirstAssertions

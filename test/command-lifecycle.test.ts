@@ -22,6 +22,7 @@ function harness(
 		deny?: boolean
 		replay?: unknown
 		auditNull?: boolean
+		middleware?: boolean
 	} = {},
 ) {
 	const events: string[] = []
@@ -76,6 +77,14 @@ function harness(
 			guard: () => {
 				events.push('guard')
 			},
+			middleware: options.middleware
+				? [
+						async ({ next }) => {
+							events.push('middleware')
+							return next()
+						},
+					]
+				: [],
 			audit: ({ command }) => {
 				events.push('audit-resolution')
 				if (options.fail === 'audit-resolution') throw Error('audit-resolution')
@@ -255,6 +264,35 @@ describe('transactional command completion', () => {
 		const t = convexTest(schema, modules)
 		await expect(t.mutation((ctx) => h.execute(ctx, { key: 'key' }))).rejects.toThrow('DENIED')
 		expect(h.events).toEqual(['permission', 'observe:failed'])
+	})
+	it('does not enter middleware for denied or replayed work', async () => {
+		for (const deny of [true, false]) {
+			const h = harness({ deny, replay: { ok: true }, middleware: true })
+			const t = convexTest(schema, modules)
+			if (deny)
+				await expect(t.mutation((ctx) => h.execute(ctx, { key: 'key' }))).rejects.toThrow('DENIED')
+			else await t.mutation((ctx) => h.execute(ctx, { key: 'key' }))
+			expect(h.events).not.toContain('middleware')
+			expect(h.events).not.toContain('guard')
+			expect(h.events).not.toContain('complete:key')
+		}
+	})
+	it('parses input before permission, preparation and observation', async () => {
+		const h = harness({ middleware: true })
+		const t = convexTest(schema, modules)
+		// SAFETY: bypass caller typing to exercise malformed runtime input.
+		await expect(t.mutation((ctx) => h.execute(ctx, { key: 4 } as never))).rejects.toThrow()
+		expect(h.events).toEqual([])
+	})
+	it('allocates a fresh middleware dispatch for each reused executor invocation', async () => {
+		const h = harness({ middleware: true })
+		const t = convexTest(schema, modules)
+		await t.mutation(async (ctx) => {
+			await h.execute(ctx, { key: 'key' })
+			await h.execute(ctx, { key: 'key' })
+		})
+		expect(h.events.filter((event) => event === 'middleware')).toHaveLength(2)
+		expect(h.events.filter((event) => event === 'complete:key')).toHaveLength(2)
 	})
 	it('isolates repeated and nested calls with the same context and key', async () => {
 		const h = harness()

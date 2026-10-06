@@ -8,7 +8,12 @@ const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-effect-'))
 const effectVersion = '4.0.1'
 const helpersVersion = '0.1.123'
-const extraTypeFixtures = process.argv.slice(2).map((path) => resolve(path))
+const extraTypeFixtures = [
+	join(root, 'src/docs/effect.md'),
+	join(root, 'src/docs/commands.md'),
+	join(root, 'src/docs/auth.md'),
+	...process.argv.slice(2).map((path) => resolve(path)),
+]
 
 function run(command, args, cwd) {
 	try {
@@ -36,16 +41,30 @@ function copyPublicTypeFixture(fixture, filename, publicImport) {
 	return filename
 }
 
-// U6 can pass standalone published examples as paths. Their imports must already use public entries.
+// Compile the published guide itself so prose edits cannot leave stale companion fixtures passing.
+function publishedTypeSources(path, contents) {
+	if (!path.endsWith('.md')) return [contents]
+	const marked = [
+		...contents.matchAll(/<!-- packed-effect-example -->\s*```ts\s*\n([\s\S]*?)^```/gm),
+	]
+	if (marked.length) return marked.map((match) => match[1])
+	return [[...contents.matchAll(/^```ts\s*\n([\s\S]*?)^```/gm)].map((match) => match[1]).join('\n')]
+}
+
 function copyExtraTypeFixtures(fixture, paths) {
-	return paths.map((path, index) => {
-		const source = readFileSync(path, 'utf8')
-		if (/from ['"](?:\.\.?\/|cvx-kit\/(?:src|dist)\/)/.test(source)) {
-			throw new Error(`Documentation fixture ${basename(path)} must use public package imports`)
-		}
-		const filename = `doc-example-${index}.ts`
-		writeFileSync(join(fixture, filename), source)
-		return filename
+	return paths.flatMap((path, index) => {
+		const contents = readFileSync(path, 'utf8')
+		const sources = publishedTypeSources(path, contents)
+		return sources.map((source, snippet) => {
+			if (!source.trim())
+				throw new Error(`Documentation fixture ${basename(path)} has no TypeScript`)
+			if (/from ['"](?:\.\.?\/|cvx-kit\/(?:src|dist)\/)/.test(source)) {
+				throw new Error(`Documentation fixture ${basename(path)} must use public package imports`)
+			}
+			const filename = `doc-example-${index}-${snippet}.ts`
+			writeFileSync(join(fixture, filename), source)
+			return filename
+		})
 	})
 }
 

@@ -74,6 +74,8 @@ try {
 	run('bun', ['pm', 'pack', '--destination', temporaryRoot, '--ignore-scripts'], root)
 	mkdirSync(fixture)
 	cpSync(join(root, 'test/fixture-effect/convex'), join(fixture, 'convex'), { recursive: true })
+	// Generate from scratch so removed generated files cannot survive the fixture copy.
+	rmSync(join(fixture, 'convex/_generated'), { recursive: true, force: true })
 	writeFileSync(
 		join(fixture, 'package.json'),
 		JSON.stringify(

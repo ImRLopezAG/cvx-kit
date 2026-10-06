@@ -151,3 +151,44 @@ it('supports bare callable custom queries and Promise-provided services', async 
 		await t.query(makeFunctionReference<'query', Record<string, never>, string>('functions:load')),
 	).toBe('server:2')
 })
+
+it('rolls back registered mutation writes when custom result parsing rejects', async () => {
+	let successCallbacks = 0
+	let writeCompleted = false
+	const native: MutationBuilder<DataModel, 'public'> = mutationGeneric
+	const mutation = effectZodApiBuilder(
+		zCustomMutation(native, {
+			args: {},
+			input: () => ({
+				ctx: {},
+				args: {},
+				onSuccess: () => {
+					successCallbacks++
+				},
+			}),
+		}),
+		{ services: () => Context.empty() },
+	)
+	const save = mutation({
+		args: {},
+		returns: z.number().positive(),
+		handler: (ctx) =>
+			Effect.gen(function* () {
+				yield* Effect.promise(() =>
+					ctx.db.insert('writes', { actor: 'fixture', tenant: 'fixture', value: -1 }),
+				)
+				writeCompleted = true
+				return -1
+			}),
+	})
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ save }),
+	})
+	await expect(
+		t.mutation(makeFunctionReference<'mutation', {}, number>('functions:save'), {}),
+	).rejects.toThrow('Too small')
+	expect(writeCompleted).toBe(true)
+	expect(successCallbacks).toBe(0)
+	expect(await t.run((ctx) => ctx.db.query('writes').collect())).toEqual([])
+})

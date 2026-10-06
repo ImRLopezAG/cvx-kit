@@ -1,10 +1,7 @@
 import { Context, Effect } from 'effect'
 import { z } from 'zod'
-import {
-	createEffectQuery,
-	bindEffectQuery,
-} from '../src/components/foundation/modules/effect/query'
-import { effectOperationFactory } from '../src/components/foundation/modules/effect/operation'
+import { createEffectQuery, bindEffectQuery } from '../src/modules/effect/query'
+import { effectOperationFactory } from '../src/modules/effect/operation'
 import { Observability } from '../src/components/foundation/modules/observability/observability'
 
 type Equal<Left, Right> =

@@ -13,7 +13,7 @@ import {
 } from 'convex/server'
 import { ConvexError, v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { effectApiBuilder } from '../src/components/foundation/modules/effect/api'
+import { effectApiBuilder } from '../src/modules/effect/api'
 
 class Request extends Context.Service<Request, { value: number }>()('ApiRequest') {}
 const schema = defineSchema({ writes: defineTable({ kind: v.string() }) })
@@ -224,5 +224,40 @@ describe('Effect native API', () => {
 			t.mutation((ctx) => invoke<Host, {}, unknown>(registered, ctx, {})),
 		).rejects.toThrow('release failed')
 		expect(await t.query((ctx) => ctx.db.query('writes').collect())).toEqual([])
+	})
+
+	it('preserves a handler failure together with failed cleanup without projecting one constituent', async () => {
+		const expected = { code: 'expected' }
+		const defect = Error('release failed')
+		let projections = 0
+		const query = effectApiBuilder(queryGeneric, {
+			services: () =>
+				Effect.acquireRelease(Effect.succeed(Context.empty()), () => Effect.die(defect)),
+			mapError: () => {
+				projections++
+				return new ConvexError('SAFE')
+			},
+		})
+		try {
+			await invoke(
+				query(() => Effect.fail(expected)),
+				{},
+				{},
+			)
+			throw Error('expected rejection')
+		} catch (error) {
+			expect(error).toBeInstanceOf(Error)
+			if (!(error instanceof Error) || !Cause.isCause(error.cause)) throw error
+			expect(error.message).toBe('Effect API execution failed')
+			expect(
+				error.cause.reasons.some(
+					(reason) => Cause.isFailReason(reason) && reason.error === expected,
+				),
+			).toBe(true)
+			expect(
+				error.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect === defect),
+			).toBe(true)
+		}
+		expect(projections).toBe(0)
 	})
 })

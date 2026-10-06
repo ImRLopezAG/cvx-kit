@@ -11,14 +11,11 @@ export {
 	type EffectOperationResult,
 	type EffectOperationError,
 	type EffectOperationRequirements,
-} from './components/foundation/modules/effect/client'
-export {
-	createEffectFoundation,
-	type EffectFoundationOptions,
-} from './components/foundation/modules/effect/client'
+} from './modules/effect/client'
+export { createEffectFoundation, type EffectFoundationOptions } from './modules/effect/client'
 export {
 	effectApiBuilder,
 	type EffectApiBuilder,
 	effectZodApiBuilder,
 	type EffectZodApiBuilder,
-} from './components/foundation/modules/effect/client'
+} from './modules/effect/client'

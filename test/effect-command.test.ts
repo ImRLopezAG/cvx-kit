@@ -9,7 +9,7 @@ import {
 import { v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
-import { bindEffectCommand } from '../src/components/foundation/modules/effect/command'
+import { bindEffectCommand } from '../src/modules/effect/command'
 import { Observability } from '../src/components/foundation/modules/observability/observability'
 
 const schema = defineSchema({ writes: defineTable({ kind: v.string() }) })

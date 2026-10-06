@@ -9,7 +9,8 @@ const packedFiles = (() => {
 	const env = { ...process.env }
 	delete env.NODE_AUTH_TOKEN
 	delete env.NPM_CONFIG_USERCONFIG
-	const output = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+	// Manifest inspection uses npm; repository development still requires the configured Bun.
+	const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--force'], {
 		cwd: process.cwd(),
 		encoding: 'utf8',
 		env,
@@ -21,6 +22,13 @@ const packedFiles = (() => {
 })()
 
 describe('packed Convex components', () => {
+	it('keeps the optional Effect peer outside Convex component discovery', () => {
+		for (const file of packedFiles.filter((path) => /^dist\/components\/.*\.mjs$/.test(path))) {
+			const source = readFileSync(join(process.cwd(), file), 'utf8')
+			expect(source, file).not.toMatch(/(?:from|import)\s*["']effect(?:\/[\w/-]+)?["']/)
+		}
+		expect(packedFiles).toContain('dist/effect.mjs')
+	})
 	it('excludes internal planning and reproduction artifacts', () => {
 		expect(
 			packedFiles.filter((file) => /^docs\/(explain|ideation|plans|reproductions)\//.test(file)),

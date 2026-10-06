@@ -1,4 +1,8 @@
-import { Observability, type ObservabilityOptions } from '../observability/observability'
+// oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
+import {
+	Observability,
+	type ObservabilityOptions,
+} from '../../components/foundation/modules/observability/observability'
 import { bindEffectCommand, type EffectCommandDependencies } from './command'
 import { bindEffectQuery } from './query'
 

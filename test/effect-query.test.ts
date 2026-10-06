@@ -1,8 +1,8 @@
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
-import { createEffectQuery } from '../src/components/foundation/modules/effect/query'
-import { effectOperationFactory } from '../src/components/foundation/modules/effect/operation'
+import { createEffectQuery } from '../src/modules/effect/query'
+import { effectOperationFactory } from '../src/modules/effect/operation'
 
 describe('Effect query registries', () => {
 	it('is lazy and supports ordinary, gen and fn handlers with parsed contracts', async () => {

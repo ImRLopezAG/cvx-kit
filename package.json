@@ -120,6 +120,8 @@
 		"test:package": "bun run build && vp test run test/package-contents.test.mjs",
 		"test:package:ids": "bun run build && node scripts/test-packed-ids.mjs",
 		"test:package:oxlint": "bun run build && node scripts/test-packed-oxlint.mjs",
+		"test:package:effect": "bun run build && node scripts/test-packed-effect.mjs",
+		"test:package:smoke:effect": "bun run build && node scripts/smoke-packed-effect.mjs",
 		"test:package:smoke:bun": "bun scripts/smoke-packed-components.mjs bun",
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
 		"docs:sync": "rm -f docs/*.md && cp src/docs/*.md docs/",

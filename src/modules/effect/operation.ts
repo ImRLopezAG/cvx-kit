@@ -1,6 +1,7 @@
 import type { Effect } from 'effect'
-import type { Parseable, SchemaInput } from '../command/command'
-import type { AuditEntryInput } from '../../client'
+// oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
+import type { Parseable, SchemaInput } from '../../components/foundation/modules/command/command'
+import type { AuditEntryInput } from '../../components/foundation/client'
 
 /** Ordinary failures are defects; only an explicit Effect supplies a typed error. */
 export type CallbackError<Value> = Value extends (...arguments_: never[]) => infer Returned

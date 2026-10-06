@@ -7,7 +7,7 @@ import {
 	type EffectOperationError,
 	type EffectOperationRequirements,
 	type EffectPreparation,
-} from '../src/components/foundation/modules/effect/operation'
+} from '../src/modules/effect/operation'
 
 const define = effectOperationFactory<{ actorId: string }>()
 const transformed = define.operation({

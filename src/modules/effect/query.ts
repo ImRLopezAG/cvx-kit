@@ -1,6 +1,10 @@
 import { Effect, Exit } from 'effect'
-import type { Parseable } from '../command/command'
-import { Observability, type ObservabilityOptions } from '../observability/observability'
+import type { Parseable } from '../../components/foundation/client'
+// oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
+import {
+	Observability,
+	type ObservabilityOptions,
+} from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
 import {
 	effectOperationFactory,

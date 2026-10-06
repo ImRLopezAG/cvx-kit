@@ -1,14 +1,16 @@
 import { Effect, Exit } from 'effect'
-import type { AuditEntryInput } from '../../client'
-import type { Parseable } from '../command/command'
+import type { AuditEntryInput } from '../../components/foundation/client'
+import type { Parseable } from '../../components/foundation/client'
+// oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
 import {
 	CommandPermissionError,
 	executeCommandLifecycle,
 	type ExecutionKind,
 	type LifecycleAlgebra,
 	type LifecyclePreparation,
-} from '../command/lifecycle'
-import type { Observability } from '../observability/observability'
+} from '../../components/foundation/modules/command/lifecycle'
+// oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
+import type { Observability } from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
 import {
 	effectOperationFactory,

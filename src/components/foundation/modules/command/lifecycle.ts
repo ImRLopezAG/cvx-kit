@@ -40,16 +40,29 @@ export type LifecycleExecution<Kind extends ExecutionKind, Context, Input, Raw, 
 	command: Input
 	permission?: () => ExecutionValue<Kind, void>
 	prepare: () => ExecutionValue<Kind, LifecyclePreparation<Kind, Result> | undefined>
-	parseReplay: <Value>(value: Value) => Result
 	middleware: readonly LifecycleMiddleware<Kind, Context, Input, Raw>[]
 	defaultGuard: (context: Context) => ExecutionValue<Kind, void>
 	guard: (context: Context) => ExecutionValue<Kind, void>
 	run: (context: Context) => ExecutionValue<Kind, Raw>
-	parseResult: (value: Raw) => Result
 	audit: (result: Result) => ExecutionValue<Kind, Omit<AuditEntryInput, 'classification'> | null>
 	aggregates?: readonly string[]
 	writeAudit: (entry: AuditEntryInput) => ExecutionValue<Kind, unknown>
-}
+} & (
+	| {
+			parseReplay: <Value>(value: Value) => Result
+			// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Replay decoding validates untrusted stored output at the interpreter boundary.
+			decodeReplay?: (value: unknown) => ExecutionValue<Kind, Result>
+	  }
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Replay decoding validates untrusted stored output at the interpreter boundary.
+	| { parseReplay?: never; decodeReplay: (value: unknown) => ExecutionValue<Kind, Result> }
+) &
+	(
+		| {
+				parseResult: (value: Raw) => Result
+				decodeResult?: (value: Raw) => ExecutionValue<Kind, Result>
+		  }
+		| { parseResult?: never; decodeResult: (value: Raw) => ExecutionValue<Kind, Result> }
+	)
 
 /** One owner for the command protocol; every interpretation allocates fresh dispatch state. */
 export function executeCommandLifecycle<Kind extends ExecutionKind, Context, Input, Raw, Result>(
@@ -79,28 +92,38 @@ export function executeCommandLifecycle<Kind extends ExecutionKind, Context, Inp
 		return algebra.flatMap(execution.permission?.() ?? algebra.succeed(undefined), () =>
 			algebra.flatMap(execution.prepare(), (preparation) => {
 				if (preparation?.kind === 'replay') {
-					return algebra.suspend(() => algebra.succeed(execution.parseReplay(preparation.result)))
+					return algebra.suspend(() =>
+						execution.decodeReplay
+							? execution.decodeReplay(preparation.result)
+							: algebra.succeed(execution.parseReplay!(preparation.result)),
+					)
 				}
 				return algebra.flatMap(dispatch(0, execution.context), (raw) => {
-					const result = execution.parseResult(raw)
-					return algebra.flatMap(execution.audit(result), (audit) => {
-						if (
-							audit &&
-							execution.aggregates &&
-							!execution.aggregates.includes(audit.aggregate.type)
-						) {
-							throw new CommandAggregateError(execution.operation, audit.aggregate.type)
-						}
-						return algebra.flatMap(
-							audit
-								? execution.writeAudit({ ...audit, classification: execution.classification })
-								: algebra.succeed(undefined),
-							() =>
-								algebra.flatMap(preparation?.complete?.(result) ?? algebra.succeed(undefined), () =>
-									algebra.succeed(result),
-								),
-						)
-					})
+					return algebra.flatMap(
+						execution.decodeResult
+							? execution.decodeResult(raw)
+							: algebra.succeed(execution.parseResult!(raw)),
+						(result) =>
+							algebra.flatMap(execution.audit(result), (audit) => {
+								if (
+									audit &&
+									execution.aggregates &&
+									!execution.aggregates.includes(audit.aggregate.type)
+								) {
+									throw new CommandAggregateError(execution.operation, audit.aggregate.type)
+								}
+								return algebra.flatMap(
+									audit
+										? execution.writeAudit({ ...audit, classification: execution.classification })
+										: algebra.succeed(undefined),
+									() =>
+										algebra.flatMap(
+											preparation?.complete?.(result) ?? algebra.succeed(undefined),
+											() => algebra.succeed(result),
+										),
+								)
+							}),
+					)
 				})
 			}),
 		)

@@ -1,6 +1,7 @@
 import { Effect, Exit } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
-import type { Parseable } from '../../components/foundation/client'
+import type { ContractSchema } from '../contracts/contract'
+import { decodeEffectContract } from './schema'
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
 import {
 	CommandPermissionError,
@@ -39,8 +40,8 @@ type Resolver = (host: never) => Supported<unknown>
 type HostOf<Resolve extends Resolver> = Parameters<Resolve>[0]
 type DomainOf<Resolve extends Resolver> = EffectValue<ReturnType<Resolve>>
 type Operation = {
-	input: Parseable<unknown>
-	result: Parseable<unknown>
+	input: ContractSchema
+	result: ContractSchema
 	classification: string
 	handler: Callback
 	audit: Callback
@@ -49,7 +50,7 @@ type Operation = {
 	middleware?: Callback
 	permission?: string
 	aggregates?: readonly string[]
-	replayResult?: Parseable<unknown>
+	replayResult?: ContractSchema
 }
 type Registry<Context> = Readonly<
 	Record<
@@ -120,12 +121,12 @@ const effectLifecycle: LifecycleAlgebra<EffectExecution> = {
 	flatMap: Effect.flatMap,
 }
 type RuntimeOperation<Context, Input, Raw, Result> = {
-	input: Parseable<Input>
-	result: Parseable<Result>
+	input: ContractSchema
+	result: ContractSchema
 	classification: string
 	permission?: string
 	aggregates?: readonly string[]
-	replayResult?: Parseable<Result>
+	replayResult?: ContractSchema
 	handler: (input: Input, context: Context) => Supported<Raw>
 	guard?: (context: Context, input: Input) => Supported<void>
 	prepare?: (
@@ -187,94 +188,107 @@ export function createEffectCommand<
 						EffectOperationResult<Operations[Key]>
 					>
 				// SAFETY: selected command input was parsed by its own paired schema.
-				const command = definition.input.parse(input) as EffectOperationInput<Operations[Key]>
-				const observation = configuration.observability.start({
-					operation,
-					classification: definition.classification,
-				})
-				// SAFETY: resolver identity owns its concrete invocation return and host parameter.
-				const resolve = configuration.context as (host: HostOf<Resolve>) => ReturnType<Resolve>
-				return normalizeEffect(() => resolve(host)).pipe(
-					Effect.flatMap((context) => {
-						const lifecycle = executeCommandLifecycle<
-							EffectExecution,
-							DomainOf<Resolve>,
-							EffectOperationInput<Operations[Key]>,
-							EffectOperationHandlerResult<Operations[Key]>,
-							EffectOperationResult<Operations[Key]>
-						>(effectLifecycle, {
-							operation,
-							classification: definition.classification,
-							context,
-							command,
-							permission:
-								definition.permission === undefined
-									? undefined
-									: () =>
-											normalizeEffect(() => {
-												if (!configuration.checkPermission)
-													throw new CommandPermissionError(operation)
-												// SAFETY: HostCompatible proves this invocation satisfies the configured policy host.
-												return configuration.checkPermission(host as never, {
-													permission: definition.permission!,
-													operation,
-												})
-											}).pipe(Effect.asVoid),
-							prepare: () =>
-								normalizeEffect(() => definition.prepare?.(context, command)).pipe(
-									Effect.map((preparation) => {
-										if (preparation?.kind !== 'execute') return preparation
-										return {
-											kind: 'execute',
-											complete: preparation.complete
-												? (result) =>
-														normalizeEffect(() => preparation.complete!(result)).pipe(Effect.asVoid)
-												: undefined,
-										} satisfies LifecyclePreparation<
-											EffectExecution,
-											EffectOperationResult<Operations[Key]>
-										>
+				return Effect.flatMap(decodeEffectContract(definition.input, input), (decoded) => {
+					// SAFETY: the selected operation's decoder owns this concrete domain input.
+					const command = decoded as EffectOperationInput<Operations[Key]>
+					const observation = configuration.observability.start({
+						operation,
+						classification: definition.classification,
+					})
+					// SAFETY: resolver identity owns its concrete invocation return and host parameter.
+					const resolve = configuration.context as (host: HostOf<Resolve>) => ReturnType<Resolve>
+					return normalizeEffect(() => resolve(host)).pipe(
+						Effect.flatMap((context) => {
+							const lifecycle = executeCommandLifecycle<
+								EffectExecution,
+								DomainOf<Resolve>,
+								EffectOperationInput<Operations[Key]>,
+								EffectOperationHandlerResult<Operations[Key]>,
+								EffectOperationResult<Operations[Key]>
+							>(effectLifecycle, {
+								operation,
+								classification: definition.classification,
+								context,
+								command,
+								permission:
+									definition.permission === undefined
+										? undefined
+										: () =>
+												normalizeEffect(() => {
+													if (!configuration.checkPermission)
+														throw new CommandPermissionError(operation)
+													// SAFETY: HostCompatible proves this invocation satisfies the configured policy host.
+													return configuration.checkPermission(host as never, {
+														permission: definition.permission!,
+														operation,
+													})
+												}).pipe(Effect.asVoid),
+								prepare: () =>
+									normalizeEffect(() => definition.prepare?.(context, command)).pipe(
+										Effect.map((preparation) => {
+											if (preparation?.kind !== 'execute') return preparation
+											return {
+												kind: 'execute',
+												complete: preparation.complete
+													? (result) =>
+															normalizeEffect(() => preparation.complete!(result)).pipe(
+																Effect.asVoid,
+															)
+													: undefined,
+											} satisfies LifecyclePreparation<
+												EffectExecution,
+												EffectOperationResult<Operations[Key]>
+											>
+										}),
+									),
+								// SAFETY: the selected final replay contract owns this result; operation types retain its E/R.
+								decodeReplay: (value) =>
+									decodeEffectContract(
+										definition.replayResult ?? definition.result,
+										value,
+									) as Effect.Effect<EffectOperationResult<Operations[Key]>, unknown, unknown>,
+								middleware: definition.middleware
+									? [
+											(input_) =>
+												normalizeCommandResult(() =>
+													definition.middleware!({ ...input_, input: command }),
+												),
+										]
+									: [],
+								defaultGuard: (enriched) =>
+									normalizeEffect(() => configuration.defaults?.guard?.(enriched)).pipe(
+										Effect.asVoid,
+									),
+								guard: (enriched) =>
+									normalizeEffect(() => definition.guard?.(enriched, command)).pipe(Effect.asVoid),
+								run: (enriched) =>
+									normalizeCommandResult(() => definition.handler(command, enriched)),
+								// SAFETY: the selected contract owns the decoded result; the public operation retains decoder E/R.
+								decodeResult: (value) =>
+									decodeEffectContract(definition.result, value) as Effect.Effect<
+										EffectOperationResult<Operations[Key]>,
+										unknown,
+										unknown
+									>,
+								audit: (result) =>
+									normalizeEffect(() => definition.audit({ command, result }, context)),
+								writeAudit: (entry) =>
+									normalizeEffect(() => {
+										// SAFETY: HostCompatible proves this invocation satisfies the configured writer host.
+										return configuration.writeAudit(host as never, entry)
 									}),
-								),
-							parseReplay: (value) => (definition.replayResult ?? definition.result).parse(value),
-							middleware: definition.middleware
-								? [
-										(input_) =>
-											normalizeCommandResult(() =>
-												definition.middleware!({ ...input_, input: command }),
-											),
-									]
-								: [],
-							defaultGuard: (enriched) =>
-								normalizeEffect(() => configuration.defaults?.guard?.(enriched)).pipe(
-									Effect.asVoid,
-								),
-							guard: (enriched) =>
-								normalizeEffect(() => definition.guard?.(enriched, command)).pipe(Effect.asVoid),
-							run: (enriched) =>
-								normalizeCommandResult(() => definition.handler(command, enriched)),
-							parseResult: (value) => {
-								// SAFETY: selected operation owns this final result parser and its output.
-								return definition.result.parse(value) as EffectOperationResult<Operations[Key]>
-							},
-							audit: (result) =>
-								normalizeEffect(() => definition.audit({ command, result }, context)),
-							writeAudit: (entry) =>
-								normalizeEffect(() => {
-									// SAFETY: HostCompatible proves this invocation satisfies the configured writer host.
-									return configuration.writeAudit(host as never, entry)
-								}),
-							aggregates: definition.aggregates,
-						})
-						return lifecycle
-					}),
-					Effect.onExit((exit) =>
-						Effect.sync(() => {
-							if (Exit.isSuccess(exit)) observation.completed()
-							else observation.failed(observationFailure(exit.cause))
+								aggregates: definition.aggregates,
+							})
+							return lifecycle
 						}),
-					),
-				)
+						Effect.onExit((exit) =>
+							Effect.sync(() => {
+								if (Exit.isSuccess(exit)) observation.completed()
+								else observation.failed(observationFailure(exit.cause))
+							}),
+						),
+					)
+				})
 			})
 			// SAFETY: dispatch selects exactly this operation; callbacks preserve the concrete definition/policy E/R.
 			return execution as Effect.Effect<

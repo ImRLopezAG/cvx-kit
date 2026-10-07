@@ -6,7 +6,9 @@ import {
 	type CommandInput,
 	type CommandRegistry,
 	type CommandResult,
-	type Parseable,
+	type CommandSchema,
+	decodeCommandSchema,
+	parseCommandSchema,
 } from './modules/command/command'
 import { Observability, type ObservabilityOptions } from './modules/observability/observability'
 import { Query } from './modules/query/query'
@@ -43,8 +45,8 @@ type MaybePromise<Value> = Value | Promise<Value>
 type OperationKey<Operations extends CommandRegistry> = Extract<keyof Operations, string>
 
 export type AuditedOperation = Readonly<{
-	command: Parseable<unknown>
-	result: Parseable<unknown>
+	command: CommandSchema
+	result: CommandSchema
 	classification: string
 	/**
 	 * Permission slug required to execute this operation. Checked through the
@@ -53,7 +55,7 @@ export type AuditedOperation = Readonly<{
 	 */
 	permission?: string
 	prepare?: (context: never, command: never) => MaybePromise<CommandPreparation<never>>
-	replayResult?: Parseable<unknown>
+	replayResult?: CommandSchema
 	/**
 	 * Per-operation precondition, after the permission check and the registry
 	 * default guard, before the handler. Throw to deny — nothing has run yet.
@@ -278,7 +280,20 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 					parseReplay: (value) => {
 						if (!definition.replayResult) return execution.parseResult(value)
 						// SAFETY: selected replay schema validates this operation's stored output.
-						return definition.replayResult.parse(value) as CommandResult<Operations, Key>
+						return parseCommandSchema(definition.replayResult, value) as CommandResult<
+							Operations,
+							Key
+						>
+					},
+					decodeReplay: async (value) => {
+						if (!definition.replayResult) {
+							return execution.decodeResult
+								? execution.decodeResult(value)
+								: execution.parseResult(value)
+						}
+						const replay = definition.replayResult
+						// SAFETY: selected replay decoder owns the final output representation.
+						return (await decodeCommandSchema(replay, value)) as CommandResult<Operations, Key>
 					},
 					middleware: [...(this.#defaults.middleware ?? []), ...(definition.middleware ?? [])].map(
 						(layer) => async (input) => {
@@ -305,6 +320,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 					},
 					run: (context) => execution.runUnparsed(context),
 					parseResult: execution.parseResult,
+					decodeResult: execution.decodeResult,
 					audit: async (result) => {
 						// SAFETY: audit receives this selected parsed command/result and original context.
 						return definition.audit(
@@ -395,6 +411,7 @@ export type {
 	CommandInput,
 	CommandRegistry,
 	CommandResult,
+	SchemaOutput,
 	Parseable,
 } from './modules/command/command'
 export type {

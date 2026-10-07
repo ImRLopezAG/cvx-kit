@@ -139,6 +139,13 @@ const checkedCommand = plain.command({
 	audit: () => null,
 	handler: (input) => input.length,
 })
+const asyncChecked = plain.query({
+	input: z.string().transform(async (value) => value.length),
+	result: z.number().transform(async (value) => String(value)),
+	handler: (input) => input + 1,
+})
+const asyncAssertions: [Assert<Equal<Parameters<typeof asyncChecked.handler>[0], number>>] = [true]
+void asyncAssertions
 foundation.Command({
 	context: (host: {}) => host,
 	// @ts-expect-error command entries likewise reject stale evidence after a handler replacement

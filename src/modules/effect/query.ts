@@ -1,5 +1,6 @@
 import { Effect, Exit } from 'effect'
-import type { Parseable } from '../../components/foundation/client'
+import type { ContractSchema } from '../contracts/contract'
+import { decodeEffectContract } from './schema'
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
 import {
 	Observability,
@@ -23,8 +24,8 @@ import {
 
 type Supported<Value> = Value | PromiseLike<Value> | Effect.Effect<Value, unknown, unknown>
 type QueryDefinition = {
-	input: Parseable<unknown>
-	result: Parseable<unknown>
+	input: ContractSchema
+	result: ContractSchema
 	// oxlint-disable-next-line anti-slop/no-unknown-returns -- Internal heterogeneous storage; selected schemas restore the concrete result at exec.
 	handler: (input: never, context: never) => unknown
 	classification?: string
@@ -133,69 +134,70 @@ export function createEffectQuery<
 			}
 			// SAFETY: operation helpers check hooks before this heterogeneous storage seam.
 			const definition: QueryDefinition = operations[operation]
-			const parsedInput = definition.input.parse(input)
-			const observation = observability.start({
-				operation,
-				classification: definition.classification ?? 'query',
-			})
-			const run = Effect.gen(function* () {
-				if (definition.permission !== undefined) {
-					const check = configuration.checkPermission
-					if (!check) return yield* Effect.die(new QueryPermissionError())
-					yield* normalizeEffect(() =>
-						check(host, { permission: definition.permission!, operation }),
-					)
-				}
-				const context = yield* normalizeEffect(() => configuration.context(host))
-				const metadata = { ...configuration.defaults?.metadata, ...definition.metadata }
-				const core = (current: EffectValue<ContextReturned>) =>
-					Effect.gen(function* () {
-						const guard = configuration.defaults?.guard
-						if (guard) yield* normalizeEffect(() => guard(current))
-						if (definition.guard)
-							yield* normalizeEffect(() => {
-								// SAFETY: selected schemas and context own the stored guard parameters.
-								return definition.guard!(current as never, parsedInput as never)
+			return Effect.flatMap(decodeEffectContract(definition.input, input), (parsedInput) => {
+				const observation = observability.start({
+					operation,
+					classification: definition.classification ?? 'query',
+				})
+				const run = Effect.gen(function* () {
+					if (definition.permission !== undefined) {
+						const check = configuration.checkPermission
+						if (!check) return yield* Effect.die(new QueryPermissionError())
+						yield* normalizeEffect(() =>
+							check(host, { permission: definition.permission!, operation }),
+						)
+					}
+					const context = yield* normalizeEffect(() => configuration.context(host))
+					const metadata = { ...configuration.defaults?.metadata, ...definition.metadata }
+					const core = (current: EffectValue<ContextReturned>) =>
+						Effect.gen(function* () {
+							const guard = configuration.defaults?.guard
+							if (guard) yield* normalizeEffect(() => guard(current))
+							if (definition.guard)
+								yield* normalizeEffect(() => {
+									// SAFETY: selected schemas and context own the stored guard parameters.
+									return definition.guard!(current as never, parsedInput as never)
+								})
+							return yield* normalizeEffect(() => {
+								// SAFETY: selected schemas and context own the stored handler parameters.
+								return definition.handler(parsedInput as never, current as never)
 							})
-						return yield* normalizeEffect(() => {
-							// SAFETY: selected schemas and context own the stored handler parameters.
-							return definition.handler(parsedInput as never, current as never)
 						})
-					})
-				let usedNext = false
-				const middleware = definition.middleware
-				const output = middleware
-					? yield* normalizeEffect(() => {
-							// SAFETY: the selected helper checked this middleware's input and next contract.
-							return middleware({
-								operation,
-								input: parsedInput,
-								command: parsedInput,
-								context,
-								metadata,
-								next: (options?: { context?: object }) =>
-									Effect.suspend(() => {
-										if (usedNext) return Effect.die(new QueryMiddlewareError())
-										usedNext = true
-										return core(
-											options?.context ? Object.assign({}, context, options.context) : context,
-										)
-									}),
-							} as never)
-						})
-					: yield* core(context)
-				return definition.result.parse(output)
+					let usedNext = false
+					const middleware = definition.middleware
+					const output = middleware
+						? yield* normalizeEffect(() => {
+								// SAFETY: the selected helper checked this middleware's input and next contract.
+								return middleware({
+									operation,
+									input: parsedInput,
+									command: parsedInput,
+									context,
+									metadata,
+									next: (options?: { context?: object }) =>
+										Effect.suspend(() => {
+											if (usedNext) return Effect.die(new QueryMiddlewareError())
+											usedNext = true
+											return core(
+												options?.context ? Object.assign({}, context, options.context) : context,
+											)
+										}),
+								} as never)
+							})
+						: yield* core(context)
+					return yield* decodeEffectContract(definition.result, output)
+				})
+				return run.pipe(
+					Effect.onExit((exit) =>
+						Effect.sync(() => {
+							if (Exit.isSuccess(exit)) observation.completed()
+							else {
+								observation.failed(observationFailure(exit.cause))
+							}
+						}),
+					),
+				)
 			})
-			return run.pipe(
-				Effect.onExit((exit) =>
-					Effect.sync(() => {
-						if (Exit.isSuccess(exit)) observation.completed()
-						else {
-							observation.failed(observationFailure(exit.cause))
-						}
-					}),
-				),
-			)
 		})
 		// SAFETY: selected schemas own A; concrete callbacks and the wrapped middleware
 		// own E/R. No interpreter or runner executes this Effect before the caller does.

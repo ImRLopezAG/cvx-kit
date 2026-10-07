@@ -15,3 +15,14 @@ export {
 export { createEffectFoundation, type EffectFoundationOptions } from './foundation'
 export { effectApiBuilder, type EffectApiBuilder } from './api'
 export { effectZodApiBuilder, type EffectZodApiBuilder } from './api-zod'
+export { projectErrorCause } from './errors'
+export {
+	effectContract,
+	effectSchema,
+	effectStandardSchema,
+	decodeEffectContract,
+	ContractValidationError,
+	type EffectDecoder,
+	type ContractDecoderError,
+	type ContractDecoderRequirements,
+} from './schema'

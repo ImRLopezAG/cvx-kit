@@ -22,6 +22,7 @@ import {
 	type CheckedApiRequirements,
 	type EffectApiOptions,
 	type EffectApiErrorProjection,
+	type EffectApiErrorContract,
 	type EffectApiServices,
 	type EffectApiHandlerValue,
 } from './api-runtime'
@@ -93,7 +94,11 @@ export function effectApiBuilder<
 ): EffectApiBuilder<GenericActionCtx<DM>, V, 'action', Provider>
 export function effectApiBuilder(
 	builder: Function,
-	options: { services: Function; mapError?: EffectApiErrorProjection },
+	options: {
+		services: Function
+		mapError?: EffectApiErrorProjection
+		errors?: EffectApiErrorContract
+	},
 ): Function {
 	return wrapEffectBuilder(builder, options)
 }

@@ -31,10 +31,17 @@ function run(command, args, cwd) {
 }
 
 function copyPublicTypeFixture(fixture, filename, publicImport) {
-	const source = readFileSync(join(root, 'test', filename), 'utf8').replaceAll(
-		publicImport,
-		'cvx-kit/effect',
-	)
+	const source = readFileSync(join(root, 'test', filename), 'utf8')
+		.replaceAll(publicImport, 'cvx-kit/effect')
+		.replaceAll('../src/errors', 'cvx-kit/errors')
+		.replaceAll('../src/contracts', 'cvx-kit/contracts')
+		.replaceAll('../src/modules/contracts/errors', 'cvx-kit/errors')
+		.replaceAll('../src/modules/effect/schema', 'cvx-kit/effect')
+		.replaceAll('../src/modules/effect/operation', 'cvx-kit/effect')
+		.replaceAll('../src/modules/effect/errors', 'cvx-kit/effect')
+		.replaceAll('../src/components/foundation/client', 'cvx-kit/components/foundation')
+		.replaceAll('../src/crud', 'cvx-kit/crud')
+		.replaceAll('../src/zod-table', 'cvx-kit/zod-table')
 	if (/from ['"]\.\.\/src\//.test(source))
 		throw new Error(`${filename} still uses private source imports`)
 	writeFileSync(join(fixture, filename), source)
@@ -76,6 +83,8 @@ import { Foundation as RootFoundation } from 'cvx-kit'
 import { createAuthFunctions, defaultRoleMap } from 'cvx-kit/auth'
 import { createCrudCommands } from 'cvx-kit/crud'
 import { zodTable } from 'cvx-kit/zod-table'
+import { decodeContract, standardContract, zodContract } from 'cvx-kit/contracts'
+import { defineErrorContract } from 'cvx-kit/errors'
 import { actionGeneric, queryGeneric, mutationGeneric, internalActionGeneric, internalQueryGeneric, internalMutationGeneric } from 'convex/server'
 import { z } from 'zod'
 const require = createRequire(import.meta.url)
@@ -83,6 +92,19 @@ if (process.argv.includes('--without-effect')) {
  assert.throws(() => require.resolve('effect'), { code: 'MODULE_NOT_FOUND' }, 'optional peer was unexpectedly auto-installed')
 }
 assert.equal(RootFoundation, Foundation)
+let normalizations = 0
+const normalized = zodContract(z.string().transform(async value => { normalizations++; return value.trim() }))
+assert.deepEqual(await decodeContract(normalized, ' packed '), { value: 'packed' })
+assert.equal(normalizations, 1)
+const receiverSchema = { '~standard': {
+ version: 1, vendor: 'packed-receiver',
+ validate(value) { return this.vendor === 'packed-receiver' ? { value } : { issues: [{ message: 'lost receiver' }] } },
+} }
+assert.deepEqual(await decodeContract(receiverSchema, 'packed'), { value: 'packed' })
+assert.deepEqual(await decodeContract(standardContract(receiverSchema), 'packed'), { value: 'packed' })
+const errors = defineErrorContract({ DENIED: { message: 'Denied', details: { key: z.string() } } })
+const envelope = errors.project(errors.create('DENIED', { key: 'packed' }))
+assert.deepEqual(errors.decode(JSON.parse(JSON.stringify(envelope))), envelope)
 const audits = []
 const { Command } = new Foundation({ functions: { status: null } }, {
  observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }), writeAudit: (_ctx, entry) => audits.push(entry) },
@@ -253,13 +275,19 @@ try {
 			run(installer, ['install', '--ignore-scripts'], fixture)
 			writeFileSync(join(fixture, 'legacy.mjs'), legacyRuntime)
 			writeFileSync(join(fixture, 'legacy-types.ts'), legacyTypes)
-			const typeFiles = ['legacy-types.ts']
+			const typeFiles = [
+				'legacy-types.ts',
+				copyPublicTypeFixture(fixture, 'operation-neutral-types.ts', '../src/effect'),
+			]
 			if (withEffect) {
 				for (const filename of [
 					'effect-foundation-types.ts',
 					'effect-api-types.ts',
 					'effect-api-zod-types.ts',
 					'effect-registry-review-types.ts',
+					'operation-contract-types.ts',
+					'effect-schema-types.ts',
+					'error-contract-types.ts',
 				]) {
 					typeFiles.push(copyPublicTypeFixture(fixture, filename, '../src/effect'))
 				}

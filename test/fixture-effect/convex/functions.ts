@@ -4,7 +4,7 @@ import { ConvexError, v } from 'convex/values'
 import { zCustomMutation } from 'convex-helpers/server/zod4'
 import { z } from 'zod'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
-import { commands, FixtureFailure, queries, Reader } from './domain'
+import { commands, declaredErrors, FixtureFailure, queries, Reader } from './domain'
 
 const scopedQuery = effectApiBuilder(query, {
 	services: (ctx) =>
@@ -133,5 +133,22 @@ export const invalidCustomReturn = customMutation({
 		Effect.gen(function* () {
 			yield* Effect.promise(() => ctx.db.insert('writes', { key: args.key, stage: ctx.actor }))
 			return 'invalid'
+		}),
+})
+
+const declaredMutation = effectApiBuilder(internalMutation, {
+	services: () => Context.empty(),
+	errors: declaredErrors,
+})
+export const declaredFailure = declaredMutation({
+	args: { key: v.string(), composite: v.boolean() },
+	returns: v.null(),
+	handler: (ctx, { key, composite }) =>
+		Effect.gen(function* () {
+			yield* Effect.promise(() => ctx.db.insert('writes', { key, stage: 'declared-domain' }))
+			const failure = Effect.fail(declaredErrors.create('DENIED', { key }))
+			return yield* composite
+				? failure.pipe(Effect.ensuring(Effect.die(new Error('PRIVATE_CLEANUP'))))
+				: failure
 		}),
 })

@@ -1,10 +1,112 @@
-import { Effect } from 'effect'
+import { Context, Effect, Exit, Schema, SchemaGetter } from 'effect'
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 import { createEffectQuery } from '../src/modules/effect/query'
 import { effectOperationFactory } from '../src/modules/effect/operation'
+import { ContractValidationError, effectSchema } from '../src/effect'
+import { zodContract } from '../src/contracts'
 
 describe('Effect query registries', () => {
+	it('provisions codec services lazily and blocks policy on invalid async input', async () => {
+		class Decoder extends Context.Service<Decoder, string>()('QueryCodecDecoder') {}
+		const calls: string[] = []
+		const input = effectSchema(
+			Schema.Number.pipe(
+				Schema.decodeTo(Schema.String, {
+					decode: SchemaGetter.transformEffect((value) =>
+						Decoder.pipe(Effect.map((prefix) => `${prefix}${value}`)),
+					),
+					encode: SchemaGetter.transform(() => 0),
+				}),
+			),
+		)
+		const query = createEffectQuery({
+			context: (host: {}) => {
+				calls.push('context')
+				return host
+			},
+			checkPermission: () => {
+				calls.push('permission')
+			},
+			operations: ({ query }) => ({
+				read: query({
+					input,
+					result: z.number(),
+					permission: 'read',
+					handler: (value) => value.length,
+				}),
+				invalid: query({
+					input: zodContract(z.string().refine(async () => false)),
+					result: z.string(),
+					permission: 'read',
+					handler: (value) => value,
+				}),
+			}),
+		})
+		const execution = query.exec('read', 2, {})
+		expect(calls).toEqual([])
+		expect(await Effect.runPromise(execution.pipe(Effect.provideService(Decoder, 'item:')))).toBe(6)
+		calls.length = 0
+		const exit = await Effect.runPromiseExit(query.exec('invalid', 'bad', {}))
+		if (!Exit.isFailure(exit)) throw Error('expected validation failure')
+		expect(exit.cause.reasons).toHaveLength(1)
+		const reason = exit.cause.reasons[0]
+		if (reason?._tag !== 'Fail') throw Error('expected typed validation failure')
+		expect(reason.error).toBeInstanceOf(ContractValidationError)
+		expect(reason.error).toMatchObject({
+			issues: [{ code: 'custom', path: [], message: 'Invalid input' }],
+		})
+		expect(calls).toEqual([])
+	})
+	it('awaits contract transforms before policy, handler and completion', async () => {
+		const calls: string[] = []
+		const query = createEffectQuery({
+			context: (host: {}) => {
+				calls.push('context')
+				return host
+			},
+			checkPermission: () => {
+				calls.push('permission')
+			},
+			observability: {
+				enabled: true,
+				classifyError: () => ({ outcome: 'failed', errorCode: 'FAILURE' }),
+				emit: ({ outcome }) => {
+					calls.push(`observe:${outcome}`)
+				},
+			},
+			operations: ({ query }) => ({
+				read: query({
+					input: z.string().transform(async (value) => {
+						await Promise.resolve()
+						calls.push('input')
+						return value.trim()
+					}),
+					result: z.number().transform(async (value) => {
+						await Promise.resolve()
+						calls.push('result')
+						return String(value)
+					}),
+					permission: 'read',
+					handler: (input) => {
+						calls.push('handler')
+						return Effect.succeed(input.length)
+					},
+				}),
+			}),
+		})
+		const execution = query.exec('read', ' abc ', {})
+		expect(calls).toEqual([])
+		expect(await Effect.runPromise(execution)).toBe('3')
+		expect(calls).toEqual([
+			'input',
+			'permission',
+			'context',
+			'handler',
+			'result',
+			'observe:completed',
+		])
+	})
 	it('is lazy and supports ordinary, gen and fn handlers with parsed contracts', async () => {
 		const calls: string[] = []
 		const query = createEffectQuery({

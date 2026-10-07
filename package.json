@@ -34,6 +34,10 @@
 			"types": "./dist/effect.d.mts",
 			"import": "./dist/effect.mjs"
 		},
+		"./contracts": {
+			"types": "./dist/contracts.d.mts",
+			"import": "./dist/contracts.mjs"
+		},
 		"./auth": {
 			"types": "./dist/auth.d.mts",
 			"import": "./dist/auth.mjs"

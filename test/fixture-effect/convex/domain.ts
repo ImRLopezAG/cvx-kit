@@ -1,4 +1,5 @@
 import { createEffectFoundation } from 'cvx-kit/effect'
+import { defineErrorContract } from 'cvx-kit/errors'
 import { Context, Effect } from 'effect'
 import { z } from 'zod'
 import type { MutationCtx, QueryCtx } from './_generated/server'
@@ -12,6 +13,10 @@ export class FixtureFailure {
 	readonly _tag = 'FixtureFailure'
 	constructor(readonly stage: string) {}
 }
+
+export const declaredErrors = defineErrorContract({
+	DENIED: { message: 'Operation denied', details: { key: z.string() } },
+})
 
 const observability = {
 	enabled: false,

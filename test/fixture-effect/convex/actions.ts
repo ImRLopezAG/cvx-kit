@@ -3,6 +3,7 @@ import { Context, Effect } from 'effect'
 import { ConvexError, v } from 'convex/values'
 import { internal } from './_generated/api'
 import { action } from './_generated/server'
+import { declaredErrors } from './domain'
 
 class HttpFixture extends Context.Service<HttpFixture, { fetch: () => Promise<string> }>()(
 	'FixtureHttp',
@@ -46,4 +47,23 @@ export const orchestrate = fixtureAction({
 			const stages = yield* Effect.promise(() => ctx.runQuery(internal.functions.read, { key }))
 			return { body, stages, rejected }
 		}).pipe(Effect.withSpan('fixture.action')),
+})
+
+export const declaredFailureRoundTrip = action({
+	args: { key: v.string(), composite: v.boolean() },
+	returns: v.union(
+		v.object({ kind: v.literal('declared'), code: v.literal('DENIED'), key: v.string() }),
+		v.object({ kind: v.literal('unknown') }),
+	),
+	handler: async (ctx, args) => {
+		try {
+			await ctx.runMutation(internal.functions.declaredFailure, args)
+			throw new Error('Expected declared mutation rejection')
+		} catch (error) {
+			if (!(error instanceof ConvexError)) throw error
+			const decoded = declaredErrors.decode(error.data)
+			if (decoded._tag === 'UnknownFailure') return { kind: 'unknown' as const }
+			return { kind: 'declared' as const, code: decoded.code, key: decoded.details.key }
+		}
+	},
 })

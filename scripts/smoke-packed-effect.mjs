@@ -181,8 +181,22 @@ try {
 		stages: ['domain', 'audit', 'completion'],
 		rejected: true,
 	})
+	assert.deepEqual(
+		invoke('actions:declaredFailureRoundTrip', { key: 'declared-round-trip', composite: false }),
+		{
+			kind: 'declared',
+			code: 'DENIED',
+			key: 'declared-round-trip',
+		},
+	)
+	assert.deepEqual(invoke('read', { key: 'declared-round-trip' }), [])
+	assert.deepEqual(
+		invoke('actions:declaredFailureRoundTrip', { key: 'composite-round-trip', composite: true }),
+		{ kind: 'unknown' },
+	)
+	assert.deepEqual(invoke('read', { key: 'composite-round-trip' }), [])
 	console.log(
-		'Actual local runtime passed: async query ordinary/gen/fn composition, spans, awaited scoped release, domain/audit/completion rollback, projected rejection, cleanup/composite rejection, HTTP action and separate transaction commits',
+		'Actual local runtime passed: async query ordinary/gen/fn composition, spans, awaited scoped release, domain/audit/completion rollback, declared ConvexError.data round-trip, composite safe unknown round-trip, projected rejection, cleanup/composite rejection, HTTP action and separate transaction commits',
 	)
 } catch (error) {
 	if (error.stdout) process.stderr.write(String(error.stdout))

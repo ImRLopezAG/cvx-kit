@@ -1,4 +1,4 @@
-import { Cause, Context, Effect } from 'effect'
+import { Cause, Context, Effect, Schema, SchemaGetter } from 'effect'
 import { convexTest } from 'convex-test'
 import {
 	actionGeneric,
@@ -14,6 +14,8 @@ import {
 import { ConvexError, v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
 import { effectApiBuilder } from '../src/modules/effect/api'
+import { defineErrorContract } from '../src/modules/contracts/errors'
+import { effectSchema } from '../src/effect'
 
 class Request extends Context.Service<Request, { value: number }>()('ApiRequest') {}
 const schema = defineSchema({ writes: defineTable({ kind: v.string() }) })
@@ -37,6 +39,89 @@ function invoke<Ctx, Args, Value>(
 }
 
 describe('Effect native API', () => {
+	it('decodes domain data and encodes its wire result within one invocation scope', async () => {
+		class Decoder extends Context.Service<Decoder, string>()('ApiCodecDecoder') {}
+		class Encoder extends Context.Service<Encoder, number>()('ApiCodecEncoder') {}
+		const codec = effectSchema(
+			Schema.Number.pipe(
+				Schema.decodeTo(Schema.String, {
+					decode: SchemaGetter.transformEffect((value) =>
+						Decoder.pipe(Effect.map((prefix) => `${prefix}${value}`)),
+					),
+					encode: SchemaGetter.transformEffect(() => Encoder),
+				}),
+			),
+		)
+		const events: string[] = []
+		const query = effectApiBuilder(queryGeneric, {
+			services: () =>
+				Effect.acquireRelease(
+					Effect.sync(() => {
+						events.push('acquire')
+						return Context.merge(Context.make(Decoder, 'domain:'), Context.make(Encoder, 7))
+					}),
+					() =>
+						Effect.sync(() => {
+							events.push('release')
+						}),
+				),
+		})
+		const registered = query({
+			args: { value: v.number() },
+			returns: v.number(),
+			handler: (_ctx, { value }) =>
+				codec.decode(value).pipe(
+					Effect.tap((domain) =>
+						Effect.sync(() => {
+							events.push(domain)
+						}),
+					),
+					Effect.flatMap(codec.encode),
+				),
+		})
+		expect(await invoke(registered, {}, { value: 3 })).toBe(7)
+		expect(events).toEqual(['acquire', 'domain:3', 'release'])
+	})
+	it('rejects safe declared failures and composite unknown failures with rollback', async () => {
+		const errors = defineErrorContract({ DENIED: { message: 'Access denied', details: {} } })
+		for (const cleanupFailure of [false, true]) {
+			const t = convexTest(schema, modules)
+			const mutation = effectApiBuilder(nativeMutation, {
+				services: () =>
+					Effect.acquireRelease(Effect.succeed(Context.empty()), () =>
+						cleanupFailure ? Effect.die(new Error('private cleanup')) : Effect.void,
+					),
+				errors,
+			})
+			const registered = mutation({
+				handler: (ctx) =>
+					Effect.gen(function* () {
+						yield* Effect.promise(() => ctx.db.insert('writes', { kind: 'domain' }))
+						return yield* Effect.fail(errors.create('DENIED', {}))
+					}),
+			})
+			try {
+				await t.mutation((ctx) => invoke<Host, {}, never>(registered, ctx, {}))
+				throw new Error('Expected rejection')
+			} catch (error) {
+				expect(error).toBeInstanceOf(ConvexError)
+				if (!(error instanceof ConvexError)) throw error
+				expect(error.data).toEqual(
+					cleanupFailure
+						? { _tag: 'UnknownFailure', version: 1 }
+						: {
+								_tag: 'DeclaredFailure',
+								version: 1,
+								code: 'DENIED',
+								message: 'Access denied',
+								details: {},
+							},
+				)
+				expect(error.cause).toBeUndefined()
+			}
+			expect(await t.query((ctx) => ctx.db.query('writes').collect())).toEqual([])
+		}
+	})
 	it('keeps registration options and executes ordinary, gen, fn and bare callbacks', async () => {
 		const query = effectApiBuilder(queryGeneric, {
 			services: () => Context.make(Request, { value: 7 }),

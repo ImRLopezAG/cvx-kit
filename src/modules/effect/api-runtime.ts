@@ -1,10 +1,14 @@
 import { Cause, Effect, Exit } from 'effect'
 import type { Context, Scope } from 'effect'
+import { ConvexError, type Value } from 'convex/values'
+import type { ErrorContract, ErrorDefinitions } from '../contracts/errors'
+import { projectErrorCause } from './errors'
 import { normalizeEffect } from './normalize'
 import type { CallbackRequirements, EffectValue } from './operation'
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- Projection receives any expected failure and its result is always thrown, never returned as public data.
 export type EffectApiErrorProjection = (error: unknown) => unknown
+export type EffectApiErrorContract = Pick<ErrorContract<ErrorDefinitions>, 'project'>
 
 export type EffectApiHandlerValue<Value> =
 	| Value
@@ -19,8 +23,10 @@ export type ProvidedServices<Provider> =
 	EffectValue<Provider> extends Context.Context<infer Services> ? Services : never
 export type EffectApiOptions<Ctx, Provider extends EffectApiServices> = {
 	services: (ctx: Ctx) => Provider
-	mapError?: EffectApiErrorProjection
-}
+} & (
+	| { errors: EffectApiErrorContract; mapError?: never }
+	| { errors?: never; mapError?: EffectApiErrorProjection }
+)
 export type CheckedApiRequirements<Returned, Provider> = [
 	Exclude<CallbackRequirements<NoInfer<Returned>>, ProvidedServices<Provider> | Scope.Scope>,
 ] extends [never]
@@ -33,6 +39,7 @@ export function wrapEffectBuilder(
 	options: {
 		services: Function
 		mapError?: EffectApiErrorProjection
+		errors?: EffectApiErrorContract
 	},
 ): Function {
 	return (definition: Function | { handler: Function }) => {
@@ -51,6 +58,10 @@ export function wrapEffectBuilder(
 				Effect.scoped(program) as Effect.Effect<unknown, unknown>,
 			)
 			if (Exit.isSuccess(exit)) return exit.value
+			if (options.errors) {
+				// SAFETY: declared projection copies validated JSON-safe fields; all other Causes have a fixed safe envelope.
+				throw new ConvexError(projectErrorCause(options.errors, exit.cause) as Value)
+			}
 			const reason = exit.cause.reasons.length === 1 ? exit.cause.reasons[0] : undefined
 			if (reason && Cause.isFailReason(reason)) {
 				throw options.mapError ? options.mapError(reason.error) : reason.error

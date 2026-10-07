@@ -134,6 +134,121 @@ function harness(
 }
 
 describe('Effect command lifecycle', () => {
+	it('awaits contract transforms before audit and completion', async () => {
+		const calls: string[] = []
+		const create = bindEffectCommand({
+			observability: new Observability({
+				enabled: false,
+				classifyError: () => ({ outcome: 'failed', errorCode: 'FAILURE' }),
+			}),
+			checkPermission: () => {
+				calls.push('permission')
+			},
+			writeAudit: () => {
+				calls.push('audit-write')
+			},
+		})
+		const commands = create({
+			context: (host: {}) => {
+				calls.push('context')
+				return host
+			},
+			operations: ({ command }) => ({
+				save: command({
+					input: z.string().transform(async (value) => {
+						await Promise.resolve()
+						calls.push('input')
+						return value.trim()
+					}),
+					result: z
+						.number()
+						.transform(async (value) => {
+							await Promise.resolve()
+							calls.push('result')
+							return String(value)
+						})
+						.refine(async (value) => value !== '0'),
+					classification: 'business',
+					permission: 'save',
+					prepare: () => ({
+						kind: 'execute' as const,
+						complete: (result: string) => {
+							calls.push(`complete:${result}`)
+						},
+					}),
+					handler: (input) => {
+						calls.push('handler')
+						return Effect.succeed(input.length)
+					},
+					audit: ({ result }) => {
+						calls.push(`audit:${result}`)
+						return null
+					},
+				}),
+			}),
+		})
+		const execution = commands.exec('save', ' abc ', {})
+		expect(calls).toEqual([])
+		expect(await Effect.runPromise(execution)).toBe('3')
+		expect(calls).toEqual([
+			'input',
+			'context',
+			'permission',
+			'handler',
+			'result',
+			'audit:3',
+			'complete:3',
+		])
+		calls.length = 0
+		await expect(Effect.runPromise(commands.exec('save', ' ', {}))).rejects.toThrow()
+		expect(calls).toEqual(['input', 'context', 'permission', 'handler', 'result'])
+	})
+	it('validates async final replay without repeating transforms or execution callbacks', async () => {
+		const calls: string[] = []
+		const create = bindEffectCommand({
+			observability: new Observability({
+				enabled: false,
+				classifyError: () => ({ outcome: 'failed', errorCode: 'FAILURE' }),
+			}),
+			checkPermission: () => {
+				calls.push('permission')
+			},
+			writeAudit: () => {
+				calls.push('audit-write')
+			},
+		})
+		const commands = create({
+			context: (host: { saved: number }) => host,
+			operations: ({ command }) => ({
+				save: command({
+					input: z.string(),
+					result: z.number().transform(async (count) => {
+						calls.push('fresh-transform')
+						return { count }
+					}),
+					replayResult: z.object({ count: z.number() }).refine(async ({ count }) => count > 0),
+					classification: 'business',
+					permission: 'save',
+					prepare: ({ saved }) => ({ kind: 'replay' as const, result: { count: saved } }),
+					handler: () => {
+						calls.push('handler')
+						return 1
+					},
+					audit: () => {
+						calls.push('audit')
+						return null
+					},
+				}),
+			}),
+		})
+		expect(await Effect.runPromise(commands.exec('save', 'input', { saved: 2 }))).toEqual({
+			count: 2,
+		})
+		expect(calls).toEqual(['permission'])
+		calls.length = 0
+		await expect(Effect.runPromise(commands.exec('save', 'input', { saved: 0 }))).rejects.toThrow()
+		expect(calls).toEqual(['permission'])
+	})
 	it('observes resolver failure and keeps resolver execution lazy', async () => {
 		const cause = Error('resolver')
 		const observed: unknown[] = []

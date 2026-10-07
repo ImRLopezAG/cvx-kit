@@ -1,6 +1,13 @@
 import type { Effect } from 'effect'
-// oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
-import type { Parseable, SchemaInput } from '../../components/foundation/modules/command/command'
+import type {
+	ContractSchema,
+	ContractInput,
+	ContractOutput,
+	Decoder,
+	LegacyParser,
+	StandardSchema,
+} from '../contracts/contract'
+import type { ContractDecoderError, ContractDecoderRequirements } from './schema'
 import type { AuditEntryInput } from '../../components/foundation/client'
 
 /** Ordinary failures are defects; only an explicit Effect supplies a typed error. */
@@ -76,16 +83,16 @@ export type UnwrappedDefaultRequirements<Definition, Guard> = Definition extends
 		? Exclude<CallbackRequirements<Guard>, Requirements>
 		: CallbackRequirements<Guard>
 	: CallbackRequirements<Guard>
-export type EffectOperationArgument<Definition extends { input: Parseable<unknown> }> = SchemaInput<
+export type EffectOperationArgument<Definition extends { input: ContractSchema }> = ContractInput<
 	Definition['input']
 >
-export type EffectOperationInput<Definition extends { input: Parseable<unknown> }> = ReturnType<
-	Definition['input']['parse']
+export type EffectOperationInput<Definition extends { input: ContractSchema }> = ContractOutput<
+	Definition['input']
 >
-export type EffectOperationHandlerResult<Definition extends { result: Parseable<unknown> }> =
-	SchemaInput<Definition['result']>
-export type EffectOperationResult<Definition extends { result: Parseable<unknown> }> = ReturnType<
-	Definition['result']['parse']
+export type EffectOperationHandlerResult<Definition extends { result: ContractSchema }> =
+	ContractInput<Definition['result']>
+export type EffectOperationResult<Definition extends { result: ContractSchema }> = ContractOutput<
+	Definition['result']
 >
 
 type Hook<Definition, Key extends PropertyKey> = Key extends keyof Definition
@@ -103,9 +110,15 @@ type CoreValue<Definition> = [Returned<Hook<Definition, 'middleware'>>] extends 
 		: Returned<Hook<Definition, 'middleware'>>
 type OutsideHooks = 'prepare' | 'audit' | 'checkPermission' | 'writeAudit'
 export type EffectOperationError<Definition> =
+	| ContractDecoderError<Hook<Definition, 'input'>>
+	| ContractDecoderError<Hook<Definition, 'result'>>
+	| ContractDecoderError<Hook<Definition, 'replayResult'>>
 	| CallbackError<CoreValue<Definition>>
 	| CallbackError<Definition[Extract<keyof Definition, OutsideHooks>]>
 export type EffectOperationRequirements<Definition> =
+	| ContractDecoderRequirements<Hook<Definition, 'input'>>
+	| ContractDecoderRequirements<Hook<Definition, 'result'>>
+	| ContractDecoderRequirements<Hook<Definition, 'replayResult'>>
 	| CallbackRequirements<CoreValue<Definition>>
 	| CallbackRequirements<Definition[Extract<keyof Definition, OutsideHooks>]>
 
@@ -140,8 +153,8 @@ type Audit<Aggregates extends readonly string[]> = Omit<
 }
 type OperationDefinition<
 	Context,
-	Input extends Parseable<unknown>,
-	Output extends Parseable<unknown>,
+	Input extends ContractSchema,
+	Output extends ContractSchema,
 	Extension,
 	Aggregates extends readonly string[],
 	Handler,
@@ -152,19 +165,27 @@ type OperationDefinition<
 	Metadata,
 	BaseError,
 	BaseRequirements,
+	Wire extends ContractSchema,
+	Replay extends ContractSchema,
 > = {
 	input: Input
 	result: Output
-	handler: (input: ReturnType<Input['parse']>, context: Context & Extension) => Handler
+	handler: (input: ContractOutput<Input>, context: Context & Extension) => Handler
 	classification?: string
 	permission?: string
 	metadata?: Metadata
 	aggregates?: Aggregates
-	replayResult?: Parseable<ReturnType<Output['parse']>>
-	guard?: (context: Context & Extension, input: ReturnType<Input['parse']>) => Guard
-	prepare?: (context: Context, input: ReturnType<Input['parse']>) => Preparation
+	replayResult?: Replay &
+		(
+			| LegacyParser<ContractOutput<Output>>
+			| StandardSchema<unknown, ContractOutput<Output>>
+			| Decoder<unknown, ContractOutput<Output>>
+		)
+	wire?: { schema: Wire; project: (value: ContractOutput<Output>) => ContractInput<Wire> }
+	guard?: (context: Context & Extension, input: ContractOutput<Input>) => Guard
+	prepare?: (context: Context, input: ContractOutput<Input>) => Preparation
 	audit?: (
-		resolution: { command: ReturnType<Input['parse']>; result: ReturnType<Output['parse']> },
+		resolution: { command: ContractOutput<Input>; result: ContractOutput<Output> },
 		context: Context,
 	) => AuditResult
 } & (keyof Extension extends never
@@ -172,8 +193,8 @@ type OperationDefinition<
 			middleware?: (
 				input: EffectMiddlewareInput<
 					Context,
-					ReturnType<Input['parse']>,
-					SchemaInput<Output>,
+					ContractOutput<Input>,
+					ContractInput<Output>,
 					Extension,
 					BaseError | CallbackError<Handler | Guard>,
 					BaseRequirements | CallbackRequirements<Handler | Guard>
@@ -184,8 +205,8 @@ type OperationDefinition<
 			middleware: (
 				input: EffectMiddlewareInput<
 					Context,
-					ReturnType<Input['parse']>,
-					SchemaInput<Output>,
+					ContractOutput<Input>,
+					ContractInput<Output>,
 					Extension,
 					BaseError | CallbackError<Handler | Guard>,
 					BaseRequirements | CallbackRequirements<Handler | Guard>
@@ -206,18 +227,19 @@ export function effectOperationFactory<
 	BaseRequirements = never,
 >() {
 	function operation<
-		const Input extends Parseable<unknown>,
-		const Output extends Parseable<unknown>,
-		Handler extends Supported<SchemaInput<Output>>,
+		const Input extends ContractSchema,
+		const Output extends ContractSchema,
+		Handler extends Supported<ContractInput<Output>>,
 		Guard extends Supported<void> = never,
-		Preparation extends Supported<
-			EffectPreparation<ReturnType<Output['parse']>, unknown, unknown>
-		> = never,
+		Preparation extends Supported<EffectPreparation<ContractOutput<Output>, unknown, unknown>> =
+			never,
 		const Aggregates extends readonly string[] = readonly string[],
 		AuditResult extends Supported<Audit<Aggregates> | null> = never,
-		Middleware extends Supported<SchemaInput<Output>> = never,
+		Middleware extends Supported<ContractInput<Output>> = never,
 		const Metadata extends object = Record<never, never>,
 		// Retain whether middleware is guaranteed, conditional, or omitted.
+		const Wire extends ContractSchema = ContractSchema,
+		const Replay extends ContractSchema = never,
 		const Definition extends object = object,
 	>(
 		definition: Definition &
@@ -234,7 +256,9 @@ export function effectOperationFactory<
 				Middleware,
 				Metadata,
 				BaseError,
-				BaseRequirements
+				BaseRequirements,
+				Wire,
+				Replay
 			>,
 	) {
 		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
@@ -247,18 +271,19 @@ export function effectOperationFactory<
 			>
 	}
 	function command<
-		const Input extends Parseable<unknown>,
-		const Output extends Parseable<unknown>,
-		Handler extends Supported<SchemaInput<Output>>,
+		const Input extends ContractSchema,
+		const Output extends ContractSchema,
+		Handler extends Supported<ContractInput<Output>>,
 		Guard extends Supported<void> = never,
-		Preparation extends Supported<
-			EffectPreparation<ReturnType<Output['parse']>, unknown, unknown>
-		> = never,
+		Preparation extends Supported<EffectPreparation<ContractOutput<Output>, unknown, unknown>> =
+			never,
 		const Aggregates extends readonly string[] = readonly string[],
 		AuditResult extends Supported<Audit<Aggregates> | null> = never,
-		Middleware extends Supported<SchemaInput<Output>> = never,
+		Middleware extends Supported<ContractInput<Output>> = never,
 		const Metadata extends object = Record<never, never>,
 		// Retain whether middleware is guaranteed, conditional, or omitted.
+		const Wire extends ContractSchema = ContractSchema,
+		const Replay extends ContractSchema = never,
 		const Definition extends object = object,
 	>(
 		definition: Definition &
@@ -275,11 +300,13 @@ export function effectOperationFactory<
 				Middleware,
 				Metadata,
 				BaseError,
-				BaseRequirements
+				BaseRequirements,
+				Wire,
+				Replay
 			> & {
 				classification: string
 				audit: (
-					resolution: { command: ReturnType<Input['parse']>; result: ReturnType<Output['parse']> },
+					resolution: { command: ContractOutput<Input>; result: ContractOutput<Output> },
 					context: Context,
 				) => AuditResult
 			},
@@ -294,12 +321,14 @@ export function effectOperationFactory<
 			>
 	}
 	function query<
-		const Input extends Parseable<unknown>,
-		const Output extends Parseable<unknown>,
-		Handler extends Supported<SchemaInput<Output>>,
+		const Input extends ContractSchema,
+		const Output extends ContractSchema,
+		Handler extends Supported<ContractInput<Output>>,
 		Guard extends Supported<void> = never,
-		Middleware extends Supported<SchemaInput<Output>> = never,
+		Middleware extends Supported<ContractInput<Output>> = never,
 		const Metadata extends object = Record<never, never>,
+		const Wire extends ContractSchema = ContractSchema,
+		const Replay extends ContractSchema = never,
 		const Definition extends object = object,
 	>(
 		definition: Definition &
@@ -316,7 +345,9 @@ export function effectOperationFactory<
 				Middleware,
 				Metadata,
 				BaseError,
-				BaseRequirements
+				BaseRequirements,
+				Wire,
+				Replay
 			> & {
 				prepare?: never
 				audit?: never

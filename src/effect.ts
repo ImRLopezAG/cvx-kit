@@ -19,3 +19,14 @@ export {
 	effectZodApiBuilder,
 	type EffectZodApiBuilder,
 } from './modules/effect/client'
+export {
+	projectErrorCause,
+	effectContract,
+	effectSchema,
+	effectStandardSchema,
+	decodeEffectContract,
+	ContractValidationError,
+	type EffectDecoder,
+	type ContractDecoderError,
+	type ContractDecoderRequirements,
+} from './modules/effect/client'

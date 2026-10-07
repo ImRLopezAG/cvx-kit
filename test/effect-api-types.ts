@@ -1,4 +1,4 @@
-import { Context, Effect } from 'effect'
+import { Context, Effect, Schema } from 'effect'
 import {
 	actionGeneric,
 	internalQueryGeneric,
@@ -8,7 +8,8 @@ import {
 	type ApiFromModules,
 } from 'convex/server'
 import { v } from 'convex/values'
-import { effectApiBuilder } from '../src/effect'
+import { effectApiBuilder, effectSchema } from '../src/effect'
+import { defineErrorContract } from '../src/errors'
 class Request extends Context.Service<Request, { value: number }>()('ApiTypeRequest') {}
 class Missing extends Context.Service<Missing, { value: number }>()('ApiTypeMissing') {}
 const query = effectApiBuilder(queryGeneric, {
@@ -68,3 +69,16 @@ const callableReference: FunctionReference<'query', 'public', { name: string }, 
 	references.callable
 const internalReference: FunctionReference<'query', 'internal', {}, number> = references.internal
 void [mutation, action, reference, inferredReference, callableReference, internalReference]
+
+declare const serviceCodec: Schema.Codec<string, number, Request, Missing>
+const codec = effectSchema(serviceCodec)
+query({ returns: v.string(), handler: () => codec.decode(1) })
+// @ts-expect-error Encoding services stay required even when decoding services are provided.
+query({ returns: v.number(), handler: () => codec.decode(1).pipe(Effect.flatMap(codec.encode)) })
+const errors = defineErrorContract({ DENIED: { message: 'Denied', details: {} } })
+// @ts-expect-error A checked error contract and legacy mapper cannot compete at the same boundary.
+effectApiBuilder(queryGeneric, {
+	services: () => Context.empty(),
+	errors,
+	mapError: () => new Error('legacy'),
+})

@@ -35,7 +35,11 @@ function copyPublicTypeFixture(fixture, filename, publicImport) {
 		.replaceAll(publicImport, 'cvx-kit/effect')
 		.replaceAll('../src/errors', 'cvx-kit/errors')
 		.replaceAll('../src/contracts', 'cvx-kit/contracts')
+		.replaceAll('../src/idempotency', 'cvx-kit/idempotency')
 		.replaceAll('../src/modules/contracts/errors', 'cvx-kit/errors')
+		.replaceAll('../src/modules/contracts/idempotency', 'cvx-kit/idempotency')
+		.replaceAll('../src/modules/effect/idempotency', 'cvx-kit/effect')
+		.replaceAll('../src/modules/effect/foundation', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/schema', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/operation', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/crud', 'cvx-kit/effect')
@@ -85,6 +89,7 @@ import { createAuthFunctions, defaultRoleMap } from 'cvx-kit/auth'
 import { createCrudCommands } from 'cvx-kit/crud'
 import { zodTable } from 'cvx-kit/zod-table'
 import { decodeContract, standardContract, zodContract } from 'cvx-kit/contracts'
+import { captureIdempotencyInvocation, transactionalIdempotency, canonicalConvexBytes } from 'cvx-kit/idempotency'
 import { defineErrorContract } from 'cvx-kit/errors'
 import { actionGeneric, queryGeneric, mutationGeneric, internalActionGeneric, internalQueryGeneric, internalMutationGeneric } from 'convex/server'
 import { z } from 'zod'
@@ -134,6 +139,24 @@ assert.deepEqual(await crud.executeCreate(ctx, { text: 'packed' }), { id: 'note-
 assert.deepEqual(await crud.executeUpdate(ctx, { id: 'note-id', data: { text: 'updated' } }), { ok: true })
 assert.deepEqual(changes, [['notes', { text: 'packed' }], ['note-id', { text: 'updated' }]])
 assert.equal(audits.length, 2)
+const bounds = { maxDepth: 8, maxNodes: 100, maxBytes: 4096, maxArrayLength: 20, maxObjectFields: 20 }
+assert.equal(canonicalConvexBytes({ b: { d: 2, c: 1 }, a: 0 }, bounds), canonicalConvexBytes({ a: 0, b: { c: 1, d: 2 } }, bounds))
+const invocation = captureIdempotencyInvocation({ binding: { kind: 'mutation', atomicity: 'same-mutation' }, identity: { operation: 'packed', scope: 'host', key: 'one' }, versions: { operation: '1', contract: '1', binding: '1', fingerprintPolicy: '1' }, rawInput: { title: 'raw' }, canonical: { bounds } })
+const ledger = []
+let authorizations = 0
+const idempotency = transactionalIdempotency({
+ final: { replayResult: zodContract(z.object({ version: z.literal(1), value: z.string() }).transform(wire => wire.value)), encode: value => ({ version: 1, value }) },
+ authorize: () => { authorizations++ }, lookup: () => ledger, fingerprint: bytes => bytes,
+ claim: (_identity, receipt) => { ledger.push(receipt); return 0 }, complete: (index, receipt) => { ledger[index] = receipt },
+})
+const preparation = await idempotency.prepare(invocation)
+assert.equal(preparation.kind, 'execute')
+await preparation.complete('final!')
+const replay = await idempotency.prepare(invocation)
+assert.equal(replay.kind, 'replay')
+assert.deepEqual(await decodeContract(idempotency.replayResult, replay.result), { value: 'final!' })
+assert.equal(authorizations, 2)
+assert.equal(ledger.length, 1)
 `
 
 const legacyTypes = `
@@ -317,6 +340,7 @@ try {
 					'operation-contract-types.ts',
 					'effect-schema-types.ts',
 					'effect-crud-types.ts',
+					'idempotency-types.ts',
 					'error-contract-types.ts',
 				]) {
 					typeFiles.push(copyPublicTypeFixture(fixture, filename, '../src/effect'))

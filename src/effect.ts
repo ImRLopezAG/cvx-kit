@@ -14,6 +14,10 @@ export {
 } from './modules/effect/client'
 export { createEffectFoundation, type EffectFoundationOptions } from './modules/effect/client'
 export {
+	effectTransactionalIdempotency,
+	type EffectIdempotencyPreparation,
+} from './modules/effect/client'
+export {
 	createEffectCrud,
 	type EffectCrudConfig,
 	type EffectCrudContext,

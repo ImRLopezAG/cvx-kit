@@ -43,7 +43,7 @@ function run(command, args, cwd = fixture) {
 function convex(...args) {
 	return run('node', [join(fixture, 'node_modules/convex/bin/main.js'), ...args])
 }
-async function verifyNativePagination(port) {
+async function verifyNativeFixture(script, label, port) {
 	const child = spawn(
 		'node',
 		[
@@ -52,7 +52,7 @@ async function verifyNativePagination(port) {
 			'--once',
 			'--typecheck=disable',
 			'--start',
-			`node pagination.mjs ${port}`,
+			`node ${script} ${port}`,
 		],
 		{ cwd: fixture, env: localConvexEnvironment(), stdio: ['pipe', 'pipe', 'pipe'] },
 	)
@@ -72,8 +72,8 @@ async function verifyNativePagination(port) {
 		})
 		process.stdout.write(output)
 		process.stderr.write(diagnostics)
-		assert.equal(code, 0, 'Native pagination command must complete successfully')
-		assert.match(output, /Native pagination passed:/)
+		assert.equal(code, 0, `Native ${label} command must complete successfully`)
+		assert.ok(output.includes(`Native ${label} passed:`))
 	} finally {
 		clearTimeout(deadline)
 		child.stdin.end()
@@ -161,6 +161,7 @@ try {
 	)
 	cpSync(join(root, 'test/fixture-effect/typecheck.ts'), join(fixture, 'typecheck.ts'))
 	cpSync(join(root, 'test/fixture-effect/pagination.mjs'), join(fixture, 'pagination.mjs'))
+	cpSync(join(root, 'test/fixture-effect/idempotency.mjs'), join(fixture, 'idempotency.mjs'))
 	console.log(`Effect runtime smoke: isolated ${installer} install`)
 	run(installer, ['install', '--ignore-scripts'])
 	assertIsolatedConvexFixture(fixture)
@@ -199,7 +200,8 @@ try {
 		`Runtime versions: Convex CLI ${manifest.devDependencies.convex}; Effect ${manifest.devDependencies.effect}; backend ${localConfig.backendVersion ?? 'not recorded by CLI'}`,
 	)
 	// Keep the local backend alive for the subscription; one-off CLI calls stop it on exit.
-	await verifyNativePagination(cloudPort)
+	await verifyNativeFixture('pagination.mjs', 'pagination', cloudPort)
+	await verifyNativeFixture('idempotency.mjs', 'idempotency', cloudPort)
 	assert.equal(invoke('save', { key: 'success', mode: 'success' }), 'saved')
 	assert.deepEqual(invoke('read', { key: 'success' }), ['domain', 'audit', 'completion'])
 	assert.deepEqual(invoke('composed', { key: 'success' }), {

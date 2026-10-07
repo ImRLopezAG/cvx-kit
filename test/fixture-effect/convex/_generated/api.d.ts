@@ -13,6 +13,7 @@ import type * as crud from "../crud.js";
 import type * as domain from "../domain.js";
 import type * as functions from "../functions.js";
 import type * as http from "../http.js";
+import type * as idempotency from "../idempotency.js";
 
 import type {
   ApiFromModules,
@@ -26,6 +27,7 @@ declare const fullApi: ApiFromModules<{
   domain: typeof domain;
   functions: typeof functions;
   http: typeof http;
+  idempotency: typeof idempotency;
 }>;
 
 /**

@@ -42,3 +42,18 @@ const wrongArgs: FunctionReference<
 	{ count: number; events: string[] }
 > = api.functions.composed
 void [publicQuery, publicMutation, internalMutation, publicAction, wrongKind, wrongArgs]
+
+const idempotentMutation: FunctionReference<
+	'mutation',
+	'public',
+	{
+		key: string
+		payload: { title: string }
+		normalized?: boolean
+		mode?: 'success' | 'audit' | 'completion' | 'result' | 'cleanup'
+	},
+	{ id: string; title: string }
+> = api.idempotency.save
+// @ts-expect-error The private receipt observer is excluded from the public generated API.
+void api.idempotency.state
+void idempotentMutation

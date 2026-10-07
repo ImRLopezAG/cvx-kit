@@ -1,12 +1,5 @@
 import type { Effect } from 'effect'
-import type {
-	ContractSchema,
-	ContractInput,
-	ContractOutput,
-	Decoder,
-	LegacyParser,
-	StandardSchema,
-} from '../contracts/contract'
+import type { ContractSchema, ContractInput, ContractOutput } from '../contracts/contract'
 import type { ContractDecoderError, ContractDecoderRequirements } from './schema'
 import type { AuditEntryInput } from '../../components/foundation/client'
 
@@ -183,12 +176,7 @@ type OperationDefinition<
 	permission?: string
 	metadata?: Metadata
 	aggregates?: Aggregates
-	replayResult?: Replay &
-		(
-			| LegacyParser<ContractOutput<Output>>
-			| StandardSchema<unknown, ContractOutput<Output>>
-			| Decoder<unknown, ContractOutput<Output>>
-		)
+	replayResult?: Replay & (ContractOutput<Replay> extends ContractOutput<Output> ? unknown : never)
 	wire?: { schema: Wire; project: (value: ContractOutput<Output>) => ContractInput<Wire> }
 	guard?: (context: Context & Extension, input: ContractOutput<Input>) => Guard
 	prepare?: (context: Context, input: ContractOutput<Input>) => Preparation

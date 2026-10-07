@@ -60,6 +60,14 @@ type CheckedChannels<Context, Error, Requirements, Definition> = {
 		definition: Definition
 	}
 }
+/** Named checked-definition boundary keeps the private evidence marker inside this module's declarations. */
+export type CheckedEffectDefinition<
+	Context,
+	Definition,
+	Error = never,
+	Requirements = never,
+> = NoInfer<Omit<Definition, typeof checkedOperation>> &
+	CheckedChannels<Context, Error, Requirements, Omit<Definition, typeof checkedOperation>>
 /** Reject stale helper evidence after callbacks or schemas are replaced. */
 export type ValidatedEffectOperations<Operations> = {
 	[Key in keyof Operations]: Operations[Key] extends {
@@ -262,13 +270,12 @@ export function effectOperationFactory<
 			>,
 	) {
 		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
-		return definition as NoInfer<Omit<typeof definition, typeof checkedOperation>> &
-			CheckedChannels<
-				Context,
-				BaseError,
-				BaseRequirements,
-				Omit<typeof definition, typeof checkedOperation>
-			>
+		return definition as CheckedEffectDefinition<
+			Context,
+			typeof definition,
+			BaseError,
+			BaseRequirements
+		>
 	}
 	function command<
 		const Input extends ContractSchema,
@@ -312,13 +319,12 @@ export function effectOperationFactory<
 			},
 	) {
 		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
-		return definition as NoInfer<Omit<typeof definition, typeof checkedOperation>> &
-			CheckedChannels<
-				Context,
-				BaseError,
-				BaseRequirements,
-				Omit<typeof definition, typeof checkedOperation>
-			>
+		return definition as CheckedEffectDefinition<
+			Context,
+			typeof definition,
+			BaseError,
+			BaseRequirements
+		>
 	}
 	function query<
 		const Input extends ContractSchema,
@@ -356,13 +362,12 @@ export function effectOperationFactory<
 			},
 	) {
 		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
-		return definition as NoInfer<Omit<typeof definition, typeof checkedOperation>> &
-			CheckedChannels<
-				Context,
-				BaseError,
-				BaseRequirements,
-				Omit<typeof definition, typeof checkedOperation>
-			>
+		return definition as CheckedEffectDefinition<
+			Context,
+			typeof definition,
+			BaseError,
+			BaseRequirements
+		>
 	}
 	return { operation, command, query }
 }

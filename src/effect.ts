@@ -14,6 +14,15 @@ export {
 } from './modules/effect/client'
 export { createEffectFoundation, type EffectFoundationOptions } from './modules/effect/client'
 export {
+	createEffectCrud,
+	type EffectCrudConfig,
+	type EffectCrudContext,
+	type EffectCrudPage,
+	type EffectCrudPagination,
+	type EffectCrudRepository,
+	type EffectCrudTable,
+} from './modules/effect/client'
+export {
 	effectApiBuilder,
 	type EffectApiBuilder,
 	effectZodApiBuilder,

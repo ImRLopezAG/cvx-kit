@@ -9,6 +9,7 @@
  */
 
 import type * as actions from "../actions.js";
+import type * as crud from "../crud.js";
 import type * as domain from "../domain.js";
 import type * as functions from "../functions.js";
 import type * as http from "../http.js";
@@ -21,6 +22,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   actions: typeof actions;
+  crud: typeof crud;
   domain: typeof domain;
   functions: typeof functions;
   http: typeof http;

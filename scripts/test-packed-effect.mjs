@@ -38,6 +38,7 @@ function copyPublicTypeFixture(fixture, filename, publicImport) {
 		.replaceAll('../src/modules/contracts/errors', 'cvx-kit/errors')
 		.replaceAll('../src/modules/effect/schema', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/operation', 'cvx-kit/effect')
+		.replaceAll('../src/modules/effect/crud', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/errors', 'cvx-kit/effect')
 		.replaceAll('../src/components/foundation/client', 'cvx-kit/components/foundation')
 		.replaceAll('../src/crud', 'cvx-kit/crud')
@@ -200,7 +201,8 @@ import { strict as assert } from 'node:assert'
 import { createRequire } from 'node:module'
 import { realpathSync } from 'node:fs'
 import { Context, Effect } from 'effect'
-import { createEffectFoundation, effectApiBuilder, effectZodApiBuilder } from 'cvx-kit/effect'
+import { createEffectFoundation, createEffectCrud, effectApiBuilder, effectZodApiBuilder } from 'cvx-kit/effect'
+import { zodTable } from 'cvx-kit/zod-table'
 import { queryGeneric, internalMutationGeneric, actionGeneric } from 'convex/server'
 import { zCustomMutation } from 'convex-helpers/server/zod4'
 import { v } from 'convex/values'
@@ -247,6 +249,33 @@ for (const fail of [false, true]) {
 }
 await assert.rejects(plain({ handler: () => Effect.die(new Error('packed-defect')) })._handler({}, {}), /packed-defect/)
 await assert.rejects(plain({ handler: () => Effect.interrupt })._handler({}, {}))
+const crudAudits = []
+const crudFoundation = createEffectFoundation({ observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }) }, writeAudit: (_host, entry) => crudAudits.push(entry) })
+const crudTable = zodTable('packedNotes', () => ({ title: z.string(), secret: z.string() }), { commandFields: ['title'], serverFields: ['secret'], publicFields: ['title'] })
+let crudRow
+const crudHost = { actor: 'packed-actor', db: { insert: async (_table, values) => { crudRow = values; return 'packed-id' }, patch: async (_id, values) => { crudRow = { ...crudRow, ...values } } } }
+const crud = createEffectCrud({ foundation: crudFoundation, table: crudTable, context: host => host, aggregateType: 'note', actor: host => host.actor, checkId: (_host, id) => id === 'packed-id', enrich: () => ({ secret: 'private' }), read: { maxPageSize: 2, project: row => ({ title: row.title }), get: () => crudRow ?? null, list: () => ({ page: crudRow ? [crudRow] : [], isDone: true, continueCursor: '' }) } })
+const pendingCreate = crud.commands.exec('packedNotes.create', { title: 'packed-crud' }, crudHost)
+assert.equal(crudRow, undefined, 'CRUD remains lazy before the API runner')
+assert.deepEqual(await Effect.runPromise(pendingCreate), { id: 'packed-id' })
+assert.deepEqual(await Effect.runPromise(crud.queries.exec('packedNotes.get', { id: 'packed-id' }, crudHost)), { title: 'packed-crud' })
+assert.deepEqual(await Effect.runPromise(crud.commands.exec('packedNotes.update', { id: 'packed-id', data: {} }, crudHost)), { ok: true })
+assert.equal(crudAudits.length, 2)
+assert.deepEqual(crudRow, { title: 'packed-crud', secret: 'private' })
+assert.deepEqual(await Effect.runPromise(crud.commands.exec('packedNotes.update', { id: 'packed-id', data: { title: 'packed-updated' } }, crudHost)), { ok: true })
+assert.deepEqual(crudRow, { title: 'packed-updated', secret: 'private' })
+assert.deepEqual(await Effect.runPromise(crud.queries.exec('packedNotes.get', { id: 'packed-id' }, crudHost)), { title: 'packed-updated' })
+assert.equal(crudAudits.length, 3)
+assert.deepEqual(crudAudits.map(entry => entry.operation), ['packedNotes.create', 'packedNotes.update', 'packedNotes.update'])
+for (const [registry, operation, input] of [
+ [crud.queries, 'packedNotes.get', { id: 'other-table-id' }],
+ [crud.commands, 'packedNotes.update', { id: 'other-table-id', data: { title: 'wrong-table' } }],
+ [crud.commands, 'packedNotes.archive', { id: 'other-table-id' }],
+]) {
+ await assert.rejects(Effect.runPromise(registry.exec(operation, input, crudHost)), error => error.code === 'CRUD_INVALID_ID')
+ assert.deepEqual(crudRow, { title: 'packed-updated', secret: 'private' })
+ assert.equal(crudAudits.length, 3)
+}
 `
 
 try {
@@ -287,6 +316,7 @@ try {
 					'effect-registry-review-types.ts',
 					'operation-contract-types.ts',
 					'effect-schema-types.ts',
+					'effect-crud-types.ts',
 					'error-contract-types.ts',
 				]) {
 					typeFiles.push(copyPublicTypeFixture(fixture, filename, '../src/effect'))

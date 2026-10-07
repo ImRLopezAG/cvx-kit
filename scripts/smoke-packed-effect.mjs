@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
 	cpSync,
 	mkdirSync,
@@ -43,14 +43,55 @@ function run(command, args, cwd = fixture) {
 function convex(...args) {
 	return run('node', [join(fixture, 'node_modules/convex/bin/main.js'), ...args])
 }
-function invoke(name, args = {}) {
-	return JSON.parse(
-		convex('run', name.includes(':') ? name : `functions:${name}`, JSON.stringify(args)),
+async function verifyNativePagination(port) {
+	const child = spawn(
+		'node',
+		[
+			join(fixture, 'node_modules/convex/bin/main.js'),
+			'dev',
+			'--once',
+			'--typecheck=disable',
+			'--start',
+			`node pagination.mjs ${port}`,
+		],
+		{ cwd: fixture, env: localConvexEnvironment(), stdio: ['pipe', 'pipe', 'pipe'] },
 	)
+	let output = ''
+	let diagnostics = ''
+	child.stdout.setEncoding('utf8').on('data', (chunk) => {
+		output += chunk
+	})
+	child.stderr.setEncoding('utf8').on('data', (chunk) => {
+		diagnostics += chunk
+	})
+	const deadline = setTimeout(() => child.kill('SIGINT'), 90000)
+	try {
+		const code = await new Promise((resolve, reject) => {
+			child.once('error', reject)
+			child.once('close', resolve)
+		})
+		process.stdout.write(output)
+		process.stderr.write(diagnostics)
+		assert.equal(code, 0, 'Native pagination command must complete successfully')
+		assert.match(output, /Native pagination passed:/)
+	} finally {
+		clearTimeout(deadline)
+		child.stdin.end()
+	}
 }
-function rejection(name, args, expected) {
+function invoke(name, args = {}, identity) {
+	const output = convex(
+		'run',
+		name.includes(':') ? name : `functions:${name}`,
+		JSON.stringify(args),
+		...(identity ? ['--identity', JSON.stringify(identity)] : []),
+	)
+	// Convex 1.45's run command emits no output for a successful null result.
+	return output.trim() === '' ? null : JSON.parse(output)
+}
+function rejection(name, args, expected, identity) {
 	assert.throws(
-		() => invoke(name, args),
+		() => invoke(name, args, identity),
 		(error) => {
 			const message = String(error.stderr)
 			assert.match(message, expected)
@@ -119,6 +160,7 @@ try {
 		),
 	)
 	cpSync(join(root, 'test/fixture-effect/typecheck.ts'), join(fixture, 'typecheck.ts'))
+	cpSync(join(root, 'test/fixture-effect/pagination.mjs'), join(fixture, 'pagination.mjs'))
 	console.log(`Effect runtime smoke: isolated ${installer} install`)
 	run(installer, ['install', '--ignore-scripts'])
 	assertIsolatedConvexFixture(fixture)
@@ -156,6 +198,8 @@ try {
 	console.log(
 		`Runtime versions: Convex CLI ${manifest.devDependencies.convex}; Effect ${manifest.devDependencies.effect}; backend ${localConfig.backendVersion ?? 'not recorded by CLI'}`,
 	)
+	// Keep the local backend alive for the subscription; one-off CLI calls stop it on exit.
+	await verifyNativePagination(cloudPort)
 	assert.equal(invoke('save', { key: 'success', mode: 'success' }), 'saved')
 	assert.deepEqual(invoke('read', { key: 'success' }), ['domain', 'audit', 'completion'])
 	assert.deepEqual(invoke('composed', { key: 'success' }), {
@@ -195,8 +239,103 @@ try {
 		{ kind: 'unknown' },
 	)
 	assert.deepEqual(invoke('read', { key: 'composite-round-trip' }), [])
+	const crudOwner = { subject: 'crud-owner', org_id: 'tenant-a', role: 'owner' }
+	const otherId = invoke('crud:createOther', {}, crudOwner)
+	const initialOtherState = invoke('crud:otherState', { id: otherId })
+	assert.deepEqual(initialOtherState, { title: 'other-table', audits: [] })
+	for (const [operation, input] of [
+		['crud:getFromString', { id: otherId }],
+		['crud:updateFromString', { id: otherId, data: { title: 'wrong-table-write' } }],
+		['crud:archiveFromString', { id: otherId }],
+	]) {
+		rejection(operation, input, /Invalid ID for table "crudNotes"/, crudOwner)
+		assert.deepEqual(invoke('crud:otherState', { id: otherId }), initialOtherState)
+	}
+	const created = invoke('crud:create', { title: 'native-crud' }, crudOwner)
+	assert.match(created.id, /^.+$/)
+	assert.deepEqual(invoke('crud:get', { id: created.id }, crudOwner), { title: 'native-crud' })
+	const initialCrudState = invoke('crud:state', { id: created.id })
+	assert.deepEqual(initialCrudState, {
+		note: {
+			title: 'native-crud',
+			tenant: 'tenant-a',
+			owner: 'crud-owner',
+			secret: 'server-private',
+		},
+		history: ['insert'],
+		audits: [{ operation: 'crudNotes.create', actor: 'crud-owner' }],
+	})
+	rejection('crud:get', { id: created.id }, /UNAUTHENTICATED|authenticated/i)
+	rejection(
+		'crud:update',
+		{ id: created.id, data: { title: 'viewer-write' } },
+		/access|allow|permission/i,
+		{ ...crudOwner, subject: 'crud-viewer', role: 'viewer' },
+	)
+	rejection(
+		'crud:update',
+		{ id: created.id, data: { tenant: 'tenant-b', secret: 'caller-secret' } },
+		/validation|invalid|unrecognized|extra/i,
+		crudOwner,
+	)
+	const foreignOwner = { ...crudOwner, subject: 'foreign-owner', org_id: 'tenant-b' }
+	assert.equal(invoke('crud:get', { id: created.id }, foreignOwner), null)
+	assert.deepEqual(invoke('crud:list', { numItems: 2, cursor: null }, foreignOwner).page, [])
+	assert.deepEqual(invoke('crud:list', { numItems: 2, cursor: null }, crudOwner).page, [
+		{ title: 'native-crud' },
+	])
+	rejection('crud:list', { numItems: 3, cursor: null }, /validation|invalid|too big/i, crudOwner)
+	rejection(
+		'crud:update',
+		{ id: created.id, data: { title: 'foreign' } },
+		/access|exist/i,
+		foreignOwner,
+	)
+	rejection(
+		'crud:update',
+		{ id: created.id, data: { title: 'audit-rollback' }, failAudit: true },
+		/CRUD_AUDIT_FAILURE/,
+		crudOwner,
+	)
+	rejection('crud:invalidOutput', { id: created.id }, /invalid|expected|validation/i, crudOwner)
+	assert.deepEqual(
+		invoke('crud:state', { id: created.id }),
+		initialCrudState,
+		'RLS, audit and native output failures must leave business, trigger and audit rows unchanged',
+	)
+	assert.deepEqual(
+		invoke('crud:update', { id: created.id, data: { title: 'native-updated' } }, crudOwner),
+		{ ok: true },
+	)
+	assert.deepEqual(invoke('crud:get', { id: created.id }, crudOwner), { title: 'native-updated' })
+	const updatedCrudState = invoke('crud:state', { id: created.id })
+	assert.deepEqual(updatedCrudState.note, { ...initialCrudState.note, title: 'native-updated' })
+	assert.deepEqual(updatedCrudState.history, ['insert', 'update'])
+	assert.deepEqual(updatedCrudState.audits, [
+		...initialCrudState.audits,
+		{ operation: 'crudNotes.update', actor: 'crud-owner' },
+	])
+	assert.deepEqual(invoke('crud:update', { id: created.id, data: {} }, crudOwner), { ok: true })
+	for (let attempt = 0; attempt < 2; attempt++) {
+		assert.deepEqual(invoke('crud:archive', { id: created.id }, crudOwner), { ok: true })
+	}
+	const archivedCrudState = invoke('crud:state', { id: created.id })
+	assert.equal(archivedCrudState.note.title, 'native-updated')
+	assert.ok(Number.isFinite(archivedCrudState.note.archivedAt))
+	assert.deepEqual(archivedCrudState.history, ['insert', 'update', 'update', 'update', 'update'])
+	assert.deepEqual(
+		archivedCrudState.audits.map((entry) => entry.operation),
+		[
+			'crudNotes.create',
+			'crudNotes.update',
+			'crudNotes.update',
+			'crudNotes.archive',
+			'crudNotes.archive',
+		],
+	)
+	assert.ok(archivedCrudState.audits.every((entry) => entry.actor === 'crud-owner'))
 	console.log(
-		'Actual local runtime passed: async query ordinary/gen/fn composition, spans, awaited scoped release, domain/audit/completion rollback, declared ConvexError.data round-trip, composite safe unknown round-trip, projected rejection, cleanup/composite rejection, HTTP action and separate transaction commits',
+		'Actual local runtime passed: async query ordinary/gen/fn composition, spans, awaited scoped release, domain/audit/completion rollback, declared ConvexError.data round-trip, composite safe unknown round-trip, projected rejection, cleanup/composite rejection, HTTP action and separate transaction commits, secured CRUD tenant projection/pagination, nonempty/empty update persistence, repeated archive, and business/trigger/audit rollback',
 	)
 } catch (error) {
 	if (error.stdout) process.stderr.write(String(error.stdout))

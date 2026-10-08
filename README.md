@@ -37,6 +37,7 @@ authored in [`src/docs/`](./src/docs/):
 - [`auth.md`](./src/docs/auth.md) — auth-aware function constructors from injected policy
 - [`commands.md`](./src/docs/commands.md) — Foundation, the audited command protocol, observability
 - [`effect.md`](./src/docs/effect.md) — opt-in Effect v4 registries, injected services, and shared API builders
+- [`domain-operations.md`](./src/docs/domain-operations.md) — server domain/API examples, contracts, errors, receipts, workflow steps, and selected tools
 - [`triggers.md`](./src/docs/triggers.md) — trigger registry, timestamps/append-only/no-delete
 - [`approvals.md`](./src/docs/approvals.md) — declarative approval workflows
 - [`tenancy.md`](./src/docs/tenancy.md) — row-level security (roles) with opt-in multi-tenant isolation

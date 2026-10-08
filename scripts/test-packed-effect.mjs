@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+	cpSync,
+	mkdtempSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 
@@ -8,10 +16,18 @@ const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-effect-'))
 const effectVersion = '4.0.1'
 const helpersVersion = '0.1.123'
+const nodeTypesVersion = '26.6.1'
+const domainGuidePath = join(root, 'src/docs/domain-operations.md')
+const domainGuideImports = new Set([
+	'./fixture-effect/convex/_generated/api',
+	'./fixture-effect/convex/_generated/server',
+	'./fixture-effect/convex/idempotency',
+])
 const extraTypeFixtures = [
 	join(root, 'src/docs/effect.md'),
 	join(root, 'src/docs/commands.md'),
 	join(root, 'src/docs/auth.md'),
+	domainGuidePath,
 	...process.argv.slice(2).map((path) => resolve(path)),
 ]
 
@@ -70,13 +86,34 @@ function copyExtraTypeFixtures(fixture, paths) {
 	return paths.flatMap((path, index) => {
 		const contents = readFileSync(path, 'utf8')
 		const sources = publishedTypeSources(path, contents)
+		const isDomainGuide = path === domainGuidePath
+		if (isDomainGuide) {
+			const companion = readFileSync(join(root, 'test/domain-operation-guide-types.ts'), 'utf8')
+			const blocks = [...contents.matchAll(/^```ts\s*\n([\s\S]*?)^```/gm)]
+			if (blocks.length !== 1 || sources.length !== 1 || sources[0].trim() !== companion.trim())
+				throw new Error(
+					'Domain operation guide must contain its complete, current companion fixture',
+				)
+			cpSync(join(root, 'test/fixture-effect/convex'), join(fixture, 'fixture-effect/convex'), {
+				recursive: true,
+			})
+		}
 		return sources.map((source, snippet) => {
 			if (!source.trim())
 				throw new Error(`Documentation fixture ${basename(path)} has no TypeScript`)
-			if (/from ['"](?:\.\.?\/|cvx-kit\/(?:src|dist)\/)/.test(source)) {
+			const imports = [...source.matchAll(/from ['"]([^'"]+)['"]/g)].map((match) => match[1])
+			if (
+				imports.some(
+					(specifier) =>
+						/^cvx-kit\/(?:src|dist)\//.test(specifier) ||
+						(/^\.\.?\//.test(specifier) && !(isDomainGuide && domainGuideImports.has(specifier))),
+				)
+			) {
 				throw new Error(`Documentation fixture ${basename(path)} must use public package imports`)
 			}
-			const filename = `doc-example-${index}-${snippet}.ts`
+			const filename = isDomainGuide
+				? `domain-operation-guide-${snippet}.ts`
+				: `doc-example-${index}-${snippet}.ts`
 			writeFileSync(join(fixture, filename), source)
 			return filename
 		})
@@ -329,13 +366,15 @@ try {
 				zod: manifest.devDependencies.zod,
 			}
 			if (withEffect) dependencies.effect = effectVersion
+			const devDependencies = { typescript: manifest.devDependencies.typescript }
+			if (withEffect) devDependencies['@types/node'] = nodeTypesVersion
 			writeFileSync(
 				join(fixture, 'package.json'),
 				JSON.stringify({
 					private: true,
 					type: 'module',
 					dependencies,
-					devDependencies: { typescript: manifest.devDependencies.typescript },
+					devDependencies,
 				}),
 			)
 			run(installer, ['install', '--ignore-scripts'], fixture)
@@ -346,6 +385,7 @@ try {
 				copyPublicTypeFixture(fixture, 'operation-neutral-types.ts', '../src/effect'),
 				copyPublicTypeFixture(fixture, 'operation-agent-tools-types.ts', '../src/effect'),
 			]
+			const guideTypeFiles = []
 			if (withEffect) {
 				for (const filename of [
 					'effect-foundation-types.ts',
@@ -363,7 +403,11 @@ try {
 				}
 				writeFileSync(join(fixture, 'domain-types.ts'), domainTypes)
 				writeFileSync(join(fixture, 'effect.mjs'), effectRuntime)
-				typeFiles.push('domain-types.ts', ...copyExtraTypeFixtures(fixture, extraTypeFixtures))
+				typeFiles.push('domain-types.ts')
+				for (const filename of copyExtraTypeFixtures(fixture, extraTypeFixtures)) {
+					if (filename.startsWith('domain-operation-guide-')) guideTypeFiles.push(filename)
+					else typeFiles.push(filename)
+				}
 			}
 			writeFileSync(
 				join(fixture, 'tsconfig.json'),
@@ -383,6 +427,18 @@ try {
 			)
 			const compiler = realpathSync(join(fixture, 'node_modules/typescript/bin/tsc'))
 			run('node', [compiler, '-p', 'tsconfig.json'], fixture)
+			if (withEffect) {
+				writeFileSync(
+					join(fixture, 'tsconfig.domain.json'),
+					JSON.stringify({
+						extends: './tsconfig.json',
+						compilerOptions: { types: ['node'] },
+						files: guideTypeFiles,
+					}),
+				)
+				run('node', [compiler, '-p', 'tsconfig.domain.json'], fixture)
+				console.log(`${name}: complete domain guide and actual native references pass separately`)
+			}
 			console.log(
 				`${name}: strict public declaration/type fixtures pass (TypeScript ${manifest.devDependencies.typescript}, helpers ${helpersVersion})`,
 			)

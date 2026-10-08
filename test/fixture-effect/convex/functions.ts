@@ -89,6 +89,56 @@ export const cleanupFailure = cleanupMutation({
 			return 'saved' as const
 		}),
 })
+
+class ProviderInitializationProbe extends Context.Service<
+	ProviderInitializationProbe,
+	{ events: string[] }
+>()('FixtureProviderInitializationProbe') {}
+
+class ProviderInitializationFailure {
+	readonly _tag = 'ProviderInitializationFailure'
+	constructor(readonly events: string[]) {}
+}
+
+const providerInitializationMutation = effectApiBuilder(internalMutation, {
+	services: (ctx) =>
+		Effect.gen(function* () {
+			const events: string[] = []
+			const services = yield* Effect.acquireRelease(
+				Effect.promise(async () => {
+					await ctx.db.insert('writes', { key: 'provider-initialization', stage: 'acquire' })
+					events.push('acquire')
+					return Context.make(ProviderInitializationProbe, { events })
+				}),
+				() =>
+					Effect.promise(async () => {
+						await ctx.db.insert('writes', { key: 'provider-initialization', stage: 'release' })
+						events.push('release')
+					}),
+			)
+			events.push('initialize')
+			return yield* Effect.fail(new ProviderInitializationFailure(events)).pipe(Effect.as(services))
+		}),
+	mapError: (error) =>
+		new ConvexError(
+			error instanceof ProviderInitializationFailure
+				? { code: 'FIXTURE_PROVIDER_INITIALIZATION', events: [...error.events] }
+				: { code: 'FIXTURE_PROVIDER_UNEXPECTED', events: [] },
+		),
+})
+export const providerInitializationFailure = providerInitializationMutation({
+	args: {},
+	returns: v.literal('saved'),
+	handler: (ctx) =>
+		Effect.gen(function* () {
+			const probe = yield* ProviderInitializationProbe
+			probe.events.push('handler')
+			yield* Effect.promise(() =>
+				ctx.db.insert('writes', { key: 'provider-initialization', stage: 'handler' }),
+			)
+			return 'saved' as const
+		}),
+})
 export const read = internalQuery({
 	args: { key: v.string() },
 	returns: v.array(v.string()),

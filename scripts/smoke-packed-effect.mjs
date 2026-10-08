@@ -204,6 +204,12 @@ try {
 	cpSync(join(root, 'test/fixture-effect/typecheck.ts'), join(fixture, 'typecheck.ts'))
 	cpSync(join(root, 'test/fixture-effect/pagination.mjs'), join(fixture, 'pagination.mjs'))
 	cpSync(join(root, 'test/fixture-effect/idempotency.mjs'), join(fixture, 'idempotency.mjs'))
+	cpSync(join(root, 'test/fixture-effect/async-domain.mjs'), join(fixture, 'async-domain.mjs'))
+	cpSync(
+		join(root, 'test/fixture-effect/deployment-versions.mjs'),
+		join(fixture, 'deployment-versions.mjs'),
+	)
+	cpSync(join(root, 'scripts/convex-smoke-env.mjs'), join(fixture, 'convex-smoke-env.mjs'))
 	cpSync(join(root, 'test/fixture-effect/workflow-proof.mjs'), join(fixture, 'workflow-proof.mjs'))
 	cpSync(
 		join(root, 'test/fixture-effect/operation-tools.mjs'),
@@ -249,9 +255,13 @@ try {
 	// Keep the local backend alive for the subscription; one-off CLI calls stop it on exit.
 	await verifyNativeFixture('pagination.mjs', 'pagination', cloudPort)
 	await verifyNativeFixture('idempotency.mjs', 'idempotency', cloudPort)
+	const versionProof = run('node', ['deployment-versions.mjs', String(cloudPort)])
+	assert.ok(versionProof.includes('Native deployment versions passed:'))
+	process.stdout.write(versionProof)
 	await verifyNativeFixture('workflow-proof.mjs', 'workflow proof', cloudPort)
 	await verifyWorkflowDeployments(cloudPort)
 	await verifyNativeFixture('operation-tools.mjs', 'operation tools', cloudPort)
+	await verifyNativeFixture('async-domain.mjs', 'async domain', cloudPort)
 	assert.equal(invoke('save', { key: 'success', mode: 'success' }), 'saved')
 	assert.deepEqual(invoke('read', { key: 'success' }), ['domain', 'audit', 'completion'])
 	assert.deepEqual(invoke('composed', { key: 'success' }), {
@@ -272,6 +282,27 @@ try {
 	assert.deepEqual(invoke('read', { key: 'cleanup' }), [])
 	rejection('cleanupFailure', { composite: true }, /Effect API execution failed/)
 	assert.deepEqual(invoke('read', { key: 'cleanup' }), [])
+	assert.deepEqual(invoke('read', { key: 'provider-initialization' }), [])
+	for (let invocation = 0; invocation < 2; invocation++) {
+		assert.throws(
+			() => invoke('providerInitializationFailure'),
+			(error) => {
+				const message = String(error.stderr)
+				assert.match(message, /FIXTURE_PROVIDER_INITIALIZATION/)
+				assert.match(
+					message,
+					/"events"\s*:\s*\[\s*"acquire"\s*,\s*"initialize"\s*,\s*"release"\s*\]/,
+				)
+				assert.doesNotMatch(message, /"handler"|FIXTURE_PROVIDER_UNEXPECTED/)
+				return true
+			},
+		)
+		assert.deepEqual(
+			invoke('read', { key: 'provider-initialization' }),
+			[],
+			'Provider acquisition and awaited release writes must roll back after initialization fails',
+		)
+	}
 	assert.deepEqual(invoke('actions:orchestrate', { key: 'action' }), {
 		body: 'fixture-http-ok',
 		stages: ['domain', 'audit', 'completion'],

@@ -9,11 +9,13 @@
  */
 
 import type * as actions from "../actions.js";
+import type * as asyncDomain from "../asyncDomain.js";
 import type * as crud from "../crud.js";
 import type * as domain from "../domain.js";
 import type * as functions from "../functions.js";
 import type * as http from "../http.js";
 import type * as idempotency from "../idempotency.js";
+import type * as idempotencyDeploymentConfig from "../idempotencyDeploymentConfig.js";
 import type * as operationTools from "../operationTools.js";
 import type * as workflowNative from "../workflowNative.js";
 import type * as workflowProof from "../workflowProof.js";
@@ -26,11 +28,13 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   actions: typeof actions;
+  asyncDomain: typeof asyncDomain;
   crud: typeof crud;
   domain: typeof domain;
   functions: typeof functions;
   http: typeof http;
   idempotency: typeof idempotency;
+  idempotencyDeploymentConfig: typeof idempotencyDeploymentConfig;
   operationTools: typeof operationTools;
   workflowNative: typeof workflowNative;
   workflowProof: typeof workflowProof;

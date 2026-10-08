@@ -159,10 +159,9 @@ describe('Effect API services from the registered secured auth builder', () => {
 	it('denies a viewer service write even when caller fields claim the owner role', async () => {
 		const { t, stored } = harness()
 		await expect(
-			t.withIdentity({ ...ownerIdentity, subject: 'trusted-viewer', role: 'viewer' }).mutation(
-				saveRef,
-				{ ...callerFields, value: 'forbidden' },
-			),
+			t
+				.withIdentity({ ...ownerIdentity, subject: 'trusted-viewer', role: 'viewer' })
+				.mutation(saveRef, { ...callerFields, value: 'forbidden' }),
 		).rejects.toThrow(/insert/i)
 		expect(await stored()).toEqual({ writes: [], history: [] })
 	})

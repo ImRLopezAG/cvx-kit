@@ -10,7 +10,6 @@ import {
 	captureIdempotencyInvocation,
 	type IdempotencyCapture,
 	type IdempotencyInvocation,
-	type IdempotencyVersions,
 } from 'cvx-kit/idempotency'
 import { Context, Effect } from 'effect'
 import { v } from 'convex/values'
@@ -27,15 +26,10 @@ import {
 	query,
 } from './_generated/server'
 import { idempotentNotes } from './schema'
+import { baseVersions } from './idempotencyDeploymentConfig'
 
 const operation = 'idempotentNotes.create'
 const scopeOf = (tenant: string, principal: string) => JSON.stringify([tenant, principal])
-const baseVersions: IdempotencyVersions = {
-	operation: '1',
-	contract: '1',
-	binding: '1',
-	fingerprintPolicy: 'raw-1',
-}
 const bounds = {
 	maxDepth: 8,
 	maxNodes: 100,
@@ -234,7 +228,10 @@ export const save = securedMutation({
 		const invocation = captureIdempotencyInvocation({
 			binding: { kind: 'mutation', atomicity: 'same-mutation' },
 			identity: { operation, scope, key: args.key },
-			versions: { ...baseVersions, fingerprintPolicy: args.normalized ? 'normalized-1' : 'raw-1' },
+			versions: {
+				...baseVersions,
+				fingerprintPolicy: args.normalized ? 'normalized-1' : baseVersions.fingerprintPolicy,
+			},
 			rawInput: args.payload,
 			canonical,
 		})

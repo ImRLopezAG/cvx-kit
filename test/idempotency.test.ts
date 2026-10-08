@@ -292,7 +292,9 @@ it('allows normalized equivalence only through explicit versioned deterministic 
 	expect(h.rows.size).toBe(1)
 })
 it('lifecycle stores already transformed output after audit and replay validates final wire only', async () => {
-	class DecoderPrefix extends Context.Service<DecoderPrefix, string>()('IdempotencyDecoderPrefix') {}
+	class DecoderPrefix extends Context.Service<DecoderPrefix, string>()(
+		'IdempotencyDecoderPrefix',
+	) {}
 	const rows: IdempotencyReceipt[] = []
 	const events: string[] = []
 	const decodedInputs: string[] = []
@@ -368,9 +370,9 @@ it('lifecycle stores already transformed output after audit and replay validates
 	})
 	const run = (raw: string, prefix: string) =>
 		Effect.runPromise(
-			registry.exec('save', raw, { capture: invocation(raw) }).pipe(
-				Effect.provideService(DecoderPrefix, prefix),
-			),
+			registry
+				.exec('save', raw, { capture: invocation(raw) })
+				.pipe(Effect.provideService(DecoderPrefix, prefix)),
 		)
 	expect(await run(' abc ', 'first:')).toEqual({ label: 'first:abc!' })
 	expect(decodedInputs).toEqual(['first:abc'])

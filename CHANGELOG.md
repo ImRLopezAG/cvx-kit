@@ -12,6 +12,29 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-07
+
+### Added
+
+- Add optional Effect 4 command and query registries with cohesive ordinary,
+  Promise, generator, and function handlers, injected services, and scoped API
+  execution through native and custom Convex builders.
+- Add asynchronous operation contracts, explicit schema adapters, and checked
+  transport for declared safe errors.
+- Add injectable audited Effect CRUD, host-owned transactional idempotency
+  receipts, native durable workflow bindings, and selected domain operation tools.
+- Document server-side declaration, composition, API consumption, receipts,
+  workflows, and tools with compile-checked public-package examples.
+
+### Fixed
+
+- Preserve native validators, trusted authorization, RLS, triggers, audit, and
+  rollback across API, workflow, and tool integrations.
+- Reconcile late workflow outcomes without allowing stale generations or late
+  completion to overwrite canceled runs.
+- Validate retained receipt versions before fingerprints and replay, and require
+  current authorization before disclosing replayed results.
+
 ## [0.1.6] - 2026-09-19
 
 ### Added

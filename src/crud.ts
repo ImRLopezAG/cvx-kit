@@ -7,6 +7,7 @@ import type {
 	ApplicationCommand,
 	AuditedOperation,
 	CommandConstructor,
+	SchemaOutput,
 } from './components/foundation/client'
 import { defaultErrors, type ErrorFactory } from './errors'
 
@@ -41,7 +42,7 @@ export type CrudConfig<Context extends CrudContext, Table extends CrudTable = Cr
 	 */
 	enrich?: (
 		context: Context,
-		command: ReturnType<Table['commandInput']['parse']>,
+		command: SchemaOutput<Table['commandInput']>,
 	) => MaybePromise<Partial<z.input<Table['storage']>>>
 	/** Per-operation preconditions; run before the handlers. */
 	guards?: {

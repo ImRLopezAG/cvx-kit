@@ -2,6 +2,11 @@ import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+	assertIsolatedConvexFixture,
+	assertLocalConvexState,
+	localConvexEnvironment,
+} from './convex-smoke-env.mjs'
 
 const installer = process.argv[2] ?? 'bun'
 if (installer !== 'bun' && installer !== 'npm') {
@@ -20,7 +25,7 @@ function run(command, args, cwd = fixture) {
 		cwd,
 		encoding: 'utf8',
 		stdio: ['ignore', 'pipe', 'pipe'],
-		env: { ...process.env, CONVEX_AGENT_MODE: 'anonymous' },
+		env: localConvexEnvironment(),
 	})
 }
 
@@ -28,7 +33,7 @@ function runStreaming(command, args, cwd = fixture) {
 	execFileSync(command, args, {
 		cwd,
 		stdio: 'inherit',
-		env: { ...process.env, CONVEX_AGENT_MODE: 'anonymous' },
+		env: localConvexEnvironment(),
 	})
 }
 
@@ -247,7 +252,9 @@ export const status = query({
 			runStreaming('npx', ['vp', 'test', 'run', 'packed-test-helper.test.ts']),
 		)
 
+	assertIsolatedConvexFixture(fixture)
 	step('deploy Convex fixture', () => runConvex('dev', '--once', '--typecheck=disable'))
+	assertLocalConvexState(fixture)
 	const health = JSON.parse(runConvex('run', 'smoke:health'))
 	if (health.status !== 'ready' || health.schemaVersion !== 1) {
 		throw new Error(`Unexpected approvals health response: ${JSON.stringify(health)}`)

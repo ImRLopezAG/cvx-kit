@@ -37,6 +37,124 @@ export const { Command, Query, observability } = new Foundation(components.found
 Host code consumes the Foundation **only through this facade** — never deep
 imports of the component's internal modules.
 
+For new domains, [the optional Effect facade](./effect.md) offers cohesive
+command/query entries with handlers in the declaration and injectable context.
+The complete guide covers ordinary, `Effect.gen`, and `Effect.fn` handlers,
+nested domain integrations, and shared API execution.
+
+## Incremental migration to Effect
+
+The existing Foundation keeps separate operation and handler declarations,
+context-first handler arguments, and Promise executors. No existing consumer
+needs to change when another domain adopts `cvx-kit/effect`.
+
+This legacy factory accepts the mounted Foundation component and defines all
+of its domain dependencies through the host context:
+
+<!-- packed-effect-example -->
+
+```ts
+import { Foundation, type AuditEntryInput } from 'cvx-kit/components/foundation'
+import { z } from 'zod'
+
+type Host = {
+	actorId: string
+	rename: (id: string, title: string) => Promise<void>
+	appendAudit: (entry: AuditEntryInput) => Promise<void>
+}
+const input = z.object({ id: z.string(), title: z.string() }).strict()
+const result = z.object({ ok: z.literal(true) }).strict()
+
+export function createLegacyRename(component: ConstructorParameters<typeof Foundation>[0]) {
+	const { Command } = new Foundation(component, {
+		observability: {
+			enabled: false,
+			classifyError: () => ({ outcome: 'failed', errorCode: 'RENAME_FAILED' }),
+			writeAudit: (host: Host, entry) => host.appendAudit(entry),
+		},
+	})
+	const typed = Command.withContext<Host>()
+	const operations = {
+		rename: typed.operation({
+			command: input,
+			result,
+			classification: 'business',
+			audit: ({ command }, host) => ({
+				operation: 'documents.rename',
+				actorId: host.actorId,
+				aggregate: { type: 'document', id: command.id },
+			}),
+		}),
+	}
+	const commands = new Command<Host, typeof operations>(operations)
+	return commands.exec({
+		operation: 'rename',
+		handler: async (host, command) => {
+			await host.rename(command.id, command.title)
+			return { ok: true }
+		},
+	})
+}
+```
+
+The replacement keeps the handler beside its schemas and audit policy. It
+uses input-first, context-second callbacks and returns a lazy Effect from
+`exec(operation, input, host)`, including when the handler is ordinary async:
+
+<!-- packed-effect-example -->
+
+```ts
+import { type AuditEntryInput } from 'cvx-kit/components/foundation'
+import { createEffectFoundation } from 'cvx-kit/effect'
+import { z } from 'zod'
+
+type Host = {
+	actorId: string
+	rename: (id: string, title: string) => Promise<void>
+	appendAudit: (entry: AuditEntryInput) => Promise<void>
+}
+const input = z.object({ id: z.string(), title: z.string() }).strict()
+const result = z.object({ ok: z.literal(true) }).strict()
+const foundation = createEffectFoundation({
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed', errorCode: 'RENAME_FAILED' }),
+	},
+	writeAudit: (host: Host, entry) => host.appendAudit(entry),
+})
+export const commands = foundation.Command({
+	context: (host: Host) => host,
+	operations: ({ command }) => ({
+		rename: command({
+			input,
+			result,
+			classification: 'business',
+			handler: async (input, context) => {
+				await context.rename(input.id, input.title)
+				return { ok: true as const }
+			},
+			audit: ({ command }, context) => ({
+				operation: 'documents.rename',
+				actorId: context.actorId,
+				aggregate: { type: 'document', id: command.id },
+			}),
+		}),
+	}),
+})
+```
+
+Pass the resulting Effect to a handler registered through a shared
+`effectApiBuilder` or `effectZodApiBuilder`; see [the complete domain-to-API
+example](./effect.md). Domain composition does not start a separate runner.
+Ordinary throws and rejected Promises become defects; use `Effect.fail` or
+`Effect.tryPromise` for an inferred typed error channel. The native Convex
+reference retains argument/result types, but does not transport the server's
+Effect error and service types.
+
+Both facades share command lifecycle ordering, validation, audit, and replay
+rules. Commands that write remain inside a Convex mutation, and failures must
+escape that mutation to roll its writes back.
+
 ## Defining commands — per domain
 
 Each domain declares a frozen registry of operations and derives typed

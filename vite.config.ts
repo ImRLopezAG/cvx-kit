@@ -53,6 +53,9 @@ export default defineConfig({
 						{
 							entryPoints: [
 								'src/index.ts',
+								// Separate facade keeps the optional Effect peer out of legacy declarations.
+								'src/modules/effect/client.ts',
+								'src/modules/effect/agent-tools.ts',
 								...Object.keys(packageManifest.exports)
 									.filter((path) => /^\.\/[^/.]+$/.test(path))
 									.map((path) => `src/${path.slice(2)}.ts`),

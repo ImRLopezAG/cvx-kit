@@ -1,11 +1,54 @@
+/* oxlint-disable anti-slop/no-unknown-parameters -- Schema validators and interpreter decoders own these untrusted input boundaries and validate before domain callbacks. */
 export type Parseable<Output> = Readonly<{
 	parse: <Input>(value: Input) => Output
+	parseAsync?: <Input>(value: Input) => Promise<Output>
 }>
 
-/** Zod exposes input separately for transforms; plain parsers retain their output contract. */
-export type SchemaInput<Schema extends Parseable<unknown>> = Schema extends { _input: infer Input }
-	? Input
-	: Parsed<Schema>
+/** Structural mirror of portable neutral contracts: components cannot import host modules. */
+interface ValidationIssue {
+	readonly message: string
+	readonly path?: readonly (PropertyKey | { readonly key: PropertyKey })[]
+}
+type ValidationResult<Output> =
+	| { readonly value: Output; readonly issues?: undefined }
+	| { readonly issues: readonly ValidationIssue[] }
+interface StandardSchema<Input = unknown, Output = unknown> {
+	readonly '~standard': {
+		readonly version: 1
+		readonly vendor: string
+		readonly types?: { readonly input: Input; readonly output: Output }
+		readonly validate: (
+			value: unknown,
+		) => ValidationResult<Output> | Promise<ValidationResult<Output>>
+	}
+}
+interface NeutralDecoder<Input = unknown, Output = unknown, Execution = unknown> {
+	readonly kind: 'contract'
+	readonly types?: { readonly input: Input; readonly output: Output }
+	readonly decode: (value: unknown) => Execution
+}
+export type CommandSchema<Output = unknown> =
+	| Parseable<Output>
+	| StandardSchema<unknown, Output>
+	| NeutralDecoder<unknown, Output, ValidationResult<Output> | Promise<ValidationResult<Output>>>
+
+/** Raw values accepted before decoding, including transform inputs. */
+export type SchemaInput<Schema extends CommandSchema> =
+	Schema extends NeutralDecoder<infer Input, unknown, unknown>
+		? Input
+		: Schema extends { _input: infer Input }
+			? Input
+			: Schema extends StandardSchema<infer Input, unknown>
+				? Input
+				: SchemaOutput<Schema>
+export type SchemaOutput<Schema extends CommandSchema> =
+	Schema extends Parseable<unknown>
+		? ReturnType<Schema['parse']>
+		: Schema extends NeutralDecoder<unknown, infer Output, unknown>
+			? Output
+			: Schema extends StandardSchema<unknown, infer Output>
+				? Output
+				: never
 export type CommandHandlerResult<
 	Registry extends CommandRegistry,
 	Key extends Operation<Registry>,
@@ -22,12 +65,12 @@ export type CommandArgument<
 export type CommandInput<
 	Registry extends CommandRegistry,
 	Key extends Operation<Registry>,
-> = Parsed<Registry[Key]['command']>
+> = SchemaOutput<Registry[Key]['command']>
 
 export type CommandResult<
 	Registry extends CommandRegistry,
 	Key extends Operation<Registry>,
-> = Parsed<Registry[Key]['result']>
+> = SchemaOutput<Registry[Key]['result']>
 
 export type CommandExecution<
 	Context,
@@ -39,6 +82,8 @@ export type CommandExecution<
 	definition: Registry[Key]
 	command: CommandInput<Registry, Key>
 	parseResult: <Input>(value: Input) => CommandResult<Registry, Key>
+	/** Interpreter-owned asynchronous result decoding, preserving the legacy parser. */
+	decodeResult?: <Input>(value: Input) => Promise<CommandResult<Registry, Key>>
 	/** Runs the handler (result-parsed). Accepts a middleware-enriched context. */
 	run: (context?: Context) => Promise<CommandResult<Registry, Key>>
 	/** Runs without parsing for owners that validate after their middleware chain. */
@@ -46,12 +91,11 @@ export type CommandExecution<
 }>
 
 type CommandDefinition = Readonly<{
-	command: Parseable<unknown>
-	result: Parseable<unknown>
+	command: CommandSchema
+	result: CommandSchema
 }>
 
 type Operation<Registry extends CommandRegistry> = Extract<keyof Registry, string>
-type Parsed<Schema extends Parseable<unknown>> = ReturnType<Schema['parse']>
 type MaybePromise<Value> = Value | Promise<Value>
 type Execute<Context, Registry extends CommandRegistry> = <Key extends Operation<Registry>>(
 	execution: CommandExecution<Context, Registry, Key>,
@@ -126,8 +170,8 @@ export class Command<Context, const Registry extends CommandRegistry> {
 			const selected =
 				'operation' in executor
 					? { operation: executor.operation, value }
-					: (() => {
-							const dispatcher = executor.dispatcher.parse(value)
+					: await (async () => {
+							const dispatcher = await decodeCommandSchema(executor.dispatcher, value)
 							return {
 								operation: executor.select(dispatcher),
 								value: dispatcher,
@@ -139,13 +183,22 @@ export class Command<Context, const Registry extends CommandRegistry> {
 			const operation = selected.operation
 			const definition = this.#operations[operation]
 			// SAFETY: the selected registry entry owns this command schema and its output.
-			const command = definition.command.parse(selected.value) as CommandInput<
-				Registry,
-				Operation<Registry>
-			>
+			const command = (await decodeCommandSchema(
+				definition.command,
+				selected.value,
+			)) as CommandInput<Registry, Operation<Registry>>
 			// SAFETY: the selected entry also owns the result schema, including transforms.
 			const parseResult = <Input>(result: Input) =>
-				definition.result.parse(result) as CommandResult<Registry, Operation<Registry>>
+				parseCommandSchema(definition.result, result) as CommandResult<
+					Registry,
+					Operation<Registry>
+				>
+			// SAFETY: selected result schema owns the decoded output, including async transforms.
+			const decodeResult = async <Input>(result: Input) =>
+				(await decodeCommandSchema(definition.result, result)) as CommandResult<
+					Registry,
+					Operation<Registry>
+				>
 			const handler = executor.handler
 			return this.#execute({
 				context,
@@ -153,11 +206,49 @@ export class Command<Context, const Registry extends CommandRegistry> {
 				definition,
 				command,
 				parseResult,
+				decodeResult,
 				runUnparsed: async (contextOverride?: Context) =>
 					handler(contextOverride ?? context, command),
 				run: async (contextOverride?: Context) =>
-					parseResult(await handler(contextOverride ?? context, command)),
+					decodeResult(await handler(contextOverride ?? context, command)),
 			})
 		}
+	}
+}
+
+/** Legacy synchronous parsing remains available to existing kernel interpreters. */
+export function parseCommandSchema<S extends CommandSchema>(
+	schema: S,
+	value: unknown,
+): SchemaOutput<S> {
+	if (!('parse' in schema))
+		throw new TypeError('This command schema requires asynchronous decoding')
+	// SAFETY: this legacy parser belongs to the selected schema.
+	return schema.parse(value) as SchemaOutput<S>
+}
+
+/** Interpreter-owned decoding awaits validation and leaves thrown/rejected defects intact. */
+export async function decodeCommandSchema<S extends CommandSchema>(
+	schema: S,
+	value: unknown,
+): Promise<SchemaOutput<S>> {
+	if ('parse' in schema) {
+		// SAFETY: parseAsync and parse share the selected legacy schema's output.
+		return (await (schema.parseAsync
+			? schema.parseAsync(value)
+			: schema.parse(value))) as SchemaOutput<S>
+	}
+	const result = await ('kind' in schema
+		? schema.decode(value)
+		: schema['~standard'].validate(value))
+	if (result.issues !== undefined) throw new CommandValidationError(result.issues)
+	// SAFETY: this decoder owns the selected schema's output.
+	return result.value as SchemaOutput<S>
+}
+
+class CommandValidationError extends Error {
+	readonly name = 'CommandValidationError'
+	constructor(readonly issues: readonly ValidationIssue[]) {
+		super('Command contract validation failed')
 	}
 }

@@ -6,10 +6,18 @@ import {
 	type CommandInput,
 	type CommandRegistry,
 	type CommandResult,
-	type Parseable,
+	type CommandSchema,
+	decodeCommandSchema,
+	parseCommandSchema,
 } from './modules/command/command'
 import { Observability, type ObservabilityOptions } from './modules/observability/observability'
 import { Query } from './modules/query/query'
+import {
+	executeCommandLifecycle,
+	promiseLifecycle,
+	CommandPermissionError,
+	type PromiseExecution,
+} from './modules/command/lifecycle'
 import { executeResultBoundary, projectResult } from './result'
 import { emitSemanticEvent } from './telemetry'
 import {
@@ -37,8 +45,8 @@ type MaybePromise<Value> = Value | Promise<Value>
 type OperationKey<Operations extends CommandRegistry> = Extract<keyof Operations, string>
 
 export type AuditedOperation = Readonly<{
-	command: Parseable<unknown>
-	result: Parseable<unknown>
+	command: CommandSchema
+	result: CommandSchema
 	classification: string
 	/**
 	 * Permission slug required to execute this operation. Checked through the
@@ -47,7 +55,7 @@ export type AuditedOperation = Readonly<{
 	 */
 	permission?: string
 	prepare?: (context: never, command: never) => MaybePromise<CommandPreparation<never>>
-	replayResult?: Parseable<unknown>
+	replayResult?: CommandSchema
 	/**
 	 * Per-operation precondition, after the permission check and the registry
 	 * default guard, before the handler. Throw to deny — nothing has run yet.
@@ -226,142 +234,106 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 	async #execute<Key extends OperationKey<Operations>>(
 		execution: CommandExecution<Context, Operations, Key>,
 	): Promise<CommandResult<Operations, Key>> {
+		const definition = execution.definition
 		return this.#observability.observe(
-			{
-				operation: execution.operation,
-				classification: execution.definition.classification,
-			},
-			async () => {
-				// Guards run before the handler: permission → default → operation.
-				const permission = execution.definition.permission
-				if (permission !== undefined) {
-					if (!this.#checkPermission) {
-						throw new CommandPermissionError(execution.operation)
-					}
-					// SAFETY: the injected policy receives the host context used by this Command instance.
-					await this.#checkPermission(execution.context as never, {
-						permission,
-						operation: execution.operation,
-					})
-				}
-				// SAFETY: prepare belongs to this definition; its context and parsed command are paired by the kernel.
-				const preparation = await execution.definition.prepare?.(
-					execution.context as never,
-					execution.command as never,
-				)
-				if (preparation?.kind === 'replay') {
-					// SAFETY: replayResult validates the stored output for this selected operation.
-					return execution.definition.replayResult
-						? (execution.definition.replayResult.parse(preparation.result) as CommandResult<
-								Operations,
-								Key
-							>)
-						: execution.parseResult(preparation.result)
-				}
-				const middleware = [
-					...(this.#defaults.middleware ?? []),
-					...(execution.definition.middleware ?? []),
-				]
-				const terminal = async (context: Context) => {
-					// SAFETY: registry guards receive the same host context, enriched by its middleware.
-					await this.#defaults.guard?.(context as never)
-					// SAFETY: guard is called with the selected operation's parsed command and middleware context.
-					await execution.definition.guard?.(context as never, execution.command as never)
-					return execution.runUnparsed(context)
-				}
-				let deepest = -1
-				const dispatch = async (
-					index: number,
-					context: Context,
-				): Promise<CommandHandlerResult<Operations, Key>> => {
-					if (index <= deepest) {
-						throw new CommandMiddlewareError(execution.operation)
-					}
-					deepest = index
-					// SAFETY: this chain belongs to the selected operation; parseResult validates its final output before audit.
-					const layer = middleware[index] as
-						| AnyCommandMiddleware<
-								CommandInput<Operations, Key>,
-								CommandHandlerResult<Operations, Key>,
-								CommandHandlerResult<Operations, Key>
-						  >
-						| undefined
-					if (!layer) return terminal(context)
-					return layer({
-						operation: execution.operation,
-						definition: execution.definition,
-						command: execution.command,
-						// SAFETY: middleware context is erased only in the heterogeneous registry.
-						context: context as never,
-						next: (options) =>
-							dispatch(
-								index + 1,
-								options?.context
-									? {
-											...context,
-											...options.context,
-										}
-									: context,
-							),
-					})
-				}
-				// Middleware may transform the return value, so the strict
-				// result schema parses whatever leaves the chain exactly once.
-				const result = execution.parseResult(await dispatch(0, execution.context))
-				// SAFETY: the selected audit callback receives its validated command/result and original host context.
-				const audit = await execution.definition.audit(
-					{ command: execution.command, result } as never,
-					execution.context as never,
-				)
-				if (audit) {
-					const allowed = execution.definition.aggregates
-					if (allowed && !allowed.includes(audit.aggregate.type)) {
-						throw new CommandAggregateError(execution.operation, audit.aggregate.type)
-					}
-					// SAFETY: the host injected this writer for the context supplied to its Command.
-					await this.#writeAudit(execution.context as never, {
-						...audit,
-						classification: execution.definition.classification,
-					})
-				}
-				// SAFETY: complete comes from this invocation's prepare hook and receives its validated result.
-				await preparation?.complete?.(result as never)
-				return result
-			},
-		)
-	}
-}
-
-/** A middleware called next() more than once. */
-class CommandMiddlewareError extends Error {
-	readonly code = 'COMMAND_MIDDLEWARE_NEXT_REUSED'
-	readonly name = 'CommandMiddlewareError'
-
-	constructor(operation: string) {
-		super(`A middleware for operation "${operation}" called next() more than once`)
-	}
-}
-
-/** The audit referenced an aggregate type outside the operation's allowlist. */
-class CommandAggregateError extends Error {
-	readonly code = 'COMMAND_AGGREGATE_NOT_DECLARED'
-	readonly name = 'CommandAggregateError'
-
-	constructor(operation: string, aggregateType: string) {
-		super(
-			`Operation "${operation}" audited aggregate type "${aggregateType}" outside its declared aggregates`,
-		)
-	}
-}
-
-/** Fails closed: an operation declared a permission but no checker exists. */
-class CommandPermissionError extends Error {
-	readonly code = 'COMMAND_PERMISSION_NOT_CONFIGURED'
-	readonly name = 'CommandPermissionError'
-
-	constructor(operation: string) {
-		super(
-			`Operation "${operation}" declares a permission but the Foundation has no checkPermission`,
+			{ operation: execution.operation, classification: definition.classification },
+			() =>
+				executeCommandLifecycle<
+					PromiseExecution,
+					Context,
+					CommandInput<Operations, Key>,
+					CommandHandlerResult<Operations, Key>,
+					CommandResult<Operations, Key>
+				>(promiseLifecycle, {
+					operation: execution.operation,
+					classification: definition.classification,
+					context: execution.context,
+					command: execution.command,
+					permission:
+						definition.permission === undefined
+							? undefined
+							: async () => {
+									if (!this.#checkPermission) throw new CommandPermissionError(execution.operation)
+									// SAFETY: injected policy consumes this invocation's original host context.
+									await this.#checkPermission(execution.context as never, {
+										permission: definition.permission!,
+										operation: execution.operation,
+									})
+								},
+					prepare: async () => {
+						// SAFETY: selected definition and parsed input are paired by the kernel.
+						const preparation = await definition.prepare?.(
+							execution.context as never,
+							execution.command as never,
+						)
+						if (preparation?.kind !== 'execute') return preparation
+						return {
+							kind: 'execute' as const,
+							complete: preparation.complete
+								? async (result: CommandResult<Operations, Key>) => {
+										// SAFETY: completion belongs to this operation's validated final result.
+										await preparation.complete!(result as never)
+									}
+								: undefined,
+						}
+					},
+					parseReplay: (value) => {
+						if (!definition.replayResult) return execution.parseResult(value)
+						// SAFETY: selected replay schema validates this operation's stored output.
+						return parseCommandSchema(definition.replayResult, value) as CommandResult<
+							Operations,
+							Key
+						>
+					},
+					decodeReplay: async (value) => {
+						if (!definition.replayResult) {
+							return execution.decodeResult
+								? execution.decodeResult(value)
+								: execution.parseResult(value)
+						}
+						const replay = definition.replayResult
+						// SAFETY: selected replay decoder owns the final output representation.
+						return (await decodeCommandSchema(replay, value)) as CommandResult<Operations, Key>
+					},
+					middleware: [...(this.#defaults.middleware ?? []), ...(definition.middleware ?? [])].map(
+						(layer) => async (input) => {
+							// SAFETY: selected definition owns this heterogeneous middleware's pre-validation output.
+							return layer({
+								...input,
+								definition,
+								// SAFETY: selected command schema owns this heterogeneous storage value.
+								command: input.command as never,
+								// SAFETY: only heterogeneous storage erases the selected middleware context.
+								context: input.context as never,
+								// SAFETY: selected operation pairs downstream output with its final schema.
+								next: input.next as (options?: { context?: object }) => Promise<never>,
+							}) as Promise<CommandHandlerResult<Operations, Key>>
+						},
+					),
+					defaultGuard: async (context) => {
+						// SAFETY: default guards consume the downstream middleware context.
+						await this.#defaults.guard?.(context as never)
+					},
+					guard: async (context) => {
+						// SAFETY: selected guard consumes its parsed input and enriched context.
+						await definition.guard?.(context as never, execution.command as never)
+					},
+					run: (context) => execution.runUnparsed(context),
+					parseResult: execution.parseResult,
+					decodeResult: execution.decodeResult,
+					audit: async (result) => {
+						// SAFETY: audit receives this selected parsed command/result and original context.
+						return definition.audit(
+							{ command: execution.command, result } as never,
+							execution.context as never,
+						)
+					},
+					aggregates: definition.aggregates,
+					writeAudit: async (entry) => {
+						// SAFETY: host supplied writer for this invocation's original context.
+						return this.#writeAudit(execution.context as never, entry)
+					},
+				}),
 		)
 	}
 }
@@ -439,6 +411,7 @@ export type {
 	CommandInput,
 	CommandRegistry,
 	CommandResult,
+	SchemaOutput,
 	Parseable,
 } from './modules/command/command'
 export type {

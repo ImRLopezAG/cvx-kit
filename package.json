@@ -30,6 +30,22 @@
 			"types": "./dist/zod-table.d.mts",
 			"import": "./dist/zod-table.mjs"
 		},
+		"./effect": {
+			"types": "./dist/effect.d.mts",
+			"import": "./dist/effect.mjs"
+		},
+		"./contracts": {
+			"types": "./dist/contracts.d.mts",
+			"import": "./dist/contracts.mjs"
+		},
+		"./idempotency": {
+			"types": "./dist/idempotency.d.mts",
+			"import": "./dist/idempotency.mjs"
+		},
+		"./workflow": {
+			"types": "./dist/workflow.d.mts",
+			"import": "./dist/workflow.mjs"
+		},
 		"./auth": {
 			"types": "./dist/auth.d.mts",
 			"import": "./dist/auth.mjs"
@@ -116,6 +132,8 @@
 		"test:package": "bun run build && vp test run test/package-contents.test.mjs",
 		"test:package:ids": "bun run build && node scripts/test-packed-ids.mjs",
 		"test:package:oxlint": "bun run build && node scripts/test-packed-oxlint.mjs",
+		"test:package:effect": "bun run build && node scripts/test-packed-effect.mjs",
+		"test:package:smoke:effect": "bun run build && node scripts/smoke-packed-effect.mjs",
 		"test:package:smoke:bun": "bun scripts/smoke-packed-components.mjs bun",
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
 		"docs:sync": "rm -f docs/*.md && cp src/docs/*.md docs/",
@@ -137,6 +155,7 @@
 		"convex": "1.45.0",
 		"convex-helpers": "0.1.124",
 		"convex-test": "^0.0.56",
+		"effect": "4.0.1",
 		"oxlint": "1.79.0",
 		"publint": "^0.3.24",
 		"typescript": "7.0.2",
@@ -146,6 +165,19 @@
 	"peerDependencies": {
 		"convex": "^1.45.0",
 		"convex-helpers": ">=0.1.123 <0.2.0",
+		"effect": ">=4.0.1 <5",
 		"zod": "^4.5.4"
+	},
+	"peerDependenciesMeta": {
+		"effect": {
+			"optional": true
+		}
+	},
+	"devEngines": {
+		"packageManager": {
+			"name": "bun",
+			"version": "1.4.2",
+			"onFail": "download"
+		}
 	}
 }

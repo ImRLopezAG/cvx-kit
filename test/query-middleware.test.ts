@@ -73,4 +73,22 @@ describe('Foundation Query middleware', () => {
 		const read = queries.exec({ handler: async () => 'x' })
 		await expect(read({ userId: 'u_1' })).rejects.toThrow(/more than once/)
 	})
+	it('retains variadic handlers, metadata overrides and repeatable policy execution', async () => {
+		const Query = queryHarness()
+		const seen: string[] = []
+		const queries = new Query<{ actorId: string }, { surface: string }>({
+			defaults: { surface: 'default' },
+			execute: async (execution) => {
+				seen.push(`${execution.context.actorId}:${execution.metadata.surface}`)
+				return execution.run()
+			},
+		})
+		const read = queries.exec({
+			metadata: { surface: 'reports' },
+			handler: (context, title: string, count: number) => `${context.actorId}:${title}:${count}`,
+		})
+		expect(await read({ actorId: 'a' }, 'first', 1)).toBe('a:first:1')
+		expect(await read({ actorId: 'b' }, 'second', 2)).toBe('b:second:2')
+		expect(seen).toEqual(['a:reports', 'b:reports'])
+	})
 })

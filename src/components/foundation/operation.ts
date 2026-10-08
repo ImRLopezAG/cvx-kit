@@ -7,7 +7,8 @@ import type {
 import type {
 	CommandInput,
 	CommandHandlerResult,
-	Parseable,
+	CommandSchema,
+	SchemaOutput,
 	SchemaInput,
 } from './modules/command/command'
 
@@ -15,7 +16,7 @@ type MaybePromise<T> = T | Promise<T>
 export type CommandPreparation<Result> =
 	| { kind: 'replay'; result: unknown }
 	| { kind: 'execute'; complete?: (result: Result) => MaybePromise<void> }
-type Parsed<S extends Parseable<unknown>> = ReturnType<S['parse']>
+type Parsed<S extends CommandSchema> = SchemaOutput<S>
 declare const extension: unique symbol
 declare const hostContext: unique symbol
 export type OperationHostContext<Context> = {
@@ -41,8 +42,8 @@ type AuditFor<Aggregate extends string> = Omit<AuditEntryInput, 'classification'
 }
 export type TypedOperation<
 	Context,
-	Input extends Parseable<unknown>,
-	Output extends Parseable<unknown>,
+	Input extends CommandSchema,
+	Output extends CommandSchema,
 	Aggregates extends readonly string[],
 	Extension,
 > = OperationHostContext<Context> & {
@@ -56,7 +57,7 @@ export type TypedOperation<
 		command: Parsed<Input>,
 	) => MaybePromise<CommandPreparation<Parsed<Output>>>
 	/** Validates stored outputs when result transforms accept a different input shape. */
-	readonly replayResult?: Parseable<Parsed<Output>>
+	readonly replayResult?: CommandSchema<Parsed<Output>>
 	readonly aggregates?: Aggregates
 	readonly guard?: (context: Context & Extension, command: Parsed<Input>) => MaybePromise<void>
 	readonly audit: (
@@ -97,8 +98,8 @@ type RegistryInput<Context, Operations extends AuditedRegistry> = {
 
 type StoredOperation<
 	Context,
-	Input extends Parseable<unknown>,
-	Output extends Parseable<unknown>,
+	Input extends CommandSchema,
+	Output extends CommandSchema,
 	Aggregates extends readonly string[],
 	Extension,
 > = Omit<TypedOperation<Context, Input, Output, Aggregates, Extension>, 'middleware'> &
@@ -111,8 +112,8 @@ export function operationFactory<
 >() {
 	return {
 		operation<
-			const Input extends Parseable<unknown>,
-			const Output extends Parseable<unknown>,
+			const Input extends CommandSchema,
+			const Output extends CommandSchema,
 			const Aggregates extends readonly string[] = readonly string[],
 		>(
 			definition: TypedOperation<Context, Input, Output, Aggregates, Extension>,

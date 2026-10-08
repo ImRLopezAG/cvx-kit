@@ -9,6 +9,17 @@ export class KitError extends Error {
 	}
 }
 
+export {
+	defineErrorContract,
+	type ErrorContract,
+	type ErrorDefinitions,
+	type ErrorDetailParser,
+	type DeclaredError,
+	type DeclaredFailure,
+	type DecodedFailure,
+	type UnknownFailure,
+} from './modules/contracts/errors'
+
 /**
  * Injection seam for host error policy. Hosts with their own error taxonomy
  * (e.g. an App.errors singleton) adapt it to this shape; everyone else uses

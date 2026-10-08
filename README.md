@@ -13,7 +13,7 @@ bun add cvx-kit
 # or: npm install cvx-kit
 ```
 
-Supported versions: Convex `^1.43.0`, Zod `^4.0.0`, Bun `1.3+`, and Node.js
+Supported versions: Convex `^1.45.0`, Zod `^4.5.4`, Bun `1.3+`, and Node.js
 `24+` with npm `11+`. The library runtime is ESM-only.
 
 ## Toolchain
@@ -36,6 +36,8 @@ authored in [`src/docs/`](./src/docs/):
 - [`zod-table.md`](./src/docs/zod-table.md) — one zod shape per entity, masked into every boundary
 - [`auth.md`](./src/docs/auth.md) — auth-aware function constructors from injected policy
 - [`commands.md`](./src/docs/commands.md) — Foundation, the audited command protocol, observability
+- [`effect.md`](./src/docs/effect.md) — opt-in Effect v4 registries, injected services, and shared API builders
+- [`domain-operations.md`](./src/docs/domain-operations.md) — server domain/API examples, contracts, errors, receipts, workflow steps, and selected tools
 - [`triggers.md`](./src/docs/triggers.md) — trigger registry, timestamps/append-only/no-delete
 - [`approvals.md`](./src/docs/approvals.md) — declarative approval workflows
 - [`tenancy.md`](./src/docs/tenancy.md) — row-level security (roles) with opt-in multi-tenant isolation
@@ -170,6 +172,13 @@ operation: auditing is type-enforced, not opt-in. The foundation component
 itself owns zero tables and ships `executeResultBoundary` (typed failures
 only while the transaction has no effects; otherwise rethrow so Convex
 rolls back).
+
+For cohesive command/query entries that include their handlers, use
+[`cvx-kit/effect`](./src/docs/effect.md). Install Effect `>=4.0.1 <5` separately;
+ordinary handlers, `Effect.gen`, and `Effect.fn` compose through the same
+registry. Shared API builders provide invocation-local services and execute
+the Effect. Existing Foundation declarations and Promise executors remain
+supported, so domains can migrate independently.
 
 ### `cvx-kit/components/approvals` (component)
 

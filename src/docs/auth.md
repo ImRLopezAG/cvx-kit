@@ -64,6 +64,71 @@ export const {
 Every function in the app is then built from these — raw `query`/`mutation`
 imports from `_generated/server` appear **only** in this file.
 
+## Shared Effect execution after authentication
+
+Wrap the constructors returned by `createAuthFunctions` with
+`effectZodApiBuilder` from `cvx-kit/effect`. The original constructor resolves
+authentication, authorization, tenant policy, and the wrapped database before
+the service provider runs. Keep that ordering when adding Effect; use the Zod
+adapter for these custom constructors.
+
+This factory accepts the configured `authMutation` from the setup above. The
+actor service comes from trusted `ctx.actor`, with no actor or organization
+argument from callers:
+
+<!-- packed-effect-example -->
+
+```ts
+import type { GenericDataModel } from 'convex/server'
+import { createAuthFunctions } from 'cvx-kit/auth'
+import { effectZodApiBuilder } from 'cvx-kit/effect'
+import { Context, Effect } from 'effect'
+import { z } from 'zod'
+
+class Actor extends Context.Service<
+	Actor,
+	{ userId: string; organizationId: string; role: string }
+>()('app/Actor') {}
+
+export function createEffectAccountApi<DataModel extends GenericDataModel>(
+	authMutation: ReturnType<typeof createAuthFunctions<DataModel>>['authMutation'],
+) {
+	const effectAuthMutation = effectZodApiBuilder(authMutation, {
+		services: (ctx) => Context.make(Actor, ctx.actor),
+	})
+	const currentActor = effectAuthMutation({
+		args: {},
+		returns: z.object({ userId: z.string(), organizationId: z.string() }),
+		handler: () =>
+			Effect.gen(function* () {
+				const actor = yield* Actor
+				return { userId: actor.userId, organizationId: actor.organizationId }
+			}),
+	})
+	return { effectAuthMutation, currentActor }
+}
+```
+
+Call `createEffectAccountApi(authMutation)` with the constructor exported by
+your `convex/functions.ts`, then export `currentActor` from the account API
+module. The factory preserves the configured auth policy; it does not choose
+an identity provider or membership authority.
+
+Declare the provider once per constructor, then reuse the builder across
+endpoints. Database services should capture the provider's `ctx.db`, so
+trigger and RLS enforcement also applies to Effect-driven writes. Services
+are created per invocation; do not cache an authenticated context in a module
+singleton. Query providers receive readers; HTTP integrations belong in
+actions.
+
+The adapter runs the composed Effect within an invocation scope and awaits
+finalizers before returning. Domain errors can be mapped with handler pipes
+or shared `mapError`; they remain thrown failures at the native boundary so
+mutation writes roll back. Native argument/result validators remain in place.
+Effect's inferred server-side error and service channels are not a typed
+transport error contract. See [the Effect guide](./effect.md) for complete
+domain registries, error mapping, scoped services, and tracing.
+
 ## The constructor families
 
 | Constructor                                                     | Visibility | Auth                         | Extra                            |

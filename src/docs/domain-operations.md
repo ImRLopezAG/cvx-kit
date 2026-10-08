@@ -2,7 +2,7 @@
 
 Declare operations beside their handlers, inject the application's repositories, and register the native functions at the application boundary. The domain registry owns decoding and the command lifecycle. Convex owns function authorization, transaction rollback, durable workflow journals, and scheduling.
 
-The complete TypeScript module below is mirrored in `test/domain-operation-guide-types.ts` for strict compilation. All TypeScript in this guide belongs to that one module; there are no standalone handler fragments. It uses public `cvx-kit/*` imports, real Convex builders, an injected document repository, and generated references from the native acceptance fixture. Its document schema and generic builders let the example compile independently; an application imports its own `mutation`, `query`, and internal builders from `./_generated/server`. The workflow and tool portions bind existing registered fixture functions rather than inventing function references.
+The complete TypeScript module below is mirrored in `test/domain-operation-guide-types.ts` for strict compilation. All TypeScript in this guide belongs to that one module; there are no standalone handler fragments. It uses public `cvx-kit/*` imports, real Convex builders, an injected document repository, and generated references from the native acceptance fixture. Its document schema and generic builders let the example compile independently; an application imports its own `mutation`, `query`, and internal builders from `./_generated/server`. The integrated rename portion imports the exact registry from `test/fixture-effect/convex/integratedRename.ts` and binds its real generated references. The document create/receipt example remains separate.
 
 The examples use the optional Effect adapter even for ordinary handlers. Consumers without Effect can keep the legacy `cvx-kit/components/foundation` surface and use the neutral contracts, errors, idempotency, workflow, and tool facades. Import `cvx-kit/effect` only when the application supplies its Effect peer.
 
@@ -60,9 +60,9 @@ The host owns authorization scope, compatible deployment policy, fingerprint equ
 
 ## Run native workflow steps
 
-Import `workflowBinding`, `workflowExecution`, and `runWorkflowStep` from `cvx-kit/workflow`. Pair the operation's explicit wire schemas and version metadata with an actual generated query, mutation, or action reference. The fixture binds `internal.workflowNative.protectedSave`, a real registered receipt-protected mutation. A wrong kind is a compile error.
+Import `workflowBinding`, `workflowExecution`, and `runWorkflowStep` from `cvx-kit/workflow`. Pair the operation's explicit wire schemas and version metadata with an actual generated query, mutation, or action reference. The rename fixture binds `internal.integratedRename.applyRename`, the same registered audited mutation reached by the direct API and selected tool. A wrong kind is a compile error. The separate create example demonstrates receipt protection; rename does not add a receipt.
 
-The `nativeWorkflowStep` function calls that registered reference through `stepBinding`. Its execution argument is a host-issued descriptor, not a caller-supplied authority object.
+The `nativeWorkflowStep` function calls that registered reference through `stepBinding`. `startNativeRename` invokes the secured `api.integratedRename.start`, which issues the execution descriptor and starts the configured `WorkflowManager` component. Its native workflow waits for a host event, then executes this binding through an actual component step. Callers supply only the note ID and raw title. The execution capability, actor and tenant come from the authenticated host.
 
 The host-issued execution descriptor contains `version`, operation/contract/binding versions, stable business `run`, opaque trusted `capability`, logical `occurrence`, and plain `args`. Reconstruct current authority and invocation services inside each newly executed native step. Replayed completed steps remain historical journal results. Status access also requires current authority.
 
@@ -80,11 +80,15 @@ The pinned native `WorkflowManager.restart` retains the original completion call
 
 The native acceptance driver exercises paused-run recovery across a compatible redeployment and rejects changed recorded step arguments through the real journal. Listed compatibility metadata is an explicit host decision, not automatic compatibility discovery.
 
+The actual rename declaration lives in `test/fixture-effect/convex/integratedRename.ts`. Its `commands.rename` resolves the injected `Notes` repository and produces only `{ title }`. The registered `applyRename` adapter supplies that repository per invocation, resolves the host-issued capability, rechecks current permission, and reconstructs the tenant/owner secured writer with native triggers. Permission, rename and actor audit execute inside the same native mutation. The asynchronous title decoder runs once there; neither the tool converter nor workflow binding normalizes it again. `rejectMissingRenameService` imports this exact registry and verifies that an API provider returning `Context.empty()` cannot close its required `Notes` service.
+
+The native driver independently reads business, audit and trigger state after direct API, selected tool and workflow calls. It also pauses a real component workflow, revokes authority, and verifies the newly executed step leaves those writes unchanged. Completed journal results remain historical; current checks apply when the native mutation executes again.
+
 ## Select operation tools explicitly
 
-Use `registry.expose(owner, key)` and `bindOperationExecutor` from `cvx-kit/agent-tools` to select one operation and bind its executor. `createOperationTools` exposes only the supplied entries. The compile fixture selects the actual native idempotent operation and invokes its secured registered mutation through the generated API reference.
+Use `registry.expose(owner, key)` and `bindOperationExecutor` from `cvx-kit/agent-tools` to select one operation and bind its executor. `createOperationTools` exposes only the supplied entries. `renameDocumentTool` consumes `selectedRename`, exported by the actual injected rename registry, and invokes `api.integratedRename.rename` through `invokeNativeRename`. That secured API issues a host capability and calls `internal.integratedRename.applyRename`, exactly the mutation bound by the workflow step. There is one rename declaration and one audited native execution boundary across all three surfaces.
 
-The `createDocumentTool` function binds the selected operation to its real generated native function through `invokeNativeCreate`. The host supplies the idempotency key outside the tool arguments. Construct a tool binding for each logical create request. Reuse that request's key for compatible retries; give distinct requests distinct keys. Reusing one binding for independent writes can replay the earlier result or reject conflicting input.
+The separate `createDocumentTool` function binds the selected create operation to its real generated native function through `invokeNativeCreate`. The host supplies the idempotency key outside the tool arguments. Construct a tool binding for each logical create request. Reuse that request's key for compatible retries; give distinct requests distinct keys. Reusing one binding for independent writes can replay the earlier result or reject conflicting input.
 
 Tool arguments carry only operation input. Tenant, actor, permissions, credentials, and service authority come from the trusted host and its secured reference. The owner and key pair identify the selected operation; they are correlation tags, not authorization credentials. The trusted host must bind an executor to the correct secured native reference. The adapter cannot authorize an arbitrary host callback or repair its public projection.
 
@@ -171,6 +175,13 @@ import type { WorkflowCtx } from '@convex-dev/workflow'
 import { internal, api } from './fixture-effect/convex/_generated/api'
 import type { ActionCtx } from './fixture-effect/convex/_generated/server'
 import { nativeIdempotencyOperation } from './fixture-effect/convex/idempotency'
+import {
+	commands as integratedRenameCommands,
+	selectedRename,
+	type Host as IntegratedRenameHost,
+} from './fixture-effect/convex/integratedRename'
+import { internalMutation as fixtureInternalMutation } from './fixture-effect/convex/_generated/server'
+import type { Id as FixtureId } from './fixture-effect/convex/_generated/dataModel'
 
 // Standalone type fixture: these are real native builders specialized to this schema.
 // An application imports its equivalent generated builders from ./_generated/server.
@@ -458,44 +469,87 @@ missingProvider({
 // References come from registered native functions.
 const stepBinding = workflowBinding({
 	kind: 'mutation',
-	operation: 'workflow.save',
+	operation: 'integratedRename.rename',
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ title: z.string() }),
-	result: z.object({ title: z.string() }),
-	reference: internal.workflowNative.protectedSave,
+	args: z.object({ id: z.string(), title: z.string() }).strict(),
+	result: z.object({ title: z.string() }).strict(),
+	reference: internal.integratedRename.applyRename,
 })
 export function nativeWorkflowStep(
 	step: WorkflowCtx,
-	execution: WorkflowExecution<{ title: string }>,
+	execution: WorkflowExecution<{ id: FixtureId<'crudNotes'>; title: string }>,
 ) {
 	return runWorkflowStep(step, stepBinding, execution, { inline: true })
 }
 workflowBinding({
 	kind: 'action',
-	operation: 'workflow.save',
+	operation: 'integratedRename.rename',
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ title: z.string() }),
-	result: z.object({ title: z.string() }),
+	args: z.object({ id: z.string(), title: z.string() }).strict(),
+	result: z.object({ title: z.string() }).strict(),
 	// @ts-expect-error A registered mutation reference cannot be an action binding.
-	reference: internal.workflowNative.protectedSave,
+	reference: internal.integratedRename.applyRename,
 })
 
 workflowBinding({
 	...stepBinding,
-	args: z.object({ title: z.number() }),
+	args: z.object({ id: z.string(), title: z.number() }),
 	// @ts-expect-error The real mutation takes a string title, not a numeric title.
-	reference: internal.workflowNative.protectedSave,
+	reference: internal.integratedRename.applyRename,
 })
 workflowBinding({
 	...stepBinding,
 	result: z.object({ title: z.number() }),
 	// @ts-expect-error The real mutation returns a string title, not a numeric title.
-	reference: internal.workflowNative.protectedSave,
+	reference: internal.integratedRename.applyRename,
 })
+
+// This registry is the exact declaration executed by the registered acceptance fixture.
+// The native adapter provides its Notes repository for each new invocation.
+export function rejectMissingRenameService(host: IntegratedRenameHost) {
+	const missingRenameProvider = effectApiBuilder(fixtureInternalMutation, {
+		services: () => Context.empty(),
+	})
+	// @ts-expect-error The actual rename operation still requires its injected Notes service.
+	missingRenameProvider({
+		args: { id: v.string(), title: v.string() },
+		returns: v.object({ title: v.string() }),
+		handler: (_ctx, input) => integratedRenameCommands.exec('rename', input, host),
+	})
+}
+export function invokeNativeRename(ctx: ActionCtx, input: { id: string; title: string }) {
+	return ctx.runMutation(api.integratedRename.rename, input)
+}
+export function startNativeRename(ctx: ActionCtx, input: { id: string; title: string }) {
+	return ctx.runMutation(api.integratedRename.start, input)
+}
+export function renameDocumentTool(ctx: ActionCtx) {
+	const executor = bindOperationExecutor(selectedRename, {
+		owner: selectedRename.owner,
+		key: selectedRename.key,
+		execute: (input) => invokeNativeRename(ctx, input),
+	})
+	return createOperationTools({
+		renameDocument: {
+			operation: selectedRename,
+			executor,
+			description: 'Rename through the same authorized audited native boundary',
+			converter: {
+				dialect: operationToolDialect,
+				convert: () => ({
+					type: 'object',
+					properties: { id: { type: 'string' }, title: { type: 'string' } },
+					required: ['id', 'title'],
+					additionalProperties: false,
+				}),
+			},
+		},
+	})
+}
 
 // Tools explicitly select a raw descriptor and execute the real secured native reference.
 export function invokeNativeCreate(ctx: ActionCtx, key: string, payload: { title: string }) {

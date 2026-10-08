@@ -206,6 +206,14 @@ try {
 	cpSync(join(root, 'test/fixture-effect/idempotency.mjs'), join(fixture, 'idempotency.mjs'))
 	cpSync(join(root, 'test/fixture-effect/async-domain.mjs'), join(fixture, 'async-domain.mjs'))
 	cpSync(
+		join(root, 'test/fixture-effect/action-validation.mjs'),
+		join(fixture, 'action-validation.mjs'),
+	)
+	cpSync(
+		join(root, 'test/fixture-effect/integrated-rename.mjs'),
+		join(fixture, 'integrated-rename.mjs'),
+	)
+	cpSync(
 		join(root, 'test/fixture-effect/deployment-versions.mjs'),
 		join(fixture, 'deployment-versions.mjs'),
 	)
@@ -262,6 +270,8 @@ try {
 	await verifyWorkflowDeployments(cloudPort)
 	await verifyNativeFixture('operation-tools.mjs', 'operation tools', cloudPort)
 	await verifyNativeFixture('async-domain.mjs', 'async domain', cloudPort)
+	await verifyNativeFixture('action-validation.mjs', 'action validation', cloudPort)
+	await verifyNativeFixture('integrated-rename.mjs', 'integrated rename', cloudPort)
 	assert.equal(invoke('save', { key: 'success', mode: 'success' }), 'saved')
 	assert.deepEqual(invoke('read', { key: 'success' }), ['domain', 'audit', 'completion'])
 	assert.deepEqual(invoke('composed', { key: 'success' }), {

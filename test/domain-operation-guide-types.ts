@@ -42,6 +42,13 @@ import type { WorkflowCtx } from '@convex-dev/workflow'
 import { internal, api } from './fixture-effect/convex/_generated/api'
 import type { ActionCtx } from './fixture-effect/convex/_generated/server'
 import { nativeIdempotencyOperation } from './fixture-effect/convex/idempotency'
+import {
+	commands as integratedRenameCommands,
+	selectedRename,
+	type Host as IntegratedRenameHost,
+} from './fixture-effect/convex/integratedRename'
+import { internalMutation as fixtureInternalMutation } from './fixture-effect/convex/_generated/server'
+import type { Id as FixtureId } from './fixture-effect/convex/_generated/dataModel'
 
 // Standalone type fixture: these are real native builders specialized to this schema.
 // An application imports its equivalent generated builders from ./_generated/server.
@@ -329,44 +336,87 @@ missingProvider({
 // References come from registered native functions.
 const stepBinding = workflowBinding({
 	kind: 'mutation',
-	operation: 'workflow.save',
+	operation: 'integratedRename.rename',
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ title: z.string() }),
-	result: z.object({ title: z.string() }),
-	reference: internal.workflowNative.protectedSave,
+	args: z.object({ id: z.string(), title: z.string() }).strict(),
+	result: z.object({ title: z.string() }).strict(),
+	reference: internal.integratedRename.applyRename,
 })
 export function nativeWorkflowStep(
 	step: WorkflowCtx,
-	execution: WorkflowExecution<{ title: string }>,
+	execution: WorkflowExecution<{ id: FixtureId<'crudNotes'>; title: string }>,
 ) {
 	return runWorkflowStep(step, stepBinding, execution, { inline: true })
 }
 workflowBinding({
 	kind: 'action',
-	operation: 'workflow.save',
+	operation: 'integratedRename.rename',
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ title: z.string() }),
-	result: z.object({ title: z.string() }),
+	args: z.object({ id: z.string(), title: z.string() }).strict(),
+	result: z.object({ title: z.string() }).strict(),
 	// @ts-expect-error A registered mutation reference cannot be an action binding.
-	reference: internal.workflowNative.protectedSave,
+	reference: internal.integratedRename.applyRename,
 })
 
 workflowBinding({
 	...stepBinding,
-	args: z.object({ title: z.number() }),
+	args: z.object({ id: z.string(), title: z.number() }),
 	// @ts-expect-error The real mutation takes a string title, not a numeric title.
-	reference: internal.workflowNative.protectedSave,
+	reference: internal.integratedRename.applyRename,
 })
 workflowBinding({
 	...stepBinding,
 	result: z.object({ title: z.number() }),
 	// @ts-expect-error The real mutation returns a string title, not a numeric title.
-	reference: internal.workflowNative.protectedSave,
+	reference: internal.integratedRename.applyRename,
 })
+
+// This registry is the exact declaration executed by the registered acceptance fixture.
+// The native adapter provides its Notes repository for each new invocation.
+export function rejectMissingRenameService(host: IntegratedRenameHost) {
+	const missingRenameProvider = effectApiBuilder(fixtureInternalMutation, {
+		services: () => Context.empty(),
+	})
+	// @ts-expect-error The actual rename operation still requires its injected Notes service.
+	missingRenameProvider({
+		args: { id: v.string(), title: v.string() },
+		returns: v.object({ title: v.string() }),
+		handler: (_ctx, input) => integratedRenameCommands.exec('rename', input, host),
+	})
+}
+export function invokeNativeRename(ctx: ActionCtx, input: { id: string; title: string }) {
+	return ctx.runMutation(api.integratedRename.rename, input)
+}
+export function startNativeRename(ctx: ActionCtx, input: { id: string; title: string }) {
+	return ctx.runMutation(api.integratedRename.start, input)
+}
+export function renameDocumentTool(ctx: ActionCtx) {
+	const executor = bindOperationExecutor(selectedRename, {
+		owner: selectedRename.owner,
+		key: selectedRename.key,
+		execute: (input) => invokeNativeRename(ctx, input),
+	})
+	return createOperationTools({
+		renameDocument: {
+			operation: selectedRename,
+			executor,
+			description: 'Rename through the same authorized audited native boundary',
+			converter: {
+				dialect: operationToolDialect,
+				convert: () => ({
+					type: 'object',
+					properties: { id: { type: 'string' }, title: { type: 'string' } },
+					required: ['id', 'title'],
+					additionalProperties: false,
+				}),
+			},
+		},
+	})
+}
 
 // Tools explicitly select a raw descriptor and execute the real secured native reference.
 export function invokeNativeCreate(ctx: ActionCtx, key: string, payload: { title: string }) {

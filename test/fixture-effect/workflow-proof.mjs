@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { promisify } from 'node:util'
 import { setTimeout as delay } from 'node:timers/promises'
 import { ConvexHttpClient } from 'convex/browser'
 import { internal } from './convex/_generated/api.js'
+import { assertLocalConvexState, localConvexEnvironment } from './convex-smoke-env.mjs'
 
 const config = JSON.parse(readFileSync('.convex/local/default/config.json', 'utf8'))
 const port = Number(process.argv[2])
@@ -225,7 +228,34 @@ for (const retry of [false, true]) {
 const callback = await launch('loop', { callbackFails: true })
 state = await finished(callback)
 assert.equal(state.status.type, 'completed')
-await delay(500)
+// The component persists this only after it actually invokes and catches onComplete.
+// Host status alone cannot distinguish failed delivery from a callback still waiting to run.
+assertLocalConvexState(process.cwd())
+const deliveryDeadline = Date.now() + 30000
+let failedDelivery
+while (Date.now() < deliveryDeadline) {
+	const { stdout } = await promisify(execFile)(
+		process.execPath,
+		[
+			'node_modules/convex/bin/main.js',
+			'data',
+			'onCompleteFailures',
+			'--component',
+			'workflow',
+			'--format',
+			'json',
+			'--limit',
+			'100',
+		],
+		{ env: localConvexEnvironment(), timeout: 15000 },
+	)
+	const failures = stdout.trim() ? JSON.parse(stdout) : []
+	failedDelivery = failures.find((row) => row.workflowId === state.run.workflowId)
+	if (failedDelivery) break
+	await delay(100)
+}
+assert.ok(failedDelivery, 'Observe an actual failed callback delivery before repairing host state')
+assert.match(failedDelivery.error, /WORKFLOW_CALLBACK_INJECTED/)
 assert.equal((await inspect(callback)).run.state.status, 'running')
 await control(callback, 'repair')
 await control(callback, 'reconcile')

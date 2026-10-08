@@ -22,6 +22,8 @@ const domainGuideImports = new Set([
 	'./fixture-effect/convex/_generated/api',
 	'./fixture-effect/convex/_generated/server',
 	'./fixture-effect/convex/idempotency',
+	'./fixture-effect/convex/integratedRename',
+	'./fixture-effect/convex/_generated/dataModel',
 ])
 const extraTypeFixtures = [
 	join(root, 'src/docs/effect.md'),

@@ -508,6 +508,55 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 
 describe('host workflow projection', () => {
 	const running = { generation: 0, status: 'running' as const, nativeStatus: 'running' as const }
+	for (const mode of ['ordinary', 'Effect'] as const) {
+		for (const order of [
+			'failure-before-native-success',
+			'failure-after-native-success',
+		] as const) {
+			it(`${mode} projects retained operation failure as failed ${order}`, async () => {
+				let state: WorkflowHostState<number, string> = running
+				const outcome = { version: 1 as const, kind: 'failed' as const, error: 'declined' }
+				const configuration = {
+					authorize: () => undefined,
+					read: () => state,
+					write: (_expected: number, next: WorkflowHostState<number, string>) => {
+						state = next
+					},
+					nativeStatus: () => 'succeeded' as const,
+					receiptOutcome: () => outcome,
+					cancelNative: () => undefined,
+					restartNative: () => undefined,
+				}
+				const ordinary = workflowStatusBindings(configuration)
+				const effect = effectWorkflowStatusBindings({
+					...configuration,
+					read: () => Effect.sync(configuration.read),
+					write: (expected, next) => Effect.sync(() => configuration.write(expected, next)),
+				})
+				const callback = (nativeStatus: 'running' | 'succeeded', failure?: typeof outcome) =>
+					mode === 'ordinary'
+						? ordinary.callback(0, nativeStatus, failure)
+						: Effect.runPromise(effect.callback(0, nativeStatus, failure))
+				if (order === 'failure-before-native-success') {
+					await callback('running', outcome)
+					expect(state).toEqual({ ...running, outcome })
+					await callback('succeeded')
+				} else {
+					await callback('succeeded')
+					expect(state).toEqual({ generation: 0, status: 'succeeded', nativeStatus: 'succeeded' })
+					if (mode === 'ordinary') await ordinary.reconcile(0)
+					else await Effect.runPromise(effect.reconcile(0))
+				}
+				const failed = { generation: 0, status: 'failed', nativeStatus: 'succeeded', outcome }
+				expect(state).toEqual(failed)
+				await callback('succeeded')
+				await callback('running')
+				expect(state, 'Repeated or stale running callbacks cannot undo terminal failure').toEqual(
+					failed,
+				)
+			})
+		}
+	}
 	it('fences canceled/restarted generations and keeps committed outcome separate from native failure', () => {
 		const canceled = workflowCancel(running, 0).state
 		expect(canceled.status).toBe('canceled')

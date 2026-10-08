@@ -365,7 +365,7 @@ export type WorkflowTransition<Result = unknown, Failure = unknown> = {
 	readonly kind: 'applied' | 'ignored'
 	readonly state: WorkflowHostState<Result, Failure>
 }
-/** Call within a host transaction or compare-and-set. Terminal host status never moves backward. */
+/** Call within a host transaction or compare-and-set. A late operation failure refines host success; cancellation and terminal native status stay fenced. */
 export function workflowTransition<Result, Failure>(
 	current: WorkflowHostState<Result, Failure>,
 	update: WorkflowHostUpdate<Result, Failure>,
@@ -373,15 +373,17 @@ export function workflowTransition<Result, Failure>(
 	generation(current.generation)
 	generation(update.generation)
 	if (current.generation !== update.generation) return { kind: 'ignored', state: current }
-	const status =
-		current.status !== 'running'
-			? current.status
-			: update.nativeStatus === 'succeeded' && update.outcome?.kind === 'failed'
-				? 'failed'
-				: update.nativeStatus
 	const nativeStatus =
 		current.nativeStatus !== 'running' ? current.nativeStatus : update.nativeStatus
 	const outcome = current.outcome ?? update.outcome
+	const status =
+		(current.status === 'running' || current.status === 'succeeded') &&
+		nativeStatus === 'succeeded' &&
+		outcome?.kind === 'failed'
+			? 'failed'
+			: current.status !== 'running'
+				? current.status
+				: nativeStatus
 	const state = { generation: current.generation, status, nativeStatus }
 	return { kind: 'applied', state: outcome === undefined ? state : { ...state, outcome } }
 }

@@ -66,6 +66,7 @@ for (const validator of [
 		for (const testFile of ['command.test.ts', 'command-lifecycle.test.ts']) {
 			const source = readFileSync(join(root, 'test', testFile), 'utf8')
 				.replace('../src/components/foundation/client', 'cvx-kit/components/foundation')
+				.replaceAll('../src/contracts', 'cvx-kit/contracts')
 				.replace(
 					"const modules = import.meta.glob('./fixture/**/*.ts')",
 					"const modules = { './_generated/server.ts': async () => ({}) }",

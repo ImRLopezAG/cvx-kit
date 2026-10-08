@@ -211,6 +211,7 @@ const commands = foundation.Command({
 	}),
 })
 const securedMutation = effectZodApiBuilder(auth.authMutation, { services: () => Context.empty() })
+export const nativeIdempotencyOperation = commands.expose(Symbol('idempotentNotes'), 'create')
 export const save = securedMutation({
 	args: {
 		key: z.string(),

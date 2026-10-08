@@ -205,6 +205,10 @@ try {
 	cpSync(join(root, 'test/fixture-effect/pagination.mjs'), join(fixture, 'pagination.mjs'))
 	cpSync(join(root, 'test/fixture-effect/idempotency.mjs'), join(fixture, 'idempotency.mjs'))
 	cpSync(join(root, 'test/fixture-effect/workflow-proof.mjs'), join(fixture, 'workflow-proof.mjs'))
+	cpSync(
+		join(root, 'test/fixture-effect/operation-tools.mjs'),
+		join(fixture, 'operation-tools.mjs'),
+	)
 	console.log(`Effect runtime smoke: isolated ${installer} install`)
 	run(installer, ['install', '--ignore-scripts'])
 	assertIsolatedConvexFixture(fixture)
@@ -247,6 +251,7 @@ try {
 	await verifyNativeFixture('idempotency.mjs', 'idempotency', cloudPort)
 	await verifyNativeFixture('workflow-proof.mjs', 'workflow proof', cloudPort)
 	await verifyWorkflowDeployments(cloudPort)
+	await verifyNativeFixture('operation-tools.mjs', 'operation tools', cloudPort)
 	assert.equal(invoke('save', { key: 'success', mode: 'success' }), 'saved')
 	assert.deepEqual(invoke('read', { key: 'success' }), ['domain', 'audit', 'completion'])
 	assert.deepEqual(invoke('composed', { key: 'success' }), {

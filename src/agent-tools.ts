@@ -94,3 +94,17 @@ export type AgentTools<Table extends ToolTable, Handlers extends AgentToolHandle
 		handler: NonNullable<Handlers[Verb]>
 	}
 }>
+export {
+	selectOperation,
+	bindOperationExecutor,
+	createOperationTools,
+	operationToolDialect,
+	type SelectedOperation,
+	type OperationExecutor,
+	type OperationPublicResult,
+	type OperationToolJsonSchema,
+	type OperationToolConverter,
+	type OperationToolDefinition,
+	type OperationToolOutcome,
+	type OperationTool,
+} from './modules/contracts/exposure'

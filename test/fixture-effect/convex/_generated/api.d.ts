@@ -14,6 +14,7 @@ import type * as domain from "../domain.js";
 import type * as functions from "../functions.js";
 import type * as http from "../http.js";
 import type * as idempotency from "../idempotency.js";
+import type * as operationTools from "../operationTools.js";
 import type * as workflowNative from "../workflowNative.js";
 import type * as workflowProof from "../workflowProof.js";
 
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   functions: typeof functions;
   http: typeof http;
   idempotency: typeof idempotency;
+  operationTools: typeof operationTools;
   workflowNative: typeof workflowNative;
   workflowProof: typeof workflowProof;
 }>;

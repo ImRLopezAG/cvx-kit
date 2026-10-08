@@ -1,6 +1,11 @@
 import { Effect, Exit } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractSchema } from '../contracts/contract'
+import {
+	selectOperation,
+	type SelectedOperation,
+	type OperationPublicResult,
+} from '../contracts/exposure'
 import { decodeEffectContract } from './schema'
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
 import {
@@ -167,6 +172,19 @@ export function createEffectCommand<
 			>(),
 		)
 	return {
+		expose<const Owner extends symbol, const Key extends Extract<keyof Operations, string>>(
+			owner: Owner,
+			operation: Key,
+		): SelectedOperation<
+			Owner,
+			Key,
+			Operations[Key]['input'],
+			OperationPublicResult<Operations[Key]>
+		> {
+			if (!Object.hasOwn(operations, operation))
+				throw Error('The selected command operation is not configured')
+			return selectOperation(owner, 'mutation', operation, operations[operation])
+		},
 		exec<Key extends Extract<keyof Operations, string>>(
 			operation: Key,
 			input: EffectOperationArgument<Operations[Key]>,
@@ -311,7 +329,7 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 	>(
 		configuration: EffectCommandConfiguration<Resolve, Operations, Guard> &
 			HostCompatible<Resolve, Dependencies>,
-	) {
+	): ReturnType<typeof createEffectCommand<Resolve, Operations, Dependencies, Guard>> {
 		return createEffectCommand<Resolve, Operations, Dependencies, Guard>({
 			...configuration,
 			...dependencies,

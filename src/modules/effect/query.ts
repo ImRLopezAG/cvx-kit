@@ -1,5 +1,10 @@
 import { Effect, Exit } from 'effect'
 import type { ContractSchema } from '../contracts/contract'
+import {
+	selectOperation,
+	type SelectedOperation,
+	type OperationPublicResult,
+} from '../contracts/exposure'
 import { decodeEffectContract } from './schema'
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
 import {
@@ -203,7 +208,19 @@ export function createEffectQuery<
 		// own E/R. No interpreter or runner executes this Effect before the caller does.
 		return execution as ReturnType<typeof exec<Key>>
 	}
-	return { exec }
+	function expose<const Owner extends symbol, const Key extends OperationKey<Operations>>(
+		owner: Owner,
+		operation: Key,
+	): SelectedOperation<
+		Owner,
+		Key,
+		Operations[Key]['input'],
+		OperationPublicResult<Operations[Key]>
+	> {
+		if (!Object.hasOwn(operations, operation)) throw new QueryConfigurationError()
+		return selectOperation(owner, 'query', operation, operations[operation])
+	}
+	return { exec, expose }
 }
 
 type Policy<Dependencies> = 'checkPermission' extends keyof Dependencies
@@ -251,7 +268,15 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 			metadata?: object
 			guard?: (context: EffectValue<ContextReturned>) => GuardReturned
 		}
-	}) {
+	}): ReturnType<
+		typeof createEffectQuery<
+			Host,
+			ContextReturned,
+			Operations,
+			PolicyReturned<Dependencies>,
+			GuardReturned
+		>
+	> {
 		// SAFETY: Host is constrained to the trusted checker's host type; its concrete
 		// return is retained while restoring the erased invocation argument slot.
 		const checkPermission = dependencies.checkPermission as (

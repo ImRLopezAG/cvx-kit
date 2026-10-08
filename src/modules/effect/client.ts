@@ -1,4 +1,18 @@
 export {
+	bindOperationExecutor,
+	createOperationTools,
+	operationToolDialect,
+	selectOperation,
+	type OperationExecutor,
+	type OperationPublicResult,
+	type OperationTool,
+	type OperationToolConverter,
+	type OperationToolDefinition,
+	type OperationToolJsonSchema,
+	type OperationToolOutcome,
+	type SelectedOperation,
+} from './agent-tools'
+export {
 	effectOperationFactory,
 	type CallbackError,
 	type CallbackRequirements,

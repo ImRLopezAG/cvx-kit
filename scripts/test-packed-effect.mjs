@@ -39,6 +39,7 @@ function copyPublicTypeFixture(fixture, filename, publicImport) {
 		.replaceAll('../src/modules/contracts/errors', 'cvx-kit/errors')
 		.replaceAll('../src/modules/contracts/idempotency', 'cvx-kit/idempotency')
 		.replaceAll('../src/modules/contracts/workflow', 'cvx-kit/workflow')
+		.replaceAll('../src/modules/contracts/exposure', 'cvx-kit/agent-tools')
 		.replaceAll('../src/modules/effect/workflow', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/idempotency', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/foundation', 'cvx-kit/effect')
@@ -94,6 +95,7 @@ import { decodeContract, standardContract, zodContract } from 'cvx-kit/contracts
 import { captureIdempotencyInvocation, transactionalIdempotency, canonicalConvexBytes } from 'cvx-kit/idempotency'
 import { defineErrorContract } from 'cvx-kit/errors'
 import { workflowTransition } from 'cvx-kit/workflow'
+import { selectOperation, bindOperationExecutor, createOperationTools, operationToolDialect } from 'cvx-kit/agent-tools'
 import { actionGeneric, queryGeneric, mutationGeneric, internalActionGeneric, internalQueryGeneric, internalMutationGeneric } from 'convex/server'
 import { z } from 'zod'
 const require = createRequire(import.meta.url)
@@ -102,6 +104,11 @@ if (process.argv.includes('--without-effect')) {
 }
 assert.equal(RootFoundation, Foundation)
 assert.equal(typeof workflowTransition, 'function')
+const toolOwner = Symbol('packed-tools')
+const toolSelection = selectOperation(toolOwner, 'query', 'measure', { input: z.object({ title: z.string() }), result: z.number() })
+const toolExecutor = bindOperationExecutor(toolSelection, { owner: toolOwner, key: 'measure', execute: async raw => raw.title.length })
+const operationTools = createOperationTools({ measure: { operation: toolSelection, executor: toolExecutor, description: 'Measure a title', converter: { dialect: operationToolDialect, convert: () => ({ type: 'object', properties: { title: { type: 'string' } }, required: ['title'], additionalProperties: false }) } } })
+assert.deepEqual(await operationTools.measure.invoke({ title: 'packed' }), { _tag: 'Success', value: 6 })
 let normalizations = 0
 const normalized = zodContract(z.string().transform(async value => { normalizations++; return value.trim() }))
 assert.deepEqual(await decodeContract(normalized, ' packed '), { value: 'packed' })
@@ -228,7 +235,8 @@ import { strict as assert } from 'node:assert'
 import { createRequire } from 'node:module'
 import { realpathSync } from 'node:fs'
 import { Context, Effect } from 'effect'
-import { createEffectFoundation, createEffectCrud, effectApiBuilder, effectZodApiBuilder } from 'cvx-kit/effect'
+import { createEffectFoundation, createEffectCrud, effectApiBuilder, effectZodApiBuilder, createOperationTools } from 'cvx-kit/effect'
+import { createOperationTools as neutralOperationTools } from 'cvx-kit/agent-tools'
 import { zodTable } from 'cvx-kit/zod-table'
 import { queryGeneric, internalMutationGeneric, actionGeneric } from 'convex/server'
 import { zCustomMutation } from 'convex-helpers/server/zod4'
@@ -236,6 +244,7 @@ import { v } from 'convex/values'
 import { z } from 'zod'
 const require = createRequire(import.meta.url)
 const packageRequire = createRequire(import.meta.resolve('cvx-kit/effect'))
+assert.equal(createOperationTools, neutralOperationTools)
 assert.equal(realpathSync(require.resolve('effect')), realpathSync(packageRequire.resolve('effect')), 'package resolved a second Effect identity')
 class Request extends Context.Service()('PackedRequest') {}
 const events = []
@@ -335,6 +344,7 @@ try {
 			const typeFiles = [
 				'legacy-types.ts',
 				copyPublicTypeFixture(fixture, 'operation-neutral-types.ts', '../src/effect'),
+				copyPublicTypeFixture(fixture, 'operation-agent-tools-types.ts', '../src/effect'),
 			]
 			if (withEffect) {
 				for (const filename of [

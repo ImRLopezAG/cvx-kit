@@ -36,3 +36,10 @@ export {
 	type ContractDecoderError,
 	type ContractDecoderRequirements,
 } from './schema'
+export {
+	effectWorkflowAttempt,
+	effectTerminalWorkflowAttempt,
+	effectReceiptWorkflowMutation,
+	effectWorkflowStatusBindings,
+	type EffectReceiptProtectedWorkflowMutation,
+} from './workflow'

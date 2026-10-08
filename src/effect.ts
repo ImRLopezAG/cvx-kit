@@ -43,3 +43,10 @@ export {
 	type ContractDecoderError,
 	type ContractDecoderRequirements,
 } from './modules/effect/client'
+export {
+	effectWorkflowAttempt,
+	effectTerminalWorkflowAttempt,
+	effectReceiptWorkflowMutation,
+	effectWorkflowStatusBindings,
+	type EffectReceiptProtectedWorkflowMutation,
+} from './modules/effect/client'

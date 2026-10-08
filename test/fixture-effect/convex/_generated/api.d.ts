@@ -14,6 +14,8 @@ import type * as domain from "../domain.js";
 import type * as functions from "../functions.js";
 import type * as http from "../http.js";
 import type * as idempotency from "../idempotency.js";
+import type * as workflowNative from "../workflowNative.js";
+import type * as workflowProof from "../workflowProof.js";
 
 import type {
   ApiFromModules,
@@ -28,6 +30,8 @@ declare const fullApi: ApiFromModules<{
   functions: typeof functions;
   http: typeof http;
   idempotency: typeof idempotency;
+  workflowNative: typeof workflowNative;
+  workflowProof: typeof workflowProof;
 }>;
 
 /**
@@ -56,4 +60,6 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  workflow: import("@convex-dev/workflow/_generated/component.js").ComponentApi<"workflow">;
+};

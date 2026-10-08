@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
 import { tenantTable } from 'cvx-kit/zod-table'
 import { z } from 'zod'
+import { vWorkflowId } from '@convex-dev/workflow'
 
 const noteFields = () => ({ title: z.string(), secret: z.string(), owner: z.string() })
 
@@ -38,6 +39,44 @@ export const receiptVersions = v.object({
 })
 
 export default defineSchema({
+	workflowRuns: defineTable({
+		key: v.string(),
+		state: v.object({
+			generation: v.number(),
+			status: v.union(
+				v.literal('running'),
+				v.literal('succeeded'),
+				v.literal('failed'),
+				v.literal('canceled'),
+			),
+			nativeStatus: v.union(
+				v.literal('running'),
+				v.literal('succeeded'),
+				v.literal('failed'),
+				v.literal('canceled'),
+			),
+			outcome: v.optional(
+				v.union(
+					v.object({
+						version: v.literal(1),
+						kind: v.literal('succeeded'),
+						value: v.object({ title: v.string() }),
+					}),
+					v.object({
+						version: v.literal(1),
+						kind: v.literal('failed'),
+						error: v.object({ code: v.literal('DENIED'), key: v.string() }),
+					}),
+				),
+			),
+		}),
+		workflowId: v.optional(vWorkflowId),
+		allowed: v.boolean(),
+		callbackFails: v.boolean(),
+		gate: v.boolean(),
+		attempts: v.number(),
+		bindingVersion: v.string(),
+	}).index('by_key', ['key']),
 	idempotentNotes: idempotentNotes.table.index('by_scope_key', ['scope', 'key']),
 	idempotentAudits: defineTable({
 		tenant: v.string(),

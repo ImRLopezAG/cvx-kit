@@ -38,6 +38,8 @@ function copyPublicTypeFixture(fixture, filename, publicImport) {
 		.replaceAll('../src/idempotency', 'cvx-kit/idempotency')
 		.replaceAll('../src/modules/contracts/errors', 'cvx-kit/errors')
 		.replaceAll('../src/modules/contracts/idempotency', 'cvx-kit/idempotency')
+		.replaceAll('../src/modules/contracts/workflow', 'cvx-kit/workflow')
+		.replaceAll('../src/modules/effect/workflow', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/idempotency', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/foundation', 'cvx-kit/effect')
 		.replaceAll('../src/modules/effect/schema', 'cvx-kit/effect')
@@ -91,6 +93,7 @@ import { zodTable } from 'cvx-kit/zod-table'
 import { decodeContract, standardContract, zodContract } from 'cvx-kit/contracts'
 import { captureIdempotencyInvocation, transactionalIdempotency, canonicalConvexBytes } from 'cvx-kit/idempotency'
 import { defineErrorContract } from 'cvx-kit/errors'
+import { workflowTransition } from 'cvx-kit/workflow'
 import { actionGeneric, queryGeneric, mutationGeneric, internalActionGeneric, internalQueryGeneric, internalMutationGeneric } from 'convex/server'
 import { z } from 'zod'
 const require = createRequire(import.meta.url)
@@ -98,6 +101,7 @@ if (process.argv.includes('--without-effect')) {
  assert.throws(() => require.resolve('effect'), { code: 'MODULE_NOT_FOUND' }, 'optional peer was unexpectedly auto-installed')
 }
 assert.equal(RootFoundation, Foundation)
+assert.equal(typeof workflowTransition, 'function')
 let normalizations = 0
 const normalized = zodContract(z.string().transform(async value => { normalizations++; return value.trim() }))
 assert.deepEqual(await decodeContract(normalized, ' packed '), { value: 'packed' })
@@ -312,6 +316,7 @@ try {
 				'cvx-kit': `file:${join(temporary, `cvx-kit-${manifest.version}.tgz`)}`,
 				convex: manifest.devDependencies.convex,
 				'convex-helpers': helpersVersion,
+				'@convex-dev/workflow': manifest.dependencies['@convex-dev/workflow'],
 				zod: manifest.devDependencies.zod,
 			}
 			if (withEffect) dependencies.effect = effectVersion
@@ -341,6 +346,7 @@ try {
 					'effect-schema-types.ts',
 					'effect-crud-types.ts',
 					'idempotency-types.ts',
+					'operation-workflow-types.ts',
 					'error-contract-types.ts',
 				]) {
 					typeFiles.push(copyPublicTypeFixture(fixture, filename, '../src/effect'))

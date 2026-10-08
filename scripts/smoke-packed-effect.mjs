@@ -43,7 +43,7 @@ function run(command, args, cwd = fixture) {
 function convex(...args) {
 	return run('node', [join(fixture, 'node_modules/convex/bin/main.js'), ...args])
 }
-async function verifyNativeFixture(script, label, port) {
+async function verifyNativeFixture(script, label, port, environment = {}) {
 	const child = spawn(
 		'node',
 		[
@@ -54,7 +54,11 @@ async function verifyNativeFixture(script, label, port) {
 			'--start',
 			`node ${script} ${port}`,
 		],
-		{ cwd: fixture, env: localConvexEnvironment(), stdio: ['pipe', 'pipe', 'pipe'] },
+		{
+			cwd: fixture,
+			env: { ...localConvexEnvironment(), ...environment },
+			stdio: ['pipe', 'pipe', 'pipe'],
+		},
 	)
 	let output = ''
 	let diagnostics = ''
@@ -73,10 +77,47 @@ async function verifyNativeFixture(script, label, port) {
 		process.stdout.write(output)
 		process.stderr.write(diagnostics)
 		assert.equal(code, 0, `Native ${label} command must complete successfully`)
-		assert.ok(output.includes(`Native ${label} passed:`))
+		const marker = environment.WORKFLOW_NATIVE_PHASE
+			? `U6 real native deployment phase passed: ${environment.WORKFLOW_NATIVE_PHASE}`
+			: `Native ${label} passed:`
+		assert.ok(output.includes(marker))
 	} finally {
 		clearTimeout(deadline)
 		child.stdin.end()
+	}
+}
+async function verifyWorkflowDeployments(port) {
+	const sourcePath = join(fixture, 'convex/workflowNative.ts')
+	const source = readFileSync(sourcePath, 'utf8')
+	assert.ok(source.includes("export const deployedBindingVersion = '1'"))
+	assert.ok(source.includes("export const deployedArgumentSuffix = ''"))
+	const state = join(temporaryRoot, 'workflow-deployment-state.json')
+	const phase = (value) =>
+		verifyNativeFixture('workflow-proof.mjs', 'workflow proof', port, {
+			WORKFLOW_NATIVE_PHASE: value,
+			WORKFLOW_NATIVE_PHASE_STATE: state,
+		})
+	try {
+		await phase('prepare')
+		writeFileSync(
+			sourcePath,
+			source.replace(
+				"export const deployedBindingVersion = '1'",
+				"export const deployedBindingVersion = '2'",
+			),
+		)
+		await phase('compatible')
+		writeFileSync(
+			sourcePath,
+			source.replace(
+				"export const deployedArgumentSuffix = ''",
+				"export const deployedArgumentSuffix = '-changed'",
+			),
+		)
+		await phase('changed-args')
+	} finally {
+		writeFileSync(sourcePath, source)
+		convex('dev', '--once', '--typecheck=disable')
 	}
 }
 function invoke(name, args = {}, identity) {
@@ -125,6 +166,7 @@ try {
 				type: 'module',
 				dependencies: {
 					'cvx-kit': `file:${join(temporaryRoot, `cvx-kit-${manifest.version}.tgz`)}`,
+					'@convex-dev/workflow': manifest.dependencies['@convex-dev/workflow'],
 					convex: manifest.devDependencies.convex,
 					effect: manifest.devDependencies.effect,
 					zod: manifest.devDependencies.zod,
@@ -162,6 +204,7 @@ try {
 	cpSync(join(root, 'test/fixture-effect/typecheck.ts'), join(fixture, 'typecheck.ts'))
 	cpSync(join(root, 'test/fixture-effect/pagination.mjs'), join(fixture, 'pagination.mjs'))
 	cpSync(join(root, 'test/fixture-effect/idempotency.mjs'), join(fixture, 'idempotency.mjs'))
+	cpSync(join(root, 'test/fixture-effect/workflow-proof.mjs'), join(fixture, 'workflow-proof.mjs'))
 	console.log(`Effect runtime smoke: isolated ${installer} install`)
 	run(installer, ['install', '--ignore-scripts'])
 	assertIsolatedConvexFixture(fixture)
@@ -202,6 +245,8 @@ try {
 	// Keep the local backend alive for the subscription; one-off CLI calls stop it on exit.
 	await verifyNativeFixture('pagination.mjs', 'pagination', cloudPort)
 	await verifyNativeFixture('idempotency.mjs', 'idempotency', cloudPort)
+	await verifyNativeFixture('workflow-proof.mjs', 'workflow proof', cloudPort)
+	await verifyWorkflowDeployments(cloudPort)
 	assert.equal(invoke('save', { key: 'success', mode: 'success' }), 'saved')
 	assert.deepEqual(invoke('read', { key: 'success' }), ['domain', 'audit', 'completion'])
 	assert.deepEqual(invoke('composed', { key: 'success' }), {

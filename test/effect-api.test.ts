@@ -2,6 +2,7 @@ import { Cause, Context, Effect, Schema, SchemaGetter } from 'effect'
 import { convexTest } from 'convex-test'
 import {
 	actionGeneric,
+	makeFunctionReference,
 	defineSchema,
 	defineTable,
 	internalMutationGeneric,
@@ -345,4 +346,60 @@ describe('Effect native API', () => {
 		}
 		expect(projections).toBe(0)
 	})
+})
+
+it('binds commands in a native helper once and exposes two-argument execution', async () => {
+	const { createEffectFoundation } = await import('../src/effect')
+	const { z } = await import('zod')
+	const foundation = createEffectFoundation({
+		observability: {
+			enabled: false,
+			classifyError: () => ({ outcome: 'failed', errorCode: 'FAILURE' }),
+		},
+		writeAudit: () => undefined,
+	})
+	const commands = foundation.Command({
+		context: (value: number) => ({ value }),
+		operations: ({ command }) => ({
+			add: command({
+				input: z.number(),
+				result: z.number(),
+				classification: 'business',
+				audit: () => null,
+				handler: (input, ctx) => input + ctx.value,
+			}),
+		}),
+	})
+	const query = effectApiBuilder(queryGeneric, {
+		context: () => ({ commands: commands.withContext(42) }),
+	})
+	const load = query({
+		args: { value: v.number() },
+		handler: (ctx, input) => ctx.commands.exec('add', input.value),
+	})
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ load }),
+	})
+	expect(
+		await t.query(makeFunctionReference<'query', { value: number }, number>('functions:load'), {
+			value: 8,
+		}),
+	).toBe(50)
+})
+
+it('preserves context prototypes and non-enumerable fields when extending context', async () => {
+	const { wrapEffectBuilder } = await import('../src/modules/effect/api-runtime')
+	const prototype = { actor: 'trusted' }
+	const context = Object.create(prototype, { db: { value: 'secured', enumerable: false } })
+	const builder = wrapEffectBuilder((handler: (ctx: { actor: string; db: string }) => Promise<string>) => handler, {
+		context: () => ({ extra: 'feature' }),
+	})
+	const handler = builder((ctx: { actor: string; db: string; extra: string }) => {
+		expect(Object.getPrototypeOf(ctx)).toBe(prototype)
+		expect(Object.getOwnPropertyDescriptor(ctx, 'db')?.enumerable).toBe(false)
+		return Effect.succeed(`${ctx.actor}:${ctx.db}:${ctx.extra}`)
+	})
+	expect(await handler(context)).toBe('trusted:secured:feature')
+	expect(Object.hasOwn(context, 'extra')).toBe(false)
 })

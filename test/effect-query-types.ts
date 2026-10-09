@@ -243,3 +243,19 @@ createEffectQuery({
 		}),
 	}),
 })
+
+const contextBoundQuery = queries.withContext({ invocation: 'bound' })
+const boundRead = contextBoundQuery.exec('read', 'raw')
+type ContextBoundResult = Assert<Equal<Effect.Success<typeof boundRead>, Effect.Success<typeof read>>>
+type ContextBoundErrors = Assert<Equal<Effect.Error<typeof boundRead>, Effect.Error<typeof read>>>
+type ContextBoundRequirements = Assert<
+	Equal<Effect.Services<typeof boundRead>, Effect.Services<typeof read>>
+>
+const contextBoundAssertions: [ContextBoundResult, ContextBoundErrors, ContextBoundRequirements] = [true, true, true]
+void contextBoundAssertions
+// @ts-expect-error Bound query inputs retain raw transformation types.
+contextBoundQuery.exec('read', 1)
+// @ts-expect-error Binding retains invocation requirements.
+queries.withContext({})
+// @ts-expect-error Bound query requirements still prevent unprovided execution.
+void Effect.runPromise(boundRead)

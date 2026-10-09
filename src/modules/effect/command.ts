@@ -172,6 +172,16 @@ export function createEffectCommand<
 			>(),
 		)
 	return {
+		/** Bind invocation context without resolving it or running an operation. */
+		withContext(context: HostOf<Resolve>) {
+			const exec = this.exec
+			return {
+				exec: <Key extends Extract<keyof Operations, string>>(
+					operation: Key,
+					input: EffectOperationArgument<Operations[Key]>,
+				) => exec(operation, input, context),
+			}
+		},
 		expose<const Owner extends symbol, const Key extends Extract<keyof Operations, string>>(
 			owner: Owner,
 			operation: Key,

@@ -118,3 +118,18 @@ create({
 		}),
 	}),
 })
+
+const bound = commands.withContext({ actorId: 'actor' })
+const boundTyped = bound.exec('typed', 1)
+type BoundErrors = Assert<Equal<ErrorOf<typeof boundTyped>, ErrorOf<typeof typed>>>
+type BoundServices = Assert<Equal<ServicesOf<typeof boundTyped>, ServicesOf<typeof typed>>>
+const boundAssertions: [BoundErrors, BoundServices] = [true, true]
+void boundAssertions
+// @ts-expect-error Binding retains the registry's invocation context type.
+commands.withContext('actor')
+// @ts-expect-error Bound input is operation-specific.
+bound.exec('plain', 1)
+// @ts-expect-error Bound handles retain the operation names.
+bound.exec('unknown', 1)
+// @ts-expect-error Binding does not satisfy Effect service requirements.
+void Effect.runPromise(boundTyped)

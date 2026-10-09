@@ -26,8 +26,10 @@ const domainGuideImports = new Set([
 	'./fixture-effect/convex/_generated/dataModel',
 ])
 const extraTypeFixtures = [
+	join(root, 'README.md'),
 	join(root, 'src/docs/effect.md'),
 	join(root, 'src/docs/commands.md'),
+	join(root, 'src/docs/commands-legacy.md'),
 	join(root, 'src/docs/auth.md'),
 	domainGuidePath,
 	...process.argv.slice(2).map((path) => resolve(path)),

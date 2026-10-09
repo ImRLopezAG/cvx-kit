@@ -13,7 +13,7 @@ convex/
   convex.config.ts        # component mounting — each app.use(x) exactly once
   schema.ts               # defineSchema(domainTables) — nothing else
   functions.ts            # createAuthFunctions(...) — the ONLY place raw builders appear
-  foundation.ts           # const { Command, Query, observability } = new Foundation(...)
+  foundation.ts           # const { Command, Query, observability } = createEffectFoundation(...)
   approvals.ts            # const approvals = new Approvals(components.approvals)
   audit.ts                # writeAuditEntry over convex-audit-log + admin readers
   triggers.ts             # the single Triggers registry + helper registrations
@@ -27,7 +27,7 @@ convex/
       schema.ts           #   zodTable declaration (shapes only)
       table.ts            #   indexes attached to <zodTable>.table
       constants.ts        #   finite vocabularies (UPPER_SNAKE readonly tuples)
-      commands.ts         #   operation registry + executors (new Command(...))
+      commands.ts         #   Command({ context, operations }) with handlers inside command({...})
       queries.ts          #   domain read logic
       approval.ts         #   approvals.define(...) workflow definitions
       *_functions.ts      #   internal callbacks (systemMutation/systemAction)
@@ -57,7 +57,7 @@ Every kit surface takes its policy as a parameter:
 
 - `createAuthFunctions` receives the generated builders, `getAuthUser`,
   `mapRole`, `verifyMembership`, `triggers`, `errors`.
-- `Foundation` receives `classifyError`, `writeAudit`, the `enabled` flag.
+- `createEffectFoundation` receives `classifyError`, `writeAudit`, the `enabled` flag.
 - `Approvals` receives only its component reference; host data crosses as
   opaque validated strings.
 

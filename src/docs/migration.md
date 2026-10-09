@@ -25,7 +25,7 @@ convex/
   schema.ts                   # defineSchema(domainTables). Nothing else.
   functions.ts                # the single createAuthFunctions(...) call
   triggers.ts                 # the single trigger registry + helper registrations
-  foundation.ts               # the single new Foundation(...) facade
+  foundation.ts               # the single createEffectFoundation(...) facade
   <component>.ts              # one facade per mounted component (audit.ts, approvals.ts, pool.ts, workflows.ts, ...)
   auth.ts                     # identity-provider client wiring
   auth.config.ts              # Convex auth providers config

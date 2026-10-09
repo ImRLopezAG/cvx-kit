@@ -121,7 +121,7 @@ another file's function to shorten an import.
 | `schema.ts`        | `defineSchema(domainTables)`                                                                                           | table definitions, validators                                    |
 | `functions.ts`     | the single `createAuthFunctions<DataModel>()` call and its exported constructors                                       | handlers, business policy beyond the injected config             |
 | `triggers.ts`      | `createTriggers()`, `timestamps`/`appendOnly`/`noDelete` registrations, calls to per-entity `register<Entity>Triggers` | trigger _logic_ for a specific entity (that lives in the entity) |
-| `foundation.ts`    | the single `new Foundation(...)`, destructured exports                                                                 | command definitions                                              |
+| `foundation.ts`    | the single `createEffectFoundation(...)`, bound command/query exports                                                  | command definitions                                              |
 | `<component>.ts`   | `new <Client>(components.<name>)` + minimal admin plumbing                                                             | workflow/business definitions                                    |
 | `http.ts`          | route registration delegating request handling to the owning domain                                                    | webhook business logic                                           |
 | `crons.ts`         | `cronJobs()` declarations targeting `internal.domain.<entity>...`                                                      | handler logic                                                    |
@@ -191,14 +191,18 @@ compile. Numeric limits and durations the entity owns also live here.
 
 ### `domain/<entity>/commands.ts` — every state change
 
-1. The frozen operation registry: `Command.operation({ command, result,
-classification, audit })` per operation, keys `'<entity>.<verb>'`.
-2. One `new Command<Ctx, typeof operations>(operations)`.
-3. Exported executors: `export const execute<Verb><Entity> = commands.exec(...)`.
+1. One `Command({ context, operations: ({ command }) => ({ ... }) })` using
+   the bound constructor from `createEffectFoundation` (`cvx-kit/effect`).
+2. Each entry declares `command({ input, result, classification, handler, audit })`,
+   with keys `'<entity>.<verb>'`. Handlers receive `(input, context)`.
+3. Exported domain functions return `commands.exec(operation, input, host)`;
+   the shared Effect API builder executes that Effect at the authenticated boundary.
 4. Private handler helpers at the bottom.
 
 Audit derivation lives here, next to the operation it describes. No reads
 that belong in `queries.ts`; no pure predicates that belong in `rules.ts`.
+The Promise command facade is deprecated; see `commands-legacy.md` only for
+maintaining existing code. New implementations follow `commands.md`.
 
 ### `domain/<entity>/queries.ts` — domain reads
 

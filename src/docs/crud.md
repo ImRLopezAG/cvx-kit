@@ -1,5 +1,9 @@
 # `cvx-kit/crud` — the CRUD command factory
 
+> This factory uses the deprecated Promise command facade and remains available
+> for existing consumers. For new Effect commands, use `createEffectCrud` from
+> `cvx-kit/effect`; see [domain integrations](./domain-operations.md).
+
 `createCrudCommands` generates the three standard operations every entity
 starts with — create, update, archive — from one zodTable declaration,
 **fully inside the audited command pipeline**: strict command inputs from

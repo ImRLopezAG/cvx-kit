@@ -1,5 +1,14 @@
 # Upgrading to 0.1.0 — the new way of things
 
+## Current command API — Effect declarations
+
+`Foundation.Command` and its separate `exec({ operation, handler })` API are
+deprecated. For new command code, use `createEffectFoundation` from
+`cvx-kit/effect`, declare handlers inside `command({...})`, and return
+`exec(operation, input, host)` through a shared Effect API builder.
+See [commands.md](./commands.md) for migration steps. Existing consumers remain
+compatible; older release sections below describe their historical APIs.
+
 ## 0.1.6 — stricter architecture checks
 
 Enable `project-structure`, `root-wiring-only`, `application-orchestration`,

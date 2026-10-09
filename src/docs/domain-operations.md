@@ -4,7 +4,7 @@ Declare operations beside their handlers, inject the application's repositories,
 
 The complete TypeScript module below is mirrored in `test/domain-operation-guide-types.ts` for strict compilation. All TypeScript in this guide belongs to that one module; there are no standalone handler fragments. It uses public `cvx-kit/*` imports, real Convex builders, an injected document repository, and generated references from the native acceptance fixture. Its document schema and generic builders let the example compile independently; an application imports its own `mutation`, `query`, and internal builders from `./_generated/server`. The integrated rename portion imports the exact registry from `test/fixture-effect/convex/integratedRename.ts` and binds its real generated references. The document create/receipt example remains separate.
 
-The examples use the optional Effect adapter even for ordinary handlers. Consumers without Effect can keep the legacy `cvx-kit/components/foundation` surface and use the neutral contracts, errors, idempotency, workflow, and tool facades. Import `cvx-kit/effect` only when the application supplies its Effect peer.
+The examples use the recommended Effect command API even for ordinary handlers. The older `Foundation.Command` facade is deprecated and retained for existing consumers without Effect; use [the migration guide](./commands.md) when moving those domains. Neutral contracts, errors, idempotency, workflow, and tool facades remain available without Effect. Import `cvx-kit/effect` only when the application supplies its Effect peer.
 
 ## Declare a cohesive domain
 

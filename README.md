@@ -307,3 +307,9 @@ One-time setup (already-published package required first):
 ## Roadmap
 
 See [ROADMAP.md](./ROADMAP.md) — milestones from 0.1.0 through 1.0.0.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./src/docs/command-context.md).

@@ -84,32 +84,32 @@ for expected failures in the inferred error channel.
 Wrap the application's trusted `authMutation` once with `effectZodApiBuilder`
 in `convex/functions.ts`, then return the command Effect from the endpoint:
 
-This wiring sketch assumes imported `Context`, `effectZodApiBuilder`, the
-configured `authMutation`, and the domain's `commands` and schemas.
-`toHost(ctx)` is the application's mapping from authenticated mutation context
-to the example's `Host` capabilities.
+This wiring sketch assumes the existing authenticated constructor, command
+registry, schemas, and a mapping to the registry's dependencies. Keep the
+application's existing function export name:
 
 ```ts
-// convex/functions.ts — after creating authMutation through createAuthFunctions
-const effectAuthMutation = effectZodApiBuilder(authMutation, {
-	services: () => Context.empty(),
+// convex/functions.ts
+export const authMutation = effectZodApiBuilder(base.authMutation, {
+	context: (ctx) => ({ commands: commands.withContext(toCommandContext(ctx)) }),
 })
 
-// convex/api/documents.ts — imports schemas, commands, and the shared builder
-export const rename = effectAuthMutation({
+// convex/api/documents.ts
+export const rename = authMutation({
 	args: renameInput,
 	returns: renameResult,
-	handler: (ctx, input) => commands.exec('documents.rename', input, toHost(ctx)),
+	handler: (ctx, input) => ctx.commands.exec('documents.rename', input),
 })
 ```
 
-The host passed to `exec` must match the registry's `context` resolver. For the
-complete example above, build its `Host` from the authenticated mutation's
-`ctx.actor` and wrapped `ctx.db`; do not accept actor or tenant identity from
-client arguments. For service-based domains, provision services from the
-trusted context in the shared builder. Use `effectApiBuilder` for native Convex
-builders and `effectZodApiBuilder` for Zod custom builders such as the kit's
-auth constructors. See [the complete domain-to-API example](./effect.md) and
+Injection is optional. Use explicit `exec(name, input, context)` when appropriate.
+The value supplied to `withContext` matches the registry's resolver, and can be
+any declared dependency type. See [optional context injection](./command-context.md)
+for a complete compiled example, input-only handlers, multiple command groups,
+and feature organization for applications with many entities. Use authenticated
+constructor fields for identity and tenant information, rather than client
+arguments. Services may also be provided by the adapter when the program uses
+Effect services. See [the complete domain-to-API example](./effect.md) and
 [authenticated builder wiring](./auth.md).
 
 The builder runs the Effect in an invocation scope and awaits finalizers.

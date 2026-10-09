@@ -387,3 +387,9 @@ The [authentication guide](./auth.md)
 shows how to wrap trusted custom builders with `effectZodApiBuilder`, so auth,
 tenancy, validators, row-level policies, and triggers run through their
 existing builder before Effect request services are provisioned.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./command-context.md).

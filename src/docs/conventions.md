@@ -321,3 +321,9 @@ component internals (anything below a component's client facade),
 created before <epoch>.`) — never narration of the next line.
 - One entity concept per file; when a file serves two purposes, split it
   along the anatomy in §2.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./command-context.md).

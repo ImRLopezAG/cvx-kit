@@ -117,7 +117,7 @@ appendOnly(triggers, 'history')
 // convex/functions.ts
 export const {
 	authQuery,
-	authMutation,
+	authMutation: baseAuthMutation,
 	authAction,
 	adminQuery,
 	adminMutation,
@@ -150,8 +150,9 @@ export const {
 
 // convex/functions.ts — wrap configured auth constructors once, after auth/RLS/triggers
 // Import Context from effect and effectZodApiBuilder from cvx-kit/effect.
-export const effectAuthMutation = effectZodApiBuilder(authMutation, {
-	services: () => Context.empty(),
+// Place this after the registry declaration or import the registry from its module.
+export const authMutation = effectZodApiBuilder(baseAuthMutation, {
+	context: (ctx) => ({ commands: commands.withContext(ctx) }),
 })
 
 // convex/foundation.ts
@@ -214,10 +215,10 @@ export const commands = Command({
 })
 
 // api/documents.ts — thin public adapter
-export const rename = effectAuthMutation({
+export const rename = authMutation({
 	args: renameInput,
 	returns: renameResult,
-	handler: (ctx, input) => commands.exec('documents.rename', input, ctx),
+	handler: (ctx, input) => ctx.commands.exec('documents.rename', input),
 })
 export const list = authQuery({
 	args: { limit: z.number() },
@@ -284,3 +285,9 @@ points at `runId`.
    be driven by an incompatible shape.
 8. When composing ctx manually, spread `wrapDB(ctx)` first — later spreads
    carrying `db` restore the unwrapped database.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./command-context.md).

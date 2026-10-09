@@ -29,6 +29,7 @@ const extraTypeFixtures = [
 	join(root, 'README.md'),
 	join(root, 'src/docs/effect.md'),
 	join(root, 'src/docs/commands.md'),
+	join(root, 'src/docs/command-context.md'),
 	join(root, 'src/docs/commands-legacy.md'),
 	join(root, 'src/docs/auth.md'),
 	domainGuidePath,

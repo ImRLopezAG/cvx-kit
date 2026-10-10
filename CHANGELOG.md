@@ -12,6 +12,25 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-10-10
+
+### Added
+
+- Declare optional domain contracts with root errors, command classification,
+  and exact command/query implementation keys in both Effect and Promise registries (#26).
+- Share a registry-level command audit default with per-operation overrides,
+  preserving replay bypass, schema inference, and transactional rollback.
+- Use `createFoundation` for typed Promise registries without installing Effect.
+- Enforce reserved domain file declarations through the packaged Oxlint plugin,
+  including constructor provenance and declarative contract ownership.
+- Document both contract APIs with packed-compiled examples and audit guidance.
+
+### Verified
+
+- Cover native validation, error projection, rollback, audit selection, agent tools,
+  workflow integration, and npm/Bun consumers with and without Effect.
+- Pass 680 runtime tests, 340 lint-rule tests, and both packed-component CI smoke tests.
+
 ## [0.1.11] - 2026-10-09
 
 ### Added

@@ -54,6 +54,7 @@ function run(command, args, cwd) {
 function copyPublicTypeFixture(fixture, filename, publicImport) {
 	const source = readFileSync(join(root, 'test', filename), 'utf8')
 		.replaceAll(publicImport, 'cvx-kit/effect')
+		.replaceAll('../src/index', 'cvx-kit')
 		.replaceAll('../src/errors', 'cvx-kit/errors')
 		.replaceAll('../src/contracts', 'cvx-kit/contracts')
 		.replaceAll('../src/idempotency', 'cvx-kit/idempotency')
@@ -126,6 +127,8 @@ function copyExtraTypeFixtures(fixture, paths) {
 }
 
 const legacyRuntime = `
+import { createFoundation } from 'cvx-kit'
+import { defineDomainContract } from 'cvx-kit/contracts'
 import { strict as assert } from 'node:assert'
 import { createRequire } from 'node:module'
 import { Foundation } from 'cvx-kit/components/foundation'
@@ -210,6 +213,10 @@ assert.equal(replay.kind, 'replay')
 assert.deepEqual(await decodeContract(idempotency.replayResult, replay.result), { value: 'final!' })
 assert.equal(authorizations, 2)
 assert.equal(ledger.length, 1)
+const domain = defineDomainContract({ commands: { save: { input: z.string().transform(Number), result: z.number().transform(count => ({ count })), classification: 'business' } } })
+const regular = createFoundation({ observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }) }, writeAudit: () => undefined })
+const domainCommands = regular.Command({ contract: domain, context: host => host, audit: () => null, operations: ({ command }) => ({ save: command.save({ handler: value => value + 1 }) }) })
+assert.deepEqual(await domainCommands.exec('save', '2', {}), { count: 3 })
 `
 
 const legacyTypes = `
@@ -387,6 +394,9 @@ try {
 			writeFileSync(join(fixture, 'legacy-types.ts'), legacyTypes)
 			const typeFiles = [
 				'legacy-types.ts',
+				copyPublicTypeFixture(fixture, 'domain-contract-types.ts', '../src/effect'),
+				copyPublicTypeFixture(fixture, 'domain-foundation-types.ts', '../src/effect'),
+				copyPublicTypeFixture(fixture, 'domain-contract-guide-types.ts', '../src/effect'),
 				copyPublicTypeFixture(fixture, 'operation-neutral-types.ts', '../src/effect'),
 				copyPublicTypeFixture(fixture, 'operation-agent-tools-types.ts', '../src/effect'),
 			]
@@ -394,6 +404,8 @@ try {
 			if (withEffect) {
 				for (const filename of [
 					'effect-foundation-types.ts',
+					'domain-effect-types.ts',
+					'domain-exactness-types.ts',
 					'effect-api-types.ts',
 					'effect-api-zod-types.ts',
 					'effect-auth-types.ts',

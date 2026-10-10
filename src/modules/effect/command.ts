@@ -1,3 +1,4 @@
+/* oxlint-disable anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- Overload implementation storage is erased; public signatures retain concrete values, errors and services. */
 import { Effect, Exit } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractSchema } from '../contracts/contract'
@@ -35,6 +36,17 @@ import {
 	type UnwrappedDefaultRequirements,
 	type ValidatedEffectOperations,
 } from './operation'
+
+import type { DomainContract, DomainCommandContract, DomainAuditInput } from '../contracts/domain'
+import { snapshotOperations } from '../contracts/binding'
+import {
+	domainEffectFactory,
+	type DomainEffectFactory,
+	type ExactDomainOperations,
+	type AuditedOperations,
+	type SharedEffectFactory,
+	type AuditValue,
+} from './domain'
 
 type Supported<Value> = Value | PromiseLike<Value> | Effect.Effect<Value, unknown, unknown>
 // Heterogeneous storage constraints preserve concrete callbacks in inferred definitions.
@@ -235,9 +247,7 @@ export function createEffectCommand<
 											kind: 'execute',
 											complete: preparation.complete
 												? (result) =>
-														normalizeEffect(() => preparation.complete!(result)).pipe(
-															Effect.asVoid,
-														)
+														normalizeEffect(() => preparation.complete!(result)).pipe(Effect.asVoid)
 												: undefined,
 										} satisfies LifecyclePreparation<
 											EffectExecution,
@@ -332,19 +342,138 @@ export function createEffectCommand<
 export function bindEffectCommand<const Dependencies extends EffectCommandDependencies>(
 	dependencies: Dependencies,
 ) {
-	return function command<
+	type LooseRegistry<Context> = Readonly<
+		Record<
+			string,
+			Pick<Operation, 'input' | 'result' | 'classification' | 'handler'> &
+				CheckedEffectOperation<Context>
+		>
+	>
+
+	function command<
+		Resolve extends Resolver,
+		const Contract extends DomainContract & {
+			commands: Readonly<Record<string, DomainCommandContract>>
+		},
+		const Operations extends Registry<DomainOf<Resolve>>,
+		Mode extends true,
+		Guard = never,
+	>(
+		configuration: {
+			contract: Contract
+			context: Resolve
+			audit?: never
+			operations: (
+				define: DomainEffectFactory<
+					DomainOf<Resolve>,
+					Contract['commands'],
+					Mode,
+					never,
+					NoInfer<CallbackError<Guard>>,
+					NoInfer<CallbackRequirements<Guard>>
+				>,
+			) => Operations &
+				NoInfer<ExactDomainOperations<Operations, Contract['commands']>> &
+				NoInfer<ValidatedEffectOperations<Operations>>
+			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
+		} & HostCompatible<Resolve, Dependencies>,
+	): ReturnType<typeof createEffectCommand<Resolve, Operations, Dependencies, Guard>>
+	function command<
+		Resolve extends Resolver,
+		const Contract extends DomainContract & {
+			commands: Readonly<Record<string, DomainCommandContract>>
+		},
+		const Operations extends LooseRegistry<DomainOf<Resolve>>,
+		Returned extends AuditValue,
+		Guard = never,
+	>(
+		configuration: {
+			contract: Contract
+			context: Resolve
+			audit: (
+				resolution: DomainAuditInput<Contract['commands']>,
+				context: DomainOf<Resolve>,
+			) => Returned
+			operations: (
+				define: DomainEffectFactory<
+					DomainOf<Resolve>,
+					Contract['commands'],
+					true,
+					[Returned] extends [never] ? never : (resolution: never, context: never) => Returned,
+					NoInfer<CallbackError<Guard>>,
+					NoInfer<CallbackRequirements<Guard>>
+				>,
+			) => Operations &
+				NoInfer<ExactDomainOperations<Operations, Contract['commands']>> &
+				NoInfer<ValidatedEffectOperations<Operations>>
+			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
+		} & HostCompatible<Resolve, Dependencies>,
+	): ReturnType<
+		typeof createEffectCommand<
+			Resolve,
+			AuditedOperations<Operations, (resolution: never, context: never) => Returned>,
+			Dependencies,
+			Guard
+		>
+	>
+	function command<
+		Resolve extends Resolver,
+		const Operations extends LooseRegistry<DomainOf<Resolve>>,
+		Returned extends AuditValue,
+		Guard,
+	>(
+		configuration: {
+			context: Resolve
+			audit: (resolution: DomainAuditInput<Operations>, context: DomainOf<Resolve>) => Returned
+			operations: (
+				define: SharedEffectFactory<DomainOf<Resolve>, Guard>,
+			) => Operations & NoInfer<ValidatedEffectOperations<Operations>>
+			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
+		} & HostCompatible<Resolve, Dependencies>,
+	): ReturnType<
+		typeof createEffectCommand<
+			Resolve,
+			AuditedOperations<Operations, (resolution: never, context: never) => Returned>,
+			Dependencies,
+			Guard
+		>
+	>
+
+	function command<
 		Resolve extends Resolver,
 		const Operations extends Registry<DomainOf<Resolve>>,
 		Guard = never,
 	>(
 		configuration: EffectCommandConfiguration<Resolve, Operations, Guard> &
 			HostCompatible<Resolve, Dependencies>,
-	): ReturnType<typeof createEffectCommand<Resolve, Operations, Dependencies, Guard>> {
-		return createEffectCommand<Resolve, Operations, Dependencies, Guard>({
+	): ReturnType<typeof createEffectCommand<Resolve, Operations, Dependencies, Guard>>
+	function command(configuration: {
+		context: Resolver
+		contract?: DomainContract
+		audit?: (resolution: never, context: never) => AuditValue
+		operations: (define: never) => Readonly<Record<string, object>>
+		defaults?: { guard?: (context: never) => unknown }
+	}): unknown {
+		const definitions = configuration.contract
+			? domainEffectFactory(configuration.contract.commands ?? {}, true)
+			: effectOperationFactory()
+		const operations = snapshotOperations(
+			configuration.operations(
+				// SAFETY: the overload chooses this exact inline or contracted helper factory.
+				definitions as never,
+			),
+			configuration.contract,
+			'commands',
+			configuration.audit,
+		)
+		// SAFETY: overloads check callbacks and schemas; binding validates exact keys and snapshots runtime records.
+		return createEffectCommand({
 			...configuration,
 			...dependencies,
-		})
+			operations: () => operations,
+		} as never)
 	}
+	return command
 }
 
 function normalizeCommandResult<Value>(

@@ -121,7 +121,7 @@ another file's function to shorten an import.
 | `schema.ts`        | `defineSchema(domainTables)`                                                                                           | table definitions, validators                                    |
 | `functions.ts`     | the single `createAuthFunctions<DataModel>()` call and its exported constructors                                       | handlers, business policy beyond the injected config             |
 | `triggers.ts`      | `createTriggers()`, `timestamps`/`appendOnly`/`noDelete` registrations, calls to per-entity `register<Entity>Triggers` | trigger _logic_ for a specific entity (that lives in the entity) |
-| `foundation.ts`    | the single `createEffectFoundation(...)`, bound command/query exports                                                  | command definitions                                              |
+| `foundation.ts`    | one `createEffectFoundation(...)` or `createFoundation(...)`, bound command/query exports                              | command definitions                                              |
 | `<component>.ts`   | `new <Client>(components.<name>)` + minimal admin plumbing                                                             | workflow/business definitions                                    |
 | `http.ts`          | route registration delegating request handling to the owning domain                                                    | webhook business logic                                           |
 | `crons.ts`         | `cronJobs()` declarations targeting `internal.domain.<entity>...`                                                      | handler logic                                                    |
@@ -155,7 +155,7 @@ moves to the domain.
 
 ### `domain/<entity>/schema.ts` — shapes only
 
-- The entity's single `zodTable(...)` call, with `serverFields`,
+- The module's `zodTable(...)` declarations (one per owned table), with `serverFields`,
   `commandFields`, `publicFields` decided deliberately.
 - DTO compositions derived from the table's boundaries
   (`z.object({ ...<entity>.publicDto.shape, ... }).strict()`).
@@ -318,7 +318,7 @@ component internals (anything below a component's client facade),
 - Zod objects that cross a boundary are `.strict()` — always.
 - `Object.freeze` for registries and long-lived configuration objects.
 - Comments state constraints the code can't (`// Optional only for rows
-created before <epoch>.`) — never narration of the next line.
+  created before <epoch>.`) — never narration of the next line.
 - One entity concept per file; when a file serves two purposes, split it
   along the anatomy in §2.
 
@@ -327,3 +327,7 @@ Optional request context can be added through the existing Effect API adapter's
 and consume `ctx.commands.exec(name, input)` through the application's existing
 function helper names. Keep dependencies local to each feature; explicit execution
 and input-only command handlers remain supported. See [optional context injection](./command-context.md).
+
+### Reserved domain declarations
+
+Existing commands.ts and queries.ts each export one kit-backed Command or Query registry. Contracts.ts contains schemas, an optional defineDomainContract declaration, and an optional root error contract; handlers stay in their registries. See [Optional domain contracts](./domain-contracts.md).

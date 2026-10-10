@@ -1,3 +1,4 @@
+/* oxlint-disable anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- Overload implementation storage is erased; public signatures retain concrete values, errors and services. */
 import { Effect, Exit } from 'effect'
 import type { ContractSchema } from '../contracts/contract'
 import {
@@ -26,6 +27,10 @@ import {
 	type UnwrappedDefaultRequirements,
 	type ValidatedEffectOperations,
 } from './operation'
+
+import type { DomainContract, DomainQueryContract } from '../contracts/domain'
+import { snapshotOperations } from '../contracts/binding'
+import { domainEffectFactory, type DomainEffectFactory, type ExactDomainOperations } from './domain'
 
 type Supported<Value> = Value | PromiseLike<Value> | Effect.Effect<Value, unknown, unknown>
 type QueryDefinition = {
@@ -259,7 +264,45 @@ export type EffectQueryDependencies = {
 export function bindEffectQuery<const Dependencies extends EffectQueryDependencies>(
 	dependencies: Dependencies,
 ) {
-	return function query<
+	function query<
+		Host extends PolicyHost<Dependencies>,
+		ContextReturned,
+		const Contract extends DomainContract & {
+			queries: Readonly<Record<string, DomainQueryContract>>
+		},
+		const Operations extends QueryRegistry<EffectValue<ContextReturned>>,
+		Mode extends false,
+		GuardReturned extends Supported<void> = never,
+	>(configuration: {
+		contract: Contract
+		context: (host: Host) => ContextReturned
+		operations: (
+			define: DomainEffectFactory<
+				EffectValue<ContextReturned>,
+				Contract['queries'],
+				Mode,
+				never,
+				NoInfer<CallbackError<GuardReturned>>,
+				NoInfer<CallbackRequirements<GuardReturned>>
+			>,
+		) => Operations &
+			NoInfer<ExactDomainOperations<Operations, Contract['queries']>> &
+			NoInfer<ValidatedEffectOperations<Operations>>
+		defaults?: {
+			metadata?: object
+			guard?: (context: EffectValue<ContextReturned>) => GuardReturned
+		}
+	}): ReturnType<
+		typeof createEffectQuery<
+			Host,
+			ContextReturned,
+			Operations,
+			PolicyReturned<Dependencies>,
+			GuardReturned
+		>
+	>
+
+	function query<
 		Host extends PolicyHost<Dependencies>,
 		ContextReturned,
 		const Operations extends QueryRegistry<EffectValue<ContextReturned>>,
@@ -288,23 +331,31 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 			PolicyReturned<Dependencies>,
 			GuardReturned
 		>
-	> {
-		// SAFETY: Host is constrained to the trusted checker's host type; its concrete
-		// return is retained while restoring the erased invocation argument slot.
-		const checkPermission = dependencies.checkPermission as (
-			host: Host,
-			input: { permission: string; operation: string },
-		) => PolicyReturned<Dependencies>
-		return createEffectQuery<
-			Host,
-			ContextReturned,
-			Operations,
-			PolicyReturned<Dependencies>,
-			GuardReturned
-		>({
+	>
+
+	function query(configuration: {
+		context: (host: never) => unknown
+		contract?: DomainContract
+		operations: (define: never) => Readonly<Record<string, object>>
+		defaults?: { metadata?: object; guard?: (context: never) => Supported<void> }
+	}): unknown {
+		const definitions = configuration.contract
+			? domainEffectFactory(configuration.contract.queries ?? {}, false)
+			: effectOperationFactory()
+		const operations = snapshotOperations(
+			configuration.operations(
+				// SAFETY: the overload chooses this exact inline or contracted helper factory.
+				definitions as never,
+			),
+			configuration.contract,
+			'queries',
+		)
+		// SAFETY: the overload verifies callback types; exact binding ownership is verified before execution.
+		return createEffectQuery({
 			...configuration,
-			observability: dependencies.observability,
-			checkPermission: dependencies.checkPermission ? checkPermission : undefined,
-		})
+			...dependencies,
+			operations: () => operations,
+		} as never)
 	}
+	return query
 }

@@ -241,7 +241,7 @@ The public API layer then wraps the executor in an `authMutation` and passes
 8. **Complete**: await the closure returned by `prepare`, including when audit
    returns null. A failure propagates inside the observation boundary.
 9. **Emit the observation**: `{ operation, classification, outcome,
-errorCode?, durationMs }` — completed, denied, or failed per
+   errorCode?, durationMs }` — completed, denied, or failed per
    `classifyError`.
 
 ### Guards and permissions
@@ -509,3 +509,5 @@ knowing. Metadata defaults are set at construction and merged per-executor.
    telemetry silently disappears (see regexes above).
 5. Keep operation registries frozen (`as const`) in the domain's
    `commands.ts`; vocabulary tuples live in `constants.ts`.
+
+See [Optional domain contracts](./domain-contracts.md) for shared declarations, named implementations, and registry audit defaults in both Effect and Promise registries.

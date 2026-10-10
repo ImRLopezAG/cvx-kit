@@ -399,3 +399,5 @@ Optional request context can also be added through the existing Effect API adapt
 and consume `ctx.commands.exec(name, input)` through the application's existing
 function helper names. Keep dependencies local to each feature; explicit execution
 and input-only command handlers remain supported. See [optional context injection](./command-context.md).
+
+See [Optional domain contracts](./domain-contracts.md) for shared declarations, named implementations, and registry audit defaults in both Effect and Promise registries.

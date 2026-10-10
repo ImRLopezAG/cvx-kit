@@ -1114,3 +1114,87 @@ tester.run('query side-effect boundaries', consumerRules['domain-file-responsibi
 		},
 	],
 })
+
+tester.run('reserved-domain-file-anatomy', consumerRules['reserved-domain-file-anatomy'], {
+	valid: [
+		{
+			filename: resolve('convex/domain/tasks/commands.ts'),
+			code: "import { createEffectFoundation as make } from 'cvx-kit/effect'; const { Command: Run } = make({}); export const commands = Run({})",
+		},
+		{
+			filename: resolve('convex/domain/tasks/commands.ts'),
+			code: "import * as kit from 'cvx-kit'; const foundation = kit.createFoundation({}); export const commands = foundation.Command({})",
+		},
+		{
+			filename: resolve('convex/domain/tasks/queries.ts'),
+			code: "import { createEffectFoundation } from 'cvx-kit/effect'; const { Query } = createEffectFoundation({}); const reads = Query({}); export { reads }",
+		},
+		{
+			filename: resolve('convex/domain/tasks/contracts.ts'),
+			code: "import { defineDomainContract } from 'cvx-kit/contracts'; export const contract = defineDomainContract({})",
+		},
+		{
+			filename: resolve('convex/domain/tasks/contracts.ts'),
+			code: "import { z } from 'zod'; export const contract = { save: z.object({}) }",
+		},
+		{
+			filename: resolve('convex/domain/tasks/schema.ts'),
+			code: "import { zodTable } from 'cvx-kit'; export const tasks = zodTable({}); export const links = zodTable({})",
+		},
+		{
+			filename: resolve('convex/domain/tasks/table.ts'),
+			code: "import { zodTable } from 'cvx-kit'; const tasks = zodTable({}); export const tables = { tasks: tasks.table.index('by_id', ['id']) }",
+		},
+		{
+			filename: resolve('convex/domain/table.ts'),
+			code: "import { createModule } from 'cvx-kit/zod-table'; export const tables = createModule({})",
+		},
+		{
+			filename: resolve('convex/domain/tasks/__tests__/commands.ts'),
+			code: 'export const fake = {}',
+		},
+		{ filename: resolve('outside/domain/tasks/commands.ts'), code: 'export const fake = {}' },
+		{
+			filename: resolve('backend/domain/tasks/commands.ts'),
+			options: [{ convexDir: 'backend' }],
+			code: "import { createFoundation } from 'cvx-kit'; const { Command } = createFoundation({}); export default Command({})",
+		},
+	],
+	invalid: [
+		{
+			filename: resolve('convex/domain/tasks/commands.ts'),
+			code: "import { Command } from '../../foundation'; export const commands = {}",
+			errors: [{ messageId: 'anatomy' }],
+		},
+		{
+			filename: resolve('convex/domain/tasks/commands.ts'),
+			code: 'function Command() { return {} }; export const commands = Command()',
+			errors: [{ messageId: 'anatomy' }],
+		},
+		{
+			filename: resolve('convex/domain/tasks/commands.ts'),
+			code: "import { createEffectFoundation } from 'cvx-kit/effect'; const { Command } = createEffectFoundation({}); export const a = Command({}); export const b = Command({})",
+			errors: [{ messageId: 'anatomy' }],
+		},
+		{
+			filename: resolve('convex/domain/tasks/commands.ts'),
+			code: "import { createFoundation } from 'cvx-kit'; const { Query } = createFoundation({}); export const commands = Query({})",
+			errors: [{ messageId: 'anatomy' }],
+		},
+		{
+			filename: resolve('convex/domain/tasks/contracts.ts'),
+			code: 'export const handlers = { save: () => 1 }',
+			errors: [{ messageId: 'anatomy' }],
+		},
+		{
+			filename: resolve('convex/domain/tasks/schema.ts'),
+			code: "import { z } from 'zod'; export const data = z.object({})",
+			errors: [{ messageId: 'anatomy' }],
+		},
+		{
+			filename: resolve('convex/domain/tasks/table.ts'),
+			code: 'export const data = {}',
+			errors: [{ messageId: 'anatomy' }],
+		},
+	],
+})

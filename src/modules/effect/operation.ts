@@ -152,7 +152,7 @@ type Audit<Aggregates extends readonly string[]> = Omit<
 > & {
 	aggregate: { type: Aggregates[number]; id: string }
 }
-type OperationDefinition<
+export type OperationDefinition<
 	Context,
 	Input extends ContractSchema,
 	Output extends ContractSchema,
@@ -221,6 +221,7 @@ export function effectOperationFactory<
 	Extension extends Record<string, unknown> = Record<never, never>,
 	BaseError = never,
 	BaseRequirements = never,
+	AuditRequired extends boolean = true,
 >() {
 	function operation<
 		const Input extends ContractSchema,
@@ -300,14 +301,18 @@ export function effectOperationFactory<
 				Replay
 			> & {
 				classification: string
-				audit: (
-					resolution: { command: ContractOutput<Input>; result: ContractOutput<Output> },
-					context: Context,
-				) => AuditResult
-			},
+			} & (AuditRequired extends true
+				? {
+						audit: (
+							resolution: { command: ContractOutput<Input>; result: ContractOutput<Output> },
+							context: Context,
+						) => AuditResult
+					}
+				: {}),
 	) {
 		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
-		return definition as CheckedEffectDefinition<
+		// oxlint-disable-next-line anti-slop/no-chained-type-assertions -- SAFETY: The private marker is type-only callback evidence, not a runtime field.
+		return definition as unknown as CheckedEffectDefinition<
 			Context,
 			typeof definition,
 			BaseError,

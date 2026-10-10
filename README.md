@@ -220,6 +220,7 @@ Load it in your application's `.oxlintrc.json` and select rules:
 		"cvx/application-orchestration": "error",
 		"cvx/internal-function-ownership": "error",
 		"cvx/domain-file-responsibilities": "error",
+		"cvx/reserved-domain-file-anatomy": "error",
 		"cvx/no-raw-builders": "error",
 		"cvx/no-handwritten-references": "error",
 		"cvx/domain-import-boundaries": "error",

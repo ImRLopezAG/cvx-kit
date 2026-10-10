@@ -7,6 +7,7 @@ import {
 	type ArchitectureOptions,
 	type ArchitectureDiagnostic,
 } from './oxlint/architecture'
+import { reservedDomainFiles } from './oxlint/reserved-files'
 import { ownershipRules, type OwnershipRuleName } from './oxlint/ownership'
 import {
 	appFile,
@@ -47,11 +48,13 @@ export type RuleName =
 	| 'no-inline-enums'
 	| 'no-unbounded-reads'
 	| 'no-manual-timestamps'
+	| 'reserved-domain-file-anatomy'
 	| 'root-facade-ownership'
 
 /** Consumer application rules derived from docs/conventions.md. */
 const applicationRules: Record<RuleName, CreateRule> = {
 	...ownershipRules,
+	'reserved-domain-file-anatomy': reservedDomainFiles,
 	'root-facade-ownership': {
 		meta: metadata('Configure shared kit infrastructure once in its root facade.', {
 			facade: 'Configure {{name}} once in convex/{{file}}; import that facade elsewhere.',
@@ -70,6 +73,11 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				if (
 					['cvx-kit', 'cvx-kit/components/foundation'].includes(ref.source) &&
 					ref.name === 'Foundation'
+				)
+					file = 'foundation.ts'
+				if (
+					(ref.source === 'cvx-kit/effect' && ref.name === 'createEffectFoundation') ||
+					(ref.source === 'cvx-kit' && ref.name === 'createFoundation')
 				)
 					file = 'foundation.ts'
 				if (!file) return

@@ -262,7 +262,7 @@ export const ownershipRules = {
 			const role = basename(file).replace(/\.[cm]?[jt]s$/, '')
 			const pure = role === 'rules'
 			const read = role === 'queries'
-			const declarative = ['schema', 'table', 'constants'].includes(role)
+			const declarative = ['schema', 'table', 'contracts', 'constants'].includes(role)
 			const actionSide =
 				/(?:^|\/)(?:actions|integrations|providers)(?:\/|\.)/.test(file) ||
 				/(?:^|_)actions\./.test(file)
@@ -292,6 +292,7 @@ export const ownershipRules = {
 						'cvx-kit',
 						'cvx-kit/zod-table',
 						'cvx-kit/errors',
+						'cvx-kit/contracts',
 					].includes(source)
 				)
 					flag(node)
@@ -359,6 +360,17 @@ export const ownershipRules = {
 						!binding(context, node.callee.object)?.defs.length &&
 						((node.callee.object.name === 'Date' && method === 'now') ||
 							(node.callee.object.name === 'Math' && method === 'random'))
+					)
+						flag(node)
+				},
+				Property(node) {
+					if (
+						role === 'contracts' &&
+						['handler', 'context', 'audit', 'prepare', 'middleware', 'guard'].includes(
+							node.key.type === 'Identifier'
+								? node.key.name
+								: String(node.key.type === 'Literal' ? node.key.value : ''),
+						)
 					)
 						flag(node)
 				},

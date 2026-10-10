@@ -67,3 +67,8 @@ export {
 	type PermissionChecker,
 	type QueryMiddleware,
 } from './components/foundation/client'
+export {
+	createFoundation,
+	type FoundationRegistry,
+	type FoundationRegistryOptions,
+} from './modules/foundation/foundation'

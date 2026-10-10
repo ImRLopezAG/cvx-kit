@@ -144,3 +144,7 @@ Shared ownership follows static runtime imports through shared helpers. A shared
 file reached from only one domain is reported for relocation. Unused code,
 type-only consumers, and computed dependencies are not treated as proof of shared
 ownership; their ownership still needs review.
+
+## Reserved domain files
+
+Enable `cvx/reserved-domain-file-anatomy` to require exported Command/Query registries, declarative contracts, zodTable shapes, and table topology or createModule assembly. Constructor provenance is traced through imported aliases, namespaces, direct Foundation factories, and the root foundation.ts facade. Pair it with `cvx/domain-file-responsibilities` to reject handlers and database/runtime work in contracts.ts. Backend scope and test/generated exclusions apply; absent files are not required.

@@ -9,7 +9,7 @@ const root = join(import.meta.dirname, '..')
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-oxlint-'))
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const ruleNames = Object.keys(rules)
-assert.equal(ruleNames.length, 20)
+assert.equal(ruleNames.length, 21)
 
 try {
 	run('bun', ['pm', 'pack', '--destination', temporary, '--ignore-scripts'], root)

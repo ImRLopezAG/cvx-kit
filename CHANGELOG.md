@@ -12,6 +12,21 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-09
+
+### Fixed
+
+- Preserve native Convex context types in auth, role, admin, and system function
+  constructors so secured handlers bind directly to Effect registries (#22).
+- Install Standard Schema types explicitly so native contract input and output
+  inference works in clean installations.
+
+### Changed
+
+- Update package dependencies and migrate the development toolchain to Vite+ 1.1.
+- Require Convex 1.46 or newer and convex-helpers 0.1.127 or newer (below 0.2.0),
+  matching workflow 0.4.10.
+
 ## [0.1.7] - 2026-10-07
 
 ### Added

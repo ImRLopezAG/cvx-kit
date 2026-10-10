@@ -1,18 +1,45 @@
 /* oxlint-disable anti-slop/no-object-parameters, anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- Configuration boundary validates heterogeneous own-key records and callback presence; validators remain opaque identities. */
-import type { DomainContract } from './domain'
+import type { DomainContract, DomainOperationContract } from './domain'
+
+declare const declaredSchemas: unique symbol
+/** Private evidence for contextual inference; schemas are installed only at registration. */
+export type DeclaredSchemas<Entry> = { readonly [declaredSchemas]: Entry }
+export type BoundOperations<
+	Operations extends Readonly<
+		Record<keyof Entries, { handler: (...arguments_: never[]) => unknown }>
+	>,
+	Entries extends Readonly<Record<string, DomainOperationContract>>,
+> = {
+	[Key in keyof Entries]: Entries[Key] &
+		Operations[Key] & {
+			input: Entries[Key]['input']
+			result: Entries[Key]['result']
+			handler: Operations[Key]['handler']
+		}
+}
 
 // SAFETY: this configuration boundary compares opaque fields or restores callback slots checked by the public helpers.
 const protectedFields = ['input', 'result', 'classification', 'replayResult', 'wire'] as const
 const bindings = new WeakMap<object, { key: string; declaration: object }>()
+const pending = new WeakMap<object, Readonly<Record<string, object>>>()
 
 /** Both adapters bind declarations through the same configuration boundary. */
 export function domainHelpers(entries: Readonly<Record<string, object>>) {
-	return Object.fromEntries(
+	const helpers = Object.fromEntries(
 		Object.keys(entries).map((key) => [
 			key,
 			(implementation: object) => bindDomainImplementation(key, entries[key], implementation),
 		]),
 	)
+	const namedHandler = helpers.handler
+	helpers.handler = (handler: Function | object, options?: object) => {
+		if (typeof handler !== 'function' && namedHandler) return namedHandler(handler)
+		if (typeof handler !== 'function') throw Error('Invalid operation handler')
+		const implementation = { ...options, handler }
+		pending.set(implementation, entries)
+		return implementation
+	}
+	return helpers
 }
 
 /** Bind only opaque schema references; never invoke user callbacks at construction. */
@@ -49,8 +76,13 @@ export function snapshotOperations(
 	)
 		throw Error('Contract operation keys must match exactly')
 	const entries = keys.map((key) => {
-		const original = operations[key]
+		let original = operations[key]
 		if (declarations) {
+			if (pending.has(original)) {
+				if (pending.get(original) !== declarations)
+					throw Error(`Operation ${key} must use its own contract helper`)
+				original = bindDomainImplementation(key, declarations[key], original)
+			}
 			const binding = bindings.get(original)
 			if (
 				!binding ||

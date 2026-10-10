@@ -43,7 +43,6 @@ void result
 // @ts-expect-error raw input must match the contract
 commands.exec('save', 2, { actor: 'a' })
 Command({
-	// @ts-expect-error invalid contracted implementation is rejected by every overload
 	contract: domain,
 	context: (host: { actor: string }) => host,
 	operations: ({ command }) => ({

@@ -29,8 +29,13 @@ import {
 } from './operation'
 
 import type { DomainContract, DomainQueryContract } from '../contracts/domain'
-import { snapshotOperations } from '../contracts/binding'
-import { domainEffectFactory, type DomainEffectFactory, type ExactDomainOperations } from './domain'
+import { snapshotOperations, type BoundOperations } from '../contracts/binding'
+import {
+	domainEffectFactory,
+	type DomainEffectFactory,
+	type DomainEffectImplementations,
+	type ExactDomainOperations,
+} from './domain'
 
 type Supported<Value> = Value | PromiseLike<Value> | Effect.Effect<Value, unknown, unknown>
 type QueryDefinition = {
@@ -270,11 +275,20 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 		const Contract extends DomainContract & {
 			queries: Readonly<Record<string, DomainQueryContract>>
 		},
-		const Operations extends QueryRegistry<EffectValue<ContextReturned>>,
+		const Operations extends DomainEffectImplementations<
+			EffectValue<ContextReturned>,
+			Contract['queries']
+		>,
 		Mode extends false,
 		GuardReturned extends Supported<void> = never,
 	>(configuration: {
-		contract: Contract
+		contract: Contract &
+			NoInfer<
+				Operations extends ExactDomainOperations<Operations, Contract['queries']> &
+					ValidatedEffectOperations<Operations>
+					? unknown
+					: never
+			>
 		context: (host: Host) => ContextReturned
 		operations: (
 			define: DomainEffectFactory<
@@ -285,9 +299,7 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 				NoInfer<CallbackError<GuardReturned>>,
 				NoInfer<CallbackRequirements<GuardReturned>>
 			>,
-		) => Operations &
-			NoInfer<ExactDomainOperations<Operations, Contract['queries']>> &
-			NoInfer<ValidatedEffectOperations<Operations>>
+		) => Operations
 		defaults?: {
 			metadata?: object
 			guard?: (context: EffectValue<ContextReturned>) => GuardReturned
@@ -296,7 +308,7 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 		typeof createEffectQuery<
 			Host,
 			ContextReturned,
-			Operations,
+			BoundOperations<Operations, Contract['queries']>,
 			PolicyReturned<Dependencies>,
 			GuardReturned
 		>

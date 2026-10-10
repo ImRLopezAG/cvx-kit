@@ -3,11 +3,12 @@ import type { Effect } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractInput, ContractOutput, ContractSchema } from '../contracts/contract'
 import type { DomainOperationContract, ExactOperationKeys } from '../contracts/domain'
-import { domainHelpers } from '../contracts/binding'
+import { domainHelpers, type DeclaredSchemas } from '../contracts/binding'
 import {
 	effectOperationFactory,
 	type OperationDefinition,
 	type CheckedEffectDefinition,
+	type CheckedEffectOperation,
 	type CallbackError,
 	type CallbackRequirements,
 	type EffectPreparation,
@@ -94,12 +95,86 @@ type Helper<
 				? { audit: AuditCallback<Context, Entry, AuditReturned> }
 				: {}
 			: { audit?: never; prepare?: never; aggregates?: never }),
-) => CheckedEffectDefinition<
+) => DeclaredSchemas<Entry> &
+	CheckedEffectDefinition<
+		Context,
+		Schemas<Entry> & Definition & BoundKey<Key>,
+		BaseError,
+		BaseRequirements
+	>
+
+type HandlerArguments<
+	Options,
+	Command extends boolean,
+	Default,
+	RequiredAudit,
+> = Command extends true
+	? [Default] extends [never]
+		? [options: Options & RequiredAudit]
+		: [options?: Options]
+	: [options?: Options]
+
+type HandlerHelper<
 	Context,
-	Schemas<Entry> & Definition & BoundKey<Key>,
+	Entries extends Readonly<Record<string, DomainOperationContract>>,
+	Command extends boolean,
+	Default,
 	BaseError,
-	BaseRequirements
->
+	BaseRequirements,
+> = <
+	const Input extends ContractSchema,
+	const Result extends ContractSchema,
+	Key extends keyof Entries,
+	Handler extends Supported<ContractInput<Result>>,
+	Guard extends Supported<void> = never,
+	Preparation extends Supported<EffectPreparation<ContractOutput<Result>, unknown, unknown>> =
+		never,
+	const Aggregates extends readonly string[] = readonly string[],
+	AuditReturned extends Supported<Audit> = never,
+	Middleware extends Supported<ContractInput<Result>> = never,
+	const Metadata extends object = Record<never, never>,
+	const Definition extends object = object,
+>(
+	handler: (input: ContractOutput<Input>, context: Context) => Handler,
+	...options: HandlerArguments<
+		Definition &
+			Forbidden & { handler?: never } & Omit<
+				OperationDefinition<
+					Context,
+					Input,
+					Result,
+					Record<never, never>,
+					Aggregates,
+					Handler,
+					Guard,
+					Preparation,
+					AuditReturned,
+					Middleware,
+					Metadata,
+					BaseError,
+					BaseRequirements,
+					ContractSchema,
+					never
+				>,
+				'handler' | 'input' | 'result' | 'classification' | 'replayResult' | 'wire'
+			> &
+			(Command extends true ? {} : { audit?: never; prepare?: never; aggregates?: never }),
+		Command,
+		Default,
+		{ audit: AuditCallback<Context, { input: Input; result: Result }, AuditReturned> }
+	>
+) => DeclaredSchemas<{ input: Input; result: Result }> & {
+	handler: (input: ContractOutput<Input>, context: Context) => NoInfer<Handler>
+} & NoInfer<Definition> &
+	BoundKey<Key> &
+	CheckedEffectDefinition<
+		Context,
+		NoInfer<Definition> & {
+			handler: (input: ContractOutput<Input>, context: Context) => Handler
+		} & BoundKey<Key>,
+		BaseError,
+		BaseRequirements
+	>
 
 export type DomainEffectFactory<
 	Context,
@@ -119,7 +194,24 @@ export type DomainEffectFactory<
 			BaseError,
 			BaseRequirements
 		>
-	}
+	} & { handler: HandlerHelper<Context, Entries, Command, Default, BaseError, BaseRequirements> }
+}
+
+export type DomainEffectImplementations<
+	Context,
+	Entries extends Readonly<Record<string, DomainOperationContract>>,
+	Required extends boolean = false,
+> = {
+	[Key in keyof Entries]: DeclaredSchemas<Pick<Entries[Key], 'input' | 'result'>> &
+		BoundKey<Key> &
+		CheckedEffectOperation<Context> & {
+			handler: (
+				input: ContractOutput<Entries[Key]['input']>,
+				context: Context,
+			) => Supported<ContractInput<Entries[Key]['result']>>
+		} & (Required extends true
+			? { audit: AuditCallback<Context, Entries[Key], Supported<Audit>> }
+			: {})
 }
 
 export function domainEffectFactory<
@@ -140,7 +232,7 @@ export function domainEffectFactory<
 	CallbackRequirements<Guard>
 > {
 	const helpers = domainHelpers(entries)
-	// SAFETY: each named helper installs its exact declaration; the public signatures check all callbacks.
+	// SAFETY: helper signatures check callbacks; registration pairs drafts with their declarations.
 	return { [command ? 'command' : 'query']: helpers } as DomainEffectFactory<
 		Context,
 		Entries,

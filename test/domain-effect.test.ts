@@ -36,11 +36,9 @@ it('binds contracted commands and queries without running callbacks at construct
 			return null
 		},
 		operations: ({ command }) => ({
-			save: command.save({
-				handler: (input, context) => {
-					events.push(context.actor)
-					return Effect.succeed(input + 1)
-				},
+			save: command.handler((input, context) => {
+				events.push(context.actor)
+				return Effect.succeed(input + 1)
 			}),
 		}),
 	})
@@ -48,11 +46,9 @@ it('binds contracted commands and queries without running callbacks at construct
 		contract: domain,
 		context: (host: { actor: string }) => host,
 		operations: ({ query }) => ({
-			get: query.get({
-				handler: (input, context) => {
-					events.push(context.actor)
-					return input
-				},
+			get: query.handler((input, context) => {
+				events.push(context.actor)
+				return input
 			}),
 		}),
 	})

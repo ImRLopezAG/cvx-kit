@@ -31,18 +31,16 @@ it('runs regular contracted registries without Effect', async () => {
 			return null
 		},
 		operations: ({ command }) => ({
-			save: command.save({
-				handler: async (input, context) => {
-					events.push(context.actor)
-					return input + 1
-				},
+			save: command.handler(async (input, context) => {
+				events.push(context.actor)
+				return input + 1
 			}),
 		}),
 	})
 	const queries = Query({
 		contract: domain,
 		context: (host: { actor: string }) => host,
-		operations: ({ query }) => ({ get: query.get({ handler: (input) => input }) }),
+		operations: ({ query }) => ({ get: query.handler((input) => input) }),
 	})
 	expect(events).toEqual([])
 	expect(await commands.exec('save', '2', { actor: 'a' })).toEqual({ n: 3 })

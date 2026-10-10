@@ -38,10 +38,11 @@ import {
 } from './operation'
 
 import type { DomainContract, DomainCommandContract, DomainAuditInput } from '../contracts/domain'
-import { snapshotOperations } from '../contracts/binding'
+import { snapshotOperations, type BoundOperations } from '../contracts/binding'
 import {
 	domainEffectFactory,
 	type DomainEffectFactory,
+	type DomainEffectImplementations,
 	type ExactDomainOperations,
 	type AuditedOperations,
 	type SharedEffectFactory,
@@ -355,12 +356,22 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 		const Contract extends DomainContract & {
 			commands: Readonly<Record<string, DomainCommandContract>>
 		},
-		const Operations extends Registry<DomainOf<Resolve>>,
+		const Operations extends DomainEffectImplementations<
+			DomainOf<Resolve>,
+			Contract['commands'],
+			true
+		>,
 		Mode extends true,
 		Guard = never,
 	>(
 		configuration: {
-			contract: Contract
+			contract: Contract &
+				NoInfer<
+					Operations extends ExactDomainOperations<Operations, Contract['commands']> &
+						ValidatedEffectOperations<Operations>
+						? unknown
+						: never
+				>
 			context: Resolve
 			audit?: never
 			operations: (
@@ -372,23 +383,39 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 					NoInfer<CallbackError<Guard>>,
 					NoInfer<CallbackRequirements<Guard>>
 				>,
-			) => Operations &
-				NoInfer<ExactDomainOperations<Operations, Contract['commands']>> &
-				NoInfer<ValidatedEffectOperations<Operations>>
+			) => Operations
 			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
 		} & HostCompatible<Resolve, Dependencies>,
-	): ReturnType<typeof createEffectCommand<Resolve, Operations, Dependencies, Guard>>
+	): ReturnType<
+		typeof createEffectCommand<
+			Resolve,
+			BoundOperations<Operations, Contract['commands']> & {
+				[Key in keyof Contract['commands']]: {
+					classification: Contract['commands'][Key]['classification']
+					audit: Operations[Key]['audit']
+				}
+			},
+			Dependencies,
+			Guard
+		>
+	>
 	function command<
 		Resolve extends Resolver,
 		const Contract extends DomainContract & {
 			commands: Readonly<Record<string, DomainCommandContract>>
 		},
-		const Operations extends LooseRegistry<DomainOf<Resolve>>,
+		const Operations extends DomainEffectImplementations<DomainOf<Resolve>, Contract['commands']>,
 		Returned extends AuditValue,
 		Guard = never,
 	>(
 		configuration: {
-			contract: Contract
+			contract: Contract &
+				NoInfer<
+					Operations extends ExactDomainOperations<Operations, Contract['commands']> &
+						ValidatedEffectOperations<Operations>
+						? unknown
+						: never
+				>
 			context: Resolve
 			audit: (
 				resolution: DomainAuditInput<Contract['commands']>,
@@ -403,15 +430,16 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 					NoInfer<CallbackError<Guard>>,
 					NoInfer<CallbackRequirements<Guard>>
 				>,
-			) => Operations &
-				NoInfer<ExactDomainOperations<Operations, Contract['commands']>> &
-				NoInfer<ValidatedEffectOperations<Operations>>
+			) => Operations
 			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
 		} & HostCompatible<Resolve, Dependencies>,
 	): ReturnType<
 		typeof createEffectCommand<
 			Resolve,
-			AuditedOperations<Operations, (resolution: never, context: never) => Returned>,
+			AuditedOperations<
+				BoundOperations<Operations, Contract['commands']>,
+				(resolution: never, context: never) => Returned
+			>,
 			Dependencies,
 			Guard
 		>

@@ -40,7 +40,8 @@ it('binds arbitrary context lazily and keeps concurrent handles independent', as
 			}),
 		}),
 	})
-	const first = commands.withContext(10)
+	const { withContext } = commands
+	const first = withContext(10)
 	const second = commands.withContext(20)
 	const effects = [first.exec('add', 1), second.exec('add', 2)]
 	expect(resolved).toBe(0)

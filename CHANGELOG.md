@@ -12,6 +12,23 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-10-09
+
+### Added
+
+- Configure shared post-auth Effect services and command/query handles once across
+  all auth, role, admin, and system constructors with `createEffectAuthFunctions` (#24).
+- Keep query, mutation, action, and internal system capabilities separately typed
+  and configured; preserve secured database wrapping and live action membership.
+- Document the shared application factory with packed-compiled examples and
+  constructor capability guidance for coding agents.
+
+### Verified
+
+- Cover denied authentication, roles and membership, request-local scopes, context
+  collisions, nested command auditing, and registered mutation rollback.
+- Preserve packed native auth context compatibility on Convex 1.45 and 1.46.
+
 ## [0.1.10] - 2026-10-09
 
 ### Fixed

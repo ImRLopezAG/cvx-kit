@@ -69,7 +69,8 @@ type CheckedRequirements<Returned, Services> = [
 export type EffectZodApiBuilder<
 	Kind extends 'query' | 'mutation' | 'action',
 	CustomArgs extends PropertyValidators,
-	CustomCtx extends Record<string, unknown>,
+	// Native Convex context interfaces do not declare a string index signature.
+	CustomCtx extends object,
 	CustomMadeArgs extends Record<string, unknown>,
 	InputCtx,
 	Visibility extends FunctionVisibility,
@@ -111,7 +112,7 @@ export type EffectZodApiBuilder<
 export function effectZodApiBuilder<
 	Kind extends 'query' | 'mutation' | 'action',
 	CustomArgs extends PropertyValidators,
-	CustomCtx extends Record<string, unknown>,
+	CustomCtx extends object,
 	CustomMadeArgs extends Record<string, unknown>,
 	InputCtx,
 	Visibility extends FunctionVisibility,

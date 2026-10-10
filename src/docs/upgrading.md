@@ -1,5 +1,13 @@
 # Upgrading to 0.1.0 — the new way of things
 
+## Current dependency requirements
+
+Install Convex 1.46 or newer and convex-helpers 0.1.127 or newer (below 0.2.0).
+These minimums match workflow 0.4.10. Regenerate your lockfile after updating.
+Auth declarations retain native Convex context types across package versions;
+the regression fixture also checks Convex 1.45, which is below the current
+full-package dependency minimum.
+
 ## Current command API — Effect declarations
 
 `Foundation.Command` and its separate `exec({ operation, handler })` API are
@@ -67,7 +75,7 @@ Install `convex-helpers` as a direct peer, using one compatible instance:
 bun add cvx-kit@0.1.3 convex-helpers@0.1.124
 ```
 
-The peer range is `>=0.1.123 <0.2.0`. Remove overrides that force a
+The peer range was `>=0.1.123 <0.2.0`. Remove overrides that force a
 separate helper copy and regenerate the installation without discarding
 unrelated dependency choices. This release is validated with Convex 1.45.0,
 Zod 4.5.4, and convex-test 0.0.56.

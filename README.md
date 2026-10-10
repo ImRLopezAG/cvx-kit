@@ -142,39 +142,39 @@ import type { AuditEntryInput } from 'cvx-kit/components/foundation'
 import { z } from 'zod'
 
 type Host = {
-  actorId: string
-  rename: (id: string, title: string) => Promise<void>
-  appendAudit: (entry: AuditEntryInput) => Promise<void>
+	actorId: string
+	rename: (id: string, title: string) => Promise<void>
+	appendAudit: (entry: AuditEntryInput) => Promise<void>
 }
 const { Command } = createEffectFoundation({
-  observability: {
-    enabled: false,
-    classifyError: () => ({ outcome: 'failed', errorCode: 'RENAME_FAILED' }),
-  },
-  writeAudit: (host: Host, entry) => host.appendAudit(entry),
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed', errorCode: 'RENAME_FAILED' }),
+	},
+	writeAudit: (host: Host, entry) => host.appendAudit(entry),
 })
 const renameInput = z.object({ id: z.string(), title: z.string() }).strict()
 export const commands = Command({
-  context: (host: Host) => host,
-  operations: ({ command }) => ({
-    'documents.rename': command({
-      input: renameInput,
-      result: z.object({ ok: z.literal(true) }).strict(),
-      classification: 'business',
-      handler: async (input, context) => {
-        await context.rename(input.id, input.title)
-        return { ok: true as const }
-      },
-      audit: ({ command }, context) => ({
-        operation: 'documents.rename',
-        actorId: context.actorId,
-        aggregate: { type: 'document', id: command.id },
-      }),
-    }),
-  }),
+	context: (host: Host) => host,
+	operations: ({ command }) => ({
+		'documents.rename': command({
+			input: renameInput,
+			result: z.object({ ok: z.literal(true) }).strict(),
+			classification: 'business',
+			handler: async (input, context) => {
+				await context.rename(input.id, input.title)
+				return { ok: true as const }
+			},
+			audit: ({ command }, context) => ({
+				operation: 'documents.rename',
+				actorId: context.actorId,
+				aggregate: { type: 'document', id: command.id },
+			}),
+		}),
+	}),
 })
 export const executeRename = (input: z.input<typeof renameInput>, host: Host) =>
-  commands.exec('documents.rename', input, host)
+	commands.exec('documents.rename', input, host)
 ```
 
 `exec` returns a lazy Effect even for ordinary async handlers. Shared
@@ -247,7 +247,7 @@ module cycles. Run Oxlint on the whole backend, including `convex.config.ts`;
 changed-file-only lint cannot guarantee a project scan. No application-owned
 architecture test framework is required. The plugin also exports `checkArchitecture()`
 for tools that need project diagnostics directly, named `rules`, and `RuleName`. Verified with
-Oxlint 1.79.0 and Vite+ 0.3.0. See [rule coverage and limitations](./src/docs/oxlint.md)
+Oxlint 1.87.0 and Vite+ 1.1.0. See [rule coverage and limitations](./src/docs/oxlint.md)
 and the [migration from the initial 0.1.4 plugin](./src/docs/upgrading.md).
 
 Repository checks and the enforced library rules are documented in

@@ -54,6 +54,9 @@ jobs:
       - name: Verify published Oxlint plugin in npm and Bun consumers
         run: node scripts/test-packed-oxlint.mjs
 
+      - name: Verify auth declarations across Convex context versions
+        run: node scripts/test-packed-auth.mjs
+
       - name: Typecheck
         run: bun run typecheck
 

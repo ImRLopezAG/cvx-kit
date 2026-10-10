@@ -25,6 +25,7 @@ export {
 	type Actor,
 	type AuthBundle,
 	type AuthFunctionsConfig,
+	type AuthFunctions,
 	type DefaultRole,
 	type Include,
 	type IncludedQuery,

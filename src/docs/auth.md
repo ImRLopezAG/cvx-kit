@@ -64,9 +64,139 @@ export const {
 Every function in the app is then built from these — raw `query`/`mutation`
 imports from `_generated/server` appear **only** in this file.
 
+## One shared Effect function foundation
+
+Use `createEffectAuthFunctions` from `cvx-kit/effect` in `convex/functions.ts`
+to configure all twelve constructors once. Its first argument is the same
+`AuthFunctionsConfig` used by `createAuthFunctions`; its second argument has
+six explicit policies: `query`, `mutation`, `action`, `systemQuery`,
+`systemMutation`, and `systemAction`. Each accepts `services`, `context`, and
+`mapError`, like `effectZodApiBuilder`. Pass `{}` when no additions are needed.
+
+Type the auth config with your generated `DataModel` and role vocabulary,
+then let the factory infer its generics from both arguments. Do not supply
+partial generic arguments, which would fix the remaining inference defaults.
+The following public-package example defines a reusable app factory; the
+host passes its auth, membership, trigger, and RLS policy as `config`.
+
+<!-- packed-effect-example -->
+
+```ts
+import {
+	defineSchema,
+	defineTable,
+	makeFunctionReference,
+	type DataModelFromSchemaDefinition,
+	type GenericQueryCtx,
+	type GenericMutationCtx,
+} from 'convex/server'
+import { v } from 'convex/values'
+import { Effect } from 'effect'
+import { z } from 'zod'
+import type { AuthFunctionsConfig, AuthBundle } from 'cvx-kit/auth'
+import { createEffectAuthFunctions, createEffectFoundation } from 'cvx-kit/effect'
+
+const schema = defineSchema({ notes: defineTable({ tenant: v.string(), title: v.string() }) })
+type Model = DataModelFromSchemaDefinition<typeof schema>
+type Role = 'owner' | 'viewer'
+const input = z.object({ title: z.string().trim().min(1) })
+const saveRef = makeFunctionReference<'mutation', z.input<typeof input>, null>('notes:save')
+
+export function createApplicationFunctions(config: AuthFunctionsConfig<Model, Role>) {
+	const foundation = createEffectFoundation({
+		observability: {
+			enabled: false,
+			classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }),
+		},
+		writeAudit: () => undefined, // supply the app's transactional audit writer in production
+	})
+	const queries = foundation.Query({
+		context: (ctx: (GenericQueryCtx<Model> | GenericMutationCtx<Model>) & AuthBundle<Role>) => ctx,
+		operations: ({ query }) => ({
+			actor: query({
+				input: z.object({}),
+				result: z.string(),
+				handler: (_input, ctx) => ctx.actor.userId,
+			}),
+		}),
+	})
+	const commands = foundation.Command({
+		context: (ctx: GenericMutationCtx<Model> & AuthBundle<Role>) => ctx,
+		operations: ({ command }) => ({
+			save: command({
+				input,
+				result: z.null(),
+				classification: 'business',
+				audit: () => null,
+				handler: (args, ctx) =>
+					Effect.promise(async () => {
+						await ctx.db.insert('notes', { title: args.title, tenant: ctx.tenant })
+						return null
+					}),
+			}),
+		}),
+	})
+	const functions = createEffectAuthFunctions(config, {
+		query: { context: (ctx) => ({ queries: queries.withContext(ctx) }) },
+		mutation: {
+			context: (ctx) => ({
+				queries: queries.withContext(ctx),
+				commands: commands.withContext(ctx),
+			}),
+		},
+		action: {
+			context: (ctx) => ({
+				commands: {
+					save: (args: z.input<typeof input>) =>
+						Effect.promise(() => ctx.runMutation(saveRef, args)),
+				},
+			}),
+		},
+		systemQuery: {},
+		systemMutation: {},
+		systemAction: {},
+	})
+	const save = functions.roleMutation('owner')({
+		args: input.shape,
+		returns: z.null(),
+		handler: (ctx, args) => ctx.commands.exec('save', args),
+	})
+	return { ...functions, save }
+}
+```
+
+Export the returned constructors once from `convex/functions.ts`, and export
+`save` at the registered `notes:save` mutation path. Endpoint modules can then
+use `ctx.commands` or `ctx.queries` directly. The callbacks run per invocation
+after auth, role checks, triggers/RLS wrapping, and live action membership
+refresh. Binding is lazy; do not cache an authenticated `withContext` handle
+at module scope. Denied requests never run the callbacks.
+
+| Policy                                            | Available authority and capabilities                                                                                                                                   |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`                                           | Trusted auth bundle, secured DB reader, `include`; bind read registries only.                                                                                          |
+| `mutation`                                        | Trusted auth bundle, secured triggered DB writer, `include`; bind queries and mutation commands.                                                                       |
+| `action`                                          | Live-verified auth bundle, `runQuery`/`runMutation`; use action-compatible registries or forward to registered functions. No DB or `include`.                          |
+| `systemQuery` / `systemMutation` / `systemAction` | Existing internal authority, configured separately. No fabricated actor or inherited public handles; system mutations retain triggers and bypass public RLS as before. |
+
+Every auth/role/admin constructor of a kind shares that kind's policy. System
+policies are deliberately explicit; choose their trusted capabilities rather
+than synthesizing public credentials. An action forwarding to `runMutation`
+creates a separate registered mutation transaction; it does not turn the
+whole action into a transaction or carry its live role into that mutation's
+JWT-based auth policy.
+
+Additions cannot replace native or auth context keys: static checks reject
+known collisions and runtime checks also reject inherited keys before the
+handler executes. Put class-based handles under named properties in the
+returned plain record. Scoped services, required Effect services, Zod raw and
+parsed argument/result types, function references, and error projection retain
+the existing adapter's behavior. Let failures escape registered mutations so
+nested command writes, triggers, and audit writes roll back together.
+
 ## Shared Effect execution after authentication
 
-Wrap the constructors returned by `createAuthFunctions` with
+For an individual constructor, wrap the builder returned by `createAuthFunctions` with
 `effectZodApiBuilder` from `cvx-kit/effect`. The original constructor resolves
 authentication, authorization, tenant policy, and the wrapped database before
 the service provider runs. Keep that ordering when adding Effect; use the Zod

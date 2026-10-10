@@ -384,11 +384,17 @@ only when you want a typed error channel.
 The [command guide](./commands.md) documents the current lifecycle and migration
 steps; the [deprecated API reference](./commands-legacy.md) retains old examples.
 The [authentication guide](./auth.md)
-shows how to wrap trusted custom builders with `effectZodApiBuilder`, so auth,
+shows the shared `createEffectAuthFunctions(config, policies)` factory and how
+to wrap individual trusted builders with `effectZodApiBuilder`, so auth,
 tenancy, validators, row-level policies, and triggers run through their
 existing builder before Effect request services are provisioned.
 
-Optional request context can be added through the existing Effect API adapter's
+For an app-wide foundation, configure `query`, `mutation`, and `action` policies
+once with `createEffectAuthFunctions` and explicit separate system policies.
+Query handles bind readers, mutation handles bind the secured triggered writer,
+and action handles use `runMutation` rather than a mutation database.
+
+Optional request context can also be added through the existing Effect API adapter's
 `context` callback. Bind selected registries with `commands.withContext(value)`
 and consume `ctx.commands.exec(name, input)` through the application's existing
 function helper names. Keep dependencies local to each feature; explicit execution

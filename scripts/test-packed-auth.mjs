@@ -46,6 +46,10 @@ try {
 			readFileSync(join(root, 'test/auth-native-context-types.ts')),
 		)
 		writeFileSync(
+			join(fixture, 'shared-auth.ts'),
+			readFileSync(join(root, 'test/effect-auth-types.ts')),
+		)
+		writeFileSync(
 			join(fixture, 'tsconfig.json'),
 			JSON.stringify({
 				compilerOptions: {
@@ -56,7 +60,7 @@ try {
 					module: 'ESNext',
 					moduleResolution: 'bundler',
 				},
-				include: ['auth.ts'],
+				include: ['auth.ts', 'shared-auth.ts'],
 			}),
 		)
 		run('bun', ['install', '--ignore-scripts'], fixture)

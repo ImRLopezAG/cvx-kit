@@ -403,3 +403,21 @@ it('preserves context prototypes and non-enumerable fields when extending contex
 	expect(await handler(context)).toBe('trusted:secured:feature')
 	expect(Object.hasOwn(context, 'extra')).toBe(false)
 })
+
+it('rejects inherited and dynamically named context collisions before calling handlers', async () => {
+	const { wrapEffectBuilder } = await import('../src/modules/effect/api-runtime')
+	let calls = 0
+	for (const key of ['toString', 'db']) {
+		// oxlint-disable-next-line anti-slop/no-known-value-widening -- Exercise runtime protection when callers provide dynamically named, broadly typed additions.
+		const additions: Record<string, string> = { [key]: 'replacement' }
+		const builder = wrapEffectBuilder((handler: Function) => handler, {
+			context: () => additions,
+		})
+		const handler = builder(() => {
+			calls++
+			return Effect.succeed('unexpected')
+		})
+		await expect(handler({ db: 'trusted' })).rejects.toThrow(`cannot replace ${key}`)
+	}
+	expect(calls).toBe(0)
+})

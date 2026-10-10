@@ -111,7 +111,10 @@ export const composedEcho = Effect.map(boundEchoEffect, (value) => value.length)
 
 Context additions are optional and cannot replace existing fields, including
 `db`, `auth`, or a custom constructor's authenticated actor. Type checking rejects
-known collisions; runtime checking protects against erased types. Additions can
+known collisions with declared fields. Runtime checking also protects inherited
+properties (such as `toString`) and keys from broadly typed records or erased
+types; those collisions cannot always be determined from the declared context
+type. Additions can
 return a plain record of own properties, or a Promise or Effect of that record.
 Wrap class instances and services in named properties, such as `{ pricingService }`,
 rather than returning an instance as the additions object. The adapter provides services first, then

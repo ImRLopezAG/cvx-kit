@@ -396,6 +396,7 @@ try {
 					'effect-foundation-types.ts',
 					'effect-api-types.ts',
 					'effect-api-zod-types.ts',
+					'effect-auth-types.ts',
 					'effect-registry-review-types.ts',
 					'operation-contract-types.ts',
 					'effect-schema-types.ts',

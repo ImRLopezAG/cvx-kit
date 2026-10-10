@@ -26,10 +26,15 @@ export type EffectApiContext = EffectApiHandlerValue<Record<string, unknown>>
 type KeysOfUnion<Value> = Value extends object ? keyof Value : never
 export type CheckedContext<Ctx, Added> =
 	Extract<KeysOfUnion<EffectValue<Added>>, keyof Ctx> extends never ? unknown : never
-export type EffectApiOptions<Ctx, Provider extends EffectApiServices, Added = {}> = {
-	services?: (ctx: Ctx) => Provider
-	context?: (ctx: Ctx) => Added & CheckedContext<Ctx, Added>
-} & (
+export type EffectApiOptions<Ctx, Provider extends EffectApiServices, Added = {}> = (
+	[ProvidedServices<Provider>] extends [never]
+		? { services?: (ctx: Ctx) => Provider }
+		: { services: (ctx: Ctx) => Provider }
+) & (
+	[KeysOfUnion<EffectValue<Added>>] extends [never]
+		? { context?: (ctx: Ctx) => Added & CheckedContext<Ctx, Added> }
+		: { context: (ctx: Ctx) => Added & CheckedContext<Ctx, Added> }
+) & (
 	| { errors: EffectApiErrorContract; mapError?: never }
 	| { errors?: never; mapError?: EffectApiErrorProjection }
 )

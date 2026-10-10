@@ -23,6 +23,12 @@ const custom = zCustomMutation(internalMutationGeneric, {
 		args: { made: 42 },
 	}),
 })
+declare const optionalServices: (() => Context.Context<Actor>) | undefined
+// @ts-expect-error A potentially missing callback cannot guarantee services.
+effectZodApiBuilder(custom, { services: optionalServices })
+declare const optionalContext: (() => { extra: number }) | undefined
+// @ts-expect-error A potentially missing callback cannot guarantee added fields.
+effectZodApiBuilder(custom, { context: optionalContext })
 const mutation = effectZodApiBuilder(custom, {
 	services: (ctx) => {
 		ctx.actor.id.toUpperCase()

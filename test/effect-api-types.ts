@@ -6,12 +6,24 @@ import {
 	queryGeneric,
 	type FunctionReference,
 	type ApiFromModules,
+	type GenericDataModel,
+	type GenericQueryCtx,
 } from 'convex/server'
 import { v } from 'convex/values'
 import { effectApiBuilder, effectSchema } from '../src/effect'
 import { defineErrorContract } from '../src/errors'
 class Request extends Context.Service<Request, { value: number }>()('ApiTypeRequest') {}
 class Missing extends Context.Service<Missing, { value: number }>()('ApiTypeMissing') {}
+// @ts-expect-error Explicit service capabilities require a provider callback.
+effectApiBuilder<GenericDataModel, 'public', Context.Context<Request>>(queryGeneric, {})
+// @ts-expect-error Explicit added fields require a context initializer.
+effectApiBuilder<GenericDataModel, 'public', Context.Context<never>, { extra: number }>(queryGeneric, {})
+declare const optionalServices: ((ctx: GenericQueryCtx<GenericDataModel>) => Context.Context<Request>) | undefined
+// @ts-expect-error A potentially missing callback cannot guarantee services.
+effectApiBuilder(queryGeneric, { services: optionalServices })
+declare const optionalContext: ((ctx: GenericQueryCtx<GenericDataModel>) => { extra: number }) | undefined
+// @ts-expect-error A potentially missing callback cannot guarantee added fields.
+effectApiBuilder(queryGeneric, { context: optionalContext })
 const query = effectApiBuilder(queryGeneric, {
 	services: (ctx) => {
 		// @ts-expect-error Native query providers cannot write.

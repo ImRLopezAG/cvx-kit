@@ -35,7 +35,7 @@ authored in [`src/docs/`](./src/docs/):
 - [`conventions.md`](./src/docs/conventions.md) — the doctrine: folder structure, file anatomy, naming grammar, import rules
 - [`zod-table.md`](./src/docs/zod-table.md) — one zod shape per entity, masked into every boundary
 - [`auth.md`](./src/docs/auth.md) — auth-aware function constructors from injected policy
-- [`commands.md`](./src/docs/commands.md) — Foundation, the audited command protocol, observability
+- [`commands.md`](./src/docs/commands.md) — Effect command declarations, lifecycle, and migration
 - [`effect.md`](./src/docs/effect.md) — opt-in Effect v4 registries, injected services, and shared API builders
 - [`domain-operations.md`](./src/docs/domain-operations.md) — server domain/API examples, contracts, errors, receipts, workflow steps, and selected tools
 - [`triggers.md`](./src/docs/triggers.md) — trigger registry, timestamps/append-only/no-delete
@@ -128,57 +128,67 @@ registry structurally; `include()` bounds every read (default 100 rows).
 `resolveOrganization` derives org and role from your own tables, enabling
 identity providers whose tokens carry no org claims.
 
-### `cvx-kit/components/foundation`
+### `cvx-kit/effect` — commands and queries
 
-Declared once; everything destructures from it. `Command` comes out of the
-Foundation already bound to observability and the audit writer — there is no
-separate command import.
+Use the Effect API for new commands. Install Effect `>=4.0.1 <5`, bind host
+policies once with `createEffectFoundation`, and declare each handler inside
+`command({...})` beside its schemas and audit policy.
+
+<!-- packed-effect-example -->
 
 ```ts
-// convex/convex.config.ts
-import foundation from 'cvx-kit/components/foundation/convex.config'
-app.use(foundation)
+import { createEffectFoundation } from 'cvx-kit/effect'
+import type { AuditEntryInput } from 'cvx-kit/components/foundation'
+import { z } from 'zod'
 
-// convex/foundation.ts — declared once, the single kernel source
-import { Foundation } from 'cvx-kit/components/foundation'
-export const { Command, Query, observability } = new Foundation(
-  components.foundation,
-  {
-    observability: {
-      enabled: () => env.OBS === 'true',
-      classifyError,
-      writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
-    },
+type Host = {
+  actorId: string
+  rename: (id: string, title: string) => Promise<void>
+  appendAudit: (entry: AuditEntryInput) => Promise<void>
+}
+const { Command } = createEffectFoundation({
+  observability: {
+    enabled: false,
+    classifyError: () => ({ outcome: 'failed', errorCode: 'RENAME_FAILED' }),
   },
-)
-
-// convex/domain/<owner>/commands.ts
-import { Command } from '../foundation'
-
-const commands = new Command({
-  'documents.rename': Command.operation({
-    command: renameInput,
-    result: renameResult,
-    classification: 'business',
-    audit: ({ command }, ctx) => ({ ... }),
+  writeAudit: (host: Host, entry) => host.appendAudit(entry),
+})
+const renameInput = z.object({ id: z.string(), title: z.string() }).strict()
+export const commands = Command({
+  context: (host: Host) => host,
+  operations: ({ command }) => ({
+    'documents.rename': command({
+      input: renameInput,
+      result: z.object({ ok: z.literal(true) }).strict(),
+      classification: 'business',
+      handler: async (input, context) => {
+        await context.rename(input.id, input.title)
+        return { ok: true as const }
+      },
+      audit: ({ command }, context) => ({
+        operation: 'documents.rename',
+        actorId: context.actorId,
+        aggregate: { type: 'document', id: command.id },
+      }),
+    }),
   }),
 })
-export const executeRename = commands.exec({ operation: 'documents.rename', handler })
+export const executeRename = (input: z.input<typeof renameInput>, host: Host) =>
+  commands.exec('documents.rename', input, host)
 ```
 
-Every command is validated (input and output zod-parsed), observed, and
-audited in-transaction. `classification` and `audit()` are mandatory per
-operation: auditing is type-enforced, not opt-in. The foundation component
-itself owns zero tables and ships `executeResultBoundary` (typed failures
-only while the transaction has no effects; otherwise rethrow so Convex
-rolls back).
+`exec` returns a lazy Effect even for ordinary async handlers. Shared
+`effectApiBuilder` / `effectZodApiBuilder` constructors provide invocation-local
+services and execute it; domain code can compose `Effect.gen` and `Effect.fn`
+without starting another runner. Commands validate inputs and results, enforce
+permissions and guards, and write audit entries in the mutation transaction.
+See [commands](./src/docs/commands.md), [complete Effect wiring](./src/docs/effect.md),
+and [authenticated builders](./src/docs/auth.md).
 
-For cohesive command/query entries that include their handlers, use
-[`cvx-kit/effect`](./src/docs/effect.md). Install Effect `>=4.0.1 <5` separately;
-ordinary handlers, `Effect.gen`, and `Effect.fn` compose through the same
-registry. Shared API builders provide invocation-local services and execute
-the Effect. Existing Foundation declarations and Promise executors remain
-supported, so domains can migrate independently.
+The old `Foundation.Command` Promise facade is **deprecated** and retained for
+existing consumers. Its separate executor handler options are covered only in
+the [compatibility reference](./src/docs/commands-legacy.md). The Foundation
+component and its transaction result helpers remain available.
 
 ### `cvx-kit/components/approvals` (component)
 
@@ -297,3 +307,9 @@ One-time setup (already-published package required first):
 ## Roadmap
 
 See [ROADMAP.md](./ROADMAP.md) — milestones from 0.1.0 through 1.0.0.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./src/docs/command-context.md).

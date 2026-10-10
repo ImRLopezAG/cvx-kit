@@ -327,3 +327,18 @@ describe('Effect query registries', () => {
 		expect(failures).toEqual([expected, expected])
 	})
 })
+
+it('binds query context while retaining explicit execution', async () => {
+	const queries = createEffectQuery({
+		context: (prefix: string) => ({ prefix }),
+		operations: ({ query }) => ({
+			read: query({
+				input: z.number(),
+				result: z.string(),
+				handler: (value, ctx) => `${ctx.prefix}:${value}`,
+			}),
+		}),
+	})
+	expect(await Effect.runPromise(queries.withContext('bound').exec('read', 1))).toBe('bound:1')
+	expect(await Effect.runPromise(queries.exec('read', 2, 'explicit'))).toBe('explicit:2')
+})

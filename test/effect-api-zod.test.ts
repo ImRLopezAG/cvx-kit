@@ -192,3 +192,206 @@ it('rolls back registered mutation writes when custom result parsing rejects', a
 	expect(successCallbacks).toBe(0)
 	expect(await t.run((ctx) => ctx.db.query('writes').collect())).toEqual([])
 })
+
+it('injects request-local context additions through existing custom helpers', async () => {
+	const custom = zCustomQuery(queryGeneric, {
+		args: {},
+		input: async (ctx) => ({
+			ctx: { actor: (await ctx.auth.getUserIdentity())!.subject },
+			args: {},
+		}),
+	})
+	const query = effectZodApiBuilder(custom, {
+		context: (ctx) => Effect.succeed({ greeting: () => `hello:${ctx.actor}` }),
+	})
+	const load = query({
+		args: {},
+		handler: (ctx) => Effect.succeed(`${ctx.actor}:${ctx.greeting()}`),
+	})
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ load }),
+	})
+	const ref = makeFunctionReference<'query', {}, string>('functions:load')
+	expect(
+		await Promise.all(
+			['alice', 'bob'].map((subject) => t.withIdentity({ subject }).query(ref, {})),
+		),
+	).toEqual(['alice:hello:alice', 'bob:hello:bob'])
+})
+
+it('runs context initialization in the provided scope and releases services on failure', async () => {
+	const releases: string[] = []
+	const custom = zCustomQuery(queryGeneric, {
+		args: {},
+		input: () => ({ ctx: { actor: 'trusted' }, args: {} }),
+	})
+	const query = effectZodApiBuilder(custom, {
+		services: (ctx) =>
+			Effect.acquireRelease(
+				Effect.succeed(Context.make(Request, { actor: ctx.actor, tenant: 'scope' })),
+				() =>
+					Effect.sync(() => {
+						releases.push(ctx.actor)
+					}),
+			),
+		context: () =>
+			Effect.gen(function* () {
+				return { greeting: (yield* Request).actor }
+			}),
+	})
+	const load = query({ args: {}, handler: (ctx) => Effect.fail(Error(ctx.greeting)) })
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ load }),
+	})
+	await expect(
+		t.query(makeFunctionReference<'query', {}, string>('functions:load'), {}),
+	).rejects.toThrow('trusted')
+	expect(releases).toEqual(['trusted'])
+})
+
+it('rejects attempted replacement of trusted custom context before the handler', async () => {
+	let calls = 0
+	const custom = zCustomQuery(queryGeneric, {
+		args: {},
+		input: () => ({ ctx: { actor: 'trusted' }, args: {} }),
+	})
+	const query = effectZodApiBuilder(custom, {
+		// @ts-expect-error Context additions cannot replace existing trusted fields.
+		context: () => ({ actor: 'forged' }),
+	})
+	const load = query({
+		args: {},
+		handler: () => {
+			calls++
+			return Effect.succeed('bad')
+		},
+	})
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ load }),
+	})
+	await expect(
+		t.query(makeFunctionReference<'query', {}, string>('functions:load'), {}),
+	).rejects.toThrow('cannot replace actor')
+	expect(calls).toBe(0)
+})
+
+const customContextlessQuery = zCustomQuery(queryGeneric, {
+	args: {},
+	input: () => ({ ctx: {}, args: {} }),
+})
+const missingContextService = effectZodApiBuilder(customContextlessQuery, {
+	context: () => Effect.map(Request, (request) => ({ actor: request.actor })),
+})
+
+// @ts-expect-error Context initialization requires services that this builder does not provide.
+missingContextService({ args: {}, handler: () => Effect.succeed('no') })
+
+const unionCustomQuery = zCustomQuery(queryGeneric, {
+	args: {},
+	input: () => ({ ctx: { actor: 'trusted' }, args: {} }),
+})
+effectZodApiBuilder(unionCustomQuery, {
+	// @ts-expect-error Every union branch must avoid replacing trusted fields.
+	context: (): { actor: string } | { tasks: number } => ({ actor: 'forged' }),
+})
+
+it('skips context initialization when authentication denies the request', async () => {
+	let initialized = 0
+	const custom = zCustomMutation(mutationGeneric, {
+		args: {},
+		input: async (ctx) => {
+			if (!(await ctx.auth.getUserIdentity())) throw Error('UNAUTHORIZED')
+			return { ctx: {}, args: {} }
+		},
+	})
+	const mutation = effectZodApiBuilder(custom, {
+		context: () => {
+			initialized++
+			return { feature: true }
+		},
+	})
+	const save = mutation({ args: {}, handler: () => Effect.succeed('ok') })
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ save }),
+	})
+	await expect(
+		t.mutation(makeFunctionReference<'mutation', {}, string>('functions:save'), {}),
+	).rejects.toThrow('UNAUTHORIZED')
+	expect(initialized).toBe(0)
+})
+
+it('projects initialization failures, releases resources, and rolls back initialization writes', async () => {
+	let releases = 0
+	let handled = false
+	const native: MutationBuilder<DataModel, 'public'> = mutationGeneric
+	const mutation = effectZodApiBuilder(
+		zCustomMutation(native, { args: {}, input: () => ({ ctx: {}, args: {} }) }),
+		{
+			services: () =>
+				Effect.acquireRelease(Effect.succeed(Context.empty()), () =>
+					Effect.sync(() => {
+						releases++
+					}),
+				),
+			context: (ctx) =>
+				Effect.gen(function* () {
+					yield* Effect.promise(() =>
+						ctx.db.insert('writes', { actor: 'init', tenant: 'init', value: 1 }),
+					)
+					return yield* Effect.fail('INIT_FAILED')
+				}),
+			mapError: (error) => Error(`projected:${String(error)}`),
+		},
+	)
+	const save = mutation({
+		args: {},
+		handler: () => {
+			handled = true
+			return Effect.succeed('bad')
+		},
+	})
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ save }),
+	})
+	await expect(
+		t.mutation(makeFunctionReference<'mutation', {}, string>('functions:save'), {}),
+	).rejects.toThrow('projected:INIT_FAILED')
+	expect(handled).toBe(false)
+	expect(releases).toBe(1)
+	expect(await t.run((ctx) => ctx.db.query('writes').collect())).toEqual([])
+})
+
+it('rejects class instances as additions rather than dropping inherited methods', async () => {
+	class Dependencies {
+		format() {
+			return 'inherited'
+		}
+	}
+	const custom = zCustomQuery(queryGeneric, { args: {}, input: () => ({ ctx: {}, args: {} }) })
+	const query = effectZodApiBuilder(custom, {
+		// @ts-expect-error Wrap class instances in named record properties.
+		context: () => new Dependencies(),
+	})
+	const load = query({ args: {}, handler: () => Effect.succeed('bad') })
+	const t = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ load }),
+	})
+	await expect(
+		t.query(makeFunctionReference<'query', {}, string>('functions:load'), {}),
+	).rejects.toThrow('must be a plain record')
+	const valid = effectZodApiBuilder(custom, { context: () => ({ service: new Dependencies() }) })
+	const wrapped = valid({ args: {}, handler: (ctx) => Effect.succeed(ctx.service.format()) })
+	const validTest = convexTest(schema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ wrapped }),
+	})
+	expect(
+		await validTest.query(makeFunctionReference<'query', {}, string>('functions:wrapped'), {}),
+	).toBe('inherited')
+})

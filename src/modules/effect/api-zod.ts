@@ -10,6 +10,7 @@ import {
 	type ProvidedServices,
 	type EffectApiServices,
 	type EffectApiHandlerValue,
+	type EffectApiContext,
 } from './api-runtime'
 import type { CallbackRequirements, EffectValue } from './operation'
 
@@ -74,6 +75,8 @@ export type EffectZodApiBuilder<
 	Visibility extends FunctionVisibility,
 	ExtraArgs extends Record<string, unknown>,
 	Services,
+	Added = {},
+	Initialized = {},
 > = {
 	<
 		Args extends ArgumentsValidator,
@@ -90,16 +93,17 @@ export type EffectZodApiBuilder<
 					returns?: Returns
 					skipConvexValidation?: boolean
 					handler: (
-						ctx: Overwrite<InputCtx, CustomCtx>,
+						ctx: Overwrite<InputCtx, CustomCtx> & Added,
 						...args: HandlerArgs<Args, CustomMadeArgs>
 					) => Returned
 			  } & Omit<ExtraArgs, 'args' | 'returns' | 'handler' | 'skipConvexValidation'>)
 			| ((
-					ctx: Overwrite<InputCtx, CustomCtx>,
+					ctx: Overwrite<InputCtx, CustomCtx> & Added,
 					...args: HandlerArgs<Args, CustomMadeArgs>
 			  ) => Returned)
 		) &
-			CheckedRequirements<Returned, Services>,
+			CheckedRequirements<Returned, Services> &
+			CheckedRequirements<Initialized, Services>,
 	): Registration<Kind, Visibility, RawArgs<Args, CustomArgs>, ResultOutput<Returns, Returned>>
 }
 
@@ -112,7 +116,8 @@ export function effectZodApiBuilder<
 	InputCtx,
 	Visibility extends FunctionVisibility,
 	ExtraArgs extends Record<string, unknown>,
-	Provider extends EffectApiServices,
+	Provider extends EffectApiServices = import('effect').Context.Context<never>,
+	Added extends EffectApiContext = {},
 >(
 	builder: CustomBuilder<
 		Kind,
@@ -123,7 +128,7 @@ export function effectZodApiBuilder<
 		Visibility,
 		ExtraArgs
 	>,
-	options: EffectApiOptions<Overwrite<InputCtx, CustomCtx>, Provider>,
+	options: EffectApiOptions<Overwrite<InputCtx, CustomCtx>, Provider, Added>,
 ): EffectZodApiBuilder<
 	Kind,
 	CustomArgs,
@@ -132,7 +137,9 @@ export function effectZodApiBuilder<
 	InputCtx,
 	Visibility,
 	ExtraArgs,
-	ProvidedServices<Provider>
+	ProvidedServices<Provider>,
+	EffectValue<Added>,
+	Added
 > {
 	// SAFETY: Runtime substitution changes only the handler. The original builder retains validation,
 	// customization, registration kind and visibility; the public call signature above checks Effects.
@@ -144,6 +151,8 @@ export function effectZodApiBuilder<
 		InputCtx,
 		Visibility,
 		ExtraArgs,
-		ProvidedServices<Provider>
+		ProvidedServices<Provider>,
+		EffectValue<Added>,
+		Added
 	>
 }

@@ -5,7 +5,11 @@ runner. Handlers can return ordinary values, Promises, or Effects. Each
 registry returns a lazy Effect from `exec(operation, input, host)`; the API
 adapter provides request services and runs it once.
 
-Install Effect explicitly when opting in:
+This is the recommended command API. The older `Foundation.Command` facade
+and `exec({ operation, handler })` executor API are deprecated and retained for
+compatibility. Declare handlers inside `command({...})` for new command code.
+
+Install Effect explicitly:
 
 ```sh
 bun add effect@4.0.1
@@ -377,8 +381,15 @@ registry's lazy Effect to a shared API adapter. A normal async handler works
 in the cohesive declaration without a generator; wrap expected Promise failures
 only when you want a typed error channel.
 
-The [command migration guide](./commands.md) shows a complete legacy-to-Effect
-pair and the existing lifecycle contract. The [authentication guide](./auth.md)
+The [command guide](./commands.md) documents the current lifecycle and migration
+steps; the [deprecated API reference](./commands-legacy.md) retains old examples.
+The [authentication guide](./auth.md)
 shows how to wrap trusted custom builders with `effectZodApiBuilder`, so auth,
 tenancy, validators, row-level policies, and triggers run through their
 existing builder before Effect request services are provisioned.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./command-context.md).

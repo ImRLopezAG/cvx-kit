@@ -3,7 +3,7 @@
 > Paste this file (installed at `node_modules/cvx-kit/docs/`) into an agent's
 > context when it works on a cvx-kit application. Detailed docs:
 > `architecture.md`, `conventions.md`, `zod-table.md`, `auth.md`,
-> `commands.md`, `triggers.md`, `approvals.md`, `maintainability.md`,
+> `commands.md`, `effect.md`, `domain-operations.md`, `triggers.md`, `approvals.md`, `maintainability.md`,
 > `migration.md` (same directory).
 > Structure, file anatomy, and naming rules → `conventions.md` is
 > authoritative. Restructuring an existing raw project → `migration.md`.
@@ -22,7 +22,13 @@
 cvx-kit is a reusable Convex application kit: zod table boundaries, auth-aware
 function constructors, a trigger registry, an audited command protocol
 (Foundation component), and a declarative approvals component. Peer deps:
-`convex ^1.43`, `zod ^4`.
+`convex ^1.45.0`, `zod ^4.5.4`; command implementations also install
+`effect >=4.0.1 <5` and import `cvx-kit/effect`.
+
+**Command API selection:** use `createEffectFoundation` and declare handlers
+inside `command({...})`. The older `Foundation.Command` Promise facade is
+deprecated. Its compatibility examples live in `commands-legacy.md`; do not
+copy that API into new implementations.
 
 ## Non-negotiable rules
 
@@ -31,27 +37,27 @@ function constructors, a trigger registry, an audited command protocol
 2. **Raw `query`/`mutation`/`action`/`internal*` builders appear only in
    `convex/functions.ts`** (the `createAuthFunctions` call). All other
    functions use `authQuery/authMutation/authAction`, `roleQuery/...`,
-   `adminQuery/...` (public) or `systemQuery/systemMutation/systemAction` (internal).
+   `adminQuery/...` (public) or `systemQuery/systemMutation/systemAction` (internal),
+   wrapped once with `effectZodApiBuilder` when their handlers return Effects.
    This is what guarantees auth, triggers, and bounded reads.
 3. **Every public query returns DTOs** via `<table>.toPublicDto(row)` —
    runtime redaction, not just types.
 4. **Every read is bounded**: `ctx.include(ctx.db.query('t')).matching(...)
 .execute(limit)` with `1 ≤ limit ≤ 100`. `.resolve()` falls back to a full
    table scan — avoid it.
-5. **State changes are commands**: an operations registry with mandatory
-   `classification` and `audit()` per operation, executed via
-   `commands.exec({ operation, handler })`. Audit writes happen in the same
-   transaction. Optional per-operation `permission` (checked via the
-   Foundation's injected `checkPermission`) and `guard(ctx, command)`
-   preconditions run BEFORE the handler, plus a registry-wide default guard
-   (`new Command(operations, { guard })`). Composable middleware
-   (`Command.middleware(async ({ context, next }) => ...)`) wraps
-   [guards → handler] via registry `middleware: [...]` and per-operation
-   `middleware: [...]` — `next({ context })` enriches downstream ctx, and
-   the chain's output is re-parsed by the result schema. Query takes the
-   same shape (`Query.middleware`, kernel + per-executor arrays). Order:
-   permission → registry middleware → operation middleware → default guard
-   → operation guard → handler → result parse → aggregates → audit.
+5. **State changes are Effect commands**: declare
+   `Command({ context, operations: ({ command }) => ({ ... }), defaults })`.
+   Each `command({ input, result, classification, handler, audit })` owns its
+   handler; handlers receive `(input, context)`. Execute with
+   `commands.exec(operation, input, host)` and return the lazy Effect through a
+   shared API builder. Never pass a handler to `exec` or run a nested
+   `Effect.runPromise`. Permission uses the injected `checkPermission(host, ...)`;
+   guards receive `(context, input)`. Per-operation middleware is one callback,
+   `next()` returns an Effect, and `next({ context })` enriches downstream ctx.
+   Order: input → context → permission → prepare/replay → middleware → default
+   guard → operation guard → handler → result parse → aggregates/audit → completion.
+   Audit writes stay in the mutation transaction. Failures must escape the
+   mutation for rollback; replay skips middleware, guards, handler, and audit.
 6. **Never write timestamps by hand.** `createdAt`/`updatedAt` are maintained
    by the `timestamps` trigger; `archivedAt` is the app-controlled soft-delete
    marker.
@@ -74,18 +80,19 @@ function constructors, a trigger registry, an audited command protocol
 
 | Import                          | Provides                                                                                                                                                                                                                                                                |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cvx-kit`                       | everything below re-exported (except components' defaults)                                                                                                                                                                                                              |
+| `cvx-kit`                       | Non-Effect helpers and component clients; import the optional Effect facade explicitly from `cvx-kit/effect`. |
 | `cvx-kit/zod-table`             | `zodTable`, `tenantTable`, `createModule`, `paginated`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS`                                                                                                                                                            |
+| `cvx-kit/effect`                | Recommended command/query API: `createEffectFoundation`, `effectApiBuilder`, `effectZodApiBuilder`, `createEffectCrud`, idempotency/workflow adapters and operation tools. |
 | `cvx-kit/auth`                  | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap`                                                                                                                                                                         |
 | `cvx-kit/tenancy`               | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD`                                                                                                                                                                      |
-| `cvx-kit/crud`                  | `createCrudCommands` — create/update/archive from a zodTable, inside the command pipeline; `enrich` REQUIRED for tenantTables                                                                                                                                           |
+| `cvx-kit/crud`                  | Compatibility CRUD factory using the deprecated Promise command facade; use `createEffectCrud` from `cvx-kit/effect` for new domains. |
 | `cvx-kit/state-machine`         | `createStateMachine` — typed transitions from constants tuples; `assert` drops into command guards                                                                                                                                                                      |
 | `cvx-kit/middleware`            | `rateLimit` — packaged middleware over an injected rate-limiter instance; keyed by `ctx.tenant`, missing key = config error                                                                                                                                             |
 | `cvx-kit/webhooks`              | `createWebhookBoundary`, `recordWebhookEvent`, `webhookEventsTable` — raw-body verify, natural-key dedup in the mutation                                                                                                                                                |
 | `cvx-kit/agent-tools`           | `createAgentTools` — tool records from table masks; mutation handlers route through command executors                                                                                                                                                                   |
 | `cvx-kit/triggers`              | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers`                                                                                                                                                                                 |
 | `cvx-kit/errors`                | `KitError`, `defaultErrors`, `ErrorFactory`                                                                                                                                                                                                                             |
-| `cvx-kit/components/foundation` | `Foundation` — the ONLY runtime export besides the default component config for `app.use`. Everything (`Command`, `Query`, `observability`, `executeResultBoundary`, `projectResult`, `emitSemanticEvent`) destructures from the instance; nothing is importable loose. |
+| `cvx-kit/components/foundation` | Component client and types; `Foundation.Command` is deprecated. The component and other capabilities remain available. New command registries use `cvx-kit/effect`. |
 | `cvx-kit/components/approvals`  | `Approvals` client; default export = component config for `app.use`                                                                                                                                                                                                     |
 | `cvx-kit/test`                  | `registerFoundation(t)`, `registerApprovals(t)` for convex-test                                                                                                                                                                                                         |
 
@@ -110,7 +117,7 @@ appendOnly(triggers, 'history')
 // convex/functions.ts
 export const {
 	authQuery,
-	authMutation,
+	authMutation: baseAuthMutation,
 	authAction,
 	adminQuery,
 	adminMutation,
@@ -141,13 +148,23 @@ export const {
 	},
 })
 
+// convex/functions.ts — wrap configured auth constructors once, after auth/RLS/triggers
+// Import Context from effect and effectZodApiBuilder from cvx-kit/effect.
+// Place this after the registry declaration or import the registry from its module.
+export const authMutation = effectZodApiBuilder(baseAuthMutation, {
+	context: (ctx) => ({ commands: commands.withContext(ctx) }),
+})
+
 // convex/foundation.ts
-export const { Command, Query, observability } = new Foundation(components.foundation, {
+// Import createEffectFoundation from cvx-kit/effect.
+import type { MutationCtx } from './_generated/server'
+export type CommandHost = MutationCtx & { actor: { userId: string } }
+export const { Command, Query, observability } = createEffectFoundation({
 	observability: {
 		enabled: () => process.env.OBS === 'true',
 		classifyError, // → { outcome: 'denied'|'failed', errorCode }
-		writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
 	},
+	writeAudit: (ctx: CommandHost, entry) => writeAuditEntry(ctx, entry),
 })
 
 // convex/approvals.ts
@@ -175,32 +192,33 @@ export const documents = zodTable(
 defineSchema({ documents: documents.table.index('by_owner', ['ownerId']) })
 
 // domain/documents/commands.ts
-const operations = {
-	'documents.rename': Command.operation({
-		command: documents.commandInput.extend({ id: zid('documents'), actorId: z.string() }),
-		result: z.object({ ok: z.literal(true) }).strict(),
-		classification: 'business',
-		audit: ({ command }) => ({
-			operation: 'documents.rename',
-			actorId: command.actorId,
-			aggregate: { type: 'document', id: command.id },
+export const renameInput = documents.commandInput.extend({ id: zid('documents') })
+export const renameResult = z.object({ ok: z.literal(true) }).strict()
+export const commands = Command({
+	context: (host: CommandHost) => host,
+	operations: ({ command }) => ({
+		'documents.rename': command({
+			input: renameInput,
+			result: renameResult,
+			classification: 'business',
+			handler: async (input, ctx) => {
+				await ctx.db.patch(input.id, { title: input.title })
+				return { ok: true as const }
+			},
+			audit: ({ command }, ctx) => ({
+				operation: 'documents.rename',
+				actorId: ctx.actor.userId,
+				aggregate: { type: 'document', id: command.id },
+			}),
 		}),
 	}),
-} as const
-const commands = new Command<MutationCtx, typeof operations>(operations)
-export const executeRename = commands.exec({
-	operation: 'documents.rename',
-	handler: async (ctx, cmd) => {
-		await ctx.db.patch(cmd.id, { title: cmd.title })
-		return { ok: true }
-	},
 })
 
 // api/documents.ts — thin public adapter
 export const rename = authMutation({
-	args: documents.commandInput.extend({ id: zid('documents') }),
-	returns: z.object({ ok: z.literal(true) }).strict(),
-	handler: (ctx, args) => executeRename(ctx, { ...args, actorId: ctx.actor.userId }),
+	args: renameInput,
+	returns: renameResult,
+	handler: (ctx, input) => ctx.commands.exec('documents.rename', input),
 })
 export const list = authQuery({
 	args: { limit: z.number() },
@@ -261,9 +279,15 @@ points at `runId`.
 4. Mis-declared `serverFields` silently make server-owned fields
    client-writable; masks are the security boundary.
 5. `include(...).resolve()` silently falls back to `fullTableScan()`.
-6. Audit callback ctx is untyped (`never`) — commands must run in mutations;
-   wiring a query ctx fails at runtime.
+6. Command audit actors come from trusted host context, never client input.
+   Commands with writes must run through mutation builders with wrapped `ctx.db`.
 7. Changing approval steps without bumping `compatibilityKey` lets old runs
    be driven by an incompatible shape.
 8. When composing ctx manually, spread `wrapDB(ctx)` first — later spreads
    carrying `db` restore the unwrapped database.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./command-context.md).

@@ -220,7 +220,19 @@ export function createEffectQuery<
 		if (!Object.hasOwn(operations, operation)) throw new QueryConfigurationError()
 		return selectOperation(owner, 'query', operation, operations[operation])
 	}
-	return { exec, expose }
+	return {
+		exec,
+		expose,
+		/** Bind invocation context without resolving it or running an operation. */
+		withContext(context: Host) {
+			return {
+				exec: <const Key extends OperationKey<Operations>>(
+					operation: Key,
+					input: EffectOperationArgument<Operations[Key]>,
+				) => exec(operation, input, context),
+			}
+		},
+	}
 }
 
 type Policy<Dependencies> = 'checkPermission' extends keyof Dependencies

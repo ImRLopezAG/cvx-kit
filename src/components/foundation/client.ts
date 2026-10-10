@@ -213,6 +213,10 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 		})
 	}
 
+	/**
+	 * @deprecated Declare handlers inside command({...}) using createEffectFoundation
+	 * from cvx-kit/effect, then call exec(operation, input, host).
+	 */
 	exec<const Key extends OperationKey<Operations>>(executor: {
 		operation: Key
 		handler: (
@@ -338,6 +342,7 @@ class BoundCommand<Context, const Operations extends AuditedRegistry> {
 	}
 }
 
+/** @deprecated Use the registry returned by createEffectFoundation(...).Command from cvx-kit/effect. */
 export type ApplicationCommand<Context, Operations extends AuditedRegistry> = BoundCommand<
 	Context,
 	Operations
@@ -347,8 +352,10 @@ export type ApplicationCommand<Context, Operations extends AuditedRegistry> = Bo
  * The constructor shape a Foundation instance exposes as `Command`.
  * Exported as a TYPE ONLY so factories (e.g. cvx-kit/crud) can accept the
  * destructured facade class as input without importing any runtime kernel.
+ * @deprecated Use createEffectFoundation from cvx-kit/effect and declare handlers inside command({...}).
  */
 export type CommandConstructor = {
+	/** @deprecated Use createEffectFoundation(...).Command({ context, operations }) from cvx-kit/effect. */
 	new <Context, const Operations extends AuditedRegistry>(
 		operations: Operations & {
 			readonly [Key in keyof Operations]: OperationHostContext<Context>
@@ -367,6 +374,7 @@ export type CommandConstructor = {
  */
 export class Foundation<Component extends FoundationComponentApi = FoundationComponentApi> {
 	readonly status: Component['functions']['status']
+	/** @deprecated Use createEffectFoundation(...).Command from cvx-kit/effect. */
 	readonly Command: CommandConstructor
 	readonly Query = Query
 	readonly observability: Observability

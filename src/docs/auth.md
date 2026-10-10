@@ -91,12 +91,12 @@ class Actor extends Context.Service<
 >()('app/Actor') {}
 
 export function createEffectAccountApi<DataModel extends GenericDataModel>(
-	authMutation: ReturnType<typeof createAuthFunctions<DataModel>>['authMutation'],
+	baseAuthMutation: ReturnType<typeof createAuthFunctions<DataModel>>['authMutation'],
 ) {
-	const effectAuthMutation = effectZodApiBuilder(authMutation, {
+	const authMutation = effectZodApiBuilder(baseAuthMutation, {
 		services: (ctx) => Context.make(Actor, ctx.actor),
 	})
-	const currentActor = effectAuthMutation({
+	const currentActor = authMutation({
 		args: {},
 		returns: z.object({ userId: z.string(), organizationId: z.string() }),
 		handler: () =>
@@ -105,7 +105,7 @@ export function createEffectAccountApi<DataModel extends GenericDataModel>(
 				return { userId: actor.userId, organizationId: actor.organizationId }
 			}),
 	})
-	return { effectAuthMutation, currentActor }
+	return { authMutation, currentActor }
 }
 ```
 
@@ -305,3 +305,9 @@ errors: { throw: (input) => { throw App.errors.from(input) } }
 3. Reads go through `ctx.include(...)` with an explicit limit.
 4. Use `ctx.actor` as the actor reference in audits and approvals — never
    re-derive identity in a handler.
+
+Optional request context can be added through the existing Effect API adapter's
+`context` callback. Bind selected registries with `commands.withContext(value)`
+and consume `ctx.commands.exec(name, input)` through the application's existing
+function helper names. Keep dependencies local to each feature; explicit execution
+and input-only command handlers remain supported. See [optional context injection](./command-context.md).

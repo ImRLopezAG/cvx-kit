@@ -27,7 +27,7 @@ Loading a plugin does not enable its rules. For example:
 
 With Vite+, place those fields under `lint` in `vite.config.ts`. The plugin
 exports a default plugin object, named `rules`, and the `RuleName` type. It is
-tested with Oxlint 1.79.0 and Vite+ 0.3.0.
+tested with Oxlint 1.87.0 and Vite+ 1.1.0.
 
 All rules default to `convex/` relative to the linter's working directory.
 For another location, set `convexDir` on **each enabled rule**:

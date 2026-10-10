@@ -133,6 +133,7 @@
 		"test:package:ids": "bun run build && node scripts/test-packed-ids.mjs",
 		"test:package:oxlint": "bun run build && node scripts/test-packed-oxlint.mjs",
 		"test:package:effect": "bun run build && node scripts/test-packed-effect.mjs",
+		"test:package:auth": "bun run build && node scripts/test-packed-auth.mjs",
 		"test:package:smoke:effect": "bun run build && node scripts/smoke-packed-effect.mjs",
 		"test:package:smoke:bun": "bun scripts/smoke-packed-components.mjs bun",
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
@@ -143,28 +144,30 @@
 		"release:minor": "npm version minor && git push --follow-tags"
 	},
 	"dependencies": {
-		"@convex-dev/workflow": "0.4.6",
-		"@oxlint/plugins": "1.79.0",
+		"@convex-dev/workflow": "0.4.10",
+		"@oxlint/plugins": "1.87.0",
+		"@standard-schema/spec": "^1.1.0",
 		"convex-audit-log": "^0.2.0",
-		"oxc-parser": "0.150.0",
+		"oxc-parser": "0.153.0",
 		"oxc-resolver": "11.24.2"
 	},
 	"devDependencies": {
 		"@edge-runtime/vm": "^5.0.0",
-		"@types/node": "^26.6.1",
-		"convex": "1.45.0",
-		"convex-helpers": "0.1.124",
-		"convex-test": "^0.0.56",
-		"effect": "4.0.1",
-		"oxlint": "1.79.0",
-		"publint": "^0.3.24",
+		"@types/node": "^26.6.5",
+		"convex": "1.46.0",
+		"convex-helpers": "0.1.128",
+		"convex-test": "^0.0.61",
+		"effect": "4.0.2",
+		"oxlint": "1.87.0",
+		"publint": "^0.3.25",
 		"typescript": "7.0.2",
-		"vite-plus": "0.3.0",
-		"zod": "4.5.4"
+		"vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
+		"vite-plus": "1.1.0",
+		"zod": "4.6.5"
 	},
 	"peerDependencies": {
-		"convex": "^1.45.0",
-		"convex-helpers": ">=0.1.123 <0.2.0",
+		"convex": "^1.46.0",
+		"convex-helpers": ">=0.1.127 <0.2.0",
 		"effect": ">=4.0.1 <5",
 		"zod": "^4.5.4"
 	},
@@ -172,6 +175,9 @@
 		"effect": {
 			"optional": true
 		}
+	},
+	"overrides": {
+		"vite": "npm:@voidzero-dev/vite-plus-core@1.1.0"
 	},
 	"devEngines": {
 		"packageManager": {

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { zCustomAction, zCustomMutation, zCustomQuery } from 'convex-helpers/server/zod4'
+import type { CustomBuilder } from 'convex-helpers/server/zod4'
 import type {
 	ActionBuilder,
 	DocumentByInfo,
@@ -189,6 +190,75 @@ export type Include = <Table extends GenericTableInfo>(
 	query: QueryInitializer<Table>,
 ) => IncludedQuery<Table>
 
+/**
+ * Keep native contexts symbolic in published declarations. Inferred spreads
+ * copy build-time Convex methods and override the consumer's native context.
+ */
+export type AuthFunctions<DataModel extends GenericDataModel, Role extends string = DefaultRole> = {
+	include: Include
+	authenticatedUser: (ctx: AnyAuthContext<DataModel>) => Promise<AuthBundle<Role>>
+	authQuery: CustomBuilder<
+		'query',
+		{},
+		GenericQueryCtx<DataModel> & AuthBundle<Role> & { include: Include },
+		{},
+		GenericQueryCtx<DataModel>,
+		'public',
+		object
+	>
+	authMutation: CustomBuilder<
+		'mutation',
+		{},
+		GenericMutationCtx<DataModel> & AuthBundle<Role> & { include: Include },
+		{},
+		GenericMutationCtx<DataModel>,
+		'public',
+		object
+	>
+	authAction: CustomBuilder<
+		'action',
+		{},
+		GenericActionCtx<DataModel> & AuthBundle<Role>,
+		{},
+		GenericActionCtx<DataModel>,
+		'public',
+		object
+	>
+	roleQuery: (...allowed: readonly Role[]) => AuthFunctions<DataModel, Role>['authQuery']
+	roleMutation: (...allowed: readonly Role[]) => AuthFunctions<DataModel, Role>['authMutation']
+	roleAction: (...allowed: readonly Role[]) => AuthFunctions<DataModel, Role>['authAction']
+	adminQuery: AuthFunctions<DataModel, Role>['authQuery']
+	adminMutation: AuthFunctions<DataModel, Role>['authMutation']
+	adminAction: AuthFunctions<DataModel, Role>['authAction']
+	systemQuery: CustomBuilder<
+		'query',
+		{},
+		GenericQueryCtx<DataModel> & { include: Include },
+		{},
+		GenericQueryCtx<DataModel>,
+		'internal',
+		object
+	>
+	systemMutation: CustomBuilder<
+		'mutation',
+		{},
+		GenericMutationCtx<DataModel> & { include: Include },
+		{},
+		GenericMutationCtx<DataModel>,
+		'internal',
+		object
+	>
+	systemAction: CustomBuilder<
+		'action',
+		{},
+		GenericActionCtx<DataModel>,
+		{},
+		GenericActionCtx<DataModel>,
+		'internal',
+		object
+	>
+}
+
 /** Builds an include() that selects the first matching indexed query and bounds the read. */
 export function createInclude(options?: { errors?: ErrorFactory; maxRows?: number }): Include {
 	const errors = options?.errors ?? defaultErrors
@@ -264,7 +334,7 @@ export function createInclude(options?: { errors?: ErrorFactory; maxRows?: numbe
 export function createAuthFunctions<
 	DataModel extends GenericDataModel,
 	const Role extends string = DefaultRole,
->(config: AuthFunctionsConfig<DataModel, Role>) {
+>(config: AuthFunctionsConfig<DataModel, Role>): AuthFunctions<DataModel, Role> {
 	const errors = config.errors ?? defaultErrors
 	const triggers = config.triggers
 	const wrapDB = triggers

@@ -12,6 +12,22 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-10-10
+
+### Added
+
+- Implement contracted operations with `command.handler(handler, options?)` and
+  `query.handler(handler, options?)` in both Promise and Effect registries.
+- Infer each handler's input and result from its operation object key, without
+  repeating the operation name; preserve existing named helpers.
+
+### Verified
+
+- Cover contract binding, validation, audits, and handler inference with 684
+  runtime tests and strict type fixtures.
+- Compile the documentation examples and test packed npm/Bun consumers with
+  and without Effect.
+
 ## [0.1.12] - 2026-10-10
 
 ### Added

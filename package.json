@@ -146,6 +146,7 @@
 	"dependencies": {
 		"@convex-dev/workflow": "0.4.10",
 		"@oxlint/plugins": "1.87.0",
+		"@standard-schema/spec": "^1.1.0",
 		"convex-audit-log": "^0.2.0",
 		"oxc-parser": "0.153.0",
 		"oxc-resolver": "11.24.2"

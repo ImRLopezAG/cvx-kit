@@ -41,17 +41,14 @@ const commands = Command({
 		}
 	},
 	operations: ({ command }) => ({
-		'tasks.create': command['tasks.create']({ handler: (input) => input + 1 }),
-		'tasks.close': command['tasks.close']({
-			handler: (input) => input.id.length > 0,
-			audit: () => null,
-		}),
+		'tasks.create': command.handler((input) => input + 1),
+		'tasks.close': command.handler((input) => input.id.length > 0, { audit: () => null }),
 	}),
 })
 const queries = Query({
 	contract,
 	context: (host: { actorId: string }) => host,
-	operations: ({ query }) => ({ 'tasks.get': query['tasks.get']({ handler: (input) => input }) }),
+	operations: ({ query }) => ({ 'tasks.get': query.handler((input) => input) }),
 })
 const created = await commands.exec('tasks.create', '2', { actorId: 'actor' })
 const count = await queries.withContext({ actorId: 'actor' }).exec('tasks.get', created.count)

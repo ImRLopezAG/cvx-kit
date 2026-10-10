@@ -25,6 +25,16 @@ const options = [{ convexDir: 'backend' }]
 tester.run('physical-reserved-domain-files', rules['reserved-domain-file-anatomy'], {
 	valid: [
 		{
+			filename: join(root, 'backend/domain/tasks/commands.ts'),
+			options,
+			code: "import { Run as Command } from '../../foundation'; export const commands = Command({ contract, context, audit, operations: ({ command }) => ({ save: command.handler((input, ctx) => save(input, ctx), { guard }) }) })",
+		},
+		{
+			filename: join(root, 'backend/domain/tasks/queries.ts'),
+			options,
+			code: "import * as foundation from '../../foundation'; export const queries = foundation.Read({ contract, context, operations: ({ query }) => ({ get: query.handler((input, ctx) => get(input, ctx)) }) })",
+		},
+		{
 			filename: join(root, 'backend/domain/tasks/contracts.ts'),
 			options,
 			code: "import { z } from 'zod'; export const contracts = { save: { input: z.string(), result: z.string(), classification: 'business' } }",

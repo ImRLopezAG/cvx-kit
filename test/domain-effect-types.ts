@@ -118,6 +118,7 @@ Query({
 Query({
 	contract: domain,
 	context: (host: { actor: string }) => host,
+	// @ts-expect-error invalid output also fails the contextual registry map
 	operations: ({ query }) => ({
 		get: query.get({
 			// @ts-expect-error invalid output

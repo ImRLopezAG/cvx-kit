@@ -2,7 +2,7 @@
 import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractInput, ContractOutput, NeutralSchema } from '../contracts/contract'
 import type { DomainOperationContract, ExactOperationKeys } from '../contracts/domain'
-import { domainHelpers } from '../contracts/binding'
+import { domainHelpers, type DeclaredSchemas } from '../contracts/binding'
 
 type Supported<A> = A | PromiseLike<A>
 export type Audit = Omit<AuditEntryInput, 'classification'> | null
@@ -90,6 +90,23 @@ type Forbidden = {
 	replayResult?: never
 	wire?: never
 }
+type HandlerOptions<
+	Context,
+	Input extends NeutralSchema,
+	Result extends NeutralSchema,
+	Command extends boolean,
+	Required extends boolean,
+> = Omit<Definition<Context, { input: Input; result: Result }>, 'handler'> &
+	Forbidden & { handler?: never } & CommandRules<
+		Context,
+		{ input: Input; result: Result },
+		Command,
+		Required
+	>
+type HandlerArguments<Options, Required extends boolean> = Required extends true
+	? [options: Options]
+	: [options?: Options]
+
 export type DomainFactory<
 	Context,
 	Entries extends Readonly<Record<string, NormalEntry>>,
@@ -102,8 +119,43 @@ export type DomainFactory<
 				Definition<Context, Entries[Key]> &
 				Forbidden &
 				CommandRules<Context, Entries[Key], Command, Required>,
-		) => CheckedDefinition<Context, Entries[Key] & Implementation, Key>
+		) => DeclaredSchemas<Pick<Entries[Key], 'input' | 'result'>> &
+			CheckedDefinition<Context, Entries[Key] & Implementation, Key>
+	} & {
+		handler: <
+			const Input extends NeutralSchema,
+			const Result extends NeutralSchema,
+			Key extends keyof Entries,
+			Handler extends Supported<ContractInput<Result>>,
+			const Implementation extends object = Record<never, never>,
+		>(
+			handler: (input: ContractOutput<Input>, context: Context) => Handler,
+			...options: HandlerArguments<
+				Implementation & HandlerOptions<Context, Input, Result, Command, Required>,
+				Command extends true ? Required : false
+			>
+		) => DeclaredSchemas<{ input: Input; result: Result }> &
+			CheckedDefinition<
+				Context,
+				NoInfer<Implementation> & {
+					handler: (input: ContractOutput<Input>, context: Context) => Handler
+				},
+				Key
+			>
 	}
+}
+export type DomainImplementations<
+	Context,
+	Entries extends Readonly<Record<string, NormalEntry>>,
+	Command extends boolean,
+	Required extends boolean,
+> = {
+	[Key in keyof Entries]: DeclaredSchemas<Pick<Entries[Key], 'input' | 'result'>> &
+		CheckedDefinition<
+			Context,
+			Definition<Context, Entries[Key]> & CommandRules<Context, Entries[Key], Command, Required>,
+			Key
+		>
 }
 export function domainFactory<
 	Context,
@@ -112,7 +164,7 @@ export function domainFactory<
 	Required extends boolean,
 >(entries: Entries, command: Command): DomainFactory<Context, Entries, Command, Required> {
 	const helpers = domainHelpers(entries)
-	// SAFETY: paired schemas and callbacks are checked by the named helper signatures.
+	// SAFETY: helper signatures check callbacks; registration pairs drafts with their declarations.
 	return { [command ? 'command' : 'query']: helpers } as DomainFactory<
 		Context,
 		Entries,

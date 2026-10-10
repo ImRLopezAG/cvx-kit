@@ -19,7 +19,7 @@ import {
 	type NeutralSchema,
 } from '../contracts/contract'
 import type { DomainContract, DomainAuditInput } from '../contracts/domain'
-import { snapshotOperations } from '../contracts/binding'
+import { snapshotOperations, type BoundOperations } from '../contracts/binding'
 import {
 	selectOperation,
 	type SelectedOperation,
@@ -29,6 +29,7 @@ import {
 	domainFactory,
 	operationFactory,
 	type DomainFactory,
+	type DomainImplementations,
 	type InlineFactory,
 	type NormalEntry,
 	type Audit,
@@ -127,10 +128,21 @@ export function createFoundation<const Options extends FoundationRegistryOptions
 		const Contract extends DomainContract & {
 			commands: Readonly<Record<string, NormalEntry & { classification: string }>>
 		},
-		const Operations extends Registry<Domain<Resolve>>,
+		const Operations extends DomainImplementations<
+			Domain<Resolve>,
+			Contract['commands'],
+			true,
+			false
+		>,
 	>(
 		configuration: {
-			contract: Contract
+			contract: Contract &
+				NoInfer<
+					Operations extends ExactOperations<Operations, Contract['commands']> &
+						ValidatedOperations<Operations>
+						? unknown
+						: never
+				>
 			context: Resolve
 			audit: (
 				resolution: DomainAuditInput<Contract['commands']>,
@@ -138,31 +150,38 @@ export function createFoundation<const Options extends FoundationRegistryOptions
 			) => Supported<Audit>
 			operations: (
 				definitions: DomainFactory<Domain<Resolve>, Contract['commands'], true, false>,
-			) => Operations &
-				NoInfer<ExactOperations<Operations, Contract['commands']>> &
-				NoInfer<ValidatedOperations<Operations>>
+			) => Operations
 			defaults?: Defaults<Domain<Resolve>>
 		} & Compatible<Resolve>,
-	): FoundationRegistry<Resolve, Operations>
+	): FoundationRegistry<Resolve, BoundOperations<Operations, Contract['commands']>>
 	function Command<
 		Resolve extends Resolver,
 		const Contract extends DomainContract & {
 			commands: Readonly<Record<string, NormalEntry & { classification: string }>>
 		},
-		const Operations extends AuditedRegistry<Domain<Resolve>>,
+		const Operations extends DomainImplementations<
+			Domain<Resolve>,
+			Contract['commands'],
+			true,
+			true
+		>,
 	>(
 		configuration: {
-			contract: Contract
+			contract: Contract &
+				NoInfer<
+					Operations extends ExactOperations<Operations, Contract['commands']> &
+						ValidatedOperations<Operations>
+						? unknown
+						: never
+				>
 			context: Resolve
 			audit?: never
 			operations: (
 				definitions: DomainFactory<Domain<Resolve>, Contract['commands'], true, true>,
-			) => Operations &
-				NoInfer<ExactOperations<Operations, Contract['commands']>> &
-				NoInfer<ValidatedOperations<Operations>>
+			) => Operations
 			defaults?: Defaults<Domain<Resolve>>
 		} & Compatible<Resolve>,
-	): FoundationRegistry<Resolve, Operations>
+	): FoundationRegistry<Resolve, BoundOperations<Operations, Contract['commands']>>
 	function Command<Resolve extends Resolver, const Operations extends Registry<Domain<Resolve>>>(
 		configuration: {
 			contract?: never
@@ -196,19 +215,28 @@ export function createFoundation<const Options extends FoundationRegistryOptions
 	function Query<
 		Resolve extends Resolver,
 		const Contract extends DomainContract & { queries: Readonly<Record<string, NormalEntry>> },
-		const Operations extends Registry<Domain<Resolve>>,
+		const Operations extends DomainImplementations<
+			Domain<Resolve>,
+			Contract['queries'],
+			false,
+			true
+		>,
 	>(
 		configuration: {
-			contract: Contract
+			contract: Contract &
+				NoInfer<
+					Operations extends ExactOperations<Operations, Contract['queries']> &
+						ValidatedOperations<Operations>
+						? unknown
+						: never
+				>
 			context: Resolve
 			operations: (
 				definitions: DomainFactory<Domain<Resolve>, Contract['queries'], false, true>,
-			) => Operations &
-				NoInfer<ExactOperations<Operations, Contract['queries']>> &
-				NoInfer<ValidatedOperations<Operations>>
+			) => Operations
 			defaults?: Defaults<Domain<Resolve>>
 		} & Compatible<Resolve>,
-	): FoundationRegistry<Resolve, Operations>
+	): FoundationRegistry<Resolve, BoundOperations<Operations, Contract['queries']>>
 	function Query<Resolve extends Resolver, const Operations extends Registry<Domain<Resolve>>>(
 		configuration: {
 			contract?: never

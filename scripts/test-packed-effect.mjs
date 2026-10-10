@@ -29,6 +29,7 @@ const extraTypeFixtures = [
 	join(root, 'README.md'),
 	join(root, 'src/docs/effect.md'),
 	join(root, 'src/docs/commands.md'),
+	join(root, 'src/docs/domain-contracts.md'),
 	join(root, 'src/docs/command-context.md'),
 	join(root, 'src/docs/commands-legacy.md'),
 	join(root, 'src/docs/auth.md'),
@@ -405,6 +406,7 @@ try {
 				for (const filename of [
 					'effect-foundation-types.ts',
 					'domain-effect-types.ts',
+					'domain-handler-types.ts',
 					'domain-exactness-types.ts',
 					'effect-api-types.ts',
 					'effect-api-zod-types.ts',

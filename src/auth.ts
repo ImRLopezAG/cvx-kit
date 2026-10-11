@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { zCustomAction, zCustomMutation, zCustomQuery } from 'convex-helpers/server/zod4'
+import { zCustomAction, zCustomMutation, zCustomQuery } from './zod-registration'
 import type { CustomBuilder } from 'convex-helpers/server/zod4'
 import type {
 	ActionBuilder,

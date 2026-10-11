@@ -216,3 +216,32 @@ it.each([
 		}),
 	).toContainEqual(expect.objectContaining({ code: 'tests' }))
 })
+
+describe('U7 narrow root declarations', () => {
+	it('accepts only declarative relations and querying facades without root business test ownership', () => {
+		expect(
+			check({
+				'convex/relations.ts':
+					"import { defineRelations as define } from 'cvx-kit/relations'; import { orders } from './domain/orders/schema'; export const relations = define({orders}, r => ({orders: {items: r.many.orders({from: r.orders.id, to: r.orders.id})}}))",
+				'convex/querying.ts':
+					"import { createQueryEngine as make } from 'cvx-kit/querying'; import { relations } from './relations'; export const engine = make({relations})",
+			}),
+		).toEqual([])
+	})
+	it.each(['relations', 'querying'])('does not exempt business implementation in %s.ts', (file) => {
+		expect(
+			check({ [`convex/${file}.ts`]: 'export function business() { return 1 }' }),
+		).toContainEqual(expect.objectContaining({ code: 'tests', file: '.' }))
+	})
+})
+
+it('U7 R1 nested local business callbacks retain root test ownership', () => {
+	const code =
+		"import {defineRelations} from 'cvx-kit/relations'; const helpers = {business: x => ({value: x})}; export const relations = defineRelations(tables, r => ({}))"
+	expect(check({ 'convex/relations.ts': code })).toContainEqual(
+		expect.objectContaining({ code: 'tests', file: '.' }),
+	)
+	expect(
+		check({ 'convex/relations.ts': code, 'convex/__tests__/relations.test.ts': testCode }),
+	).toEqual([])
+})

@@ -1,6 +1,6 @@
 {
 	"name": "cvx-kit",
-	"version": "0.1.13",
+	"version": "0.1.14",
 	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
 	"keywords": [
 		"component",
@@ -29,6 +29,14 @@
 		"./zod-table": {
 			"types": "./dist/zod-table.d.mts",
 			"import": "./dist/zod-table.mjs"
+		},
+		"./relations": {
+			"types": "./dist/relations-public.d.mts",
+			"import": "./dist/relations-public.mjs"
+		},
+		"./querying": {
+			"types": "./dist/querying.d.mts",
+			"import": "./dist/querying.mjs"
 		},
 		"./effect": {
 			"types": "./dist/effect.d.mts",
@@ -134,6 +142,7 @@
 		"test:package:oxlint": "bun run build && node scripts/test-packed-oxlint.mjs",
 		"test:package:effect": "bun run build && node scripts/test-packed-effect.mjs",
 		"test:package:auth": "bun run build && node scripts/test-packed-auth.mjs",
+		"test:package:querying": "bun run build && node scripts/test-packed-querying.mjs",
 		"test:package:smoke:effect": "bun run build && node scripts/smoke-packed-effect.mjs",
 		"test:package:smoke:bun": "bun scripts/smoke-packed-components.mjs bun",
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
@@ -145,6 +154,7 @@
 	},
 	"dependencies": {
 		"@convex-dev/workflow": "0.4.10",
+		"@noble/ciphers": "2.4.0",
 		"@oxlint/plugins": "1.87.0",
 		"@standard-schema/spec": "^1.1.0",
 		"convex-audit-log": "^0.2.0",

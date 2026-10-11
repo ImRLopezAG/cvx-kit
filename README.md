@@ -83,6 +83,150 @@ under application control.
 `zodVariantTable` covers discriminated-union tables; `jsonSafeZid` keeps
 LLM-tool JSON schemas primitive while preserving the `Id<...>` type.
 
+### `cvx-kit/relations` and `cvx-kit/querying`
+
+See the [querying guide](./src/docs/querying.md),
+[DTO parameters](./src/docs/zod-table.md#public-dto-parameters), and
+[consumer rule reference](./src/docs/oxlint.md#dto-and-pagination-diagnostics).
+
+Declare relationships once in `convex/relations.ts`, then configure the engine
+once in `convex/querying.ts`. Both factories are also available from the package
+root. The relations subpath exposes declarations and public types; executor
+metadata and managed reader capabilities are internal.
+
+```ts
+// convex/relations.ts
+import { defineRelations } from 'cvx-kit/relations'
+import './domain/tasks/table' // Establish native indexes before compiling the registry.
+import { tasks, labels, edges } from './domain/tasks/schema'
+
+export const relations = defineRelations({ tasks, labels, edges }, (r) => ({
+	tasks: {
+		referenceTask: r.one.tasks({ from: r.tasks.reference, to: r.tasks._id }),
+		labels: r.many.labels({
+			from: r.tasks._id.through(r.edges.task),
+			to: r.labels._id.through(r.edges.label),
+		}),
+	},
+}))
+```
+
+The tables must be object-shaped `zodTable` or `tenantTable` boundaries, with
+indexes supporting each declared lookup. Names can distinguish multiple edges
+to the same table; references can point to the same table. A one edge returns a
+public DTO or `null`. A many edge returns a bounded native page. Junction output
+preserves duplicate edge occurrences, even when target reads are memoized.
+Missing and unreadable targets have the same public result.
+
+```ts
+// convex/querying.ts
+import { createQueryEngine } from 'cvx-kit/querying'
+import schema from './schema'
+import { relations } from './relations'
+import { cursor } from './functions'
+
+export const querying = createQueryEngine({
+	schema,
+	relations,
+	cursor,
+})
+```
+
+`cursor.keys` is a server-only map of key IDs to 64-byte `Uint8Array` secrets.
+Keep key material out of arguments, client code, and logs. The default codec
+uses authenticated AES-SIV encryption without a plaintext fallback; identical
+payloads under the same binding reveal equality. Tokens bind filters, selected
+output, index, order, relation ancestry, principal/tenant/security scope, and
+registry/policy/engine versions. Page-size changes alone remain valid. Retain
+old keys during rotation when existing cursors should continue working.
+
+Use the registry's validators in domain contracts and an authenticated Query
+registry handler:
+
+```ts
+const options = relations.tables.tasks.paginationOpts({
+	department: true,
+	status: true,
+	labels: { name: true },
+})
+const result = relations.tables.tasks.pageDto({ labels: true })
+
+// In the Query operation's handler, ctx comes from createAuthFunctions.authQuery.
+const page = await querying(ctx)
+	.tasks.where({ tenant: ctx.tenant })
+	.with({ labels: true })
+	.paginate(args)
+
+// A separate authenticated child endpoint validates parent with tasks.schema.shape._id.
+const nextLabels = await querying(ctx)
+	.tasks.relation(parent, 'labels')
+	.paginate({ numItems: 25, cursor: page.page[0].labels.continueCursor })
+```
+
+Select filterable stored fields explicitly, including server-owned fields when
+needed. Public DTO fields do not determine filter eligibility. Scalar predicates
+support equality, ranges, `and`, `or`, and `not`; many predicates use `some` or
+`none`. Eligibility and composed read authorization run before parents fill a
+page. Parent, junction, target, and continuation reads all recheck authorization.
+`include` and `paginated(dto)` retain their existing behavior independently.
+
+Chain `.when(value, 'index_name')` to choose the first present condition: `false`,
+`0`, and `''` are present; `null` and `undefined` are absent. The gate does not
+bind an index field; validated filters and server `.where(...)` constraints do.
+An incompatible explicit choice fails. Automatic selection uses the longest
+usable equality prefix, then stable index-name order, with creation-time fallback.
+`order: 'desc'` reverses the chosen native index order. Native continuation,
+split/end cursors, and page status are preserved, with external tokens protected.
+
+Page sizes are positive integers up to 100; central `maxPageSize` may lower that
+ceiling. Central budgets bound read operations, index ranges, raw candidates,
+observed/reserved document bytes, fan-out, depth, and memo entries across a
+request, including policy reads. Native request read limits may lower ceilings.
+An incomplete eligibility proof throws `MANAGED_READ_BUDGET`; it is never an
+empty exhausted page or a negative predicate. Output relationship depth is at
+most four. Traversal executes in the caller's query transaction and may require
+many reads. Application/helper accounting does not measure physical platform I/O.
+
+Kit auth query contexts carry the engine's private read capability. Unknown
+contexts fail closed unless a centrally configured trusted adapter attests their
+query reader, effective policy, and security scope. Mutation/action contexts,
+variant tables, search/vector optimization, arbitrary predicates/projections,
+and custom sorts are outside this API.
+
+For manual projection, `tasks.toPublicDto(row)` still omits IDs and unselected
+storage fields. `tasks.toPublicDto(row, true)` or `{ _id: true }` adds the branded
+ID only. Computed extensions use matching schemas:
+
+```ts
+const extend = { url: z.url() }
+const dto = tasks.toPublicDto(row, {
+	_id: true,
+	extend,
+	values: { url: `https://example.test/tasks/${row._id}` },
+})
+const returnSchema = tasks.dto({ _id: true, extend })
+```
+
+To migrate, replace manual ID spreads with the shorthand and copied pagination
+objects with `paginationOpts`. Move eligibility filters before bounded reads by
+expressing them in the engine. Replace recognized unbounded relationship
+collections with declared many pages and authenticated continuation endpoints.
+Consumer diagnostics identify these patterns when kit/native provenance is known;
+predicate movement has no automatic fix. Keep declarations in root
+`relations.ts`/`querying.ts` and contracts and Query registries in their domain.
+
+The [packed executable example](./test/fixture-packed-querying/convex/) includes
+domain tables, contracts, authenticated API adapters, one/self/named/many/junction
+edges, and child continuation. Its `.template` files become ordinary TypeScript
+in isolated consumers; `bun run test:package:querying` installs the tarball on
+installed and minimum peers, checks strict declarations and consumer rules, and
+runs the full independent stress oracle and focused tie, output, replay, and
+authorization-revocation probes. For a bounded anonymous local native proof,
+run `node scripts/smoke-packed-querying.mjs <retained-packed-proof-directory>`
+after the package check. It uses the same tarball and central default budgets.
+Package publishing and application
+migration remain separate work.
+
 ### `cvx-kit/auth`
 
 `createAuthFunctions` builds the six auth-aware constructors from injected

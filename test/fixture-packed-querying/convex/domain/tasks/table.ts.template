@@ -1,0 +1,7 @@
+import { tasks, labels, edges } from './schema'
+export const tables = {
+ tasks: tasks.table.index('by_tenant_department_status', ['tenant', 'department', 'status'])
+  .index('by_active', ['active']).index('by_priority', ['priority']).index('by_code', ['code']),
+ labels: labels.table.index('by_task', ['task']),
+ edges: edges.table.index('by_task', ['task']),
+}

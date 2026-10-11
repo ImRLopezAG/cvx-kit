@@ -1,0 +1,179 @@
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { convexTest } from 'convex-test'
+import { anyApi } from 'convex/server'
+import { z } from 'zod'
+import * as root from 'cvx-kit'
+import * as relationPublic from 'cvx-kit/relations'
+import * as queryingPublic from 'cvx-kit/querying'
+import schema from './convex/schema'
+import { contract } from './convex/domain/tasks/contracts'
+import { policies } from './convex/domain/tasks/security'
+import { tasks } from './convex/domain/tasks/schema'
+import { relations } from './convex/relations'
+import { cursor as cursorConfig } from './convex/functions'
+import { authQuery } from './convex/functions'
+
+assert.deepEqual(Object.keys(relationPublic), ['defineRelations'])
+assert.deepEqual(Object.keys(queryingPublic), ['createQueryEngine'])
+assert.equal(root.createQueryEngine, queryingPublic.createQueryEngine)
+assert.equal(root.defineRelations, relationPublic.defineRelations)
+for (const path of ['cvx-kit/querying/security', 'cvx-kit/querying/cursors', 'cvx-kit/relations-public', 'cvx-kit/dist/relations.mjs'])
+ await assert.rejects(import(path), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })
+assert.equal('getRelationExecutor' in root, false)
+assert.equal('getRelationMetadata' in relationPublic, false)
+const bounded = root.createQueryEngine({ schema, relations, cursor: cursorConfig, budgets: { rawCandidates: 100 } })
+const tiny = root.createQueryEngine({ schema, relations, cursor: cursorConfig, budgets: { readOperations: 1 } })
+const probes = {
+ bounded: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => bounded(ctx).tasks.paginate(args) }),
+ tiny: authQuery({ args: contract.queries.next.input, returns: contract.queries.next.result,
+  handler: (ctx, { parent, ...args }) => tiny(ctx).tasks.relation(parent, 'labels').with({ owner: true }).paginate(args) }),
+}
+const t = convexTest(schema, {
+ './_generated/server.ts': () => import('./convex/_generated/server'),
+ './api/tasks.ts': () => import('./convex/api/tasks'),
+ './api/probes.ts': async () => probes,
+})
+const client = t.withIdentity({ subject: 'fixture-reader', org_id: 'a', role: 'reader' })
+const original = Date.now
+let clock = 2 ** 44
+Date.now = () => clock++
+const ids = await t.run(async (ctx) => {
+ const labels = []
+ for (let i = 0; i < 80; i++) labels.push(await ctx.db.insert('labels', {
+  ordinal: i, tenant: i % 7 ? 'a' : 'b', authorized: i % 5 !== 0, name: `label-${i}`,
+ }))
+ const parents = []
+ for (let i = 0; i < 2200; i++) parents.push(await ctx.db.insert('tasks', {
+  ordinal: i, tenant: i % 7 ? 'a' : 'b', department: ['support', 'sales', 'engineering'][i % 3],
+  status: ['open', 'done', 'blocked'][Math.floor(i / 3) % 3], active: i % 2 === 0,
+  priority: Math.floor(i / 9) % 5, authorized: i >= 200 && i % 11 !== 0, code: '', secret: 'FIXTURE_PRIVATE',
+ }))
+ for (let i = 0; i < 2200; i++) for (let j = 0; j < 5; j++) await ctx.db.insert('edges', {
+  ordinal: i * 5 + j, task: parents[i], label: labels[(i + j * 17) % 80], authorized: i % 37 !== 0 && (i + j) % 13 !== 0,
+ })
+ for (let i = 0; i < 100; i++) await ctx.db.insert('edges', {
+  ordinal: 11000 + i, task: parents[200 + i], label: labels[(200 + i + 17) % 80], authorized: true,
+ })
+ return { tasks: parents, labels }
+}).finally(() => { Date.now = original })
+writeFileSync('seed-ids.json', JSON.stringify(ids))
+const oracle = z.object({ counts: z.object({ tasks: z.number(), labels: z.number(), junctions: z.number() }),
+ visibleDuplicateParents: z.array(z.number()), caseCounts: z.record(z.string(), z.number()),
+ expected: z.record(z.string(), z.object({ asc: z.array(z.number()), desc: z.array(z.number()) })) }).parse(JSON.parse(readFileSync('oracle-v3.json', 'utf8')))
+assert.deepEqual(oracle.counts, { tasks: 2200, labels: 80, junctions: 11100 })
+assert.equal(oracle.visibleDuplicateParents.length, 49)
+const cases = {
+ department_status_active: { tenant: 'a', department: 'support', status: 'open', active: true },
+ range_and_not: { priority: { gte: 1, lt: 4 }, not: { status: 'blocked' } },
+ or_common_department: { tenant: 'a', department: 'support', or: [{ active: true }, { priority: 3 }] },
+ or_no_common_binding: { or: [{ department: 'support' }, { status: 'done' }] },
+ some_shared_label: { labels: { some: { ordinal: 17 } } },
+ none_visible_label: { labels: { none: { ordinal: 17 } } },
+ no_authorized_related_target: { labels: { none: {} } },
+} satisfies Record<string, z.input<typeof contract.queries.list.input>['filters']>
+const hash = (values: readonly string[]) => createHash('sha256').update(JSON.stringify(values)).digest('hex')
+const records: object[] = []
+function record(value: object) {
+ records.push(value)
+ writeFileSync('stress-results.json', JSON.stringify(records, null, 2))
+ console.log(JSON.stringify(value))
+}
+// Public auth registration and central ceilings: denial must advance or fail explicitly.
+let deniedCursor: string | null = null
+for (let page = 0; page < 2; page++) {
+ const result = contract.queries.list.result.parse(await client.query(anyApi.api.probes.bounded, { numItems: 100, cursor: deniedCursor }))
+ assert.deepEqual(result.page, [])
+ assert.equal(result.isDone, false)
+ assert.equal(result.pageStatus, 'SplitRequired')
+ assert.notEqual(result.continueCursor, deniedCursor)
+ deniedCursor = result.continueCursor
+}
+await assert.rejects(client.query(anyApi.api.probes.tiny, { parent: ids.tasks[201], numItems: 1, cursor: null }), /MANAGED_READ_BUDGET/)
+record({ name: 'denied-prefix-budget', passed: true })
+for (const filters of [{ active: false }, { priority: 0 }, { code: '' }, { tenant: 'a', department: 'support', status: 'open' }]) {
+ const automatic = contract.queries.list.result.parse(await client.query(anyApi.api.tasks.list, { numItems: 100, cursor: null, filters }))
+ const conditional = contract.queries.list.result.parse(await client.query(anyApi.api.tasks.conditional, { numItems: 100, cursor: null, filters }))
+ assert.deepEqual(conditional.page, automatic.page)
+}
+await assert.rejects(client.query(anyApi.api.tasks.conditional, { numItems: 1, cursor: null, filters: { department: 'support' } }))
+record({ name: 'conditional-present-and-incompatible', passed: true })
+for (const [name, filters] of Object.entries(cases)) for (const order of ['asc', 'desc'] as const) for (const size of [1, 7, 25, 100]) {
+ const started = performance.now(), actual: string[] = []
+ Object.assign(policies, { tasks: 0, labels: 0, edges: 0 })
+ let cursor: string | null = null, pages = 0, payloadBytes = 0
+ for (; pages < 2500; pages++) {
+  const raw: unknown = await client.query(anyApi.api.tasks.list, { numItems: size, cursor, order, filters })
+  const result = contract.queries.list.result.parse(raw)
+  payloadBytes += Buffer.byteLength(JSON.stringify(raw))
+  actual.push(...result.page.map((row) => row._id))
+  assert.ok(!JSON.stringify(raw).includes('FIXTURE_PRIVATE'))
+  if (result.isDone) break
+  assert.notEqual(result.continueCursor, cursor)
+  assert.match(result.continueCursor, /^pc\./)
+  cursor = result.continueCursor
+ }
+ assert.ok(pages < 2500)
+ const expected = oracle.expected[name][order].map((i) => ids.tasks[i])
+ assert.deepEqual(actual, expected)
+ assert.equal(hash(actual), hash(expected))
+ record({ scope: 'packed auth Query registry / convex-test application policy counts', name, order, size,
+  count: actual.length, idHash: hash(actual), expectedIdHash: hash(expected), pages: pages + 1, payloadBytes,
+  policies: { ...policies }, milliseconds: performance.now() - started })
+}
+for (const ordinal of oracle.visibleDuplicateParents) for (const order of ['asc', 'desc'] as const) {
+ const started = performance.now()
+ const edges = Array.from({ length: 5 }, (_, j) => ({ label: (ordinal + j * 17) % 80, allowed: ordinal % 37 !== 0 && (ordinal + j) % 13 !== 0 }))
+ edges.push({ label: (ordinal + 17) % 80, allowed: true })
+ const expected = edges.filter((e) => e.allowed && e.label % 5 !== 0 && e.label % 7 !== 0).map((e) => ids.labels[e.label])
+ if (order === 'desc') expected.reverse()
+ const actual: string[] = []
+ let cursor: string | null = null, pages = 0
+ Object.assign(policies, { tasks: 0, labels: 0, edges: 0 })
+ for (; pages < 20; pages++) {
+  const result = contract.queries.next.result.parse(await client.query(anyApi.api.tasks.next, { parent: ids.tasks[ordinal], numItems: 1, cursor, order }))
+  actual.push(...result.page.map((row) => row._id))
+  if (result.isDone) break
+  assert.notEqual(result.continueCursor, cursor)
+  cursor = result.continueCursor
+ }
+ assert.ok(pages < 20)
+ assert.deepEqual(actual, expected)
+ assert.ok(new Set(actual).size < actual.length)
+ record({ name: 'duplicate-continuation', ordinal, order, count: actual.length, idHash: hash(actual), expectedIdHash: hash(expected),
+  policies: { ...policies }, milliseconds: performance.now() - started })
+}
+// Strict manual DTO boundary and extension, independently of engine projection.
+await t.run(async (ctx) => {
+ const row = await ctx.db.get(ids.tasks[201])
+ assert.ok(row)
+ const plain = tasks.toPublicDto(row)
+ assert.deepEqual(Object.keys(plain), ['ordinal'])
+ const withId = tasks.toPublicDto(row, true)
+ assert.deepEqual(Object.keys(withId).sort(), ['_id', 'ordinal'])
+ assert.deepEqual(tasks.toPublicDto(row, { _id: true }), withId)
+ const extend = { url: z.url() }
+ const dto = tasks.toPublicDto(row, { _id: true, extend, values: { url: 'https://example.test/task' } })
+ assert.deepEqual(tasks.dto({ _id: true, extend }).parse(dto), dto)
+ assert.throws(() => tasks.toPublicDto(row, { extend, values: { url: 'invalid' } }))
+})
+const first = contract.queries.list.result.parse(await client.query(anyApi.api.tasks.list, { numItems: 1, cursor: null }))
+assert.ok(first.page.length === 1 && !first.isDone)
+const token = first.continueCursor
+assert.ok(!token.includes(ids.tasks[201]))
+for (const [label, caller, args] of [
+ ['tamper', client, { numItems: 1, cursor: token.slice(0, -1) + (token.endsWith('0') ? '1' : '0') }],
+ ['filter', client, { numItems: 1, cursor: token, filters: { ordinal: 201 } }],
+ ['order', client, { numItems: 1, cursor: token, order: 'desc' }],
+ ['tenant', t.withIdentity({ subject: 'fixture-reader', org_id: 'b', role: 'reader' }), { numItems: 1, cursor: token }],
+ ['principal', t.withIdentity({ subject: 'other', org_id: 'a', role: 'reader' }), { numItems: 1, cursor: token }],
+] as const) {
+ await assert.rejects(caller.query(anyApi.api.tasks.list, args), /Invalid cursor/)
+ record({ name: `cursor-${label}`, passed: true })
+}
+await assert.rejects(t.query(anyApi.api.tasks.list, { numItems: 1, cursor: null }))
+await assert.rejects(t.withIdentity({ subject: 'other', org_id: 'a', role: 'unsupported' }).query(anyApi.api.tasks.list, { numItems: 1, cursor: null }))
+assert.ok(contract.queries.list.result.parse(await client.query(anyApi.api.tasks.list, { numItems: 7, cursor: token })).page.length > 0)
+writeFileSync('SUCCESS', '56 full root sequences and 98 duplicate continuations, public boundary, auth, DTO and cursor checks passed.\n')

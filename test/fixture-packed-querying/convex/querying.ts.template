@@ -1,0 +1,10 @@
+import { createQueryEngine } from 'cvx-kit/querying'
+import schema from './schema'
+import { relations } from './relations'
+import { cursor } from './functions'
+// Synthetic fixture key only. Applications load their own 64-byte server secret.
+export const querying = createQueryEngine({
+ schema, relations, cursor,
+ budgets: { readOperations: 100000, indexRanges: 100000, rawCandidates: 100000,
+ documentBytes: 67108864, fanout: 100000, memoEntries: 100000 },
+})

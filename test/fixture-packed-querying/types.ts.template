@@ -1,0 +1,74 @@
+import { tenantTable, createQueryEngine, type QueryEngineConfig, type RelationRegistryIdentity } from 'cvx-kit'
+import { defineRelations } from 'cvx-kit/relations'
+import type { TableQuery } from 'cvx-kit/querying'
+import type { GenericId } from 'convex/values'
+import { z } from 'zod'
+import { tasks, labels } from './convex/domain/tasks/schema'
+import { relations } from './convex/relations'
+import { querying } from './convex/querying'
+import type { QueryCtx } from './convex/_generated/server'
+import schema from './convex/schema'
+import { edges } from './convex/domain/tasks/schema'
+const tenant = tenantTable('tenanted', () => ({ title: z.string() }), { publicFields: ['title'] })
+void tenant.paginationOpts({ tenant: true, title: true })
+const config: QueryEngineConfig<typeof schema, { tasks: typeof tasks; labels: typeof labels; edges: typeof edges }, never> | undefined = undefined
+void config
+void createQueryEngine
+type Chain = ReturnType<typeof querying>['tasks']
+const namedQueryType: TableQuery<{ tasks: typeof tasks; labels: typeof labels; edges: typeof edges }, never, 'tasks'> | undefined = undefined
+void namedQueryType
+const inferredChain: Chain | undefined = undefined
+void inferredChain
+const identity: RelationRegistryIdentity = relations
+void identity
+function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
+ const dto = tasks.toPublicDto(row, true)
+ const id: GenericId<'tasks'> = dto._id
+ const same = tasks.toPublicDto(row, { _id: true })
+ const extended = tasks.toPublicDto(row, { _id: true, extend: { url: z.url() }, values: { url: 'https://example.test/task' } })
+ tasks.dto({ _id: true, extend: { url: z.url() } }).parse(extended)
+ void same
+ void id
+ // @ts-expect-error DTO excludes storage secret
+ void dto.secret
+ // @ts-expect-error table brand must not cross to labels
+ const wrong: GenericId<'labels'> = dto._id
+ void wrong
+ // @ts-expect-error reserved extension fields cannot be declared
+ tasks.dto({ extend: { _creationTime: z.number() } })
+ // @ts-expect-error command inputs do not contain server-owned fields
+ const input: z.input<typeof tasks.commandInput> = { authorized: true }
+ void input
+ querying(ctx).tasks.with({ labels: { owner: true }, referenceTask: true }).paginate({ numItems: 1, cursor: null }).then((p) => {
+  const parent: GenericId<'tasks'> = p.page[0]._id
+  const label: GenericId<'labels'> = p.page[0].labels.page[0]._id
+  const nested: GenericId<'tasks'> | undefined = p.page[0].labels.page[0].owner?._id
+  void [parent, label, nested]
+  // @ts-expect-error nested public targets exclude private storage
+  void p.page[0].labels.page[0].tenant
+ })
+ // @ts-expect-error private callbacks are not endpoint predicates
+ querying(ctx).tasks.where(() => true)
+ // @ts-expect-error named relationships must be declared
+ querying(ctx).tasks.with({ missing: true })
+ // @ts-expect-error relation parent has a task brand
+ querying(ctx).tasks.relation(labels.schema.shape._id.parse('labels:1'), 'labels')
+}
+void check
+// @ts-expect-error private accessor is absent from supported facade
+import { getRelationExecutor } from 'cvx-kit/relations'
+// @ts-expect-error private metadata is absent from supported facade
+import type { RelationMetadata } from 'cvx-kit/relations'
+// @ts-expect-error private managed capability has no supported package subpath
+import { registerQueryReader } from 'cvx-kit/querying/security'
+void getRelationExecutor
+const bad: RelationMetadata | undefined = undefined
+void bad
+void registerQueryReader
+void defineRelations
+// @ts-expect-error internal declaration mask is absent from the supported facade
+import type { SelectionMask } from 'cvx-kit/relations'
+// @ts-expect-error internal declaration mask is absent from the root
+import type { SelectionMask as RootMask } from 'cvx-kit'
+const privateMasks: SelectionMask | RootMask | undefined = undefined
+void privateMasks

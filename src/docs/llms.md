@@ -2,13 +2,14 @@
 
 > Paste this file (installed at `node_modules/cvx-kit/docs/`) into an agent's
 > context when it works on a cvx-kit application. Detailed docs:
-> `architecture.md`, `conventions.md`, `zod-table.md`, `auth.md`,
+> `architecture.md`, `conventions.md`, `zod-table.md`, `querying.md`, `auth.md`,
 > `commands.md`, `effect.md`, `domain-operations.md`, `triggers.md`, `approvals.md`, `maintainability.md`,
 > `migration.md` (same directory).
 > Structure, file anatomy, and naming rules → `conventions.md` is
 > authoritative. Restructuring an existing raw project → `migration.md`.
 > Upgrading from 0.0.x → `upgrading.md`. New 0.1.0 helpers: `crud.md`,
-> `webhooks.md`, `agent-tools.md`; pagination in `zod-table.md`/`auth.md`.
+> `webhooks.md`, `agent-tools.md`; stream/relationship pagination in `querying.md`,
+> table DTO and pagination helpers in `zod-table.md`.
 > Consumer lint configuration and coverage → `oxlint.md`. The optional
 > `cvx-kit/oxlint` plugin checks the statically detectable conventions;
 > behavioral guarantees still need architecture and runtime tests.
@@ -41,11 +42,20 @@ copy that API into new implementations.
    built once with `createEffectAuthFunctions(config, policies)` from `cvx-kit/effect`
    for shared Effect handles, or individually wrapped with `effectZodApiBuilder`.
    This is what guarantees auth, triggers, and bounded reads.
-3. **Every public query returns DTOs** via `<table>.toPublicDto(row)` —
-   runtime redaction, not just types.
+3. **Every public query returns DTOs** via `<table>.toPublicDto(row)` or the
+   querying engine. For IDs use `toPublicDto(row, true)` with `dto(true)`; for
+   computed fields use matching `extend` schemas and explicit `values`.
+   `publicDto` remains the default schema. Never manually append IDs to a DTO.
 4. **Every read is bounded**: `ctx.include(ctx.db.query('t')).matching(...)
    .execute(limit)` with `1 ≤ limit ≤ 100`. `.resolve()` falls back to a full
-   table scan — avoid it.
+   table scan — avoid it. Alternatively use the independent querying engine
+   with table/registry `paginationOpts(selection)` and matching `pageDto`.
+   Declare relationships in root `relations.ts`, configure `createQueryEngine`
+   in root `querying.ts`, and paginate inside authenticated domain Query handlers.
+   Apply eligibility before limits; many relationships return bounded pages.
+   `order` reverses native index order; `.when(value, index)` selects an index
+   without binding fields. Unknown contexts fail closed and budget exhaustion
+   throws. See `querying.md` and the DTO/pagination rules in `oxlint.md`.
 5. **State changes are Effect commands**: declare
    `Command({ context, operations: ({ command }) => ({ ... }), defaults })`.
    Each `command({ input, result, classification, handler, audit })` owns its

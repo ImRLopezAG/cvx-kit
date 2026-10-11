@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { convexTest } from 'convex-test'
+import { anyApi } from 'convex/server'
+import schema from '../schema'
+
+test('registered auth rejects missing identity and composes tenant and read policies', async () => {
+ const t = convexTest(schema, {
+  './_generated/server.ts': () => import('../_generated/server'),
+  './api/tasks.ts': () => import('../api/tasks'),
+ })
+ await t.run(async ctx => {
+  for (const [ordinal, tenant, authorized] of [[0, 'a', true], [1, 'b', true], [2, 'a', false]] as const)
+   await ctx.db.insert('tasks', { ordinal, tenant, authorized, department: 'support', status: 'open', active: false, priority: 0, code: '', secret: 'PRIVATE' })
+ })
+ await assert.rejects(t.query(anyApi.api.tasks.list, { numItems: 7, cursor: null }))
+ const client = t.withIdentity({ subject: 'reader', org_id: 'a', role: 'reader' })
+ const result = await client.query(anyApi.api.tasks.list, { numItems: 7, cursor: null })
+ assert.deepEqual(result.page.map((row: { ordinal: number }) => row.ordinal), [0])
+ assert.ok(!JSON.stringify(result).includes('PRIVATE'))
+ await assert.rejects(t.withIdentity({ subject: 'reader', org_id: 'a', role: 'unknown' }).query(anyApi.api.tasks.list, { numItems: 7, cursor: null }))
+})

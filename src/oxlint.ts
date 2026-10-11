@@ -4,6 +4,7 @@ import {
 	inspectArchitecture,
 	createResolver,
 	resolveImport,
+	narrowRootDeclaration,
 	type ArchitectureOptions,
 	type ArchitectureDiagnostic,
 } from './oxlint/architecture'
@@ -16,12 +17,13 @@ import {
 	isFunctionsImport,
 	isTableChain,
 	isDbWrite,
-	hasCall,
 	metadata,
 	componentRoot,
 	staticString,
 	propertyName,
 	binding,
+	readProvenance,
+	localInitializer,
 	exportedNames,
 	exportName,
 } from './oxlint/ast'
@@ -50,10 +52,33 @@ export type RuleName =
 	| 'no-manual-timestamps'
 	| 'reserved-domain-file-anatomy'
 	| 'root-facade-ownership'
+	| 'no-manual-id-projection'
+	| 'no-copied-pagination'
 
 /** Consumer application rules derived from docs/conventions.md. */
 const applicationRules: Record<RuleName, CreateRule> = {
 	...ownershipRules,
+	'root-wiring-only': {
+		...ownershipRules['root-wiring-only'],
+		create(context) {
+			const file = appFile(context) ?? ''
+			if (['relations.ts', 'querying.ts'].includes(file)) {
+				if (narrowRootDeclaration(file, context.sourceCode.text)) return {}
+				return {
+					Program(node) {
+						context.report({
+							node,
+							messageId: 'ownership',
+							data: {
+								reason: `${file} must export one kit factory declaration and contain only declarative configuration`,
+							},
+						})
+					},
+				}
+			}
+			return ownershipRules['root-wiring-only'].create(context)
+		},
+	},
 	'reserved-domain-file-anatomy': reservedDomainFiles,
 	'root-facade-ownership': {
 		meta: metadata('Configure shared kit infrastructure once in its root facade.', {
@@ -66,6 +91,13 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				const ref = imported(context, node.callee)
 				if (!ref) return
 				let file: string | null = null
+				if (
+					['cvx-kit', 'cvx-kit/querying'].includes(ref.source) &&
+					ref.name === 'createQueryEngine'
+				)
+					file = 'querying.ts'
+				if (['cvx-kit', 'cvx-kit/relations'].includes(ref.source) && ref.name === 'defineRelations')
+					file = 'relations.ts'
 				if (['cvx-kit', 'cvx-kit/auth'].includes(ref.source) && ref.name === 'createAuthFunctions')
 					file = 'functions.ts'
 				if (['cvx-kit', 'cvx-kit/triggers'].includes(ref.source) && ref.name === 'createTriggers')
@@ -184,7 +216,8 @@ const applicationRules: Record<RuleName, CreateRule> = {
 						from[1] !== 'table.ts'
 					) {
 						forbidden =
-							from[1] === 'shared' || !['rules', 'queries'].includes(to.slice(2).join('/'))
+							from[1] === 'shared' ||
+							!['rules', 'queries', 'contracts'].includes(to.slice(2).join('/'))
 					}
 				} else if (from[0] === 'api') {
 					forbidden =
@@ -193,6 +226,12 @@ const applicationRules: Record<RuleName, CreateRule> = {
 							to[1] !== 'shared' &&
 							to[1] !== (from.length > 2 ? from[1] : basename(file).replace(/\.[cm]?[jt]s$/, '')))
 				} else if (from[0] === 'application') forbidden = ['api', 'migrations'].includes(to[0])
+				else if (['relations.ts', 'querying.ts'].includes(file) && to[0] === 'domain') {
+					const allowed = file === 'relations.ts' ? ['schema', 'table'] : ['queries', 'contracts']
+					forbidden =
+						!allowed.includes(to.slice(2).join('/')) &&
+						!(file === 'relations.ts' && target === 'domain/table')
+				}
 				if (to[0] === 'migrations' && from[0] !== 'migrations') forbidden = true
 				if (
 					['api', 'domain', 'application'].includes(from[0]) &&
@@ -297,6 +336,8 @@ const applicationRules: Record<RuleName, CreateRule> = {
 		meta: metadata('Bound collection reads through include or pagination.', {
 			bounded:
 				'Use include(...).execute(limit) or bounded pagination; do not collect() or resolve() an unbounded query.',
+			order:
+				'Apply eligibility filters in the indexed query before take(), execute(), or paginate(); filtering a bounded result can omit eligible rows. Do not move the predicate automatically.',
 		}),
 		create(context) {
 			if (componentRoot(context, context.filename)) return {}
@@ -304,11 +345,79 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				CallExpression(node) {
 					if (node.callee.type !== 'MemberExpression') return
 					const name = propertyName(node.callee)
+					const origin = readProvenance(context, node.callee.object)
+					if (name === 'filter' && origin === 'bounded')
+						context.report({ node, messageId: 'order' })
 					if (
-						(name === 'collect' && hasCall(node.callee.object, 'query')) ||
-						(name === 'resolve' && hasCall(node.callee.object, 'include'))
+						(name === 'collect' && (origin === 'stream' || origin === 'relationship')) ||
+						(name === 'resolve' && origin === 'stream')
 					)
 						context.report({ node, messageId: 'bounded' })
+				},
+			}
+		},
+	},
+	'no-manual-id-projection': {
+		meta: metadata('Use the table DTO boundary to project public IDs.', {
+			projection:
+				'Use toPublicDto(row, true) to include _id; do not add IDs manually after a table DTO parse or projection.',
+		}),
+		create(context) {
+			return {
+				ObjectExpression(node) {
+					const dto = node.properties.some(
+						(property) =>
+							property.type === 'SpreadElement' &&
+							readProvenance(context, property.argument) === 'dto',
+					)
+					if (!dto) return
+					for (const property of node.properties) {
+						if (
+							property.type === 'Property' &&
+							['id', '_id'].includes(
+								(property.computed ? staticString(property.key) : exportName(property.key)) ?? '',
+							)
+						)
+							context.report({ node: property, messageId: 'projection' })
+					}
+				},
+				AssignmentExpression(node) {
+					if (
+						node.left.type === 'MemberExpression' &&
+						['id', '_id'].includes(propertyName(node.left) ?? '') &&
+						readProvenance(context, node.left.object) === 'dto'
+					)
+						context.report({ node, messageId: 'projection' })
+				},
+			}
+		},
+	},
+	'no-copied-pagination': {
+		meta: metadata('Use native or table pagination schemas instead of copying their shape.', {
+			pagination:
+				'Use the native paginationOptsValidator (or paginated(table.dto())) for native pagination, or table.paginationOpts(selection) for table queries; do not copy pagination fields.',
+		}),
+		create(context) {
+			return {
+				CallExpression(node) {
+					const ref = imported(context, node.callee)
+					if (!(ref?.name === 'object' && ['zod', 'zod/v4', 'convex/values'].includes(ref.source)))
+						return
+					const argument = node.arguments[0]
+					const fieldsNode = argument && (localInitializer(context, argument) ?? argument)
+					if (fieldsNode?.type !== 'ObjectExpression') return
+					const fields = new Set(
+						fieldsNode.properties.flatMap((property) =>
+							property.type === 'Property'
+								? [property.computed ? staticString(property.key) : exportName(property.key)]
+								: [],
+						),
+					)
+					if (
+						(fields.has('numItems') && fields.has('cursor')) ||
+						['page', 'isDone', 'continueCursor'].every((field) => fields.has(field))
+					)
+						context.report({ node, messageId: 'pagination' })
 				},
 			}
 		},

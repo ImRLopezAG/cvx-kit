@@ -1,0 +1,18 @@
+import { Query } from '../../foundation'
+import type { QueryCtx } from '../../_generated/server'
+import { querying } from '../../querying'
+import { contract } from './contracts'
+export const queries = Query({
+ contract, context: (ctx: QueryCtx) => ctx,
+ operations: ({ query }) => ({
+  list: query.list({ handler: (args, ctx) => querying(ctx).tasks.paginate(args) }),
+  conditional: query.conditional({ handler: (args, ctx) => querying(ctx).tasks
+   .when(typeof args.filters?.department === 'string' ? args.filters.department : undefined, 'by_tenant_department_status')
+   .when(typeof args.filters?.active === 'boolean' ? args.filters.active : undefined, 'by_active')
+   .when(typeof args.filters?.priority === 'number' ? args.filters.priority : undefined, 'by_priority')
+   .when(typeof args.filters?.code === 'string' ? args.filters.code : undefined, 'by_code').paginate(args) }),
+  expanded: query.expanded({ handler: (args, ctx) => querying(ctx).tasks.with({ referenceTask: true,
+   requiredLabel: true, direct: true, labels: { owner: true }, aliasLabels: true }).paginate(args) }),
+  next: query.next({ handler: ({ parent, ...args }, ctx) => querying(ctx).tasks.relation(parent, 'labels').with({ owner: true }).paginate(args) }),
+ }),
+})

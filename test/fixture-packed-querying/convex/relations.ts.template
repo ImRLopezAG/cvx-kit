@@ -1,0 +1,13 @@
+import { defineRelations } from 'cvx-kit/relations'
+import './domain/tasks/table'
+import { tasks, labels, edges } from './domain/tasks/schema'
+export const relations = defineRelations({ tasks, labels, edges }, (r) => ({
+ tasks: {
+  referenceTask: r.one.tasks({ from: r.tasks.reference, to: r.tasks._id }),
+  requiredLabel: r.one.labels({ from: r.tasks.required, to: r.labels._id }),
+  direct: r.many.labels({ from: r.tasks._id, to: r.labels.task }),
+  labels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
+  aliasLabels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
+ },
+ labels: { owner: r.one.tasks({ from: r.labels.task, to: r.tasks._id }) },
+}))

@@ -9,7 +9,7 @@ const root = join(import.meta.dirname, '..')
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-oxlint-'))
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const ruleNames = Object.keys(rules)
-assert.equal(ruleNames.length, 21)
+assert.equal(ruleNames.length, 23)
 
 try {
 	run('bun', ['pm', 'pack', '--destination', temporary, '--ignore-scripts'], root)
@@ -79,6 +79,7 @@ export const value = privateHelper()
 import { makeFunctionReference as ref } from 'convex/server'
 import { z } from 'zod'
 import { createAuthFunctions } from 'cvx-kit/auth'
+import { zodTable } from 'cvx-kit/zod-table'
 import { other } from '../domain/users/commands'
 export const save = mutation({ handler: async (ctx) => {
   await ctx.db.insert('orders', { updatedAt: Date.now() })
@@ -88,6 +89,9 @@ export const constructors = createAuthFunctions({})
 export const state = z.enum(['draft'])
 export const target = ref('orders:save')
 export const value = other
+const orders = zodTable('orders', () => ({ name: z.string() }))
+export const dto = { ...orders.toPublicDto(row), _id: row._id }
+export const pagination = z.object({ numItems: z.number(), cursor: z.string().nullable() })
 `,
 		)
 		mkdirSync(join(fixture, 'convex/application'), { recursive: true })

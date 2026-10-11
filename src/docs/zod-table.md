@@ -49,19 +49,21 @@ unregistered foreign ID and does not throw; peer installation prevents the
 supported package graph from creating that ambiguity. Verify critical ID
 validators retain `kind === 'id'` and the expected `tableName` after installation.
 
-| Property                                     | What it is                                           | Where you use it               |
-| -------------------------------------------- | ---------------------------------------------------- | ------------------------------ |
-| `table`                                      | `defineTable(...)` from the storage shape            | `convex/schema.ts`             |
-| `storage`                                    | zod object of the raw row (no `_id`/`_creationTime`) | validating rows                |
-| `schema`                                     | `storage` + `_id` + `_creationTime`                  | full-document validation       |
-| `insertSchema`                               | storage minus timestamps minus `serverFields`        | mutation args                  |
-| `updateSchema`                               | `insertSchema.partial()`                             | patch mutation args            |
-| `commandInput`                               | strict pick of `commandFields`                       | command protocol inputs        |
-| `publicDto`                                  | strict pick of `publicFields`                        | query return validators        |
-| `toPublicDto(row)`                           | projects **and re-parses** a row into the DTO        | query handlers                 |
-| `insert(omit?)` / `update(omit?)`            | schema with per-callsite field omission              | specialized mutations          |
-| `tools.insert` / `tools.update` / `tools.id` | ready-made LLM tool input schemas                    | agent tool definitions         |
-| `tableName`                                  | the literal table name                               | indexes, triggers registration |
+| Property                                     | What it is                                             | Where you use it               |
+| -------------------------------------------- | ------------------------------------------------------ | ------------------------------ |
+| `table`                                      | `defineTable(...)` from the storage shape              | `convex/schema.ts`             |
+| `storage`                                    | zod object of the raw row (no `_id`/`_creationTime`)   | validating rows                |
+| `schema`                                     | `storage` + `_id` + `_creationTime`                    | full-document validation       |
+| `insertSchema`                               | storage minus timestamps minus `serverFields`          | mutation args                  |
+| `updateSchema`                               | `insertSchema.partial()`                               | patch mutation args            |
+| `commandInput`                               | strict pick of `commandFields`                         | command protocol inputs        |
+| `publicDto`                                  | strict pick of `publicFields`                          | query return validators        |
+| `dto(options?)`                              | public return schema with optional ID and extensions   | query return validators        |
+| `toPublicDto(row)`                           | projects **and re-parses** a row into the DTO          | query handlers                 |
+| `paginationOpts(selection)`                  | native pagination options, selected filters, and order | query input validators         |
+| `insert(omit?)` / `update(omit?)`            | schema with per-callsite field omission                | specialized mutations          |
+| `tools.insert` / `tools.update` / `tools.id` | ready-made LLM tool input schemas                      | agent tool definitions         |
+| `tableName`                                  | the literal table name                                 | indexes, triggers registration |
 
 ## Redaction is runtime, not just types
 
@@ -81,6 +83,84 @@ export const get = authQuery({
 	},
 })
 ```
+
+## Public DTO parameters
+
+`publicDto` is the strict Zod schema selected by `publicFields`; it takes no
+parameters. Use `dto(...)` to derive a return schema and `toPublicDto(row, ...)`
+to project a row with the same options. These methods are also available on
+`tenantTable` boundaries.
+
+```ts
+documents.toPublicDto(row) // publicFields only
+documents.toPublicDto(row, false) // same default projection
+documents.toPublicDto(row, true) // publicFields plus _id
+documents.toPublicDto(row, { _id: true }) // explicit equivalent
+
+const withoutId = documents.dto() // same boundary as publicDto
+const withId = documents.dto(true) // branded Id<'documents'>
+const explicit = documents.dto({ _id: true })
+```
+
+Including `_id` requires a row containing an ID and validates it through the
+table's ID schema. It does not expose `_creationTime`, tenant metadata, or other
+storage fields. Do not spread an ID onto a parsed DTO manually; use the matching
+`dto(true)` return validator.
+
+Computed fields need both a schema and explicitly supplied values:
+
+```ts
+const extend = { url: z.url() }
+const returnSchema = documents.dto({ _id: true, extend })
+
+const output = documents.toPublicDto(row, {
+	_id: true,
+	extend,
+	values: { url: `https://example.test/documents/${row._id}` },
+})
+returnSchema.parse(output)
+```
+
+`extend` is a map of field names to Zod validators, not an `extendFields` wrapper.
+`values` belongs only to the projector; `dto(...)` describes the result. Extension
+values are parsed as a strict object: missing required fields, unknown values,
+and invalid values fail. Values are never copied implicitly from storage.
+
+Extensions cannot replace public fields or use `_id`, `_creationTime`, `tenant`,
+`createdAt`, `updatedAt`, `archivedAt`, or `__proto__`. Their schemas must validate
+without changing values: transforms, pipes, coercion, preprocess, defaults,
+catches, and overwrites are rejected, including inside nested schemas.
+Refinements must not mutate their input. Existing public-field schemas retain
+their existing parsing behavior.
+
+## Pagination options
+
+Select filterable scalar fields independently of the public DTO mask:
+
+```ts
+const input = documents.paginationOpts({ title: true, ownerId: true })
+const args = input.parse({
+	numItems: 25,
+	cursor: null,
+	order: 'desc',
+	filters: { title: 'Proposal' },
+})
+```
+
+The helper extends Convex's native pagination options with optional `filters`
+and `order: 'asc' | 'desc'`. It returns a Zod object that can be used directly as
+query args or extended with endpoint-specific fields. `numItems` must be a
+positive integer at most 100; engine configuration may lower that ceiling.
+Unknown filter fields fail. Stored scalar fields, including explicitly selected
+server-owned fields and IDs, can be filterable even when absent from the DTO.
+Arrays, objects, and other unsupported non-scalar fields cannot be selected.
+This schema creates no authorization policy by itself.
+
+For relationship filters and paginated public output, use
+`relations.tables.documents.paginationOpts(selection)` and `.pageDto(selection)`.
+See [querying.md](./querying.md) for declarations, conditional indexes, filters,
+authorization, and child-page continuation. Existing native pagination can keep
+using `paginated(dto)`; the querying engine is independent of `include`.
 
 ## Opinionated timestamps
 

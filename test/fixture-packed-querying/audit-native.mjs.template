@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+const read = (path) => JSON.parse(readFileSync(path, 'utf8'))
+const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const results = read('native-results.json')
+const ids = read('seed-envelope.json')
+const envelopes = readdirSync('.').filter((name) => /^http-\d+-.*\.json$/.test(name)).sort((a,b) => Number(a.split('-')[1])-Number(b.split('-')[1])).map(read)
+assert.equal(envelopes.length, 33)
+assert.equal(results.length, envelopes.length)
+assert.equal(read('NATIVE_SUCCESS').cases, envelopes.length)
+const byLabel = new Map(results.map((row,i) => [row.label, envelopes[i]]))
+for (const order of ['asc','desc']) {
+ const actual = results.flatMap((row,i) => row.label.startsWith('conditional-'+order+'-') ? envelopes[i].value.page.map((task)=>task._id) : [])
+ const expected = ids.tasks.slice(5)
+ if(order==='desc')expected.reverse()
+ assert.deepEqual(actual,expected)
+}
+assert.equal(byLabel.get('first').value.page[0]._id,ids.tasks[5])
+assert.equal(byLabel.get('equivalent-registry').value.page[0]._id,ids.tasks[6])
+for(const label of ['changed-registry','tamper','filter','order','tenant','principal','cross-parent'])assert.match(byLabel.get(label).errorMessage,/Invalid cursor/)
+assert.match(byLabel.get('wrong-table-parent').errorMessage,/ArgumentValidationError/)
+assert.ok(!byLabel.get('wrong-table-parent').errorMessage.includes('Invalid cursor'))
+for(const label of ['wrong-scalar','unknown-operator','unknown-field'])assert.match(byLabel.get(label).errorMessage,/ArgumentValidationError/)
+assert.match(byLabel.get('no-identity').errorMessage,/UNAUTHENTICATED/)
+assert.match(byLabel.get('unsupported-role').errorMessage,/FORBIDDEN/)
+const expanded=byLabel.get('expanded').value.page[0]
+assert.equal(expanded.referenceTask,null)
+assert.equal(expanded.requiredLabel._id,ids.labels[0])
+assert.deepEqual(expanded.labels.page.map(label=>label._id),[...ids.labels.slice(0,4),ids.labels[1]])
+assert.deepEqual(expanded.aliasLabels.page.map(label=>label._id),expanded.labels.page.map(label=>label._id))
+assert.deepEqual(byLabel.get('nested-predicate').value.page.map(task=>task._id),[ids.tasks[5]])
+const child=results.flatMap((row,i)=> /^child-\d+$/.test(row.label) ? envelopes[i].value.page.map(label=>label._id) : [])
+assert.deepEqual(child,[...ids.labels.slice(0,4),ids.labels[1]])
+const split=byLabel.get('native-limit').value
+assert.match(split.splitCursor,/^pc\./)
+assert.deepEqual([...byLabel.get('end-left').value.page,...byLabel.get('end-right').value.page],split.page)
+for(const row of read('native-validator-hashes.json')){const bytes=readFileSync(row.path);assert.equal(bytes.length,row.bytes);assert.equal(hash(bytes),row.sha256);const metadata=JSON.parse(bytes);assert.equal(metadata.args.type,'object');assert.equal(metadata.returns.type,'object')}
+assert.deepEqual(read('source-before.json'),read('source-after.json'))
+const identity=read('package-identity.json');assert.equal(hash(readFileSync(identity.tarball)),identity.sha256)
+const cleanup=read('cleanup.json');assert.ok(cleanup.ports.every(port=>port.closed));assert.ok(cleanup.pids.every(pid=>!pid.alive))
+for(const stage of ['deploy','runtime']){const result=read(stage+'-result.json');assert.equal(result.code,0);assert.equal(result.timedOut,false)}
+writeFileSync('INDEPENDENT_SUCCESS',JSON.stringify({envelopes:envelopes.length,packageSHA256:identity.sha256,metadata:read('native-validator-hashes.json'),cleanup,measurement:'bounded synthetic default runtime functional wall-times; no physical I/O or performance claim'},null,2))
+console.log('Independent raw-envelope, ID, native-validator, identity and cleanup audit passed')

@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict'
+import { writeFileSync } from 'node:fs'
+import { convexTest } from 'convex-test'
+import { anyApi } from 'convex/server'
+import { createQueryEngine } from 'cvx-kit/querying'
+import { defineRelations } from 'cvx-kit/relations'
+import schema from './convex/schema'
+import { tasks, labels, edges } from './convex/domain/tasks/schema'
+import { relations } from './convex/relations'
+import { cursor } from './convex/functions'
+import { authQuery } from './convex/functions'
+import { query } from './convex/_generated/server'
+import { contract } from './convex/domain/tasks/contracts'
+
+function equivalentRegistry() {
+ return defineRelations({ tasks, labels, edges }, (r) => ({
+  tasks: {
+   referenceTask: r.one.tasks({ from: r.tasks.reference, to: r.tasks._id }),
+   requiredLabel: r.one.labels({ from: r.tasks.required, to: r.labels._id }),
+   direct: r.many.labels({ from: r.tasks._id, to: r.labels.task }),
+   labels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
+   aliasLabels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
+  }, labels: { owner: r.one.tasks({ from: r.labels.task, to: r.tasks._id }) },
+ }))
+}
+const equivalent = equivalentRegistry()
+assert.equal(equivalent.identity, relations.identity)
+const changed = defineRelations({ tasks, labels, edges }, (r) => ({ tasks: {
+ labels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
+}}))
+const eqEngine = createQueryEngine({ schema, relations: equivalent, cursor })
+const changedEngine = createQueryEngine({ schema, relations: changed, cursor })
+const deepEngine = createQueryEngine({ schema, relations, cursor, budgets: { depth: 1 } })
+const probes = {
+ unmanaged: query({ args: {}, handler: (ctx) => eqEngine(ctx).tasks.paginate({ numItems: 1, cursor: null }) }),
+ equivalent: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => eqEngine(ctx).tasks.paginate(args) }),
+ changed: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => changedEngine(ctx).tasks.paginate(args) }),
+ depth: authQuery({ args: contract.queries.expanded.input, returns: contract.queries.expanded.result,
+  handler: (ctx, args) => deepEngine(ctx).tasks.with({ referenceTask: true, requiredLabel: true,
+   direct: true, labels: { owner: true }, aliasLabels: true }).paginate(args) }),
+ alias: authQuery({ args: contract.queries.next.input, returns: contract.queries.next.result,
+  handler: (ctx, { parent, ...args }) => eqEngine(ctx).tasks.relation(parent, 'aliasLabels').with({ owner: true }).paginate(args) }),
+ nested: authQuery({ args: contract.queries.next.input, returns: relations.tables.labels.pageDto({}),
+  handler: (ctx, { parent, ...args }) => eqEngine(ctx).tasks.relation(parent, 'labels.owner.direct').paginate(args) }),
+ nestedOutput: authQuery({ args: contract.queries.expanded.input, returns: relations.tables.tasks.pageDto({ labels: { owner: { direct: true } } }),
+  handler: (ctx, args) => eqEngine(ctx).tasks.with({ labels: { owner: { direct: true } } }).paginate(args) }),
+}
+const t = convexTest(schema, {
+ './_generated/server.ts': () => import('./convex/_generated/server'),
+ './api/tasks.ts': () => import('./convex/api/tasks'),
+ './api/probes.ts': async () => probes,
+})
+const client = t.withIdentity({ subject: 'fixture-reader', org_id: 'a', role: 'reader' })
+const original = Date.now
+Date.now = () => 2 ** 44
+const ids = await t.run(async (ctx) => {
+ const rows = []
+ for (let ordinal = 0; ordinal < 24; ordinal++) rows.push(await ctx.db.insert('tasks', {
+  ordinal, tenant: 'a', authorized: true, department: 'support', status: 'open', active: false,
+  priority: 0, code: '', secret: 'FOCUSED_PRIVATE',
+ }))
+ const timestamps = []
+ for (const id of rows) {
+  const row = await ctx.db.get(id)
+  assert.ok(row)
+  timestamps.push(row._creationTime)
+ }
+ assert.equal(new Set(timestamps).size, 1)
+ assert.equal(timestamps[0], 2 ** 44)
+ const targets = []
+ for (let ordinal = 0; ordinal < 5; ordinal++) targets.push(await ctx.db.insert('labels', {
+  ordinal, tenant: 'a', authorized: ordinal !== 4, name: `label-${ordinal}`, task: rows[0],
+ }))
+ await ctx.db.patch(rows[0], { reference: rows[1], required: targets[0] })
+ await ctx.db.patch(rows[1], { authorized: false })
+ await ctx.db.patch(rows[2], { reference: rows[1], required: targets[4] })
+ const junctions = []
+ for (const label of targets) junctions.push(await ctx.db.insert('edges', { task: rows[0], label, ordinal: junctions.length, authorized: true }))
+ junctions.push(await ctx.db.insert('edges', { task: rows[0], label: targets[1], ordinal: 5, authorized: true }))
+ const row = await ctx.db.get(rows[1])
+ assert.ok(row)
+ await ctx.db.delete(rows[1])
+ return { rows, targets, junctions, deleted: row }
+}).finally(() => { Date.now = original })
+const results: object[] = []
+const record = (value: object) => { results.push(value); writeFileSync('focused-results.json', JSON.stringify(results, null, 2)); console.log(JSON.stringify(value)) }
+await assert.rejects(client.query(anyApi.api.probes.unmanaged, {}), /UNMANAGED_QUERY_CONTEXT/)
+// Every timestamp is equal; the independent tie-break oracle is the ID's lexical order.
+for (const order of ['asc', 'desc'] as const) for (const size of [1, 7, 25, 100]) {
+ const expected = ids.rows.filter((id) => id !== ids.rows[1]).sort()
+ if (order === 'desc') expected.reverse()
+ for (const filters of [undefined, { active: false }, { priority: 0 }, { code: '' }]) {
+  const actual: string[] = []; let continuation: string | null = null
+  for (let page = 0; page < 30; page++) {
+   const raw: unknown = await client.query(anyApi.api.tasks.conditional, { numItems: size, cursor: continuation, order, filters })
+   const value = contract.queries.list.result.parse(raw)
+   actual.push(...value.page.map((row) => row._id))
+   if (value.isDone) break
+   assert.notEqual(value.continueCursor, continuation)
+   continuation = value.continueCursor
+  }
+  assert.deepEqual(actual, expected)
+ }
+ record({ name: 'constant-clock-ties', order, size, count: expected.length, expected })
+}
+const expanded = contract.queries.expanded.result.parse(await client.query(anyApi.api.tasks.expanded, { numItems: 100, cursor: null, filters: { ordinal: 0 } }))
+assert.equal(expanded.page[0].referenceTask, null)
+assert.equal(expanded.page[0].requiredLabel?._id, ids.targets[0])
+assert.equal(expanded.page[0].direct.page.length, 4)
+assert.equal(expanded.page[0].labels.page.length, 5)
+assert.deepEqual(expanded.page[0].labels.page.map(row => row._id), expanded.page[0].aliasLabels.page.map(row => row._id))
+assert.ok(expanded.page[0].labels.page.every((row) => row.owner?._id === ids.rows[0]))
+assert.ok(!JSON.stringify(expanded).includes('FOCUSED_PRIVATE'))
+await t.run(async (ctx) => { await ctx.db.patch(ids.rows[3], { authorized: false }); await ctx.db.patch(ids.rows[0], { reference: ids.rows[3] }) })
+const denied = contract.queries.expanded.result.parse(await client.query(anyApi.api.tasks.expanded, { numItems: 1, cursor: null, filters: { ordinal: 0 } }))
+assert.equal(denied.page[0].referenceTask, expanded.page[0].referenceTask)
+const absentRequired = contract.queries.expanded.result.parse(await client.query(anyApi.api.tasks.expanded, { numItems: 1, cursor: null, filters: { ordinal: 2 } }))
+assert.equal(absentRequired.page[0].requiredLabel, null)
+await assert.rejects(client.query(anyApi.api.probes.depth, { numItems: 1, cursor: null, filters: { ordinal: 0 } }))
+record({ name: 'expanded-self-one-many-named-junction-nested-depth', passed: true })
+const first = contract.queries.list.result.parse(await client.query(anyApi.api.tasks.list, { numItems: 1, cursor: null }))
+const eq = contract.queries.list.result.parse(await client.query(anyApi.api.probes.equivalent, { numItems: 7, cursor: first.continueCursor }))
+assert.ok(eq.page.length > 0)
+await assert.rejects(client.query(anyApi.api.probes.changed, { numItems: 7, cursor: first.continueCursor }), /Invalid cursor/)
+const native = contract.queries.list.result.parse(await client.query(anyApi.api.tasks.list, { numItems: 100, cursor: null, maximumRowsRead: 5 }))
+assert.match(native.splitCursor ?? '', /^pc\./)
+assert.ok(['SplitRecommended', 'SplitRequired'].includes(native.pageStatus ?? ''))
+const left = contract.queries.list.result.parse(await client.query(anyApi.api.tasks.list, { numItems: 100, cursor: null, endCursor: native.splitCursor }))
+const right = contract.queries.list.result.parse(await client.query(anyApi.api.tasks.list, { numItems: 100, cursor: native.splitCursor, endCursor: native.continueCursor }))
+assert.deepEqual([...left.page, ...right.page], native.page)
+await assert.rejects(client.query(anyApi.api.tasks.list, { numItems: 100, cursor: null, endCursor: native.splitCursor, order: 'desc' }), /Invalid cursor/)
+record({ name: 'registry-equivalent-changed-native-split-end', passed: true })
+const child = contract.queries.next.result.parse(await client.query(anyApi.api.tasks.next, { parent: ids.rows[0], numItems: 1, cursor: null }))
+assert.equal(child.isDone, false)
+await assert.rejects(client.query(anyApi.api.probes.alias, { parent: ids.rows[0], numItems: 1, cursor: child.continueCursor }), /Invalid cursor/)
+const nestedOutput = relations.tables.tasks.pageDto({ labels: { owner: { direct: true } } }).parse(await client.query(anyApi.api.probes.nestedOutput, { numItems: 1, cursor: null, filters: { ordinal: 0 } }))
+const nestedFirst = nestedOutput.page[0].labels.page[0].owner?.direct
+assert.ok(nestedFirst)
+const nested = relations.tables.labels.pageDto({}).parse(await client.query(anyApi.api.probes.nested, { parent: ids.rows[0], numItems: 100, cursor: nestedFirst.continueCursor }))
+assert.deepEqual([...nestedFirst.page, ...nested.page].map(row => row._id), ids.targets.slice(0, 4))
+await t.run(async (ctx) => { await ctx.db.patch(ids.targets[0], { authorized: false }) })
+const revokedAncestor = relations.tables.labels.pageDto({}).parse(await client.query(anyApi.api.probes.nested, { parent: ids.rows[0], numItems: 100, cursor: nestedFirst.continueCursor }))
+assert.deepEqual(revokedAncestor.page, [])
+for (const args of [
+ { parent: ids.rows[2], numItems: 1, cursor: child.continueCursor },
+ { parent: ids.rows[0], numItems: 1, cursor: child.continueCursor, filters: { ordinal: 1 } },
+ { parent: ids.rows[0], numItems: 1, cursor: child.continueCursor, order: 'desc' },
+]) await assert.rejects(client.query(anyApi.api.tasks.next, args), /Invalid cursor/)
+await t.run(async (ctx) => { for (const edge of ids.junctions) await ctx.db.patch(edge, { authorized: false }) })
+const revokedEdges = contract.queries.next.result.parse(await client.query(anyApi.api.tasks.next, { parent: ids.rows[0], numItems: 7, cursor: child.continueCursor }))
+assert.deepEqual(revokedEdges.page, [])
+await t.run(async (ctx) => { await ctx.db.patch(ids.rows[0], { authorized: false }) })
+const revokedParent = contract.queries.next.result.parse(await client.query(anyApi.api.tasks.next, { parent: ids.rows[0], numItems: 7, cursor: child.continueCursor }))
+assert.deepEqual(revokedParent.page, [])
+record({ name: 'child-replay-and-parent-junction-revocation', passed: true })
+writeFileSync('FOCUSED_SUCCESS', 'Public registered focused tie/output/depth/metadata/registry/revocation probes passed.\n')

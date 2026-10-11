@@ -22,6 +22,27 @@ const packedFiles = (() => {
 })()
 
 describe('packed Convex components', () => {
+	it('ships deliberate relations and querying facades', () => {
+		const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+		for (const [path, stem] of [
+			['./relations', 'relations-public'],
+			['./querying', 'querying'],
+		]) {
+			expect(manifest.exports[path]).toEqual({
+				types: `./dist/${stem}.d.mts`,
+				import: `./dist/${stem}.mjs`,
+			})
+			expect(packedFiles).toContain(`dist/${stem}.mjs`)
+			expect(packedFiles).toContain(`dist/${stem}.d.mts`)
+		}
+		for (const path of [
+			'./querying/security',
+			'./querying/cursors',
+			'./relations-public',
+			'./dist/relations.mjs',
+		])
+			expect(manifest.exports[path]).toBeUndefined()
+	})
 	it('keeps the optional Effect peer outside Convex component discovery', () => {
 		for (const file of packedFiles.filter((path) => /^dist\/components\/.*\.mjs$/.test(path))) {
 			const source = readFileSync(join(process.cwd(), file), 'utf8')

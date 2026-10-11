@@ -58,7 +58,9 @@ export default defineConfig({
 								'src/modules/effect/agent-tools.ts',
 								...Object.keys(packageManifest.exports)
 									.filter((path) => /^\.\/[^/.]+$/.test(path))
-									.map((path) => `src/${path.slice(2)}.ts`),
+									.map((path) =>
+										path === './relations' ? 'src/relations-public.ts' : `src/${path.slice(2)}.ts`,
+									),
 							],
 						},
 					],

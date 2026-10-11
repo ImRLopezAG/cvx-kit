@@ -530,12 +530,12 @@ tester.run('consumer/no-unbounded-reads', consumerRules['no-unbounded-reads'], {
 	invalid: [
 		{
 			filename: resolve('convex/api/orders.ts'),
-			code: "ctx.db.query('orders').withIndex('by_owner').collect()",
+			code: "import { query } from '../../_generated/server'; query({ handler: ctx => ctx.db.query('orders').withIndex('by_owner').collect() })",
 			errors: [{ messageId: 'bounded' }],
 		},
 		{
 			filename: resolve('convex/domain/orders/queries.ts'),
-			code: "ctx.include(ctx.db.query('orders')).matching('by_owner').resolve()",
+			code: "import { authQuery } from '../../functions'; authQuery({ handler: ctx => ctx.include(ctx.db.query('orders')).matching('by_owner').resolve() })",
 			errors: [{ messageId: 'bounded' }],
 		},
 	],
@@ -1198,3 +1198,28 @@ tester.run('reserved-domain-file-anatomy', consumerRules['reserved-domain-file-a
 		},
 	],
 })
+
+tester.run(
+	'U7 R1 direct foundation registry read preservation',
+	consumerRules['no-unbounded-reads'],
+	{
+		valid: [
+			{
+				filename: resolve('convex/domain/tasks/queries.ts'),
+				code: "import {createFoundation} from 'cvx-kit'; const {Query} = createFoundation({}); function local(Query) { Query({context: host => host, operations: ({query}) => ({list: query.handler((input, ctx) => ctx.db.query('tasks').collect())})}) }",
+			},
+		],
+		invalid: [
+			{
+				filename: resolve('convex/domain/tasks/queries.ts'),
+				code: "import {createFoundation} from 'cvx-kit'; const {Query} = createFoundation({}); Query({context: host => host, operations: ({query}) => ({list: query.handler((input, ctx) => ctx.db.query('tasks').collect())})})",
+				errors: [{ messageId: 'bounded' }],
+			},
+			{
+				filename: resolve('convex/domain/tasks/queries.ts'),
+				code: "import {createEffectFoundation} from 'cvx-kit/effect'; const {Query} = createEffectFoundation({}); Query({context: host => host, operations: ({query}) => ({list: query.handler((input, ctx) => ctx.include(ctx.db.query('tasks')).resolve())})})",
+				errors: [{ messageId: 'bounded' }],
+			},
+		],
+	},
+)

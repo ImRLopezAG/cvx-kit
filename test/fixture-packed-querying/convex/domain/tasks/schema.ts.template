@@ -1,0 +1,14 @@
+import { z } from 'zod'
+import { zodTable } from 'cvx-kit/zod-table'
+
+export const tasks = zodTable('tasks', (id) => ({
+ ordinal: z.number(), tenant: z.string(), department: z.string(), status: z.string(),
+ active: z.boolean(), priority: z.number(), authorized: z.boolean(), code: z.string(),
+ reference: id('tasks').nullable().optional(), required: id('labels').optional(), secret: z.string(),
+}), { serverFields: ['tenant', 'authorized', 'secret'], publicFields: ['ordinal'] })
+export const labels = zodTable('labels', (id) => ({
+ ordinal: z.number(), tenant: z.string(), authorized: z.boolean(), name: z.string(), task: id('tasks').optional(),
+}), { serverFields: ['tenant', 'authorized'], publicFields: ['ordinal', 'name'] })
+export const edges = zodTable('edges', (id) => ({
+ task: id('tasks'), label: id('labels'), authorized: z.boolean(), ordinal: z.number(),
+}), { serverFields: ['authorized'], publicFields: ['ordinal'] })

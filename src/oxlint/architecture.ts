@@ -67,7 +67,12 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 				message:
 					'Domain source belongs in domain/<module>/ or domain/shared/. Only domain/table.ts assembles module tables.',
 			})
-		if (executable(parsed.program) && file !== 'domain/table.ts') required.add(dirname(file))
+		if (
+			executable(parsed.program) &&
+			file !== 'domain/table.ts' &&
+			!narrowRootDeclaration(file, readFileSync(filename, 'utf8'))
+		)
+			required.add(dirname(file))
 		const owner = moduleOwner(file) ?? ''
 		const targets = new Set<string>()
 		dependencies.set(file, targets)
@@ -132,6 +137,138 @@ export function architectureAnchor(root: string) {
 	for (const file of sourceFiles(root, []))
 		if (!file.includes('__tests__/') && !testFile(file)) return resolve(root, file)
 	return null
+}
+
+/** Only these two factory declarations may omit root business ownership. */
+export function narrowRootDeclaration(file: string, source: string): boolean {
+	const factory =
+		file === 'relations.ts'
+			? 'defineRelations'
+			: file === 'querying.ts'
+				? 'createQueryEngine'
+				: null
+	if (!factory) return false
+	const parsed = parseSync(file, source)
+	if (parsed.errors.length) return false
+	const imports = new Map<string, string>()
+	const aliases = new Map<string, Node>()
+	let factories = 0
+	let exported = false
+	function factoryName(node: Node, active = new Set<string>()): string | null {
+		if (node.type === 'Identifier') {
+			if (active.has(node.name)) return null
+			const init = aliases.get(node.name)
+			return init
+				? factoryName(init, new Set(active).add(node.name))
+				: (imports.get(node.name) ?? null)
+		}
+		if (
+			node.type === 'MemberExpression' &&
+			!node.computed &&
+			node.property.type === 'Identifier' &&
+			factoryName(node.object, active) === '*'
+		)
+			return node.property.name
+		return null
+	}
+	function declarative(node: Node, relationParameter?: string, registryCallback = false): boolean {
+		if (node.type === 'Identifier' || node.type === 'Literal') return true
+		if (
+			node.type === 'TSAsExpression' ||
+			node.type === 'TSSatisfiesExpression' ||
+			node.type === 'ParenthesizedExpression'
+		)
+			return declarative(node.expression, relationParameter, registryCallback)
+		if (node.type === 'MemberExpression')
+			return !node.computed && declarative(node.object, relationParameter)
+		if (node.type === 'ArrayExpression')
+			return node.elements.every((value) => value !== null && declarative(value, relationParameter))
+		if (node.type === 'ObjectExpression')
+			return node.properties.every(
+				(property) =>
+					property.type === 'Property' &&
+					!property.computed &&
+					property.kind === 'init' &&
+					!property.method &&
+					declarative(property.value, relationParameter),
+			)
+		if (
+			node.type === 'ArrowFunctionExpression' &&
+			registryCallback &&
+			!relationParameter &&
+			node.params.length === 1 &&
+			node.params[0].type === 'Identifier' &&
+			!node.async
+		) {
+			const body = node.body.type === 'ParenthesizedExpression' ? node.body.expression : node.body
+			return body.type === 'ObjectExpression' && declarative(body, node.params[0].name)
+		}
+		if (node.type === 'CallExpression' && relationParameter) {
+			let callee: Node = node.callee
+			const path: string[] = []
+			while (
+				callee.type === 'MemberExpression' &&
+				!callee.computed &&
+				callee.property.type === 'Identifier'
+			) {
+				path.unshift(callee.property.name)
+				callee = callee.object
+			}
+			return (
+				callee.type === 'Identifier' &&
+				callee.name === relationParameter &&
+				((path.length === 2 && ['one', 'many'].includes(path[0])) ||
+					(path.length === 3 && path[2] === 'through')) &&
+				node.arguments.every((argument) => declarative(argument, relationParameter))
+			)
+		}
+		return false
+	}
+	for (const statement of parsed.program.body) {
+		if (statement.type === 'ImportDeclaration') {
+			if (statement.importKind === 'type') continue
+			for (const specifier of statement.specifiers) {
+				if (specifier.type === 'ImportSpecifier' && specifier.importKind === 'type') continue
+				if (['cvx-kit', `cvx-kit/${file.slice(0, -3)}`].includes(statement.source.value))
+					imports.set(
+						specifier.local.name,
+						specifier.type === 'ImportSpecifier'
+							? specifier.imported.type === 'Identifier'
+								? specifier.imported.name
+								: ''
+							: specifier.type === 'ImportNamespaceSpecifier'
+								? '*'
+								: '',
+					)
+			}
+			continue
+		}
+		if (
+			statement.type === 'EmptyStatement' ||
+			statement.type === 'TSTypeAliasDeclaration' ||
+			statement.type === 'TSInterfaceDeclaration'
+		)
+			continue
+		const declaration =
+			statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement
+		if (declaration?.type !== 'VariableDeclaration' || declaration.kind !== 'const') return false
+		for (const item of declaration.declarations) {
+			if (item.id.type !== 'Identifier' || !item.init) return false
+			if (item.init.type === 'CallExpression' && factoryName(item.init.callee) === factory) {
+				if (
+					!item.init.arguments.every((argument, index) =>
+						declarative(argument, undefined, factory === 'defineRelations' && index === 1),
+					)
+				)
+					return false
+				factories++
+				exported ||= statement.type === 'ExportNamedDeclaration'
+			} else if (statement.type === 'ExportNamedDeclaration' || !declarative(item.init))
+				return false
+			aliases.set(item.id.name, item.init)
+		}
+	}
+	return factories === 1 && exported
 }
 
 function* sourceFiles(root: string, diagnostics: ArchitectureDiagnostic[]): Generator<string> {

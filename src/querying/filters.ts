@@ -103,9 +103,20 @@ export const nativePagination = nativeOptions.strict().extend({
 	maximumBytesRead: nativeOptions.shape.maximumBytesRead.unwrap().int().positive().optional(),
 })
 export type NativePagination = z.output<typeof nativePagination>
-export type ScalarPaginationSchema<Fields extends FieldSchemas, Selection> = z.ZodType<
-	NativePagination & { filters?: ScalarFilters<Fields, Selection>; order?: 'asc' | 'desc' },
-	NativePagination & { filters?: ScalarFilters<Fields, Selection, 'input'>; order?: 'asc' | 'desc' }
+/** Preserve the object boundary so pagination options can be registered directly as query args. */
+export type PaginationOptionsSchema<Filters, InputFilters = Filters> = z.ZodObject<
+	(typeof nativePagination)['shape'] & {
+		filters: z.ZodOptional<z.ZodType<Filters, InputFilters>>
+		order: z.ZodOptional<z.ZodEnum<{ asc: 'asc'; desc: 'desc' }>>
+	},
+	z.core.$strict
+>
+export type ScalarPaginationSchema<
+	Fields extends FieldSchemas,
+	Selection,
+> = PaginationOptionsSchema<
+	ScalarFilters<Fields, Selection>,
+	ScalarFilters<Fields, Selection, 'input'>
 >
 
 /** Scalar-only schema constructor shared by table and future registry boundaries.

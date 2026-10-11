@@ -586,6 +586,7 @@ describe('U2 native ID-domain enforcement', () => {
 				]) {
 					await expect(
 						t.query(app.api.functions.validate, {
+							// @ts-expect-error deliberately send malformed/foreign IDs to exercise native validation
 							options: { numItems: 1, cursor: null, filters },
 						}),
 					).rejects.toThrow()

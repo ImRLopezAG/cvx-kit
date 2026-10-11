@@ -15,7 +15,7 @@ import {
 	scalarPredicateSchema,
 	type FieldSchemas,
 	type FilterGrammar,
-	type NativePagination,
+	type PaginationOptionsSchema,
 	type ScalarSelection,
 	type ScalarPredicate,
 } from './querying/filters'
@@ -303,12 +303,9 @@ export interface RelationTableHelpers<
 > {
 	paginationOpts<const S extends RelationFilterSelection<Tables, D, T>>(
 		selection: ExactFilterMask<Tables, D, T, S>,
-	): z.ZodType<
-		NativePagination & { filters?: RelationFilters<Tables, D, T, S>; order?: 'asc' | 'desc' },
-		NativePagination & {
-			filters?: RelationFilters<Tables, D, T, S, 'input'>
-			order?: 'asc' | 'desc'
-		}
+	): PaginationOptionsSchema<
+		RelationFilters<Tables, D, T, S>,
+		RelationFilters<Tables, D, T, S, 'input'>
 	>
 	pageDto<const S extends RelationSelection<Tables, D, T>>(
 		selection: ExactOutputMask<Tables, D, T, S>,

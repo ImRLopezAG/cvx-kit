@@ -808,6 +808,7 @@ test('native nested output and selected relation filter validators reject real f
 	).resolves.toBe(true)
 	for (const filters of [{ referencedTask: { _id: label } }, { labels: { none: { _id: task } } }])
 		await expect(
+			// @ts-expect-error deliberately send foreign-table IDs to exercise native validation
 			t.query(app.api.functions.input, { options: { numItems: 1, cursor: null, filters } }),
 		).rejects.toThrow()
 })

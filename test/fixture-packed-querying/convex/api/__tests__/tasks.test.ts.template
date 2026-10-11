@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { convexTest } from 'convex-test'
+import { anyApi } from 'convex/server'
+import schema from '../../schema'
+import { contract } from '../../domain/tasks/contracts'
+
+test('API continuation preserves junction duplicates and rechecks parent authorization', async () => {
+ const t = convexTest(schema, {
+  './_generated/server.ts': () => import('../../_generated/server'),
+  './api/tasks.ts': () => import('../tasks'),
+ })
+ const ids = await t.run(async ctx => {
+  const parent = await ctx.db.insert('tasks', { ordinal: 0, tenant: 'a', authorized: true, department: 'support', status: 'open', active: false, priority: 0, code: '', secret: 'PRIVATE' })
+  const label = await ctx.db.insert('labels', { ordinal: 1, tenant: 'a', authorized: true, name: 'visible', task: parent })
+  for (const ordinal of [0, 1]) await ctx.db.insert('edges', { ordinal, task: parent, label, authorized: true })
+  return { parent, label }
+ })
+ const client = t.withIdentity({ subject: 'reader', org_id: 'a', role: 'reader' })
+ const first = contract.queries.next.result.parse(await client.query(anyApi.api.tasks.next, { parent: ids.parent, numItems: 1, cursor: null }))
+ assert.equal(first.isDone, false)
+ assert.deepEqual(first.page.map(row => row._id), [ids.label])
+ const next = contract.queries.next.result.parse(await client.query(anyApi.api.tasks.next, { parent: ids.parent, numItems: 7, cursor: first.continueCursor }))
+ assert.deepEqual(next.page.map(row => row._id), [ids.label])
+ await t.run(ctx => ctx.db.patch(ids.parent, { authorized: false }))
+ const revoked = contract.queries.next.result.parse(await client.query(anyApi.api.tasks.next, { parent: ids.parent, numItems: 7, cursor: first.continueCursor }))
+ assert.deepEqual(revoked.page, [])
+})

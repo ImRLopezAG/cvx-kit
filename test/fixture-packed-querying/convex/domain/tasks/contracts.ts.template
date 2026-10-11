@@ -1,0 +1,16 @@
+import { defineDomainContract } from 'cvx-kit/contracts'
+import { relations } from '../../relations'
+import { tasks } from './schema'
+export const listOptions = relations.tables.tasks.paginationOpts({
+ ordinal: true, tenant: true, department: true, status: true, active: true, priority: true, code: true,
+ authorized: true, referenceTask: { ordinal: true }, labels: { ordinal: true, owner: { ordinal: true } },
+})
+export const expandedOptions = tasks.paginationOpts({ ordinal: true })
+export const childOptions = relations.tables.labels.paginationOpts({ ordinal: true }).extend({ parent: tasks.schema.shape._id })
+export const contract = defineDomainContract({ queries: {
+ list: { input: listOptions, result: relations.tables.tasks.pageDto({}) },
+ conditional: { input: listOptions, result: relations.tables.tasks.pageDto({}) },
+ expanded: { input: expandedOptions, result: relations.tables.tasks.pageDto({ referenceTask: true, requiredLabel: true,
+ direct: true, labels: { owner: true }, aliasLabels: true }) },
+ next: { input: childOptions, result: relations.tables.labels.pageDto({ owner: true }) },
+}})

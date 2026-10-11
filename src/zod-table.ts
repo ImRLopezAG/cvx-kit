@@ -1,9 +1,4 @@
-import {
-	convexToZod,
-	zid,
-	type ConvexValidatorFromZod,
-	type Zid,
-} from 'convex-helpers/server/zod4'
+import { convexToZod, zid, type ConvexValidatorFromZod, type Zid } from 'convex-helpers/server/zod4'
 import { defineTable, paginationOptsValidator, type TableDefinition } from 'convex/server'
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'

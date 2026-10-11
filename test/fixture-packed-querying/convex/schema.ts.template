@@ -1,0 +1,3 @@
+import { defineSchema } from 'convex/server'
+import { tables } from './domain/tasks/table'
+export default defineSchema(tables)

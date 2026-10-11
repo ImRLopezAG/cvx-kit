@@ -29,6 +29,10 @@ export interface RelationTable {
 	dto(includeId: true): z.ZodType
 }
 export type RelationTables = Record<string, RelationTable>
+/** Internal named declaration dependency; excluded from the supported relations facade. */
+export interface SelectionMask {
+	[key: string]: true | SelectionMask
+}
 type Fields<T extends RelationTable> = T['schema']['shape']
 type Native<T extends RelationTable, K extends keyof Fields<T>> = ConvexValidatorFromZod<
 	Fields<T>[K],
@@ -655,9 +659,6 @@ function scalarValidator(validator: GenericValidator): boolean {
 	)
 }
 
-interface SelectionMask {
-	[key: string]: true | SelectionMask
-}
 function assertSelection(selection: SelectionMask): void {
 	const pending: { value: SelectionMask; depth: number; ancestors: readonly SelectionMask[] }[] = [
 		{ value: selection, depth: 0, ancestors: [] },

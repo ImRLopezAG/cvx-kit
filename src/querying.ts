@@ -68,7 +68,8 @@ type EngineArgs<
 	filters?: RelationFilters<Tables, D, T, FullMask<RelationFilterSelection<Tables, D, T>>>
 	order?: 'asc' | 'desc'
 }
-interface TableQuery<
+/** Typed declarative chain returned by the engine; named for consumer declaration emission. */
+export interface TableQuery<
 	Tables extends RelationTables,
 	D extends RelationDeclarations,
 	T extends keyof Tables,

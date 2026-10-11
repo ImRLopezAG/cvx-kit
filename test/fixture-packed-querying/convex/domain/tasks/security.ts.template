@@ -1,0 +1,16 @@
+import type { QueryCtx } from '../../_generated/server'
+import type { z } from 'zod'
+import type { tasks, labels, edges } from './schema'
+export const policies = { tasks: 0, labels: 0, edges: 0 }
+export async function getAuthUser(ctx: Pick<QueryCtx, 'auth'>) {
+ const identity = await ctx.auth.getUserIdentity()
+ return identity ? { id: identity.subject } : null
+}
+export function mapRole(role?: string) { return role === 'owner' ? 'owner' : role === 'reader' ? 'reader' : null }
+export function readRules() { return {
+ tasks: { read: async (_ctx: unknown, row: z.output<typeof tasks.schema>) => { policies.tasks++; return row.authorized } },
+ labels: { read: async (_ctx: unknown, row: z.output<typeof labels.schema>) => { policies.labels++; return row.authorized } },
+ edges: { read: async (_ctx: unknown, row: z.output<typeof edges.schema>) => { policies.edges++; return row.authorized } },
+} }
+export const classifyError = () => ({ outcome: 'failed' as const, errorCode: 'FAIL' })
+export const writeAudit = (_host: QueryCtx) => undefined

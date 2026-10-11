@@ -1,0 +1,12 @@
+import { createAuthFunctions } from 'cvx-kit/auth'
+import { query, mutation, action, internalQuery, internalMutation, internalAction } from './_generated/server'
+import type { DataModel } from './_generated/dataModel'
+import { getAuthUser, mapRole, readRules } from './domain/tasks/security'
+export const { authQuery } = createAuthFunctions<DataModel, 'owner' | 'reader'>({
+ query, mutation, action, internalQuery, internalMutation, internalAction,
+ getAuthUser, mapRole, adminRoles: ['owner'],
+ security: { tenancy: { tables: ['tasks', 'labels'] }, rules: readRules },
+})
+
+// Synthetic fixture key only. Applications load their own 64-byte server secret.
+export const cursor = { version: 'v1', currentKeyId: 'fixture', keys: { fixture: new Uint8Array(64).fill(7) } }

@@ -1,0 +1,3 @@
+import { createFoundation } from 'cvx-kit'
+import { classifyError, writeAudit } from './domain/tasks/security'
+export const { Query } = createFoundation({ observability: { enabled: false, classifyError }, writeAudit })

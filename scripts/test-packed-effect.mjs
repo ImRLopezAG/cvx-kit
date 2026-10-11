@@ -144,6 +144,8 @@ import { workflowTransition } from 'cvx-kit/workflow'
 import { selectOperation, bindOperationExecutor, createOperationTools, operationToolDialect } from 'cvx-kit/agent-tools'
 import { actionGeneric, queryGeneric, mutationGeneric, internalActionGeneric, internalQueryGeneric, internalMutationGeneric } from 'convex/server'
 import { z } from 'zod'
+import { convexTest } from 'convex-test'
+import { defineSchema, anyApi } from 'convex/server'
 const require = createRequire(import.meta.url)
 if (process.argv.includes('--without-effect')) {
  assert.throws(() => require.resolve('effect'), { code: 'MODULE_NOT_FOUND' }, 'optional peer was unexpectedly auto-installed')
@@ -187,7 +189,11 @@ const auth = createAuthFunctions({
  getAuthUser: async () => ({ id: 'actor' }), mapRole: defaultRoleMap, adminRoles: ['admin'],
 })
 const authenticated = auth.authQuery({ args: {}, returns: z.string(), handler: ctx => ctx.actor.userId + ':' + ctx.tenant })
-assert.equal(await authenticated._handler({ auth: { getUserIdentity: async () => ({ subject: 'actor', org_id: 'org', role: 'member' }) }, db: {} }, {}), 'actor:org')
+const authTest = convexTest(defineSchema({}), {
+ './_generated/server.js': async () => ({ query: queryGeneric }),
+ './auth.js': async () => ({ authenticated }),
+})
+assert.equal(await authTest.withIdentity({ subject: 'actor', org_id: 'org', role: 'member' }).query(anyApi.auth.authenticated, {}), 'actor:org')
 const table = zodTable('notes', () => ({ text: z.string() }), { commandFields: ['text'] })
 const crud = createCrudCommands({ Command, table, aggregateType: 'note', actor: () => 'actor' })
 const changes = []
@@ -375,6 +381,7 @@ try {
 				'cvx-kit': `file:${join(temporary, `cvx-kit-${manifest.version}.tgz`)}`,
 				convex: manifest.devDependencies.convex,
 				'convex-helpers': helpersVersion,
+				'convex-test': '0.0.61',
 				'@convex-dev/workflow': manifest.dependencies['@convex-dev/workflow'],
 				zod: manifest.devDependencies.zod,
 			}

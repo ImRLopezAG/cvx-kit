@@ -1,0 +1,11 @@
+import { authQuery } from '../functions'
+import { contract } from '../domain/tasks/contracts'
+import { queries } from '../domain/tasks/queries'
+export const list = authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+ handler: (ctx, args) => queries.exec('list', args, ctx) })
+export const conditional = authQuery({ args: contract.queries.conditional.input, returns: contract.queries.conditional.result,
+ handler: (ctx, args) => queries.exec('conditional', args, ctx) })
+export const expanded = authQuery({ args: contract.queries.expanded.input, returns: contract.queries.expanded.result,
+ handler: (ctx, args) => queries.exec('expanded', args, ctx) })
+export const next = authQuery({ args: contract.queries.next.input, returns: contract.queries.next.result,
+ handler: (ctx, args) => queries.exec('next', args, ctx) })

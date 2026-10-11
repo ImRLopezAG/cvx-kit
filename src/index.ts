@@ -91,3 +91,4 @@ export {
 	type RelationDeclarations,
 } from './relations'
 export type { ServerFilter, ScalarFilters, ScalarSelection } from './querying/filters'
+export { createQueryEngine, type QueryEngineConfig } from './querying'

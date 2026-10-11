@@ -1,6 +1,6 @@
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
-import { zodTable, type DtoOptions } from '../src/zod-table'
+import { zodTable, tenantTable, type DtoOptions } from '../src/zod-table'
 
 type Equal<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -124,3 +124,165 @@ const maybeId = table.toPublicDto(row, optionalId)
 // @ts-expect-error an optional boolean id flag cannot promise a required id
 const requiredId: GenericId<'documents'> = maybeId._id
 void requiredId
+
+const filterTable = zodTable(
+	'filterRecords',
+	(id) => ({
+		text: z.string().transform((value) => value.length),
+		count: z.number(),
+		active: z.boolean(),
+		owner: id('users').optional(),
+		status: z.enum(['open', 'done']),
+		object: z.object({ name: z.string() }),
+		list: z.array(z.string()),
+	}),
+	{ serverFields: ['active'] },
+)
+const pagination = filterTable.paginationOpts({
+	text: true,
+	count: true,
+	owner: true,
+	active: true,
+	status: true,
+	_id: true,
+	_creationTime: true,
+})
+type PaginationInput = z.input<typeof pagination>
+type PaginationOutput = z.output<typeof pagination>
+const validPagination: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	order: 'desc',
+	filters: {
+		text: { gte: 'a' },
+		count: { in: [1, 2] },
+		active: false,
+		owner: { eq: 'users:1', exists: true },
+		and: [{ status: 'open' }],
+		_id: 'filterRecords:1',
+	},
+}
+void validPagination
+const output = pagination.parse(validPagination)
+void output
+const paginationAssertions: [
+	Assert<Equal<Extract<NonNullable<PaginationInput['filters']>['text'], string>, string>>,
+	Assert<
+		Equal<
+			Extract<NonNullable<PaginationOutput['filters']>['_id'], string>,
+			GenericId<'filterRecords'>
+		>
+	>,
+] = [true, true]
+void paginationAssertions
+// @ts-expect-error unknown selections are rejected
+filterTable.paginationOpts({ missing: true })
+// @ts-expect-error false is not a selection
+filterTable.paginationOpts({ text: false })
+// @ts-expect-error nested objects are unsupported
+filterTable.paginationOpts({ object: true })
+// @ts-expect-error arrays are unsupported
+filterTable.paginationOpts({ list: true })
+// @ts-expect-error storage output number cannot replace actual stored string
+const wrongText: PaginationInput = { numItems: 1, cursor: null, filters: { text: 1 } }
+const wrongOperator: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error boolean ranges are unsupported
+	filters: { active: { gt: true } },
+}
+const wrongIdRange: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error ID ranges are unsupported
+	filters: { owner: { gt: 'users:1' } },
+}
+const wrongExists: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error only optional fields support existence
+	filters: { count: { exists: true } },
+}
+const wrongEnum: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error literal domain retained
+	filters: { status: { eq: 'other' } },
+}
+// @ts-expect-error unselected fields remain unavailable
+const wrongField: PaginationInput = { numItems: 1, cursor: null, filters: { createdAt: 1 } }
+void [wrongText, wrongOperator, wrongIdRange, wrongExists, wrongEnum, wrongField]
+// @ts-expect-error system declarations are reserved
+zodTable('bad', () => ({ _id: z.string() }))
+// @ts-expect-error system creation time is reserved
+zodTable('bad', () => ({ _creationTime: z.number() }))
+// @ts-expect-error injected timestamps are reserved
+zodTable('bad', () => ({ createdAt: z.number() }))
+zodTable('bad', () => ({ secret: z.string() }), {
+	serverFields: ['secret'],
+	// @ts-expect-error server fields cannot be commanded
+	commandFields: ['secret'],
+})
+// @ts-expect-error inherited timestamps never become command inputs
+zodTable('bad', () => ({ name: z.string() }), { commandFields: ['createdAt'] })
+// @ts-expect-error managed tenant cannot be user-declared
+tenantTable('bad', () => ({ tenant: z.string() }))
+// @ts-expect-error tenant cannot be a command field
+tenantTable('bad', () => ({ name: z.string() }), { commandFields: ['tenant'] })
+const publicManaged = tenantTable('valid', () => ({ name: z.string() }), {
+	publicFields: ['tenant', 'createdAt'],
+})
+publicManaged.paginationOpts({ tenant: true, createdAt: true })
+
+const nullableIdTable = zodTable('nullableIds', (id) => ({
+	owner: id('users').nullable(),
+	mixed: z.union([id('users'), z.number()]),
+}))
+const nullableIdOpts = nullableIdTable.paginationOpts({ owner: true, mixed: true })
+const nullableIdInput: z.input<typeof nullableIdOpts> = {
+	numItems: 1,
+	cursor: null,
+	filters: { owner: { in: ['users:1', null] }, mixed: { eq: 'users:2' } },
+}
+void nullableIdInput
+const nullableIdAssertions: [
+	Assert<
+		Equal<
+			Extract<NonNullable<z.input<typeof nullableIdOpts>['filters']>['owner'], string | null>,
+			string | null
+		>
+	>,
+	Assert<
+		Equal<
+			Extract<NonNullable<z.output<typeof nullableIdOpts>['filters']>['owner'], string | null>,
+			GenericId<'users'> | null
+		>
+	>,
+] = [true, true]
+void nullableIdAssertions
+const nestedScalar = zodTable('nullableEnum', () => ({
+	status: z.enum(['open', 'done']).nullable(),
+}))
+const nestedOpts = nestedScalar.paginationOpts({ status: true })
+const nestedInput: z.input<typeof nestedOpts> = {
+	numItems: 1,
+	cursor: null,
+	filters: { status: { in: ['open', null] } },
+}
+void nestedInput
+const logicalFields = zodTable('logicalFields', () => ({
+	and: z.string(),
+	or: z.number(),
+	not: z.boolean(),
+	fields: z.string(),
+}))
+const logicalOpts = logicalFields.paginationOpts({ and: true, or: true, not: true, fields: true })
+const logicalInput: z.input<typeof logicalOpts> = {
+	numItems: 1,
+	cursor: null,
+	filters: {
+		fields: { and: 'a', or: { gt: 0 }, not: false, fields: 'f' },
+		and: [{ fields: { not: true } }],
+	},
+}
+void logicalInput

@@ -9,6 +9,13 @@ import { defineTable, paginationOptsValidator, type TableDefinition } from 'conv
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 
+import {
+	scalarPaginationSchema,
+	type ScalarPaginationSchema,
+	type ScalarSelection,
+	type ExactScalarSelection,
+} from './querying/filters'
+
 // Use this entry point when deriving validators from kit-owned schemas so
 // the producer and converter consult the same convex-helpers ID registry.
 export { zid, zodToConvex, convexToZod } from 'convex-helpers/server/zod4'
@@ -28,6 +35,11 @@ const timestampFields = {
 } satisfies FieldSchemas
 
 type TimestampFields = typeof timestampFields
+type ReservedStorageField = '_id' | '_creationTime' | keyof TimestampFields
+type OwnedFields<Fields> = {
+	[Key in keyof Fields]: Key extends ReservedStorageField ? never : Fields[Key]
+}
+type SystemFields<Table extends string> = { _id: Zid<Table>; _creationTime: z.ZodNumber }
 
 export const TIMESTAMP_FIELDS = ['createdAt', 'updatedAt', 'archivedAt'] as const
 
@@ -38,7 +50,8 @@ export type TableBoundaryOptions<
 	PublicFields extends readonly FieldKey<Fields & TimestampFields>[],
 > = {
 	serverFields?: ServerFields
-	commandFields?: CommandFields
+	commandFields?: CommandFields &
+		readonly Exclude<FieldKey<Fields>, ServerFields[number] | keyof TimestampFields>[]
 	publicFields?: PublicFields
 }
 
@@ -136,6 +149,11 @@ export type TableBoundary<
 	Fields & TimestampFields,
 	Pick<Fields & TimestampFields, PublicFields[number]>
 > & {
+	paginationOpts<
+		const Selection extends ScalarSelection<Fields & TimestampFields & SystemFields<Table>>,
+	>(
+		selection: ExactScalarSelection<Fields & TimestampFields & SystemFields<Table>, Selection>,
+	): ScalarPaginationSchema<Fields & TimestampFields & SystemFields<Table>, Selection>
 	tableName: Table
 	storage: StrictObject<Fields & TimestampFields>
 	schema: ReturnType<typeof documentSchema<Fields & TimestampFields, Table>>
@@ -171,10 +189,18 @@ export function zodTable<
 	const PublicFields extends readonly FieldKey<Fields & TimestampFields>[] = readonly [],
 >(
 	tableName: Table,
-	fields: (id: typeof zid) => Fields,
+	fields: (id: typeof zid) => Fields & OwnedFields<Fields>,
 	options: TableBoundaryOptions<Fields, ServerFields, CommandFields, PublicFields> = {},
 ): TableBoundary<Table, Fields, ServerFields, CommandFields, PublicFields> {
-	const columns: Fields & TimestampFields = { ...fields(zid), ...timestampFields }
+	const declared = fields(zid)
+	assertOwnedFields(declared, ['_id', '_creationTime', ...TIMESTAMP_FIELDS])
+	const columns: Fields & TimestampFields = { ...declared, ...timestampFields }
+	assertFieldLists(
+		columns,
+		options.serverFields ?? [],
+		options.commandFields ?? [],
+		options.publicFields ?? [],
+	)
 	const storage: z.ZodObject<Fields & TimestampFields, z.core.$strict> = z.object(columns).strict()
 	const schema = documentSchema(storage, tableName)
 	const omittedKeys: readonly (ServerFields[number] | (typeof TIMESTAMP_FIELDS)[number])[] = [
@@ -300,9 +326,15 @@ export function zodTable<
 		return omit ? updateSchema.omit(omit as never) : updateSchema
 	}
 
-	const table: TableDefinition<ConvexValidatorFromZod<typeof storage, 'required'>> = defineTable(
-		zodToConvex(storage),
-	)
+	const nativeStorage = zodToConvex(storage)
+	const table: TableDefinition<ConvexValidatorFromZod<typeof storage, 'required'>> =
+		defineTable(nativeStorage)
+	type EntityFields = Fields & TimestampFields & SystemFields<Table>
+	function paginationOpts<const Selection extends ScalarSelection<EntityFields>>(
+		selection: ExactScalarSelection<EntityFields, Selection>,
+	): ScalarPaginationSchema<EntityFields, Selection> {
+		return scalarPaginationSchema<EntityFields, Selection>(zodToConvex(schema).fields, selection)
+	}
 	return {
 		tableName,
 		schema,
@@ -313,6 +345,7 @@ export function zodTable<
 		publicDto,
 		dto,
 		toPublicDto,
+		paginationOpts,
 		table,
 		insert,
 		update,
@@ -349,7 +382,10 @@ export function tenantTable<
 		readonly [],
 >(
 	tableName: Table,
-	fields: (id: typeof zid) => Fields,
+	fields: (
+		id: typeof zid,
+	) => Fields &
+		OwnedFields<Fields> & { [Key in keyof Fields]: Key extends 'tenant' ? never : Fields[Key] },
 	options: TableBoundaryOptions<
 		Fields & TenantFields,
 		readonly (ServerFields[number] | 'tenant')[],
@@ -363,10 +399,22 @@ export function tenantTable<
 		readonly (ServerFields[number] | 'tenant')[],
 		CommandFields,
 		PublicFields
-	>(tableName, (id) => ({ ...fields(id), ...tenantFields }), {
-		...options,
-		serverFields: [...(options.serverFields ?? []), 'tenant'],
-	})
+	>(
+		tableName,
+		(id) => {
+			const declared = fields(id)
+			assertOwnedFields(declared, ['tenant', '_id', '_creationTime', ...TIMESTAMP_FIELDS])
+			// SAFETY: reserved keys were rejected before injecting tenant; the generic
+			// wrapper forwards the same checked fields to the ordinary table constructor.
+			return { ...declared, ...tenantFields } as Fields &
+				TenantFields &
+				OwnedFields<Fields & TenantFields>
+		},
+		{
+			...options,
+			serverFields: [...(options.serverFields ?? []), 'tenant'],
+		},
+	)
 }
 
 /**
@@ -557,5 +605,27 @@ function assertDtoValidationSchema(
 			return
 		default:
 			reject()
+	}
+}
+
+function assertOwnedFields(fields: FieldSchemas, reserved: readonly string[]): void {
+	for (const key of reserved) {
+		if (Object.hasOwn(fields, key))
+			throw new Error(`Reserved table field "${key}" cannot be declared`)
+	}
+}
+
+function assertFieldLists(
+	fields: FieldSchemas,
+	server: readonly string[],
+	command: readonly string[],
+	publicKeys: readonly string[],
+): void {
+	for (const key of [...server, ...command, ...publicKeys]) {
+		if (!Object.hasOwn(fields, key)) throw new Error(`Unknown table field "${key}"`)
+	}
+	const managed = new Set<string>([...TIMESTAMP_FIELDS, ...server])
+	for (const key of command) {
+		if (managed.has(key)) throw new Error(`Server-owned field "${key}" cannot be a command input`)
 	}
 }

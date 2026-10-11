@@ -552,6 +552,13 @@ describe('immutable registry identity', () => {
 		for (const field of [
 			z.string().default('default'),
 			z.string().transform((value) => value.length),
+			new z.ZodPipe({ type: 'pipe', in: z.string(), out: z.string().prefault('fallback') }),
+			new z.ZodPipe({
+				type: 'pipe',
+				in: z.object({ code: z.string() }),
+				out: z.object({ code: z.string().prefault('fallback') }),
+			}),
+			z.coerce.number(),
 			z.lazy(() => z.string()),
 			z.any(),
 		]) {
@@ -559,6 +566,124 @@ describe('immutable registry identity', () => {
 			expect(() => defineRelations({ items: boundary }, () => ({}))).toThrow(/Unsupported/)
 		}
 	})
+	test.each([
+		['transform', z.number().transform(() => 'changed')],
+		[
+			'default',
+			z.string().default(() => {
+				throw new Error('Private default invoked')
+			}),
+		],
+		['coercion', z.coerce.number()],
+	] as const)(
+		'private stored %s nodes preserve construction and strict public DTOs',
+		(_name, hidden) => {
+			const tasks = zodTable('tasks', () => ({ title: z.string(), hidden }), {
+				publicFields: ['title'],
+			})
+			const relations = defineRelations({ tasks }, () => ({}))
+			const output = relations.tables.tasks.pageDto({})
+			const page = {
+				page: [{ _id: 'tasks:1', title: 'visible' }],
+				isDone: true,
+				continueCursor: '',
+			}
+			expect(output.parse(page)).toEqual(page)
+			expect(output.safeParse({ ...page, page: [{ ...page.page[0], hidden: 1 }] }).success).toBe(
+				false,
+			)
+		},
+	)
+	test.each(['scalar', 'nested'] as const)(
+		'private pipe %s prefault output preserves native input and strict DTOs',
+		(kind) => {
+			let calls = 0
+			const fallback = () => {
+				calls++
+				throw new Error('Private prefault invoked')
+			}
+			const hidden =
+				kind === 'scalar'
+					? new z.ZodPipe({ type: 'pipe', in: z.string(), out: z.string().prefault(fallback) })
+					: new z.ZodPipe({
+							type: 'pipe',
+							in: z.object({ code: z.string() }),
+							out: z.object({ code: z.string().prefault(fallback) }),
+						})
+			const tasks = zodTable('tasks', () => ({ title: z.string(), hidden }), {
+				publicFields: ['title'],
+			})
+			const native = tasks.table
+			const validator = native.validator
+			const hiddenValidator = validator.fields.hidden
+			const relations = defineRelations({ tasks }, () => ({}))
+			expect(tasks.table).toBe(native)
+			expect(tasks.table.validator).toBe(validator)
+			expect(tasks.table.validator.fields.hidden).toBe(hiddenValidator)
+			expect(getRelationMetadata(relations).tables.tasks.fields.hidden.kind).toBe(
+				kind === 'scalar' ? 'string' : 'object',
+			)
+			const output = relations.tables.tasks.pageDto({})
+			const page = {
+				page: [{ _id: 'tasks:1', title: 'visible' }],
+				isDone: true,
+				continueCursor: '',
+			}
+			expect(output.parse(page)).toEqual(page)
+			expect(output.safeParse({ ...page, page: [{ ...page.page[0], hidden: '' }] }).success).toBe(
+				false,
+			)
+			expect(calls).toBe(0)
+		},
+	)
+	test('direct private prefault remains unsupported at the native input boundary', () => {
+		let calls = 0
+		const tasks = zodTable(
+			'tasks',
+			() => ({
+				title: z.string(),
+				hidden: z.string().prefault(() => {
+					calls++
+					throw new Error('Direct prefault invoked')
+				}),
+			}),
+			{ publicFields: ['title'] },
+		)
+		expect(() => defineRelations({ tasks }, () => ({}))).toThrow(
+			/Unsupported native validation form/,
+		)
+		expect(calls).toBe(0)
+	})
+	test.each(['defaultValue', 'unexpected'] as const)(
+		'unknown stored prefault %s accessor rejects without invocation',
+		(key) => {
+			const output = z.string().prefault('fallback')
+			const tasks = zodTable(
+				'tasks',
+				() => ({
+					title: z.string(),
+					hidden: new z.ZodPipe({ type: 'pipe', in: z.string(), out: output }),
+				}),
+				{ publicFields: ['title'] },
+			)
+			let calls = 0
+			const getter = () => {
+				calls++
+				return 'changed'
+			}
+			getter.toString = () =>
+				Function.prototype.toString.call(
+					Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
+				)
+			Object.defineProperty(output._zod.def, key, {
+				configurable: true,
+				enumerable: true,
+				get: getter,
+			})
+			expect(() => defineRelations({ tasks }, () => ({}))).toThrow(/accessor/)
+			expect(calls).toBe(0)
+		},
+	)
 	test('regular expression and object checks survive repeated parsing', () => {
 		const profile = z
 			.object({ code: z.string().regex(/^valid$/g) })

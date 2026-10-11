@@ -348,6 +348,16 @@ export interface RelationMetadata {
 }
 
 const registries = new WeakMap<RelationRegistryIdentity, RelationMetadata>()
+// Private executor state retains validators and projection, never a database reader.
+const executorRegistries = new WeakMap<
+	RelationRegistryIdentity,
+	{
+		internal: RegistryMetadata
+		tables: RelationTables
+		assertStoredUnchanged(): void
+		assertNativeTable(table: string, definition: TableDefinition): void
+	}
+>()
 const refs = new WeakMap<AnyField, GenericValidator>()
 const throughRefs = new WeakSet<AnyThrough>()
 const edgeRefs = new WeakSet<AnyEdge>()
@@ -511,14 +521,109 @@ export function defineRelations<
 		tables: Object.freeze(helpers),
 	}) as RelationRegistry<Tables, D>
 	registries.set(registry, snapshotMetadata(internal))
+	const ownedTables = Object.freeze({ ...tables })
+	const storedGuards = Object.fromEntries(
+		Object.entries(ownedTables).map(([name, table]) => {
+			const schemaGuard = schemaMutationGuard(table.schema, 'stored')
+			const nativeSnapshot = JSON.stringify(nativeTableExport(table.table))
+			return [
+				name,
+				() => {
+					schemaGuard()
+					if (JSON.stringify(nativeTableExport(table.table)) !== nativeSnapshot)
+						throw new Error(`Native schema mutated after registry construction: ${name}`)
+				},
+			]
+		}),
+	)
+	executorRegistries.set(registry, {
+		internal,
+		tables: ownedTables,
+		assertStoredUnchanged: () => {
+			for (const guard of Object.values(storedGuards)) guard()
+		},
+		assertNativeTable(table, definition) {
+			if (!Object.hasOwn(ownedTables, table) || ownedTables[table].table !== definition)
+				throw new Error('Native schema/table ownership disagrees with relation registry')
+			storedGuards[table]()
+		},
+	})
 	return registry
 }
 
+/** Internal owned executor bridge. Not an advertised root API. Every operation
+ * rechecks the live registry, including cached plans and individual projections.
+ */
+export function getRelationExecutor(registry: RelationRegistryIdentity) {
+	const owned = executorRegistries.get(registry)
+	if (!owned) throw new Error('Unknown relation registry')
+	const assertUnchanged = () => {
+		assertRegistryUnchanged(owned.internal)
+		owned.assertStoredUnchanged()
+	}
+	const assertSchema = (tables: Readonly<Record<string, TableDefinition>>) => {
+		assertUnchanged()
+		const names = Object.keys(owned.tables)
+		if (
+			names.length !== Object.keys(tables).length ||
+			names.some((name) => tables[name] !== owned.tables[name].table)
+		)
+			throw new Error('Native schema/table ownership disagrees with relation registry')
+	}
+	assertUnchanged()
+	return Object.freeze({
+		assertUnchanged,
+		assertNativeTable: owned.assertNativeTable,
+		assertSchema,
+		pagination(table: string) {
+			assertUnchanged()
+			const data = owned.internal.metadata[table]
+			if (!data) throw new Error('Unknown query table')
+			const fields: FieldSchemas = {}
+			for (const [name, validator] of Object.entries(data.fields)) {
+				// Unsupported stored containers are not scalar-queryable. No validators
+				// are reconstructed from JSON; these are the actual native validators.
+				if (scalarValidator(validator)) fields[name] = scalarPredicateSchema(validator).optional()
+			}
+			return nativePagination.extend({
+				filters: relationFilterSchema({ fields, relations: {} }).optional(),
+				order: z.enum(['asc', 'desc']).optional(),
+			})
+		},
+		project(
+			tables: Readonly<Record<string, TableDefinition>>,
+			table: string,
+			row: Record<string, import('convex/values').Value>,
+			eligible: () => boolean,
+		) {
+			assertSchema(tables)
+			if (!eligible()) return null
+			const dto = owned.internal.metadata[table]?.dto
+			if (!dto) throw new Error('Unknown query table')
+			// The strict DTO remains the authority. Pick its fields before parsing,
+			// matching table projection without spreading any storage-only fields.
+			return dto.parse(
+				Object.fromEntries(
+					Object.keys(dto.shape)
+						.filter((key) => Object.hasOwn(row, key))
+						.map((key) => [key, row[key]]),
+				),
+			)
+		},
+	})
+}
 /** Internal compiler/engine adapter. Registry identity alone cannot forge a registry. */
 export function getRelationMetadata(registry: RelationRegistryIdentity): RelationMetadata {
 	const metadata = registries.get(registry)
 	if (!metadata) throw new Error('Unknown relation registry')
 	return metadata
+}
+
+function scalarValidator(validator: GenericValidator): boolean {
+	return (
+		['id', 'string', 'float64', 'int64', 'boolean', 'null', 'literal'].includes(validator.kind) ||
+		(validator.kind === 'union' && validator.members.every(scalarValidator))
+	)
 }
 
 interface SelectionMask {
@@ -734,7 +839,21 @@ const builtinObjectGetters = new Set(
  * is outside the schema contract. Lazy/transform/default/coercion nodes fail closed.
  */
 function dtoMutationGuard(dto: z.ZodObject): () => void {
+	return schemaMutationGuard(dto, 'dto')
+}
+
+// Stored schemas already passed the native input boundary. Track their graph
+// independently of public DTO admissibility, without running any stored parser.
+const builtinDefaultGetter = Function.prototype.toString.call(
+	Object.getOwnPropertyDescriptor(z.string().default('')._zod.def, 'defaultValue')!.get!,
+)
+const builtinPrefaultGetter = Function.prototype.toString.call(
+	Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
+)
+
+function schemaMutationGuard(dto: z.ZodObject, boundary: 'dto' | 'stored'): () => void {
 	const nodes: DtoGraphNode[] = []
+	const fallbackDefinitions = new Set<object>()
 	const patterns: { expression: RegExp; source: string; flags: string }[] = []
 	const seen = new Set<object>()
 	const active = new Set<object>()
@@ -752,7 +871,8 @@ function dtoMutationGuard(dto: z.ZodObject): () => void {
 			if (value instanceof RegExp)
 				patterns.push({ expression: value, source: value.source, flags: value.flags })
 			if (value instanceof z.core.$ZodCheck && 'check' in value._zod.def) {
-				if (value._zod.def.check === 'overwrite') throw new Error('Unsupported DTO overwrite check')
+				if (boundary === 'dto' && value._zod.def.check === 'overwrite')
+					throw new Error('Unsupported DTO overwrite check')
 				visit(value._zod.def, depth + 1)
 				nodes.push({
 					object: value._zod,
@@ -766,7 +886,8 @@ function dtoMutationGuard(dto: z.ZodObject): () => void {
 				// SAFETY: built-in Zod definitions form a discriminated union.
 				const def = (value as z.core.$ZodTypes)._zod.def
 				if (
-					![
+					boundary === 'dto' &&
+					(![
 						'object',
 						'array',
 						'optional',
@@ -785,9 +906,22 @@ function dtoMutationGuard(dto: z.ZodObject): () => void {
 						'literal',
 						'enum',
 					].includes(def.type) ||
-					('coerce' in def && def.coerce)
+						('coerce' in def && def.coerce))
 				)
 					throw new Error(`Unsupported DTO schema "${def.type}"`)
+				if (boundary === 'stored' && (def.type === 'default' || def.type === 'prefault')) {
+					const descriptor = Object.getOwnPropertyDescriptor(def, 'defaultValue')
+					if (descriptor?.get) {
+						if (
+							descriptor.set ||
+							Function.prototype.toString.call(descriptor.get) !==
+								(def.type === 'default' ? builtinDefaultGetter : builtinPrefaultGetter)
+						)
+							throw new Error('Unsupported stored schema accessor')
+						// Snapshot the accessor identity below, never evaluate its fallback.
+						fallbackDefinitions.add(def)
+					}
+				}
 				if (def.type === 'object') {
 					const descriptor = Object.getOwnPropertyDescriptor(def, 'shape')
 					if (descriptor?.get) {
@@ -826,7 +960,8 @@ function dtoMutationGuard(dto: z.ZodObject): () => void {
 				values.some(
 					(property, i) =>
 						!('value' in property) &&
-						!objectFields.some(({ definition }) => definition === value && keys[i] === 'shape'),
+						!objectFields.some(({ definition }) => definition === value && keys[i] === 'shape') &&
+						!(fallbackDefinitions.has(value) && keys[i] === 'defaultValue'),
 				)
 			)
 				throw new Error('Unsupported DTO schema accessor')

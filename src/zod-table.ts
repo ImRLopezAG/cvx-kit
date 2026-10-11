@@ -1,13 +1,14 @@
 import {
 	convexToZod,
 	zid,
-	zodToConvex,
 	type ConvexValidatorFromZod,
 	type Zid,
 } from 'convex-helpers/server/zod4'
 import { defineTable, paginationOptsValidator, type TableDefinition } from 'convex/server'
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
+
+import { zodToConvex } from './zod-convex'
 
 import {
 	scalarPaginationSchema,
@@ -18,7 +19,8 @@ import {
 
 // Use this entry point when deriving validators from kit-owned schemas so
 // the producer and converter consult the same convex-helpers ID registry.
-export { zid, zodToConvex, convexToZod } from 'convex-helpers/server/zod4'
+export { zid, convexToZod } from 'convex-helpers/server/zod4'
+export { zodToConvex } from './zod-convex'
 
 type FieldSchemas = Record<string, z.ZodType>
 type FieldKey<Fields extends FieldSchemas> = Extract<keyof Fields, string>
@@ -531,6 +533,15 @@ function omitFields<Fields extends FieldSchemas, const Keys extends readonly Fie
 	>
 }
 
+type DtoPropertiesCheck = z.core.$ZodCheck & {
+	readonly _zod: {
+		readonly def: { readonly check: 'properties' } & Record<
+			'shape',
+			Record<string, z.core.$ZodType>
+		>
+	}
+}
+
 /** Inspect Zod 4's discriminated definitions, failing closed for unsupported nodes.
  * This restriction applies only to new DTO extensions; storage/publicDto are unchanged.
  */
@@ -557,7 +568,7 @@ function assertDtoValidationSchema(
 		}
 		if (check._zod.def.check === 'properties') {
 			// SAFETY: the properties discriminator owns this schema shape in Zod 4.
-			for (const child of Object.values((check as z.core.$ZodCheckProperties)._zod.def.shape)) {
+			for (const child of Object.values((check as DtoPropertiesCheck)._zod.def.shape)) {
 				visit(child)
 			}
 		}

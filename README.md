@@ -85,6 +85,10 @@ LLM-tool JSON schemas primitive while preserving the `Id<...>` type.
 
 ### `cvx-kit/relations` and `cvx-kit/querying`
 
+See the [querying guide](./src/docs/querying.md),
+[DTO parameters](./src/docs/zod-table.md#public-dto-parameters), and
+[consumer rule reference](./src/docs/oxlint.md#dto-and-pagination-diagnostics).
+
 Declare relationships once in `convex/relations.ts`, then configure the engine
 once in `convex/querying.ts`. Both factories are also available from the package
 root. The relations subpath exposes declarations and public types; executor

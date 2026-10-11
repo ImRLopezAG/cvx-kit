@@ -20,6 +20,7 @@ convex/
   functions.ts
   triggers.ts
   foundation.ts
+  relations.ts  querying.ts (optional declarative relation/engine facades)
   <component>.ts            (one per mounted component: audit.ts, approvals.ts, ...)
   auth.ts  auth.config.ts  http.ts  crons.ts
   api/
@@ -58,6 +59,17 @@ Three zones, three privileges:
 
 Dependency direction is one-way: `api → domain → shared → kit`. Anything
 pointing the other way is a violation.
+
+### Relational query facades
+
+When using the querying engine, root `relations.ts` exports one declarative
+`defineRelations(...)` registry and root `querying.ts` exports one configured
+`createQueryEngine(...)` facade. Establish native indexes before compiling the
+registry. Keep database execution and business predicates in domain Query
+handlers, and derive pagination/result validators in domain `contracts.ts`.
+Root facades contain configuration, not handlers or business branches.
+See [querying.md](./querying.md) for complete usage and [oxlint.md](./oxlint.md)
+for facade ownership and pagination diagnostics.
 
 ### Module grain
 

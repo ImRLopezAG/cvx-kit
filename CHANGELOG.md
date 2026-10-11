@@ -12,6 +12,26 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-10-11
+
+### Added
+
+- Typed relational queries with scalar and relationship filters, conditional indexes, global ascending or descending order, and bounded stream pagination.
+- Explicit relationship declarations for direct, self, and junction relationships, with paginated child continuations.
+- Managed query authorization, shared read budgets, and encrypted cursors bound to the query, principal, tenant, and parent relationship.
+- Table DTO options for validated IDs and extensions, including `toPublicDto(row, true)`, plus native-derived `paginationOpts` and page DTO helpers.
+- Oxlint enforcement for manual ID projections, copied pagination contracts, and unsafe relational query boundaries.
+- Dedicated querying documentation and updated table and rule documentation in `src/docs`.
+
+### Fixed
+
+- Preserve shared validator graphs during native auth registration to avoid repeated validator expansion.
+
+### Verified
+
+- Source, type, rule, and packed-consumer checks; 308 independently audited relational stress sequences across installed and minimum peer versions.
+- 33 HTTP responses exercised encrypted cursor pagination and rejection paths on a local Convex backend. Hosted production performance remains unmeasured.
+
 ## [0.1.13] - 2026-10-10
 
 ### Added

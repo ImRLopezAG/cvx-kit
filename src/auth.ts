@@ -25,6 +25,12 @@ import type { Triggers } from 'convex-helpers/server/triggers'
 import type { TableNamesInDataModel } from 'convex/server'
 import { defaultErrors, type ErrorFactory } from './errors'
 import {
+	registerQueryReader,
+	suppliedPolicyRules,
+	type SecurityPolicyContext,
+} from './querying/security'
+export type { SecurityPolicyContext } from './querying/security'
+import {
 	composeRules,
 	createTenantRules,
 	wrapDatabaseReader,
@@ -73,7 +79,7 @@ export type SecurityConfig<DataModel extends GenericDataModel, Role extends stri
 	 * composed AND-wise with tenant isolation. E.g. gate `modify` on a table
 	 * to admin roles.
 	 */
-	rules?: (bundle: AuthBundle<Role>) => Rules<unknown, DataModel>
+	rules?: (bundle: AuthBundle<Role>) => Rules<SecurityPolicyContext<DataModel>, DataModel>
 	/**
 	 * Policy for tables with no rule. Defaults to 'deny' when tenancy is
 	 * configured (unlisted tables are unreachable — fail closed), 'allow'
@@ -392,10 +398,12 @@ export function createAuthFunctions<
 			}
 		: undefined
 
-	function securityRules(bundle: AuthBundle<Role>): Rules<unknown, DataModel> | undefined {
+	function securityRules(
+		bundle: AuthBundle<Role>,
+	): Rules<SecurityPolicyContext<DataModel>, DataModel> | undefined {
 		const security = config.security
 		if (!security) return undefined
-		const sets: Rules<unknown, DataModel>[] = []
+		const sets: Rules<SecurityPolicyContext<DataModel>, DataModel>[] = []
 		if (security.tenancy) {
 			sets.push(createTenantRules<DataModel>(bundle.tenant, security.tenancy.tables))
 		}
@@ -408,10 +416,28 @@ export function createAuthFunctions<
 		bundle: AuthBundle<Role>,
 	): GenericQueryCtx<DataModel> {
 		const rules = securityRules(bundle)
-		if (!rules) return ctx
+		const defaultPolicy = securityConfig?.defaultPolicy ?? 'allow'
+		const ordinary = rules
+			? wrapDatabaseReader(
+					{ db: ctx.db },
+					ctx.db,
+					suppliedPolicyRules(ctx.db, rules, defaultPolicy),
+					securityConfig,
+				)
+			: ctx.db
 		return {
 			...ctx,
-			db: wrapDatabaseReader({}, ctx.db, rules, securityConfig),
+			db: registerQueryReader(ctx.db, ordinary, {
+				scope: {
+					mode: 'authenticated',
+					principal: bundle.user.id,
+					organization: bundle.org.organizationId,
+					tenant: bundle.tenant,
+					role: bundle.role,
+				},
+				rules: rules ?? {},
+				defaultPolicy,
+			}),
 		}
 	}
 
@@ -425,7 +451,12 @@ export function createAuthFunctions<
 		// then row-level security wraps the triggered db — order matters.
 		return {
 			...ctx,
-			db: wrapDatabaseWriter({}, ctx.db, rules, securityConfig),
+			db: wrapDatabaseWriter(
+				{ db: ctx.db },
+				ctx.db,
+				suppliedPolicyRules(ctx.db, rules, securityConfig?.defaultPolicy ?? 'allow'),
+				securityConfig,
+			),
 		}
 	}
 
@@ -555,7 +586,24 @@ export function createAuthFunctions<
 		adminAction: roleAction(...config.adminRoles),
 		systemQuery: zCustomQuery(config.internalQuery, {
 			args: {},
-			input: async (ctx) => ({ ctx: { ...ctx, include }, args: {} }),
+			input: async (ctx) => ({
+				ctx: {
+					...ctx,
+					include,
+					db: registerQueryReader(ctx.db, ctx.db, {
+						scope: {
+							mode: 'system',
+							principal: null,
+							organization: null,
+							tenant: null,
+							role: null,
+						},
+						rules: {},
+						defaultPolicy: 'allow',
+					}),
+				},
+				args: {},
+			}),
 		}),
 		systemMutation: zCustomMutation(config.internalMutation, {
 			args: {},

@@ -3,6 +3,7 @@ import {
 	zid,
 	zodToConvex,
 	type ConvexValidatorFromZod,
+	type Zid,
 } from 'convex-helpers/server/zod4'
 import { defineTable, paginationOptsValidator, type TableDefinition } from 'convex/server'
 import type { GenericId } from 'convex/values'
@@ -50,6 +51,79 @@ type PartialFields<Fields extends FieldSchemas> = {
 	[Key in keyof Fields]: z.ZodOptional<Fields[Key]>
 }
 
+/** Options shared by the DTO return schema and row projector.
+ * Promised contributions must be present, including in reusable options.
+ * New extension schemas support validation only: no transforms, pipes,
+ * coercion, preprocess, defaults, catches, or overwrites, even when nested.
+ * Refinements must validate without mutating their input.
+ */
+export type DtoOptions<IncludeId extends boolean = false, Extension extends FieldSchemas = {}> = ([
+	IncludeId,
+] extends [true]
+	? { _id: IncludeId }
+	: { _id?: IncludeId }) &
+	(keyof Extension extends never ? { extend?: Extension } : { extend: Extension })
+
+type DtoProjectionOptions<IncludeId extends boolean> = DtoOptions<IncludeId> & {
+	extend?: Record<string, never>
+	values?: never
+}
+
+type ReservedDtoField =
+	| '_id'
+	| '_creationTime'
+	| 'tenant'
+	| '__proto__'
+	| (typeof TIMESTAMP_FIELDS)[number]
+type DtoExtension<Public extends FieldSchemas, Extension extends FieldSchemas> = {
+	[Key in keyof Extension]: Key extends keyof Public | ReservedDtoField
+		? never
+		: Extension[Key] extends z.ZodPipe | z.ZodTransform
+			? never
+			: unknown
+}
+// Broad dictionaries cannot promise any particular extension field.
+type KnownExtension<Extension> = string extends keyof Extension ? {} : Extension
+
+type DtoSchema<
+	Table extends string,
+	Public extends FieldSchemas,
+	IncludeId extends boolean,
+	Extension extends FieldSchemas = {},
+> = IncludeId extends true
+	? StrictObject<Public & { _id: Zid<Table> } & KnownExtension<Extension>>
+	: StrictObject<Public & KnownExtension<Extension>>
+type DtoRow<Row, IncludeId extends boolean> = Row & (true extends IncludeId ? { _id: string } : {})
+type DtoValues<Extension extends FieldSchemas> = keyof Extension extends never
+	? { values?: never }
+	: { values: z.input<StrictObject<NoInfer<Extension>>> }
+
+type DtoBoundary<Table extends string, Fields extends FieldSchemas, Public extends FieldSchemas> = {
+	dto(): StrictObject<Public>
+	dto<const IncludeId extends boolean>(includeId: IncludeId): DtoSchema<Table, Public, IncludeId>
+	dto<const IncludeId extends boolean = false>(
+		options: DtoProjectionOptions<IncludeId>,
+	): DtoSchema<Table, Public, IncludeId>
+	dto<const IncludeId extends boolean = false, const Extension extends FieldSchemas = {}>(
+		options: DtoOptions<IncludeId, Extension> & { extend?: DtoExtension<Public, Extension> },
+	): DtoSchema<Table, Public, IncludeId, Extension>
+	toPublicDto(row: z.input<StrictObject<Fields>>): z.output<StrictObject<Public>>
+	toPublicDto<const IncludeId extends boolean>(
+		row: DtoRow<z.input<StrictObject<Fields>>, IncludeId>,
+		includeId: IncludeId,
+	): z.output<DtoSchema<Table, Public, IncludeId>>
+	toPublicDto<const IncludeId extends boolean = false>(
+		row: DtoRow<z.input<StrictObject<Fields>>, IncludeId>,
+		options: DtoProjectionOptions<IncludeId>,
+	): z.output<DtoSchema<Table, Public, IncludeId>>
+	toPublicDto<const IncludeId extends boolean = false, const Extension extends FieldSchemas = {}>(
+		row: DtoRow<z.input<StrictObject<Fields>>, IncludeId>,
+		options: DtoOptions<IncludeId, Extension> & {
+			extend?: DtoExtension<Public, Extension>
+		} & DtoValues<Extension>,
+	): z.output<DtoSchema<Table, Public, IncludeId, Extension>>
+}
+
 /** Named schema relationships keep generated declarations bounded and consumers fully typed. */
 export type TableBoundary<
 	Table extends string,
@@ -57,7 +131,11 @@ export type TableBoundary<
 	ServerFields extends readonly FieldKey<Fields>[],
 	CommandFields extends readonly FieldKey<Fields>[],
 	PublicFields extends readonly FieldKey<Fields & TimestampFields>[],
-> = {
+> = DtoBoundary<
+	Table,
+	Fields & TimestampFields,
+	Pick<Fields & TimestampFields, PublicFields[number]>
+> & {
 	tableName: Table
 	storage: StrictObject<Fields & TimestampFields>
 	schema: ReturnType<typeof documentSchema<Fields & TimestampFields, Table>>
@@ -65,9 +143,6 @@ export type TableBoundary<
 	updateSchema: StrictObject<PartialFields<WriteFields<Fields, ServerFields>>>
 	commandInput: StrictObject<Pick<Fields & TimestampFields, CommandFields[number]>>
 	publicDto: StrictObject<Pick<Fields & TimestampFields, PublicFields[number]>>
-	toPublicDto: (
-		row: z.input<StrictObject<Fields & TimestampFields>>,
-	) => z.output<StrictObject<Pick<Fields & TimestampFields, PublicFields[number]>>>
 	table: TableDefinition<ConvexValidatorFromZod<StrictObject<Fields & TimestampFields>, 'required'>>
 	insert(): StrictObject<WriteFields<Fields, ServerFields>>
 	insert<Mask extends z.util.Mask<keyof WriteFields<Fields, ServerFields>>>(
@@ -120,8 +195,70 @@ export function zodTable<
 		Pick<Fields & TimestampFields, PublicFields[number]>,
 		z.core.$strict
 	> = z.object(pickFields(columns, publicKeys)).strict()
-	const toPublicDto = (row: z.input<typeof storage>) =>
-		publicDto.parse(
+	type Public = Pick<Fields & TimestampFields, PublicFields[number]>
+	type Row = z.input<typeof storage>
+	type RuntimeDtoFields = Public & FieldSchemas
+	type RuntimeDto = z.output<StrictObject<RuntimeDtoFields>> & { _id?: GenericId<Table> }
+	type RuntimeOptions = { _id?: boolean; extend?: FieldSchemas; values?: unknown }
+	const reservedDtoFields = new Set<string>([
+		'_id',
+		'_creationTime',
+		'tenant',
+		'__proto__',
+		...TIMESTAMP_FIELDS,
+	])
+
+	function dto(): typeof publicDto
+	function dto<const IncludeId extends boolean>(
+		includeId: IncludeId,
+	): DtoSchema<Table, Public, IncludeId>
+	function dto<const IncludeId extends boolean = false>(
+		options: DtoProjectionOptions<IncludeId>,
+	): DtoSchema<Table, Public, IncludeId>
+	function dto<const IncludeId extends boolean = false, const Extension extends FieldSchemas = {}>(
+		options: DtoOptions<IncludeId, Extension> & { extend?: DtoExtension<Public, Extension> },
+	): DtoSchema<Table, Public, IncludeId, Extension>
+	function dto(options?: boolean | RuntimeOptions) {
+		return deriveDto(options)
+	}
+
+	function deriveDto(options?: boolean | RuntimeOptions) {
+		const normalized = options === true || options === false ? { _id: options } : options
+		const extension = normalized?.extend ?? {}
+		for (const key of Object.keys(extension)) {
+			if (reservedDtoFields.has(key) || Object.hasOwn(publicDto.shape, key)) {
+				throw new Error(`DTO extension collision for field "${key}" on table "${tableName}"`)
+			}
+			assertDtoValidationSchema(extension[key])
+		}
+		if (!normalized?._id && Object.keys(extension).length === 0) return publicDto
+		const resultSchema = z.object({ ...publicDto.shape, ...extension }).strict()
+		return normalized?._id ? resultSchema.extend({ _id: schema.shape._id }) : resultSchema
+	}
+
+	function toPublicDto(row: Row): z.output<typeof publicDto>
+	function toPublicDto<const IncludeId extends boolean>(
+		row: DtoRow<Row, IncludeId>,
+		includeId: IncludeId,
+	): z.output<DtoSchema<Table, Public, IncludeId>>
+	function toPublicDto<const IncludeId extends boolean = false>(
+		row: DtoRow<Row, IncludeId>,
+		options: DtoProjectionOptions<IncludeId>,
+	): z.output<DtoSchema<Table, Public, IncludeId>>
+	function toPublicDto<
+		const IncludeId extends boolean = false,
+		const Extension extends FieldSchemas = {},
+	>(
+		row: DtoRow<Row, IncludeId>,
+		options: DtoOptions<IncludeId, Extension> & {
+			extend?: DtoExtension<Public, Extension>
+		} & DtoValues<Extension>,
+	): z.output<DtoSchema<Table, Public, IncludeId, Extension>>
+	function toPublicDto(row: Row, options?: boolean | RuntimeOptions): RuntimeDto {
+		const normalized = options === true || options === false ? { _id: options } : options
+		// Enforce extension collisions and validation-only schemas before parsing values.
+		deriveDto(options)
+		const projected = publicDto.parse(
 			Object.fromEntries(
 				Object.keys(publicDto.shape).map((key) => {
 					// SAFETY: publicDto contains only keys selected from the storage fields.
@@ -129,6 +266,16 @@ export function zodTable<
 				}),
 			),
 		)
+		const extension = z
+			.object(normalized?.extend ?? {})
+			.strict()
+			.parse(normalized?.values ?? {})
+		const result: RuntimeDto = { ...projected, ...extension }
+		if (normalized?._id) {
+			result._id = schema.shape._id.parse('_id' in row ? row._id : undefined)
+		}
+		return result
+	}
 
 	type InsertSchema = typeof insertSchema
 	type UpdateSchema = typeof updateSchema
@@ -164,6 +311,7 @@ export function zodTable<
 		updateSchema,
 		commandInput,
 		publicDto,
+		dto,
 		toPublicDto,
 		table,
 		insert,
@@ -333,4 +481,81 @@ function omitFields<Fields extends FieldSchemas, const Keys extends readonly Fie
 		Fields,
 		Keys[number]
 	>
+}
+
+/** Inspect Zod 4's discriminated definitions, failing closed for unsupported nodes.
+ * This restriction applies only to new DTO extensions; storage/publicDto are unchanged.
+ */
+function assertDtoValidationSchema(
+	schema: z.core.$ZodType,
+	seen = new Set<z.core.$ZodType>(),
+): void {
+	if (seen.has(schema)) return
+	seen.add(schema)
+	// SAFETY: Zod 4 exposes its built-in schema definitions as this discriminated union.
+	const def = (schema as z.core.$ZodTypes)._zod.def
+	const reject = () => {
+		throw new Error('DTO extensions require supported value-preserving validation schemas')
+	}
+	if ('coerce' in def && def.coerce) reject()
+	if ('normalize' in def && def.normalize) reject()
+	const visit = (child: z.core.$ZodType) => assertDtoValidationSchema(child, seen)
+	for (const check of def.checks ?? []) {
+		if (check._zod.def.check === 'overwrite') reject()
+		if ('normalize' in check._zod.def && check._zod.def.normalize) reject()
+		if (check._zod.def.check === 'property') {
+			// SAFETY: the property discriminator owns this embedded schema in Zod 4.
+			visit((check as z.core.$ZodCheckProperty)._zod.def.schema)
+		}
+		if (check._zod.def.check === 'properties') {
+			// SAFETY: the properties discriminator owns this schema shape in Zod 4.
+			for (const child of Object.values((check as z.core.$ZodCheckProperties)._zod.def.shape)) {
+				visit(child)
+			}
+		}
+	}
+	switch (def.type) {
+		case 'string':
+		case 'number':
+		case 'boolean':
+		case 'bigint':
+		case 'date':
+		case 'symbol':
+		case 'null':
+		case 'undefined':
+		case 'void':
+		case 'never':
+		case 'literal':
+		case 'enum':
+			return
+		case 'object':
+			for (const child of Object.values(def.shape)) visit(child)
+			if (def.catchall) visit(def.catchall)
+			return
+		case 'array':
+			visit(def.element)
+			return
+		case 'optional':
+		case 'nullable':
+		case 'nonoptional':
+			visit(def.innerType)
+			return
+		case 'union':
+			for (const child of def.options) visit(child)
+			return
+		case 'intersection':
+			visit(def.left)
+			visit(def.right)
+			return
+		case 'tuple':
+			for (const child of def.items) visit(child)
+			if (def.rest) visit(def.rest)
+			return
+		case 'record':
+			visit(def.keyType)
+			visit(def.valueType)
+			return
+		default:
+			reject()
+	}
 }

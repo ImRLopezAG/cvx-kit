@@ -8,6 +8,7 @@ export {
 	zodTable,
 	zodVariantTable,
 	type TableBoundaryOptions,
+	type DtoOptions,
 } from './zod-table'
 export {
 	assertTenantOwned,

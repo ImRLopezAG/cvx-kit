@@ -577,18 +577,47 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		assertSchema,
 		pagination(table: string) {
 			assertUnchanged()
-			const data = owned.internal.metadata[table]
-			if (!data) throw new Error('Unknown query table')
-			const fields: FieldSchemas = {}
-			for (const [name, validator] of Object.entries(data.fields)) {
-				// Unsupported stored containers are not scalar-queryable. No validators
-				// are reconstructed from JSON; these are the actual native validators.
-				if (scalarValidator(validator)) fields[name] = scalarPredicateSchema(validator).optional()
+			const internal = owned.internal
+			const scalarFields = new Map<string, FieldSchemas>()
+			function grammar(name: string, depth: number): FilterGrammar {
+				const data = internal.metadata[name]
+				if (!data) throw new Error('Unknown query table')
+				let fields = scalarFields.get(name)
+				if (!fields) {
+					fields = {}
+					for (const [name, validator] of Object.entries(data.fields)) {
+						// Unsupported stored containers are not scalar-queryable. No validators
+						// are reconstructed from JSON; these are the actual native validators.
+						if (scalarValidator(validator))
+							fields[name] = scalarPredicateSchema(validator).optional()
+					}
+					scalarFields.set(name, fields)
+				}
+				return {
+					fields,
+					relations:
+						depth >= 4
+							? {}
+							: Object.fromEntries(
+									Object.entries(internal.declarations[name] ?? {}).map(([edge, declaration]) => [
+										edge,
+										{
+											cardinality: declaration.cardinality,
+											target: grammar(declaration.target, depth + 1),
+										},
+									]),
+								),
+				}
 			}
 			return nativePagination.extend({
-				filters: relationFilterSchema({ fields, relations: {} }).optional(),
+				filters: relationFilterSchema(grammar(table, 0)).optional(),
 				order: z.enum(['asc', 'desc']).optional(),
 			})
+		},
+		page(table: string, selection: SelectionMask) {
+			assertUnchanged()
+			assertSelection(selection)
+			return paginated(rowSchema(owned.internal, table, selection)).result
 		},
 		project(
 			tables: Readonly<Record<string, TableDefinition>>,

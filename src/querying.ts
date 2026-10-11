@@ -4,15 +4,24 @@ import type {
 	DataModelFromSchemaDefinition,
 	PaginationResult,
 } from 'convex/server'
+import type { GenericId } from 'convex/values'
 import type {
 	RelationTables,
 	RelationDeclarations,
 	RelationRegistry,
 	RelationRow,
 	RelationSelection,
+	RelationFilters,
+	RelationFilterSelection,
 } from './relations'
 import { createPlanner, type QueryInput, type StoredConstraint } from './querying/planner'
-import { executeScalar } from './querying/execution'
+import { executeQuery, type ExecutionRequest } from './querying/execution'
+import {
+	relationshipExecutor,
+	assertRelationshipDepth,
+	type OutputSelection,
+	type RelationDocument,
+} from './querying/relationships'
 import { createCursorCodec, type CursorCodecConfig, type CursorBinding } from './querying/cursors'
 import {
 	createManagedSecurity,
@@ -20,20 +29,43 @@ import {
 	type ManagedQueryContext,
 	type ManagedBudgets,
 } from './querying/security'
-import type {
-	IndexCondition,
-	ServerFilter,
-	ScalarFilters,
-	ScalarSelection,
-	NativePagination,
-} from './querying/filters'
+import type { IndexCondition, NativePagination } from './querying/filters'
 
-interface OutputSelection {
-	[relation: string]: true | OutputSelection
+type FullMask<S> = {
+	[K in keyof S]-?: NonNullable<S[K]> extends true ? true : FullMask<NonNullable<S[K]>>
 }
-
-type EngineArgs<Table extends RelationTables[string]> = NativePagination & {
-	filters?: ScalarFilters<Table['schema']['shape'], ScalarSelection<Table['schema']['shape']>>
+type Paths<
+	D extends RelationDeclarations,
+	T extends string,
+	L extends readonly 1[] = [1, 1, 1, 1],
+> = L extends readonly [1, ...infer Rest extends 1[]]
+	? {
+			[K in keyof D[T] & string]:
+				| (D[T][K]['cardinality'] extends 'many' ? K : never)
+				| `${K}.${Paths<D, D[T][K]['target'], Rest>}`
+		}[keyof D[T] & string]
+	: never
+type PathTarget<
+	D extends RelationDeclarations,
+	T extends string,
+	P extends string,
+> = P extends `${infer Head}.${infer Rest}`
+	? PathTarget<D, D[T][Head]['target'], Rest>
+	: D[T][P]['target']
+type RemainingDepth<P extends string, L extends readonly 1[]> = L extends readonly [
+	1,
+	...infer Rest extends 1[],
+]
+	? P extends `${string}.${infer Tail}`
+		? RemainingDepth<Tail, Rest>
+		: Rest
+	: []
+type EngineArgs<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+> = NativePagination & {
+	filters?: RelationFilters<Tables, D, T, FullMask<RelationFilterSelection<Tables, D, T>>>
 	order?: 'asc' | 'desc'
 }
 interface TableQuery<
@@ -41,15 +73,31 @@ interface TableQuery<
 	D extends RelationDeclarations,
 	T extends keyof Tables,
 	S = {},
+	L extends readonly 1[] = [1, 1, 1, 1],
 > {
-	when(value: IndexCondition['value'], index: string): TableQuery<Tables, D, T, S>
-	where(spec: ServerFilter<Tables[T]['schema']['shape']>): TableQuery<Tables, D, T, S>
-	with<const Selection extends RelationSelection<Tables, D, T>>(
+	when(value: IndexCondition['value'], index: string): TableQuery<Tables, D, T, S, L>
+	where(spec: NonNullable<EngineArgs<Tables, D, T>['filters']>): TableQuery<Tables, D, T, S, L>
+	with<const Selection extends RelationSelection<Tables, D, T, L>>(
 		selection: Selection & {
-			[K in keyof Selection]: K extends keyof RelationSelection<Tables, D, T> ? Selection[K] : never
+			[K in keyof Selection]: K extends keyof RelationSelection<Tables, D, T, L>
+				? Selection[K]
+				: never
 		},
-	): TableQuery<Tables, D, T, Selection>
-	paginate(args: EngineArgs<Tables[T]>): Promise<PaginationResult<RelationRow<Tables, D, T, S>>>
+	): TableQuery<Tables, D, T, Selection, L>
+	relation<const P extends Paths<D, Extract<T, string>>>(
+		parent: GenericId<Tables[T]['tableName']>,
+		path: P,
+	): Omit<
+		TableQuery<
+			Tables,
+			D,
+			Extract<PathTarget<D, Extract<T, string>, P>, keyof Tables>,
+			{},
+			RemainingDepth<P, L>
+		>,
+		'relation'
+	>
+	paginate(args: EngineArgs<Tables, D, T>): Promise<PaginationResult<RelationRow<Tables, D, T, S>>>
 }
 export interface QueryEngineConfig<
 	Schema extends SchemaDefinition<GenericSchema, boolean>,
@@ -66,9 +114,7 @@ export interface QueryEngineConfig<
 	trustedAdapter?: ManagedSecurityConfig<DataModelFromSchemaDefinition<Schema>>['trustedAdapter']
 }
 
-/** Central facade. Endpoint chains carry declarative constraints only. Relation
- * execution is U6; selecting a relation here fails visibly instead of omitting it.
- */
+/** Central facade. Endpoint chains carry declarative constraints and explicit relationships. */
 export function createQueryEngine<
 	Schema extends SchemaDefinition<GenericSchema, boolean>,
 	const Tables extends RelationTables,
@@ -77,9 +123,6 @@ export function createQueryEngine<
 	const { schema, relations } = config
 	const planner = createPlanner(schema, relations)
 	const codec = createCursorCodec(config.cursor)
-	const pages = new Map(
-		Object.keys(relations.tables).map((table) => [table, relations.tables[table].pageDto({})]),
-	)
 	const maxPageSize = config.maxPageSize ?? 100
 	if (!Number.isSafeInteger(maxPageSize) || maxPageSize <= 0 || maxPageSize > 100)
 		throw new Error('Invalid central page size')
@@ -103,17 +146,31 @@ export function createQueryEngine<
 			conditions: readonly IndexCondition[] = [],
 			constraints: readonly StoredConstraint[] = [],
 			selection: OutputSelection = {},
+			route?: { table: string; parent: string; path: string[] },
 		) {
 			return Object.freeze({
 				when: (value: IndexCondition['value'], index: string) =>
-					tableQuery(table, [...conditions, { value, index }], constraints, selection),
+					tableQuery(table, [...conditions, { value, index }], constraints, selection, route),
 				where: (spec: StoredConstraint) =>
-					tableQuery(table, conditions, [...constraints, spec], selection),
-				with: (selected: OutputSelection) => tableQuery(table, conditions, constraints, selected),
+					tableQuery(table, conditions, [...constraints, spec], selection, route),
+				with: (selected: OutputSelection) =>
+					tableQuery(table, conditions, constraints, selected, route),
+				relation: (parent: string, declaredPath: string) => {
+					const path = declaredPath.split('.')
+					if (!path.length || path.length > 4) throw new Error('INVALID_RELATION')
+					let target = table
+					for (const name of path) {
+						const edge = planner.metadata.declarations[target]?.[name]
+						if (!edge) throw new Error('INVALID_RELATION')
+						target = edge.target
+					}
+					return tableQuery(target, conditions, constraints, {}, { table, parent, path })
+				},
 				async paginate(input: QueryInput) {
 					planner.assertUnchanged()
-					if (Reflect.ownKeys(selection).length) throw new Error('Relation execution requires U6')
-					const plan = planner.plan(table, input, conditions, constraints)
+					const pageSchema = planner.page(table, selection)
+					assertRelationshipDepth(selection, route?.path.length ?? 0)
+					const plan = planner.plan(table, input, route ? [] : conditions, constraints)
 					if (plan.args.numItems > maxPageSize) throw new Error('Page size exceeds central ceiling')
 					// Native root limits stay native; lowering those limits cannot raise
 					// the independent shared request meter.
@@ -134,15 +191,16 @@ export function createQueryEngine<
 					// The digest await is a boundary too: mutation must be detected
 					// before authenticated cursor validation or native query construction.
 					planner.assertUnchanged()
+					// SAFETY: selection has passed the registry page validator before binding.
 					const binding: CursorBinding = {
-						table,
+						table: route?.table ?? table,
 						index: plan.index?.name ?? 'by_creation_time',
 						order: plan.args.order ?? 'asc',
 						clientFilters: plan.clientIdentity,
 						// Include output selection and the complete immutable scope in trusted identity.
 						serverFilters: {
 							predicates: plan.serverIdentity,
-							selection: {},
+							selection: selection as import('convex/values').Value,
 							scope: { ...request.scope },
 						},
 						relationPath: [],
@@ -152,9 +210,47 @@ export function createQueryEngine<
 						engineVersion,
 						registryVersion: registryDigest,
 					}
-					const result = await executeScalar(schema, request, table, plan, planner, codec, binding)
+					// The executor accepts registry-selected native tables, rather than a static DM key.
+					const executorRequest: unknown = request
+					// SAFETY: only native DM types are erased at this private executor boundary.
+					const executor = relationshipExecutor(
+						schema,
+						executorRequest as ExecutionRequest,
+						planner,
+						codec,
+						binding,
+					)
+					if (route)
+						return executor.continuation(
+							route.table,
+							route.parent,
+							route.path,
+							selection,
+							plan.args,
+							conditions,
+							constraints,
+						)
+					const result = await executeQuery(
+						schema,
+						request,
+						table,
+						plan,
+						planner,
+						codec,
+						binding,
+						async (row, permitted) => {
+							// SAFETY: metered native stream rows contain the validated system fields.
+							if (
+								!permitted ||
+								!(await executor.matches(table, row as RelationDocument, plan.residual))
+							)
+								return null
+							// SAFETY: the same native row is authorized and matches the declared predicates.
+							return executor.output(table, row as RelationDocument, selection, plan.args)
+						},
+					)
 					planner.assertUnchanged()
-					return pages.get(table)!.parse(result)
+					return pageSchema.parse(result)
 				},
 			})
 		}

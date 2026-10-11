@@ -1,4 +1,10 @@
-import { QueryStream, stream, type IndexBounds, type IndexKey } from 'convex-helpers/server/stream'
+import {
+	EmptyStream,
+	QueryStream,
+	stream,
+	type IndexBounds,
+	type IndexKey,
+} from 'convex-helpers/server/stream'
 import type {
 	GenericDatabaseReader,
 	GenericDataModel,
@@ -15,17 +21,32 @@ import type { createPlanner } from './planner'
 import { MAX_DOCUMENT_BYTES, ManagedReadError, type ManagedReadRequest } from './security'
 import { CursorError, type CursorBinding, type createCursorCodec } from './cursors'
 import type { NativePagination } from './filters'
+import { RelationshipError } from './relationships'
 
 type Entry = [Record<string, Value> | null, IndexKey, number]
 type Plan = ReturnType<ReturnType<typeof createPlanner>['plan']>
 type Codec = ReturnType<typeof createCursorCodec>
-type Request = Omit<ManagedReadRequest<GenericDataModel>, 'db'>
+export type ExecutionRequest = ManagedReadRequest<GenericDataModel>
+type Request = Omit<ExecutionRequest, 'db'>
 type ExecutionSchema = SchemaDefinition<
 	Record<string, TableDefinition<any, Record<string, string[]>>>,
 	boolean
 >
 
-export async function executeScalar(
+/** Private shared boundary: only the established fixed typed errors are public. */
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Thrown values enter this error boundary untrusted; the class checks below admit only the fixed public error contracts.
+export function rethrowQueryError(error: unknown): never {
+	if (
+		error instanceof ManagedReadError ||
+		error instanceof CursorError ||
+		error instanceof RelationshipError
+	)
+		throw error
+	// Native/policy errors may contain traversal values or structured private data.
+	throw new Error('Query execution failed')
+}
+
+export async function executeQuery(
 	schema: SchemaDefinition<GenericSchema, boolean>,
 	request: Request,
 	table: string,
@@ -33,6 +54,10 @@ export async function executeScalar(
 	planner: ReturnType<typeof createPlanner>,
 	codec: Codec,
 	binding: CursorBinding,
+	complete?: (
+		document: Record<string, Value>,
+		permitted: boolean,
+	) => Promise<Record<string, Value> | null>,
 ) {
 	// Authenticate BOTH navigation slots before constructing or consuming native queries.
 	const args = {
@@ -41,6 +66,29 @@ export async function executeScalar(
 		endCursor:
 			plan.args.endCursor == null ? plan.args.endCursor : codec.open(plan.args.endCursor, binding),
 	}
+	return executeStream(schema, request, table, plan, planner, codec, binding, args, complete)
+}
+
+export async function executeStream(
+	schema: SchemaDefinition<GenericSchema, boolean>,
+	request: Request,
+	table: string,
+	plan: Plan,
+	planner: ReturnType<typeof createPlanner>,
+	codec: Codec,
+	binding: CursorBinding,
+	args: NativePagination,
+	complete?: (
+		document: Record<string, Value>,
+		permitted: boolean,
+	) => Promise<Record<string, Value> | null>,
+	seal: (raw: string) => string = (raw) => codec.seal(raw, binding),
+	transform?: (
+		source: QueryStream<Record<string, Value>>,
+		db: GenericDatabaseReader<any>,
+	) => QueryStream<Record<string, Value>>,
+	authorizationTable = table,
+) {
 	const leaves = leafReader(request, planner)
 	try {
 		// SAFETY: runtime ownership/index validation precedes this dynamic table
@@ -58,22 +106,34 @@ export async function executeScalar(
 					return range
 				})
 			: base
-		const source = selected.order(plan.args.order ?? 'asc')
-		const result = await new EligibleStream(source, request, table, plan, planner, {
-			completed: [],
-			stopped: false,
-		}).paginate(args)
+		const ordered = selected.order(plan.args.order ?? 'asc')
+		const source = transform ? transform(ordered, leaves.db) : ordered
+		const result = plan.unsatisfiable
+			? await new EmptyStream<Record<string, Value>>(
+					source.getOrder(),
+					source.getIndexFields(),
+					source.getEqualityIndexFilter(),
+				).paginate(args)
+			: await new EligibleStream(
+					source,
+					request,
+					authorizationTable,
+					plan,
+					planner,
+					{
+						completed: [],
+						stopped: false,
+					},
+					complete,
+				).paginate(args)
 		const protectedResult = {
 			...result,
-			continueCursor: codec.seal(result.continueCursor, binding),
+			continueCursor: seal(result.continueCursor),
 		}
-		if (result.splitCursor != null)
-			protectedResult.splitCursor = codec.seal(result.splitCursor, binding)
+		if (result.splitCursor != null) protectedResult.splitCursor = seal(result.splitCursor)
 		return protectedResult
 	} catch (error) {
-		if (error instanceof ManagedReadError || error instanceof CursorError) throw error
-		// Native errors may include a decoded key; never forward their message.
-		throw new Error('Query execution failed')
+		rethrowQueryError(error)
 	} finally {
 		await leaves.close()
 	}
@@ -201,6 +261,10 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 		private readonly plan: Plan,
 		private readonly planner: ReturnType<typeof createPlanner>,
 		private readonly progress: Progress,
+		private readonly complete?: (
+			document: Record<string, Value>,
+			permitted: boolean,
+		) => Promise<Record<string, Value> | null>,
 	) {
 		super()
 	}
@@ -221,6 +285,7 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 			this.plan,
 			this.planner,
 			this.progress,
+			this.complete,
 		)
 	}
 	async *iterWithKeys(): AsyncGenerator<Entry, undefined> {
@@ -237,6 +302,7 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 				const candidatesBefore = this.request.counters.rawCandidates
 				try {
 					next = await iterator.next()
+					this.planner.assertUnchanged()
 				} catch (error) {
 					// A reservation failure BEFORE the next root is safe to stop at
 					// completed progress. Authorization errors below are never partialized.
@@ -257,15 +323,16 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 				if (document) {
 					// SAFETY: metered native stream documents contain their system IDs.
 					const permitted = await this.request.authorize(this.table, document as GenericDocument)
+					this.planner.assertUnchanged()
 					// One live whole-registry guard covers the synchronous residual
 					// and strict projection step AFTER the asynchronous policy finishes.
 					// SAFETY: the registry DTO validates declared public native values only.
-					output = this.planner.complete(
-						this.table,
-						document,
-						permitted,
-						this.plan.residual,
-					) as Record<string, Value> | null
+					output = this.complete
+						? await this.complete(document, permitted)
+						: (this.planner.complete(this.table, document, permitted, this.plan.residual) as Record<
+								string,
+								Value
+							> | null)
 				}
 				// Complete policy, residual, and required DTO before recording the key.
 				const entry: Entry = [output, key, bytes]

@@ -601,7 +601,7 @@ describe('U5 actual helper scalar engine', () => {
 			expect(o.counts.next).toBe(1)
 		})
 	})
-	test('unknown context fails closed and relation execution is explicitly pending', async () => {
+	test('unknown context fails closed with relation selection supported', async () => {
 		const f = harness()
 		await f.t.run(async (ctx) => {
 			// SAFETY: intentionally unregistered context probes runtime fail-closed behavior.
@@ -613,7 +613,7 @@ describe('U5 actual helper scalar engine', () => {
 					.querying(managed(ctx.db))
 					.tasks.with({ referenceTask: true })
 					.paginate({ numItems: 1, cursor: null }),
-			).rejects.toThrow(/relation/i)
+			).resolves.toMatchObject({ page: [], isDone: true })
 		})
 	})
 	test('native schema ownership and live index mutations fail before reads', () => {

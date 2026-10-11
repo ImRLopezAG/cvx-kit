@@ -23,6 +23,8 @@ export function createPlanner(
 		Object.keys(metadata.tables).map((table) => [table, owned.pagination(table)]),
 	)
 	return {
+		metadata,
+		page: owned.page,
 		assertUnchanged,
 		beforeLeaf(table: string) {
 			owned.assertNativeTable(table, schema.tables[table])

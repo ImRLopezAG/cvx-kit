@@ -1,0 +1,524 @@
+import type { GenericSchema, SchemaDefinition, IndexRangeBuilder } from 'convex/server'
+import type { GenericId, Value } from 'convex/values'
+import type { RelationEdge } from '../relations'
+import type { createPlanner, QueryInput, StoredConstraint } from './planner'
+import { scalarMatches } from './planner'
+import type {
+	FilterAst,
+	FilterScalar,
+	IndexCondition,
+	NativePagination,
+	QueryIndex,
+} from './filters'
+import { executeStream, rethrowQueryError, type ExecutionRequest } from './execution'
+import type { createCursorCodec, CursorBinding } from './cursors'
+import { CursorError } from './cursors'
+import { z } from 'zod'
+import { stream, EmptyStream, getIndexFields } from 'convex-helpers/server/stream'
+
+export interface OutputSelection {
+	[name: string]: true | OutputSelection
+}
+type Edge = RelationEdge<string, string, 'one' | 'many'>
+export type RelationDocument = Record<string, Value> & {
+	_id: GenericId<string>
+	_creationTime: number
+}
+type Document = RelationDocument
+type Planner = ReturnType<typeof createPlanner>
+
+export class RelationshipError extends Error {
+	constructor(readonly code: 'AMBIGUOUS_RELATION' | 'INVALID_RELATION') {
+		super(code)
+		this.name = 'RelationshipError'
+	}
+}
+
+/** The selection has already passed the registry validator; count leaf edges too. */
+export function assertRelationshipDepth(selection: OutputSelection, depth: number): void {
+	for (const nested of Object.values(selection)) {
+		if (depth >= 4) throw new RelationshipError('INVALID_RELATION')
+		if (nested !== true) assertRelationshipDepth(nested, depth + 1)
+	}
+}
+
+/** One request owns all traversal and authorized ID memoization. No raw reader escapes. */
+export function relationshipExecutor(
+	schema: SchemaDefinition<GenericSchema, boolean>,
+	request: ExecutionRequest,
+	planner: Planner,
+	codec: ReturnType<typeof createCursorCodec>,
+	rootBinding: CursorBinding,
+) {
+	const metadata = planner.metadata
+	const navigation = z
+		.object({ cursor: z.string(), ancestors: z.array(z.string()).max(3) })
+		.strict()
+	const base = (leg: Edge['from']) => ('base' in leg ? leg.base : leg)
+	function edge(table: string, name: string): Edge {
+		planner.assertUnchanged()
+		const declared = metadata.declarations[table]?.[name]
+		if (!declared) throw new RelationshipError('INVALID_RELATION')
+		return declared
+	}
+	function lookup(table: string, field: string) {
+		const index =
+			field === '_id'
+				? { name: 'by_id', fields: ['_id'] }
+				: metadata.tables[table].indexes.find((i) => i.fields[0] === field)
+		if (!index) throw new RelationshipError('INVALID_RELATION')
+		return index
+	}
+	function relationIndex(
+		table: string,
+		field: string,
+		plan: ReturnType<Planner['plan']>,
+		conditions: readonly IndexCondition[],
+	): QueryIndex {
+		const indexes =
+			field === '_id' ? [{ name: 'by_id', fields: ['_id'] }] : metadata.tables[table].indexes
+		const length = (index: QueryIndex) => {
+			let size = 1
+			for (const key of index.fields.slice(1)) {
+				if (!plan.bindings.has(key)) break
+				size++
+			}
+			return size
+		}
+		const condition = conditions.find((c) => c.value !== null && c.value !== undefined)
+		if (condition) {
+			const chosen = indexes.find((i) => i.name === condition.index && i.fields[0] === field)
+			if (!chosen)
+				throw new Error(
+					`Explicit index "${condition.index}" is incompatible with declared relationship lookup`,
+				)
+			return chosen
+		}
+		const candidates = indexes
+			.filter((i) => i.fields[0] === field)
+			.sort(
+				(a, b) =>
+					length(b) - length(a) ||
+					a.name.localeCompare(b.name) ||
+					a.fields.join('\0').localeCompare(b.fields.join('\0')),
+			)
+		if (!candidates.length) throw new RelationshipError('INVALID_RELATION')
+		return candidates[0]
+	}
+	function relationPrefix(
+		index: QueryIndex,
+		value: FilterScalar,
+		plan: ReturnType<Planner['plan']>,
+	) {
+		const prefix = [{ field: index.fields[0], value }]
+		for (const field of index.fields.slice(1)) {
+			if (!plan.bindings.has(field)) break
+			prefix.push({ field, value: plan.bindings.get(field)! })
+		}
+		return prefix
+	}
+
+	async function get(table: string, id: Value | undefined): Promise<Document | null> {
+		planner.beforeLeaf(table)
+		// SAFETY: native normalization rejects non-string/non-table IDs before any read.
+		if (id == null || !request.db.normalizeId(table, id as string)) return null
+		// SAFETY: normalizeId verifies the declared native table before the authorized metered get.
+		const result = await request.db.get(table, id as GenericId<string>)
+		planner.assertUnchanged()
+		// SAFETY: normalizeId checked the table; the authorized native get retains system fields.
+		return result as Document | null
+	}
+	async function* targets(
+		table: string,
+		field: string,
+		value: Value | undefined,
+		depth: number,
+	): AsyncGenerator<Document> {
+		request.expand(depth, 0)
+		if (value == null) return
+		if (field === '_id') {
+			const target = await get(table, value)
+			if (target) {
+				request.expand(depth)
+				yield target
+			}
+			return
+		}
+		planner.beforeLeaf(table)
+		const index = lookup(table, field)
+		// SAFETY: registry validates the indexed native lookup prefix and compatible values.
+		const source = request.leafQuery(table).withIndex(index.name, (q) => q.eq(field, value))
+		const iterator = source[Symbol.asyncIterator]()
+		try {
+			while (true) {
+				planner.assertUnchanged()
+				planner.beforeLeaf(table)
+				const next = await iterator.next()
+				planner.assertUnchanged()
+				if (next.done) return
+				const permitted = await request.authorize(table, next.value)
+				// Denials are an await boundary too; never hide them inside an authorized iterator.
+				planner.assertUnchanged()
+				if (!permitted) continue
+				request.expand(depth)
+				// SAFETY: native rows include system fields and explicit authorization just completed.
+				yield next.value as Document
+			}
+		} finally {
+			await iterator.return?.()
+		}
+	}
+	async function* traverse(
+		declared: Edge,
+		parent: Document,
+		depth: number,
+	): AsyncGenerator<Document> {
+		request.expand(depth, 0)
+		const value = parent[base(declared.from).field]
+		if (value == null) return
+		if ('base' in declared.from && 'base' in declared.to) {
+			for await (const junction of targets(
+				declared.from.junction.table,
+				declared.from.junction.field,
+				value,
+				depth,
+			))
+				yield* targets(
+					declared.target,
+					declared.to.base.field,
+					junction[declared.to.junction.field],
+					depth,
+				)
+		} else yield* targets(declared.target, base(declared.to).field, value, depth)
+	}
+	async function one(declared: Edge, parent: Document, depth: number) {
+		let match: Document | null = null
+		for await (const target of traverse(declared, parent, depth)) {
+			if (match) throw new RelationshipError('AMBIGUOUS_RELATION')
+			match = target
+		}
+		return match
+	}
+	async function matches(
+		table: string,
+		parent: Document,
+		ast: FilterAst,
+		depth = 0,
+	): Promise<boolean> {
+		request.expand(depth, 0)
+		planner.assertUnchanged()
+		if (ast.kind === 'scalar') return scalarMatches(ast, parent)
+		if (ast.kind === 'not') return !(await matches(table, parent, ast.child, depth))
+		if (ast.kind === 'and' || ast.kind === 'or') {
+			for (const child of ast.children) {
+				const result = await matches(table, parent, child, depth)
+				if (ast.kind === 'and' && !result) return false
+				if (ast.kind === 'or' && result) return true
+			}
+			return ast.kind === 'and'
+		}
+		if (ast.kind !== 'relation') throw new RelationshipError('INVALID_RELATION')
+		const declared = edge(table, ast.name)
+		if (ast.mode === 'one') {
+			const target = await one(declared, parent, depth + 1)
+			return ast.predicate === null
+				? target === null
+				: target !== null && (await matches(declared.target, target, ast.predicate, depth + 1))
+		}
+		for await (const target of traverse(declared, parent, depth + 1))
+			if (await matches(declared.target, target, ast.predicate!, depth + 1))
+				return ast.mode === 'some'
+		// Only actual authorized traversal exhaustion proves none.
+		return ast.mode === 'none'
+	}
+	async function output(
+		table: string,
+		parent: Document,
+		selection: OutputSelection,
+		args: NativePagination & { order?: 'asc' | 'desc' },
+		path: readonly string[] = [],
+		depth = 0,
+		parents: readonly string[] = [],
+	): Promise<Record<string, Value>> {
+		request.expand(depth, 0)
+		// SAFETY: the registry strictly validates this public native DTO projection.
+		const dto = planner.complete(table, parent, true, { kind: 'and', children: [] }) as Record<
+			string,
+			Value
+		>
+		for (const [name, selected] of Object.entries(selection)) {
+			const declared = edge(table, name),
+				nested = selected === true ? {} : selected
+			if (declared.cardinality === 'one') {
+				const target = await one(declared, parent, depth + 1)
+				dto[name] = target
+					? await output(declared.target, target, nested, args, [...path, name], depth + 1, [
+							...parents,
+							parent._id,
+						])
+					: null
+			} else {
+				const page = await pageRelation(
+					table,
+					parent,
+					name,
+					nested,
+					{ numItems: args.numItems, cursor: null, order: args.order },
+					[],
+					[],
+					[...path, name],
+					depth + 1,
+					[...parents, parent._id],
+				)
+				// SAFETY: the declared page validator has parsed this nested DTO page.
+				dto[name] = page as Value
+			}
+		}
+		return dto
+	}
+	function prepare(
+		table: string,
+		name: string,
+		selection: OutputSelection,
+		input: QueryInput,
+		conditions: readonly IndexCondition[],
+		constraints: readonly StoredConstraint[],
+		path: readonly string[],
+		rootId: string,
+	) {
+		planner.page(edge(table, name).target, selection)
+		assertRelationshipDepth(selection, path.length)
+		const declared = edge(table, name)
+		if (declared.cardinality !== 'many') throw new RelationshipError('INVALID_RELATION')
+		const plan = planner.plan(declared.target, input, [], constraints)
+		const from = declared.from,
+			to = declared.to
+		const through =
+			'base' in from && 'base' in to
+				? {
+						table: from.junction.table,
+						field: from.junction.field,
+						targetField: to.base.field,
+						targetReference: to.junction.field,
+					}
+				: null
+		const sourceTable = through ? through.table : declared.target
+		const field = through ? through.field : base(to).field
+		const targetIndex = relationIndex(
+			declared.target,
+			through ? through.targetField : field,
+			plan,
+			conditions,
+		)
+		const index = through ? lookup(sourceTable, field) : targetIndex
+		// SAFETY: planner.page validated the complete output mask before cursor binding.
+		const binding: CursorBinding = {
+			...rootBinding,
+			table: sourceTable,
+			index: index.name,
+			order: plan.args.order ?? 'asc',
+			clientFilters: plan.clientIdentity,
+			serverFilters: {
+				predicates: plan.serverIdentity,
+				selection: selection as Value,
+				scope: { ...request.scope },
+				rootTable: rootBinding.table,
+				lookupIndex: targetIndex.name,
+			},
+			relationPath: path,
+			parent: rootId,
+		}
+		function open(token: string) {
+			try {
+				return navigation.parse(JSON.parse(codec.open(token, binding)))
+			} catch {
+				throw new CursorError()
+			}
+		}
+		return { declared, plan, through, sourceTable, field, index, targetIndex, binding, open }
+	}
+	async function pageRelation(
+		table: string,
+		parent: Document | null,
+		name: string,
+		selection: OutputSelection,
+		input: QueryInput,
+		conditions: readonly IndexCondition[] = [],
+		constraints: readonly StoredConstraint[] = [],
+		path: readonly string[] = [name],
+		depth = 1,
+		parents: readonly string[] = [],
+		prepared = prepare(
+			table,
+			name,
+			selection,
+			input,
+			conditions,
+			constraints,
+			path,
+			parents[0] ?? parent!._id,
+		),
+		opened?: { cursor: string | null; endCursor?: string | null },
+	) {
+		request.expand(depth, 0)
+		const { declared, plan, through, sourceTable, field, index, targetIndex, binding } = prepared
+		const value = parent?.[base(declared.from).field]
+		const args = { ...plan.args, ...(opened ?? { cursor: null }) }
+		// SAFETY: declarations accept only native scalar lookup values; nullish references are absence.
+		const lookupPlan = {
+			...plan,
+			index,
+			prefix:
+				value == null
+					? []
+					: through
+						? [{ field, value: value as FilterScalar }]
+						: relationPrefix(index, value as FilterScalar, plan),
+			unsatisfiable: value == null || plan.unsatisfiable,
+		}
+		const indexedTarget = through && through.targetField !== '_id'
+		const result = await executeStream(
+			schema,
+			request,
+			sourceTable,
+			lookupPlan,
+			planner,
+			codec,
+			binding,
+			args,
+			async (row, permitted) => {
+				if (!permitted) return null
+				request.expand(depth)
+				let target: Document | null
+				if (through && !indexedTarget)
+					target = await get(declared.target, row[through.targetReference])
+				else {
+					// SAFETY: native direct/flattened target streams retain validated system fields.
+					target = row as Document
+				}
+				if (!target || !(await matches(declared.target, target, plan.residual, depth))) return null
+				return output(declared.target, target, selection, plan.args, path, depth, parents)
+			},
+			(raw) => codec.seal(JSON.stringify({ cursor: raw, ancestors: parents.slice(1) }), binding),
+			indexedTarget
+				? (source, db) => {
+						// SAFETY: the registry owns the native schema/index descriptors. Public
+						// helper flatMap concatenates native outer/inner keys and paginates them.
+						const nativeSchema = schema as SchemaDefinition<
+							Record<
+								string,
+								import('convex/server').TableDefinition<any, Record<string, string[]>>
+							>,
+							boolean
+						>
+						const fields = getIndexFields(declared.target, targetIndex.name, nativeSchema)
+						return source.flatMap(async (junction) => {
+							request.expand(depth)
+							const permitted = await request.authorize(sourceTable, junction)
+							planner.assertUnchanged()
+							const reference = junction[through.targetReference]
+							if (!permitted || reference == null)
+								return new EmptyStream(plan.args.order ?? 'asc', fields)
+							return stream(db, nativeSchema)
+								.query(declared.target)
+								.withIndex(targetIndex.name, (q) => {
+									// SAFETY: registry validates the native leading lookup; validated filters supply each consecutive trailing binding.
+									let range = q as IndexRangeBuilder<any, string[], number>
+									// SAFETY: junction references are native scalar Values validated by the declared lookup.
+									const prefix = relationPrefix(targetIndex, reference as FilterScalar, plan)
+									for (const binding of prefix) {
+										// SAFETY: native eq advances the validated consecutive index prefix.
+										range = range.eq(binding.field, binding.value) as IndexRangeBuilder<
+											any,
+											string[],
+											number
+										>
+									}
+									return range
+								})
+								.order(plan.args.order ?? 'asc')
+						}, fields)
+					}
+				: undefined,
+			indexedTarget ? declared.target : sourceTable,
+		)
+		planner.assertUnchanged()
+		return planner.page(declared.target, selection).parse(result)
+	}
+	async function continuation(
+		rootTable: string,
+		rootId: string,
+		path: readonly string[],
+		selection: OutputSelection,
+		input: QueryInput,
+		conditions: readonly IndexCondition[],
+		constraints: readonly StoredConstraint[],
+	) {
+		if (!path.length || path.length > 4 || !request.db.normalizeId(rootTable, rootId))
+			throw new RelationshipError('INVALID_RELATION')
+		let table = rootTable
+		const declarations = path.map((name) => {
+			const declaration = edge(table, name)
+			table = declaration.target
+			return declaration
+		})
+		const final = declarations.at(-1)!
+		const prepared = prepare(
+			final.source,
+			path.at(-1)!,
+			selection,
+			input,
+			conditions,
+			constraints,
+			path,
+			rootId,
+		)
+		// Authenticate both slots and native ancestor IDs before ANY parent/traversal read.
+		const start = input.cursor === null ? null : prepared.open(input.cursor)
+		const end = input.endCursor == null ? null : prepared.open(input.endCursor)
+		const ancestors = start?.ancestors ?? end?.ancestors ?? []
+		if (
+			ancestors.length !== path.length - 1 ||
+			(start && end && JSON.stringify(start.ancestors) !== JSON.stringify(end.ancestors)) ||
+			ancestors.some((id, i) => !request.db.normalizeId(declarations[i].target, id))
+		)
+			throw new CursorError()
+		// Declarative input/index/cursor validation above retains its pre-read errors,
+		// just as on the root path. Every awaited read, ancestry proof and page is protected.
+		try {
+			let parent = await get(rootTable, rootId)
+			for (let i = 0; parent && i < ancestors.length; i++) {
+				const declared = declarations[i]
+				let found: Document | null = null
+				if (declared.cardinality === 'one') {
+					const target = await one(declared, parent, i + 1)
+					if (target?._id === ancestors[i]) found = target
+				} else
+					for await (const target of traverse(declared, parent, i + 1)) {
+						if (target._id === ancestors[i]) {
+							found = target
+							break
+						}
+					}
+				parent = found
+			}
+			return await pageRelation(
+				final.source,
+				parent,
+				path.at(-1)!,
+				selection,
+				input,
+				conditions,
+				constraints,
+				path,
+				path.length,
+				[rootId, ...ancestors],
+				prepared,
+				{ cursor: start?.cursor ?? null, endCursor: end?.cursor ?? input.endCursor },
+			)
+		} catch (error) {
+			rethrowQueryError(error)
+		}
+	}
+	return { matches, output, continuation, edge }
+}

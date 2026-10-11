@@ -284,3 +284,10 @@ wiring. `bun run test:package:querying` exercises strict installed and minimum-p
 consumers, all consumer rules, and multi-entity/filter/order continuation tests.
 The local native smoke runner exercises registered Convex validators and cursors;
 these checks do not establish hosted production performance.
+
+Run `bunx vp test run test/querying-relations-stress.test.ts --silent=false` to
+report per-page p10, p50, and p99 latency for each filter/order/page-size case,
+plus an aggregate for duplicate child continuations. Reports include sample
+counts and use nearest-rank percentiles. A small sample's p99 is its maximum;
+the measurements include `convex-test` and instrumentation overhead. Read
+counters and ordered-result assertions remain separate from latency measurements.

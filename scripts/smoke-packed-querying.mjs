@@ -54,8 +54,7 @@ writeFileSync(
 	`import { createQueryEngine } from 'cvx-kit/querying'
 import schema from './schema'
 import { relations } from './relations'
-import { cursor } from './functions'
-export const querying = createQueryEngine({ schema, relations, cursor })
+export const querying = createQueryEngine({ schema, relations })
 `,
 )
 const originalRelations = readFileSync(join(fixture, 'convex/relations.ts'), 'utf8')
@@ -75,10 +74,9 @@ import { authQuery } from '../functions'
 import { relations as equivalent } from '../relationsEquivalent'
 import { relations as changed } from '../relationsChanged'
 import schema from '../schema'
-import { cursor } from '../functions'
 import { contract } from '../domain/tasks/contracts'
-const eq = createQueryEngine({ schema, relations: equivalent, cursor })
-const different = createQueryEngine({ schema, relations: changed, cursor })
+const eq = createQueryEngine({ schema, relations: equivalent })
+const different = createQueryEngine({ schema, relations: changed })
 export const resume = authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result, handler: (ctx,args) => eq(ctx).tasks.paginate(args) })
 export const reject = authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result, handler: (ctx,args) => different(ctx).tasks.paginate(args) })
 `,
@@ -125,6 +123,10 @@ for(const [name, fn] of Object.entries(api)) writeFileSync('validator-'+name+'.j
 writeFileSync(
 	join(fixture, 'verify.mjs'),
 	`import assert from 'node:assert/strict';import {readFileSync,writeFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';
+// Public fixture key only: configure the isolated backend, exercising its real process.env.
+for (const [name,value] of [['CVX_QUERY_CURSOR_KEYS_JSON',JSON.stringify({fixture:'07'.repeat(64)})],['CVX_QUERY_CURSOR_CURRENT_KEY_ID','fixture']]) {
+const result=spawnSync(process.execPath,['node_modules/convex/bin/main.js','env','set',name,value],{encoding:'utf8',timeout:30000});assert.equal(result.status,0,'fixture env setup failed');
+}
 const key=JSON.parse(readFileSync('.convex/local/default/config.json')).adminKey;
 const who={subject:'native-reader',issuer:'https://fixture.test',tokenIdentifier:'https://fixture.test|native-reader',org_id:'a',role:'reader'};
 const url='http://127.0.0.1:'+process.argv[2];const records=[];

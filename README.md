@@ -123,17 +123,15 @@ Missing and unreadable targets have the same public result.
 import { createQueryEngine } from 'cvx-kit/querying'
 import schema from './schema'
 import { relations } from './relations'
-import { cursor } from './functions'
 
-export const querying = createQueryEngine({
-	schema,
-	relations,
-	cursor,
-})
+export const querying = createQueryEngine({ schema, relations })
 ```
 
-`cursor.keys` is a server-only map of key IDs to 64-byte `Uint8Array` secrets.
-Keep key material out of arguments, client code, and logs. The default codec
+One engine serves every registered table. Cursor keys load internally on first
+pagination from server environment variables `CVX_QUERY_CURSOR_KEYS_JSON`
+(key IDs mapped to 128-character hex secrets) and `CVX_QUERY_CURSOR_CURRENT_KEY_ID`.
+Keep key material out of arguments, client code, and logs. Optional overrides
+belong in a separate second argument; see [querying](src/docs/querying.md). The default codec
 uses authenticated AES-SIV encryption without a plaintext fallback; identical
 payloads under the same binding reveal equality. Tokens bind filters, selected
 output, index, order, relation ancestry, principal/tenant/security scope, and

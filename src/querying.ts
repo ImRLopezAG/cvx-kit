@@ -22,7 +22,12 @@ import {
 	type OutputSelection,
 	type RelationDocument,
 } from './querying/relationships'
-import { createCursorCodec, type CursorCodecConfig, type CursorBinding } from './querying/cursors'
+import {
+	createCursorCodec,
+	createEnvironmentCursorCodec,
+	type CursorCodecConfig,
+	type CursorBinding,
+} from './querying/cursors'
 import {
 	createManagedSecurity,
 	type ManagedSecurityConfig,
@@ -100,14 +105,18 @@ export interface TableQuery<
 	>
 	paginate(args: EngineArgs<Tables, D, T>): Promise<PaginationResult<RelationRow<Tables, D, T, S>>>
 }
-export interface QueryEngineConfig<
+export interface QueryEngineDeclaration<
 	Schema extends SchemaDefinition<GenericSchema, boolean>,
 	Tables extends RelationTables,
 	D extends RelationDeclarations,
 > {
 	schema: Schema
 	relations: RelationRegistry<Tables, D>
-	cursor: CursorCodecConfig
+}
+/** Advanced server configuration, separate from the normal schema/relations declaration. */
+export interface QueryEngineOptions<Schema extends SchemaDefinition<GenericSchema, boolean>> {
+	/** Explicit codecs validate at creation. Otherwise environment keys load at first paginate. */
+	cursor?: CursorCodecConfig
 	budgets?: Partial<ManagedBudgets>
 	maxPageSize?: number
 	policyVersion?: string
@@ -115,20 +124,63 @@ export interface QueryEngineConfig<
 	trustedAdapter?: ManagedSecurityConfig<DataModelFromSchemaDefinition<Schema>>['trustedAdapter']
 }
 
+/** @deprecated Use QueryEngineDeclaration and optional QueryEngineOptions separately. */
+export interface QueryEngineConfig<
+	Schema extends SchemaDefinition<GenericSchema, boolean>,
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+>
+	extends QueryEngineDeclaration<Schema, Tables, D>, QueryEngineOptions<Schema> {
+	cursor: CursorCodecConfig
+}
+
+type QueryEngine<
+	Schema extends SchemaDefinition<GenericSchema, boolean>,
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+> = {
+	(ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>): {
+		[T in keyof Tables]: TableQuery<Tables, D, T>
+	}
+	tables: RelationRegistry<Tables, D>['tables']
+}
+
 /** Central facade. Endpoint chains carry declarative constraints and explicit relationships. */
 export function createQueryEngine<
 	Schema extends SchemaDefinition<GenericSchema, boolean>,
 	const Tables extends RelationTables,
 	const D extends RelationDeclarations,
->(config: QueryEngineConfig<Schema, Tables, D>) {
+>(
+	config: QueryEngineDeclaration<Schema, Tables, D>,
+	options?: QueryEngineOptions<Schema>,
+): QueryEngine<Schema, Tables, D>
+/** @deprecated Pass advanced fields in the optional second argument. */
+export function createQueryEngine<
+	Schema extends SchemaDefinition<GenericSchema, boolean>,
+	const Tables extends RelationTables,
+	const D extends RelationDeclarations,
+>(
+	config: QueryEngineDeclaration<Schema, Tables, D> &
+		QueryEngineOptions<Schema> & { cursor: CursorCodecConfig },
+): QueryEngine<Schema, Tables, D>
+export function createQueryEngine<
+	Schema extends SchemaDefinition<GenericSchema, boolean>,
+	const Tables extends RelationTables,
+	const D extends RelationDeclarations,
+>(
+	config: QueryEngineDeclaration<Schema, Tables, D> & QueryEngineOptions<Schema>,
+	options?: QueryEngineOptions<Schema>,
+) {
 	const { schema, relations } = config
+	// Retain released one-argument calls; a second argument overrides legacy fields.
+	const settings = { ...config, ...options }
 	const planner = createPlanner(schema, relations)
-	const codec = createCursorCodec(config.cursor)
-	const maxPageSize = config.maxPageSize ?? 100
+	let cursorCodec = settings.cursor === undefined ? undefined : createCursorCodec(settings.cursor)
+	const maxPageSize = settings.maxPageSize ?? 100
 	if (!Number.isSafeInteger(maxPageSize) || maxPageSize <= 0 || maxPageSize > 100)
 		throw new Error('Invalid central page size')
-	const engineVersion = config.engineVersion ?? 'scalar-1'
-	const policyVersion = config.policyVersion ?? '1'
+	const engineVersion = settings.engineVersion ?? 'scalar-1'
+	const policyVersion = settings.policyVersion ?? '1'
 	// Bind the full immutable identity through a collision-resistant digest so
 	// real application registries fit the codec's bounded AAD. Live guards still
 	// inspect current schemas; this caches only the immutable version identity.
@@ -136,8 +188,8 @@ export function createQueryEngine<
 	const security = createManagedSecurity<DataModelFromSchemaDefinition<Schema>>({
 		tables: Object.keys(relations.tables),
 		policyVersion,
-		budgets: config.budgets,
-		trustedAdapter: config.trustedAdapter,
+		budgets: settings.budgets,
+		trustedAdapter: settings.trustedAdapter,
 	})
 	function querying(ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>) {
 		planner.assertUnchanged()
@@ -168,6 +220,8 @@ export function createQueryEngine<
 					return tableQuery(target, conditions, constraints, {}, { table, parent, path })
 				},
 				async paginate(input: QueryInput) {
+					// Resolve once per global engine, before any native query or policy reads.
+					const codec = (cursorCodec ??= createEnvironmentCursorCodec())
 					planner.assertUnchanged()
 					const pageSchema = planner.page(table, selection)
 					assertRelationshipDepth(selection, route?.path.length ?? 0)

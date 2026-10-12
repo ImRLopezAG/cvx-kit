@@ -58,6 +58,29 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 const identifier = /^[A-Za-z0-9_-]{1,32}$/
 
+/** Private lazy server configuration. Call only at the first pagination boundary. */
+export function createEnvironmentCursorCodec() {
+	try {
+		const encoded = process.env.CVX_QUERY_CURSOR_KEYS_JSON
+		const currentKeyId = process.env.CVX_QUERY_CURSOR_CURRENT_KEY_ID
+		if (!encoded || !currentKeyId) throw new CursorConfigurationError()
+		const parsed: unknown = JSON.parse(encoded)
+		if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+			throw new CursorConfigurationError()
+		const keys = Object.fromEntries(
+			Object.entries(parsed).map(([id, key]) => {
+				if (typeof key !== 'string' || !/^[0-9a-fA-F]{128}$/.test(key))
+					throw new CursorConfigurationError()
+				return [id, hexToBytes(key)]
+			}),
+		)
+		return createCursorCodec({ version: '1', currentKeyId, keys })
+	} catch {
+		// Parsing/runtime failures must never expose key material or environment values.
+		throw new CursorConfigurationError()
+	}
+}
+
 /**
  * Deterministic RFC 5297 AES-SIV: equal plaintext and binding leak equality.
  * One navigation-boundary family permits native split/continue tokens in start/end

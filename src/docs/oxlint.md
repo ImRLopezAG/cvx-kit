@@ -178,7 +178,13 @@ predicate can change authorization, ordering, and continuation semantics.
 
 `root-facade-ownership` requires `defineRelations` in `convex/relations.ts` and
 `createQueryEngine` in `convex/querying.ts`, each configured once. The same rule
-continues to enforce auth, triggers, and foundation facades.
+continues to enforce auth, triggers, and foundation facades. Declare one global
+engine as `createQueryEngine({ schema, relations })`, then bind it with
+`querying(ctx)` inside handlers. Avoid rebuilding engines per request or table.
+Cursor key parsing belongs to the engine's server environment loader; advanced
+application-wide overrides use the optional second argument. This setup guidance
+is a convention; the rule currently checks facade ownership and repeated factory
+calls, rather than proving module-scope placement or environment parsing.
 
 `root-wiring-only` and the whole-project checker permit these root files only
 as narrow declarative factory configurations. `relations.ts` can import domain

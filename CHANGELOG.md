@@ -12,6 +12,18 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-10-11
+
+### Added
+
+- Declare a global query engine with only `createQueryEngine({ schema, relations })`.
+- Load cursor secrets internally from server environment configuration on first pagination.
+- Configure optional engine overrides in a separate second argument, while preserving existing declarations.
+
+### Changed
+
+- Document global engine setup, server cursor secrets, and the purpose of advanced options.
+
 ## [0.1.14] - 2026-10-11
 
 ### Added

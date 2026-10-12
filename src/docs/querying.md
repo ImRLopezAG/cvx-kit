@@ -100,9 +100,8 @@ indexes. Convex does not infer relationships; this registry supplies them.
 import { createQueryEngine } from 'cvx-kit/querying'
 import schema from './schema'
 import { relations } from './relations'
-import { cursor } from './functions'
 
-export const querying = createQueryEngine({ schema, relations, cursor })
+export const querying = createQueryEngine({ schema, relations })
 ```
 
 The application's `functions.ts` facade configures `createAuthFunctions`,
@@ -118,12 +117,24 @@ contexts are unsupported. A host with another auth system can centrally configur
 `trustedAdapter`; it must attest the query reader, effective policy, and security
 scope. Do not expose adapter selection to endpoint arguments.
 
-`cursor` has `{ version, currentKeyId, keys }`. `keys` maps key IDs to server-only
-64-byte `Uint8Array` secrets; `currentKeyId` names the key used for new tokens.
-Load real secrets through server configuration, never from clients or a constant
-fixture key. Keep prior keys during rotation to preserve existing cursors.
-The default codec uses authenticated AES-SIV encryption; there is no plaintext
-fallback. Identical bound payloads reveal equality.
+Declare this engine once at module scope. It serves every registered table;
+`querying(ctx)` binds authorization and read accounting to the current request.
+Table fields, indexes, DTOs, and relationship metadata come from the schema and
+relation registry. No per-table engine declaration is needed.
+
+The engine loads cursor keys internally when pagination first runs. Set
+`CVX_QUERY_CURSOR_KEYS_JSON` to a JSON object mapping key IDs to 128 hexadecimal
+characters (64 secret bytes), and `CVX_QUERY_CURSOR_CURRENT_KEY_ID` to the ID
+used for new tokens. These are server environment variables, shared by all
+tables. Generate real secrets outside query execution and configure them through
+Convex environment settings; never put them in client arguments, source, or logs.
+Keep prior keys during rotation to preserve existing cursors. Changing environment
+configuration requires the engine to reload with the new deployment configuration.
+
+Engine declaration and auth registration do not read these variables. Missing or
+invalid configuration fails pagination before database reads. The codec's format
+version is internal. It uses authenticated AES-SIV encryption with no plaintext
+fallback; identical bound payloads reveal equality.
 
 ## Define input and result contracts
 
@@ -249,10 +260,35 @@ changes are rechecked on resume. Native `endCursor` supports bounded partitions.
 
 ## Central limits and operational behavior
 
-`createQueryEngine` also accepts `maxPageSize`, `budgets`, `policyVersion`,
-`engineVersion`, and `trustedAdapter`. These belong in central configuration,
-not per-endpoint filter/project callbacks. Page sizes are positive integers up
-to 100; `maxPageSize` can lower that ceiling. Shared request budgets cover read
+The engine supplies default limits and cursor compatibility versions. Normal
+applications need only `{ schema, relations }`. Optional central overrides belong
+in the second argument:
+
+```ts
+export const querying = createQueryEngine(
+	{ schema, relations },
+	{
+		maxPageSize: 50,
+	},
+)
+```
+
+| Option           | Purpose                                                                | Default setup                                               |
+| ---------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `budgets`        | Lower shared read, byte, fan-out, depth, and memo ceilings             | Engine defaults                                             |
+| `maxPageSize`    | Lower the 100-item page ceiling                                        | 100                                                         |
+| `policyVersion`  | Invalidate old cursors after a policy semantic change                  | Internal default; current authorization is always rechecked |
+| `engineVersion`  | Override the engine compatibility identity                             | Internal default                                            |
+| `trustedAdapter` | Connect another auth system's query reader and policies                | Managed auth capability from `cvx-kit/auth`                 |
+| `cursor`         | Supply an explicit key ring, for custom secret management or migration | Server environment loader                                   |
+
+These are application-wide overrides, never endpoint arguments. Existing
+one-argument declarations with these fields still work for compatibility; move
+those fields to the second argument when migrating. To preserve pre-migration
+cursors, keep the existing explicit cursor version and key ring until those
+cursors have expired.
+
+Page sizes are positive integers up to 100. Shared request budgets cover read
 operations, index ranges, raw candidates, document bytes, fan-out, traversal
 depth, and memo entries, including managed policy reads. Native request read
 limits may lower ceilings. Output relationship depth is at most four.

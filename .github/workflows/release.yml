@@ -53,8 +53,10 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build
-        run: bun run build
+      - name: Build and prepare package documentation
+        run: |
+          bun run build
+          bun run docs:sync
 
       - name: Publish to npm
         # --tag latest is explicit so a corrective release lower than a
@@ -63,7 +65,9 @@ jobs:
         # Bun's devEngines.packageManager requirement rejects npm itself.
         # Bun installation and successful CI enforce the development
         # environment; --force permits npm's OIDC publishing step.
-        run: npm publish --force --access public --tag latest
+        # CI already validated this exact commit. Skip prepublishOnly, which
+        # repeats build/typecheck/tests; the artifact and docs are prepared above.
+        run: npm publish --ignore-scripts --force --access public --tag latest
 
       - name: Create GitHub Release with CHANGELOG notes
         if: startsWith(github.ref, 'refs/tags/v')

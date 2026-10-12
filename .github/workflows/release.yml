@@ -23,6 +23,7 @@ jobs:
       # publish itself needs nothing beyond id-token.
       contents: write
       id-token: write # required for OIDC trusted publishing
+      actions: read # verify CI succeeded for the exact release commit
     steps:
       - uses: actions/checkout@v5
 
@@ -39,42 +40,28 @@ jobs:
       - name: Update npm
         run: npm install -g npm@latest
 
+      - name: Require successful CI for the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CI_PASSED="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" --branch main --event push --limit 1 --json status,conclusion --jq '.[0] | .status == "completed" and .conclusion == "success"')"
+          if [ "$CI_PASSED" != "true" ]; then
+            echo "Release requires successful main-branch CI for $GITHUB_SHA."
+            exit 1
+          fi
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Build
         run: bun run build
 
-      - name: Enforce anti-slop and library conventions
-        run: bun run lint
-
-      - name: Verify published Oxlint plugin in npm and Bun consumers
-        run: node scripts/test-packed-oxlint.mjs
-
-      - name: Verify packed package contents
-        run: bunx vp test run test/package-contents.test.mjs
-
-      - name: Verify shared helper identity in npm and Bun consumers
-        run: node scripts/test-packed-ids.mjs
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Test
-        run: bun run test
-
-      - name: Smoke packed components with Bun
-        run: bun run test:package:smoke:bun
-
-      - name: Smoke packed components with npm
-        run: bun run test:package:smoke:npm
-
       - name: Publish to npm
         # --tag latest is explicit so a corrective release lower than a
         # mistakenly published higher version can still become latest
         # (npm refuses implicit latest for lower versions).
         # Bun's devEngines.packageManager requirement rejects npm itself.
-        # Bun installation and release checks above enforce the development
+        # Bun installation and successful CI enforce the development
         # environment; --force permits npm's OIDC publishing step.
         run: npm publish --force --access public --tag latest
 

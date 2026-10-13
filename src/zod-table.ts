@@ -463,11 +463,227 @@ export function paginated<Dto extends z.ZodType>(dto: Dto) {
 	}
 }
 
-/** Preserves discriminated-union storage while retaining the same table owner. */
+type VariantSchema = z.ZodDiscriminatedUnion<readonly StrictObject<FieldSchemas>[], string>
+type VariantDiscriminator<Schema extends VariantSchema> = Schema['_zod']['def']['discriminator']
+type VariantTags<Schema extends VariantSchema> = Extract<
+	z.output<Schema>[VariantDiscriminator<Schema>],
+	string
+>
+type VariantBranch<Schema extends VariantSchema, Tag extends string> = Extract<
+	Schema['options'][number],
+	z.ZodObject<{ [Key in VariantDiscriminator<Schema>]: z.ZodLiteral<Tag> }, z.core.$strict>
+>
+type VariantKeys<Schema extends VariantSchema, Tag extends string> = FieldKey<
+	VariantBranch<Schema, Tag>['shape']
+>
+
+/** Boundary mode supports strict object branches with one string literal tag each. */
+export type VariantBoundaryOptions<Schema extends VariantSchema> = {
+	discriminator: VariantDiscriminator<Schema>
+	timestamps?: boolean
+	variants: {
+		[Tag in VariantTags<Schema>]: {
+			serverFields?: readonly Exclude<VariantKeys<Schema, Tag>, VariantDiscriminator<Schema>>[]
+			commandFields?: readonly Exclude<VariantKeys<Schema, Tag>, VariantDiscriminator<Schema>>[]
+			publicFields?: readonly (
+				| Exclude<VariantKeys<Schema, Tag>, VariantDiscriminator<Schema>>
+				| keyof TimestampFields
+			)[]
+		}
+	}
+}
+type VariantMaskKeys<Config, Mask extends string> = Config extends {
+	[Key in Mask]?: readonly (infer Field)[]
+}
+	? Extract<Field, string>
+	: never
+type CheckedVariantOptions<
+	Schema extends VariantSchema,
+	Options extends VariantBoundaryOptions<Schema>,
+> = {
+	variants: {
+		[Tag in keyof Options['variants']]: Tag extends VariantTags<Schema>
+			? {
+					commandFields?: readonly Exclude<
+						VariantKeys<Schema, Tag>,
+						VariantDiscriminator<Schema> | VariantMaskKeys<Options['variants'][Tag], 'serverFields'>
+					>[]
+					publicFields?: readonly (
+						| Exclude<VariantKeys<Schema, Tag>, VariantDiscriminator<Schema>>
+						| (Options extends { timestamps: true } ? keyof TimestampFields : never)
+					)[]
+				}
+			: never
+	}
+}
+type VariantMode =
+	| 'storage'
+	| 'document'
+	| 'insert'
+	| 'update'
+	| 'command'
+	| 'commandUpdate'
+	| 'public'
+type VariantFields<
+	Table extends string,
+	Branch extends StrictObject<FieldSchemas>,
+	Discriminator extends string,
+	Config,
+	Timestamps extends boolean,
+	Mode extends VariantMode,
+> = Mode extends 'storage'
+	? Branch['shape'] & (true extends Timestamps ? TimestampFields : {})
+	: Mode extends 'document'
+		? VariantFields<Table, Branch, Discriminator, Config, Timestamps, 'storage'> &
+				SystemFields<Table>
+		: Mode extends 'public' | 'command'
+			? Pick<
+					VariantFields<Table, Branch, Discriminator, Config, Timestamps, 'storage'>,
+					Extract<
+						| Discriminator
+						| VariantMaskKeys<Config, Mode extends 'public' ? 'publicFields' : 'commandFields'>,
+						keyof VariantFields<Table, Branch, Discriminator, Config, Timestamps, 'storage'>
+					>
+				>
+			: Mode extends 'insert'
+				? Omit<Branch['shape'], VariantMaskKeys<Config, 'serverFields'>>
+				: PartialFields<
+						Omit<
+							VariantFields<
+								Table,
+								Branch,
+								Discriminator,
+								Config,
+								Timestamps,
+								Mode extends 'update' ? 'insert' : 'command'
+							>,
+							Discriminator
+						>
+					> &
+						Pick<Branch['shape'], Extract<Discriminator, keyof Branch['shape']>>
+type DerivedVariantBranches<
+	Table extends string,
+	Schema extends VariantSchema,
+	Options extends VariantBoundaryOptions<Schema>,
+	Mode extends VariantMode,
+	IncludeId extends boolean,
+	Branches extends readonly StrictObject<FieldSchemas>[],
+> = {
+	[Index in keyof Branches]: Branches[Index] extends StrictObject<FieldSchemas>
+		? StrictObject<
+				VariantFields<
+					Table,
+					Branches[Index],
+					VariantDiscriminator<Schema>,
+					Options['variants'][Extract<
+						z.output<Branches[Index]>[VariantDiscriminator<Schema>],
+						keyof Options['variants']
+					>],
+					Options extends { timestamps: infer Enabled }
+						? true extends Enabled
+							? true
+							: false
+						: false,
+					Mode
+				> &
+					(IncludeId extends true ? { _id: Zid<Table> } : {})
+			>
+		: never
+}
+type DerivedVariant<
+	Table extends string,
+	Schema extends VariantSchema,
+	Options extends VariantBoundaryOptions<Schema>,
+	Mode extends VariantMode,
+	IncludeId extends boolean = false,
+> = IncludeId extends true
+	? z.ZodDiscriminatedUnion<
+			DerivedVariantBranches<Table, Schema, Options, Mode, true, Schema['options']>,
+			VariantDiscriminator<Schema>
+		>
+	: z.ZodDiscriminatedUnion<
+			DerivedVariantBranches<Table, Schema, Options, Mode, false, Schema['options']>,
+			VariantDiscriminator<Schema>
+		>
+
+export type VariantTableBoundary<
+	Table extends string,
+	Schema extends VariantSchema,
+	Options extends VariantBoundaryOptions<Schema>,
+> = {
+	tableName: Table
+	storage: DerivedVariant<Table, Schema, Options, 'storage'>
+	schema: DerivedVariant<Table, Schema, Options, 'document'>
+	insertSchema: DerivedVariant<Table, Schema, Options, 'insert'>
+	updateSchema: DerivedVariant<Table, Schema, Options, 'update'>
+	commandInput: DerivedVariant<Table, Schema, Options, 'command'>
+	publicDto: DerivedVariant<Table, Schema, Options, 'public'>
+	table: TableDefinition<
+		ConvexValidatorFromZod<DerivedVariant<Table, Schema, Options, 'storage'>, 'required'>
+	>
+	dto(): DerivedVariant<Table, Schema, Options, 'public'>
+	dto<const IncludeId extends boolean>(
+		includeId: IncludeId,
+	): DerivedVariant<Table, Schema, Options, 'public', IncludeId>
+	toPublicDto(
+		row: z.input<DerivedVariant<Table, Schema, Options, 'storage'>>,
+	): z.output<DerivedVariant<Table, Schema, Options, 'public'>>
+	toPublicDto<const IncludeId extends boolean>(
+		row: DtoRow<z.input<DerivedVariant<Table, Schema, Options, 'storage'>>, IncludeId>,
+		includeId: IncludeId,
+	): z.output<DerivedVariant<Table, Schema, Options, 'public', IncludeId>>
+	tools: {
+		id: StrictObject<{ id: z.ZodType<GenericId<Table>, string> }>
+		insert: z.ZodType<
+			z.output<DerivedVariant<Table, Schema, Options, 'command'>>,
+			z.input<DerivedVariant<Table, Schema, Options, 'command'>>
+		>
+		update: StrictObject<{
+			id: z.ZodType<GenericId<Table>, string>
+			data: z.ZodType<
+				z.output<DerivedVariant<Table, Schema, Options, 'commandUpdate'>>,
+				z.input<DerivedVariant<Table, Schema, Options, 'commandUpdate'>>
+			>
+		}>
+	}
+}
+
+/** Legacy mode preserves arbitrary storage; the third argument opts into derived boundaries. */
 export function zodVariantTable<Table extends string, Schema extends z.ZodType>(
 	tableName: Table,
 	storage: Schema,
+): {
+	tableName: Table
+	storage: Schema
+	insertSchema: Schema
+	table: TableDefinition<ConvexValidatorFromZod<Schema, 'required'>>
+}
+export function zodVariantTable<
+	Table extends string,
+	Schema extends VariantSchema,
+	const Options extends VariantBoundaryOptions<Schema>,
+>(
+	tableName: Table,
+	storage: Schema,
+	options: Options & CheckedVariantOptions<Schema, NoInfer<Options>>,
+): VariantTableBoundary<Table, Schema, Options>
+export function zodVariantTable(
+	tableName: string,
+	storage: z.ZodType,
+	options?: {
+		discriminator: string
+		timestamps?: boolean
+		variants: Record<
+			string,
+			{
+				serverFields?: readonly string[]
+				commandFields?: readonly string[]
+				publicFields?: readonly string[]
+			}
+		>
+	},
 ) {
+	if (options) return deriveVariantTable(tableName, storage, options)
 	return {
 		tableName,
 		storage,
@@ -488,6 +704,226 @@ export function jsonSafeZid<Table extends string>(
 		.string()
 		.refine((value): value is GenericId<Table> => id.safeParse(value).success)
 		.describe(`Convex document id for table "${tableName}"; validated against the table by Convex`)
+}
+
+function deriveVariantTable(
+	tableName: string,
+	declared: z.ZodType,
+	options: {
+		discriminator: string
+		timestamps?: boolean
+		variants: Record<
+			string,
+			{
+				serverFields?: readonly string[]
+				commandFields?: readonly string[]
+				publicFields?: readonly string[]
+			}
+		>
+	},
+) {
+	if (
+		!(declared instanceof z.ZodDiscriminatedUnion) ||
+		declared.def.discriminator !== options.discriminator
+	)
+		throw new Error(
+			'Variant boundaries require a discriminated union with the configured discriminator',
+		)
+	if (declared.def.checks?.length)
+		throw new Error('Variant boundaries do not support union-level refinements')
+	const discriminator = options.discriminator
+	if (['_id', '_creationTime', ...TIMESTAMP_FIELDS].includes(discriminator))
+		throw new Error('Variant discriminator cannot be a reserved field')
+	const branches = new Map<
+		string,
+		{
+			storage: StrictObject<FieldSchemas>
+			document: StrictObject<FieldSchemas>
+			insert: StrictObject<FieldSchemas>
+			update: StrictObject<FieldSchemas>
+			command: StrictObject<FieldSchemas>
+			commandUpdate: StrictObject<FieldSchemas>
+			public: StrictObject<FieldSchemas>
+		}
+	>()
+	for (const branch of declared.options) {
+		if (!(branch instanceof z.ZodObject) || !(branch.def.catchall instanceof z.ZodNever))
+			throw new Error('Variant boundaries require strict object branches')
+		if (branch.def.checks?.length)
+			throw new Error('Variant boundaries do not support object-level refinements')
+		try {
+			assertDtoValidationSchema(branch, new Set(), true)
+		} catch (cause) {
+			throw new Error(
+				'Variant boundaries require supported value-preserving field validators without object catchalls',
+				{ cause },
+			)
+		}
+		const tagSchema = branch.shape[discriminator]
+		if (!(tagSchema instanceof z.ZodLiteral) || tagSchema.values.size !== 1)
+			throw new Error('Variant branches require one string literal discriminator')
+		const tag = [...tagSchema.values][0]
+		if (!z.string().safeParse(tag).success)
+			throw new Error('Variant branches require a string discriminator')
+		// SAFETY: a single literal value was checked as a string above.
+		const tagValue = tag as string
+		if (branches.has(tagValue)) throw new Error(`Duplicate variant discriminator "${tagValue}"`)
+		if (!Object.hasOwn(options.variants, tagValue))
+			throw new Error(`Missing variant configuration "${tagValue}"`)
+		const config = options.variants[tagValue]
+		assertOwnedFields(branch.shape, ['_id', '_creationTime', ...TIMESTAMP_FIELDS])
+		const columns = { ...branch.shape } satisfies FieldSchemas
+		if (options.timestamps) Object.assign(columns, timestampFields)
+		assertFieldLists(
+			columns,
+			config.serverFields ?? [],
+			config.commandFields ?? [],
+			config.publicFields ?? [],
+		)
+		for (const mask of [config.serverFields, config.commandFields, config.publicFields]) {
+			if (mask?.includes(discriminator))
+				throw new Error(
+					'The variant discriminator is retained automatically and cannot appear in masks',
+				)
+		}
+		const stored = z.strictObject(columns)
+		const insert = z.strictObject(
+			omitFields(columns, [...TIMESTAMP_FIELDS, ...(config.serverFields ?? [])]),
+		)
+		const command = z.strictObject(
+			pickFields(columns, [discriminator, ...(config.commandFields ?? [])]),
+		)
+		const partial = (schema: StrictObject<FieldSchemas>) =>
+			schema.partial().extend({ [discriminator]: tagSchema })
+		branches.set(tagValue, {
+			storage: stored,
+			document: documentSchema(stored, tableName),
+			insert,
+			update: partial(insert),
+			command,
+			commandUpdate: partial(command),
+			public: z.strictObject(pickFields(columns, [discriminator, ...(config.publicFields ?? [])])),
+		})
+	}
+	for (const tag of Object.keys(options.variants)) {
+		if (!branches.has(tag)) throw new Error(`Unknown variant configuration "${tag}"`)
+	}
+	function union(mode: VariantMode, includeId = false, tool = false) {
+		const schemas = [...branches.values()].map((branch) => {
+			const schema = branch[mode]
+			if (tool)
+				return z.strictObject(
+					Object.fromEntries(
+						Object.entries(schema.shape).map(([key, field]) => [key, variantToolField(field)]),
+					),
+				)
+			return includeId ? schema.extend({ _id: zid(tableName) }) : schema
+		})
+		if (!schemas.length) throw new Error('Variant boundaries require at least one branch')
+		// SAFETY: all entries are checked strict objects with a unique required literal tag; nonempty checked above.
+		return z.discriminatedUnion(
+			discriminator,
+			schemas as [StrictObject<FieldSchemas>, ...StrictObject<FieldSchemas>[]],
+		)
+	}
+	const storage = union('storage')
+	const schema = union('document')
+	const insertSchema = union('insert')
+	const updateSchema = union('update')
+	const commandInput = union('command')
+	const publicDto = union('public')
+	function dto(includeId = false) {
+		return includeId ? union('public', true) : publicDto
+	}
+	function toPublicDto(row: z.input<StrictObject<FieldSchemas>>, includeId = false) {
+		const tag = z.string().parse(row[discriminator])
+		const branch = branches.get(tag)
+		if (!branch) throw new Error(`Unknown variant discriminator "${tag}"`)
+		const projection = includeId ? branch.public.extend({ _id: zid(tableName) }) : branch.public
+		return projection.parse(
+			Object.fromEntries(
+				Object.keys(projection.shape)
+					.filter((key) => Object.hasOwn(row, key))
+					.map((key) => [key, row[key]]),
+			),
+		)
+	}
+	return {
+		tableName,
+		storage,
+		schema,
+		insertSchema,
+		updateSchema,
+		commandInput,
+		publicDto,
+		dto,
+		toPublicDto,
+		table: defineTable(zodToConvex(storage)),
+		tools: {
+			id: z.strictObject({ id: jsonSafeZid(tableName) }),
+			insert: union('command', false, true),
+			update: z.strictObject({
+				id: jsonSafeZid(tableName),
+				data: union('commandUpdate', false, true),
+			}),
+		},
+	}
+}
+
+function variantToolField(schema: z.core.$ZodType): z.ZodType {
+	if (!(schema instanceof z.ZodType))
+		throw new Error('Variant tools require classic Zod field schemas')
+	if (
+		schema instanceof z.ZodBigInt ||
+		(schema instanceof z.ZodLiteral &&
+			[...schema.values].some((value) => z.bigint().safeParse(value).success))
+	)
+		throw new Error(
+			'Variant tool command fields cannot contain bigint; JSON Schema cannot represent it',
+		)
+	const native = zodToConvex(schema)
+	if (native.kind === 'id') {
+		const id = jsonSafeZid(native.tableName)
+		if (native.isOptional === 'optional')
+			return id.optional().refine((value) => schema.safeParse(value).success)
+		return id.refine((value) => schema.safeParse(value).success)
+	}
+	if (schema instanceof z.ZodOptional)
+		return schema.clone({ ...schema.def, innerType: variantToolField(schema.unwrap()) })
+	if (schema instanceof z.ZodNullable)
+		return schema.clone({ ...schema.def, innerType: variantToolField(schema.unwrap()) })
+	if (schema instanceof z.ZodNonOptional)
+		return schema.clone({ ...schema.def, innerType: variantToolField(schema.unwrap()) })
+	if (schema instanceof z.ZodArray)
+		return schema.clone({ ...schema.def, element: variantToolField(schema.element) })
+	if (schema instanceof z.ZodObject) {
+		const fields = Object.fromEntries(
+			Object.entries(schema.shape).map(([key, child]) => [key, variantToolField(child)]),
+		)
+		return schema.clone(Object.assign({}, schema.def, { ['shape']: fields }))
+	}
+	if (schema instanceof z.ZodUnion)
+		return schema.clone({ ...schema.def, options: schema.options.map(variantToolField) })
+	if (schema instanceof z.ZodRecord)
+		return schema.clone({
+			...schema.def,
+			// SAFETY: conversion preserves the original record key output; IDs remain strings.
+			keyType: variantToolField(schema.keyType) as z.core.$ZodRecordKey,
+			valueType: variantToolField(schema.valueType),
+		})
+	if (schema instanceof z.ZodTuple)
+		return schema.clone({
+			...schema.def,
+			items: schema.def.items.map(variantToolField),
+			rest: schema.def.rest ? variantToolField(schema.def.rest) : null,
+		})
+	if (schema instanceof z.ZodIntersection)
+		return schema.clone({
+			...schema.def,
+			left: variantToolField(schema.def.left),
+			right: variantToolField(schema.def.right),
+		})
+	return schema
 }
 
 type ZodObjectOmit<
@@ -538,11 +974,12 @@ type DtoPropertiesCheck = z.core.$ZodCheck & {
 }
 
 /** Inspect Zod 4's discriminated definitions, failing closed for unsupported nodes.
- * This restriction applies only to new DTO extensions; storage/publicDto are unchanged.
+ * Used by DTO extensions and opt-in variant boundaries; legacy schemas are unchanged.
  */
 function assertDtoValidationSchema(
 	schema: z.core.$ZodType,
 	seen = new Set<z.core.$ZodType>(),
+	allowNativeIds = false,
 ): void {
 	if (seen.has(schema)) return
 	seen.add(schema)
@@ -553,7 +990,7 @@ function assertDtoValidationSchema(
 	}
 	if ('coerce' in def && def.coerce) reject()
 	if ('normalize' in def && def.normalize) reject()
-	const visit = (child: z.core.$ZodType) => assertDtoValidationSchema(child, seen)
+	const visit = (child: z.core.$ZodType) => assertDtoValidationSchema(child, seen, allowNativeIds)
 	for (const check of def.checks ?? []) {
 		if (check._zod.def.check === 'overwrite') reject()
 		if ('normalize' in check._zod.def && check._zod.def.normalize) reject()
@@ -569,6 +1006,10 @@ function assertDtoValidationSchema(
 		}
 	}
 	switch (def.type) {
+		case 'custom':
+			if (allowNativeIds && zodToConvex(schema).kind === 'id') return
+			reject()
+			return
 		case 'string':
 		case 'number':
 		case 'boolean':
@@ -583,6 +1024,8 @@ function assertDtoValidationSchema(
 		case 'enum':
 			return
 		case 'object':
+			if (allowNativeIds && def.catchall && def.catchall._zod.def.type !== 'never')
+				throw new Error('Variant fields cannot use object catchalls; use a record field instead')
 			for (const child of Object.values(def.shape)) visit(child)
 			if (def.catchall) visit(def.catchall)
 			return

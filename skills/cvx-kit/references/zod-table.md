@@ -236,8 +236,91 @@ const events = zodVariantTable(
 // events.table → defineTable, events.insertSchema → the union itself
 ```
 
-Note: variant tables do not get the timestamp fields or boundary masks — the
-union is the boundary.
+The two-argument form keeps its original behavior: no derived masks or timestamps.
+Pass a third argument to opt into per-variant boundaries:
+
+```ts
+const payments = zodVariantTable(
+	'payments',
+	z.discriminatedUnion('type', [
+		z.strictObject({
+			type: z.literal('draft'),
+			clientId: zid('clients'),
+			amount: z.int().positive(),
+			evidence: z.string().optional(),
+		}),
+		z.strictObject({
+			type: z.literal('creditor'),
+			clientId: zid('clients'),
+			creditorId: zid('creditors'),
+			amount: z.int().positive(),
+			evidence: z.string().optional(),
+		}),
+	]),
+	{
+		discriminator: 'type',
+		timestamps: true,
+		variants: {
+			draft: {
+				serverFields: ['evidence'],
+				commandFields: ['clientId', 'amount'],
+				publicFields: ['clientId', 'amount'],
+			},
+			creditor: {
+				serverFields: ['evidence'],
+				commandFields: ['clientId', 'creditorId', 'amount'],
+				publicFields: ['clientId', 'creditorId', 'amount'],
+			},
+		},
+	},
+)
+```
+
+Each branch must be a strict object with one string literal discriminator.
+Every tag needs exactly one configuration. Masks accept only that branch's
+fields; the discriminator is always retained and must not appear in a mask.
+System fields and timestamp names are reserved. Root object/union refinements,
+transforms, defaults, coercion, and other value-changing validators are rejected.
+Pure field refinements are supported. Nested object catchalls are unsupported;
+use a record field instead. Bigint fields may be stored, but cannot be selected
+as command fields because tool JSON schemas cannot represent them.
+Use `zid` in storage to retain native
+Convex table-ID validation; generated tool schemas convert IDs to JSON strings.
+
+The result exposes `table`, `storage`, `schema` (including system fields),
+`insertSchema`, `updateSchema`, `commandInput`, `publicDto`, `dto(includeId?)`,
+`toPublicDto(row, includeId?)`, and `tools.id/insert/update`. Inserts exclude
+server fields and timestamps. Commands select only the configured command
+fields. Tool inserts use the command boundary; tool updates wrap its partial
+boundary in `{ id, data }`. All boundaries remain strict discriminated unions.
+`dto(true)` includes the table's branded `_id`; DTO extensions are unavailable
+in this mode. `toPublicDto` selects the matching branch's whitelist and re-parses
+it, removing server evidence and fields belonging to other branches.
+
+Timestamps are optional storage fields; existing triggers must maintain them.
+They are private unless explicitly selected in `publicFields`. The helper does
+not assign timestamps or server fields.
+
+A patch always requires the discriminator. In one Convex mutation, fetch the
+stored row, check the discriminator, merge, validate the complete storage row,
+and only then write. For example, after parsing `{ id, data }` with `tools.update`:
+
+```ts
+const row = await ctx.db.get('payments', id)
+if (!row || row.type !== data.type) throw new Error('Variant mismatch')
+const { _id, _creationTime, ...stored } = row
+payments.storage.parse({ ...stored, ...data })
+await ctx.db.patch('payments', id, data)
+```
+
+Do not change variants through a patch. Full validation also rejects deleting a
+required field with an explicit `undefined`. Native Convex validators preserve
+IDs and branch structure but do not enforce Zod field refinements such as
+positive integers; parse with Zod in the handler. Add authorization before the
+write as appropriate for the application.
+
+Variant tables are not supported by `defineRelations` or the query engine.
+Registration fails explicitly; use native Convex queries and DTO projection.
 
 ## `jsonSafeZid` — Ids in LLM tool schemas
 

@@ -12,6 +12,22 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-10-13
+
+### Added
+
+- Opt-in `zodVariantTable` command, insert, update, public DTO, and tool boundaries with per-variant masks, native storage IDs, and strict discriminators.
+- Repository-hosted `cvx-kit` agent skill, installable from GitHub through the skills CLI, with task-specific access to the full documentation.
+
+### Changed
+
+- Keep documentation in `skills/cvx-kit/references` and ship only the README as npm documentation.
+- Verify portable skill references in CI and before publication; remove obsolete planning and explainer artifacts.
+
+### Fixed
+
+- Preserve optional/nullable refinements in derived tool inputs and reject bigint command literals before JSON Schema generation.
+
 ## [0.1.15] - 2026-10-11
 
 ### Added

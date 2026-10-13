@@ -314,8 +314,10 @@ new contributor. Minimum set:
   first; keep entries one paragraph.
 - **`CLAUDE.md` / `AGENTS.md`** — thin pointers: the stack, the three
   commands that matter (test, typecheck, deploy), and links to
-  `CODE_CONDUCT.md` + `node_modules/cvx-kit/src/docs/llms.md`. Agent files
-  that duplicate the conduct doc drift; keep them as an index.
+  `CODE_CONDUCT.md` + the [cvx-kit skill](https://github.com/ImRLopezAG/cvx-kit/tree/main/skills/cvx-kit).
+  Include `npx skills add ImRLopezAG/cvx-kit --skill cvx-kit` for installation;
+  full documentation is bundled with the skill rather than the npm package.
+  Agent files that duplicate the conduct doc drift; keep them as an index.
 - **Architecture tests as documentation** — the test names in
   `architecture.test.ts` are the enforceable summary of the conduct doc;
   a rule that exists in prose but not in the suite is a request, not a rule.

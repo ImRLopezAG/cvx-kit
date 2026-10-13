@@ -383,6 +383,8 @@ export function defineRelations<
 	const one: Record<string, (spec: { from: Leg; to: Leg }) => AnyEdge> = {}
 	const many: Record<string, (spec: { from: Leg; to: Leg }) => AnyEdge> = {}
 	for (const [name, table] of Object.entries(tables)) {
+		if (table.schema instanceof z.ZodUnion)
+			throw new Error('Variant tables are not supported by relations or the query engine')
 		if (
 			table.tableName !== name ||
 			['one', 'many', '__proto__', 'constructor', 'prototype'].includes(name)

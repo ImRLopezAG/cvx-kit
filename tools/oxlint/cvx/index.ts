@@ -13,7 +13,7 @@ export type RuleName =
 	| 'public-api-first'
 	| 'named-private-helpers'
 
-/** Library rules derived from src/docs/conventions.md and architecture.md. */
+/** Library rules derived from skills/cvx-kit/references/conventions.md and architecture.md. */
 export const rules: Record<RuleName, Rule> = {
 	'component-boundaries': {
 		meta: {

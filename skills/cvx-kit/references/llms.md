@@ -1,7 +1,7 @@
 # cvx-kit — condensed reference for LLMs and coding agents
 
-> Paste this file (installed at `node_modules/cvx-kit/docs/`) into an agent's
-> context when it works on a cvx-kit application. Detailed docs:
+> Install the repository skill with `npx skills add ImRLopezAG/cvx-kit --skill cvx-kit`
+> for task-specific guidance. This file is an optional condensed overview. Detailed docs:
 > `architecture.md`, `conventions.md`, `zod-table.md`, `querying.md`, `auth.md`,
 > `commands.md`, `effect.md`, `domain-operations.md`, `triggers.md`, `approvals.md`, `maintainability.md`,
 > `migration.md` (same directory).

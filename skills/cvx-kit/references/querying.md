@@ -314,7 +314,7 @@ predicates before bounded page filling, and replace unbounded relationship
 collection with declared many pages and child continuation. See the diagnostics
 and examples in [oxlint.md](./oxlint.md).
 
-The [packed example](../../test/fixture-packed-querying/convex/) contains complete
+The [packed example](https://github.com/ImRLopezAG/cvx-kit/tree/main/test/fixture-packed-querying/convex/) contains complete
 schema, relation, engine, contract, Query-registry, auth-adapter, and child-endpoint
 wiring. `bun run test:package:querying` exercises strict installed and minimum-peer
 consumers, all consumer rules, and multi-entity/filter/order continuation tests.

@@ -1,4 +1,4 @@
-# Ship only dist/, docs/, and src/test.ts (the vitest helper that must stay source).
+# package.json files limits shipping to dist/, src/test.ts, README, and LICENSE.
 /src/*
 !/src/test.ts
 /test
@@ -12,7 +12,7 @@
 *.tsbuildinfo
 .DS_Store
 
-# repo-internal explainers; the shipped docs/ mirrors src/docs only
+# Repo-internal explainers are outside the package files allowlist.
 /docs/explain
 /docs/ideation
 /docs/plans

@@ -771,7 +771,11 @@ function deriveVariantTable(
 		if (!Object.hasOwn(options.variants, tagValue))
 			throw new Error(`Missing variant configuration "${tagValue}"`)
 		const config = options.variants[tagValue]
-		assertOwnedFields(branch.shape, ['_id', '_creationTime', ...TIMESTAMP_FIELDS])
+		assertOwnedFields(branch.shape, [
+			'_id',
+			'_creationTime',
+			...(options.timestamps === false ? [] : TIMESTAMP_FIELDS),
+		])
 		const columns = { ...branch.shape } satisfies FieldSchemas
 		if (options.timestamps) Object.assign(columns, timestampFields)
 		assertFieldLists(
@@ -779,6 +783,7 @@ function deriveVariantTable(
 			config.serverFields ?? [],
 			config.commandFields ?? [],
 			config.publicFields ?? [],
+			options.timestamps !== false,
 		)
 		for (const mask of [config.serverFields, config.commandFields, config.publicFields]) {
 			if (mask?.includes(discriminator))
@@ -788,7 +793,10 @@ function deriveVariantTable(
 		}
 		const stored = z.strictObject(columns)
 		const insert = z.strictObject(
-			omitFields(columns, [...TIMESTAMP_FIELDS, ...(config.serverFields ?? [])]),
+			omitFields(columns, [
+				...(options.timestamps === false ? [] : TIMESTAMP_FIELDS),
+				...(config.serverFields ?? []),
+			]),
 		)
 		const command = z.strictObject(
 			pickFields(columns, [discriminator, ...(config.commandFields ?? [])]),
@@ -1069,11 +1077,12 @@ function assertFieldLists(
 	server: readonly string[],
 	command: readonly string[],
 	publicKeys: readonly string[],
+	managedTimestamps = true,
 ): void {
 	for (const key of [...server, ...command, ...publicKeys]) {
 		if (!Object.hasOwn(fields, key)) throw new Error(`Unknown table field "${key}"`)
 	}
-	const managed = new Set<string>([...TIMESTAMP_FIELDS, ...server])
+	const managed = new Set<string>([...(managedTimestamps ? TIMESTAMP_FIELDS : []), ...server])
 	for (const key of command) {
 		if (managed.has(key)) throw new Error(`Server-owned field "${key}" cannot be a command input`)
 	}

@@ -9,6 +9,7 @@ import {
 } from './fixture-querying/id-unions'
 
 import { createQueryEngine } from '../src/querying'
+import { defineRelations } from '../src/relations-public'
 import { ManagedReadError, type SecurityPolicyContext } from '../src/querying/security'
 import type { Rules } from '../src/tenancy'
 import type { IdUnionDM } from './fixture-querying/id-unions'
@@ -107,6 +108,61 @@ test('member guard prevents indexed union-to-union lookup on a nonmatching sourc
 		expect(page).toBeInstanceOf(Error)
 	})
 })
+
+test.each(['hydration', 'child'] as const)(
+	'source-only member guard avoids a singleton foreign-key index in %s',
+	async (mode) => {
+		const f = idUnionFixture(),
+			ids = await seedIdUnions(f)
+		f.tables.deals.table.index('by_clientId', ['clientId'])
+		const relations = defineRelations(f.tables, (r) => ({
+			tasks: {
+				clientDeals: r.many.deals({
+					from: r.tasks.rel.forTable('clients'),
+					to: r.deals.clientId,
+				}),
+			},
+		}))
+		const querying = createQueryEngine({ schema: f.schema, relations }, { cursor })
+		await f.t.run(async (ctx) => {
+			const o = f.context(ctx.db)
+			const page = await querying(o.ctx)
+				.tasks.with({ clientDeals: true })
+				.paginate({
+					numItems: 1,
+					cursor: null,
+					filters: { _id: ids.links[3] },
+				})
+			expect(page.page[0].clientDeals.page.map((row) => row._id)).toEqual([ids.targets.deals])
+			expect(o.counts.ranges).toBe(2)
+		})
+		if (mode === 'hydration')
+			await f.t.run(async (ctx) => {
+				const o = f.context(ctx.db)
+				const page = await querying(o.ctx)
+					.tasks.with({ clientDeals: true })
+					.paginate({
+						numItems: 1,
+						cursor: null,
+						filters: { _id: ids.links[0] },
+					})
+				expect(page.page[0].clientDeals.page).toEqual([])
+				expect(page.page[0].clientDeals.isDone).toBe(true)
+				expect(o.counts.ranges).toBe(1)
+			})
+		else
+			await f.t.run(async (ctx) => {
+				const o = f.context(ctx.db)
+				const page = await querying(o.ctx)
+					.tasks.relation(ids.links[0], 'clientDeals')
+					.paginate({ numItems: 1, cursor: null })
+				expect(page.page).toEqual([])
+				expect(page.isDone).toBe(true)
+				expect(o.counts.gets).toBe(1)
+				expect(o.counts.ranges).toBe(0)
+			})
+	},
+)
 
 test('union target guards and variant discriminator guards compose independently in both directions', async () => {
 	const f = idUnionFixture(),
@@ -361,6 +417,41 @@ test('finance/domain policies may require currently authorized clients and share
 			.payments.relation(ids.targets.payments, 'tasks')
 			.paginate({ numItems: 20, cursor: null })
 		expect(parent.page).toEqual([])
+	})
+})
+
+test('a finance policy dependency consumes the selected relation read budget', async () => {
+	const f = idUnionFixture(),
+		ids = await seedIdUnions(f)
+	const rules: Rules<SecurityPolicyContext<IdUnionDM>, IdUnionDM> = {
+		payments: {
+			read: async ({ db }, row) => row.allowed && !!(await db.get('clients', row.clientId)),
+		},
+	}
+	const input = { numItems: 1, cursor: null } as const
+	await f.t.run(async (ctx) => {
+		const o = f.context(ctx.db, scope, rules)
+		const page = await f
+			.querying(o.ctx)
+			.payments.relation(ids.targets.payments, 'tasks')
+			.paginate(input)
+		expect(page.page.map((row) => row._id)).toEqual([ids.links[6]])
+		expect(o.counts.gets).toBe(2)
+	})
+	const querying = createQueryEngine(
+		{ schema: f.schema, relations: f.relations },
+		{
+			cursor,
+			budgets: { readOperations: 1 },
+		},
+	)
+	await f.t.run(async (ctx) => {
+		const o = f.context(ctx.db, scope, rules)
+		await expect(
+			querying(o.ctx).payments.relation(ids.targets.payments, 'tasks').paginate(input),
+		).rejects.toMatchObject({ name: 'ManagedReadError', code: 'MANAGED_READ_BUDGET' })
+		expect(o.counts.gets).toBe(1)
+		expect(o.counts.closes).toBe(o.counts.ranges)
 	})
 })
 

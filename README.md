@@ -28,26 +28,47 @@ Supported versions: Convex `^1.46.0`, Zod `^4.5.4`, Bun `1.3+`, and Node.js
 
 ## Documentation
 
-Full docs ship with the package — `node_modules/cvx-kit/docs/` when installed,
-authored in [`src/docs/`](./src/docs/):
+Full docs live on [GitHub](https://github.com/ImRLopezAG/cvx-kit/tree/main/skills/cvx-kit/references)
+and are bundled with the repository's [agent skill](https://github.com/ImRLopezAG/cvx-kit/tree/main/skills/cvx-kit).
+The npm package includes this README; full docs and skills are installed separately.
 
-- [`architecture.md`](./src/docs/architecture.md) — the layered application shape the kit encodes
-- [`conventions.md`](./src/docs/conventions.md) — the doctrine: folder structure, file anatomy, naming grammar, import rules
-- [`zod-table.md`](./src/docs/zod-table.md) — one zod shape per entity, masked into every boundary
-- [`auth.md`](./src/docs/auth.md) — auth-aware function constructors from injected policy
-- [`commands.md`](./src/docs/commands.md) — Effect command declarations, lifecycle, and migration
-- [`effect.md`](./src/docs/effect.md) — opt-in Effect v4 registries, injected services, and shared API builders
-- [`domain-operations.md`](./src/docs/domain-operations.md) — server domain/API examples, contracts, errors, receipts, workflow steps, and selected tools
-- [`triggers.md`](./src/docs/triggers.md) — trigger registry, timestamps/append-only/no-delete
-- [`approvals.md`](./src/docs/approvals.md) — declarative approval workflows
-- [`tenancy.md`](./src/docs/tenancy.md) — row-level security (roles) with opt-in multi-tenant isolation
-- [`crud.md`](./src/docs/crud.md) — the CRUD command factory
-- [`webhooks.md`](./src/docs/webhooks.md) — the sanctioned webhook boundary
-- [`agent-tools.md`](./src/docs/agent-tools.md) — agent tools that are audited commands
-- [`upgrading.md`](./src/docs/upgrading.md) — 0.0.x → 0.1.0, old way → new way
-- [`maintainability.md`](./src/docs/maintainability.md) — keeping a Convex app maintainable long-term
-- [`migration.md`](./src/docs/migration.md) — restructuring an existing raw Convex project into this architecture
-- [`llms.md`](./src/docs/llms.md) — condensed reference to paste into an LLM/agent context
+If you use a coding agent, install the cvx-kit skill from your application directory:
+
+```sh
+npx skills add ImRLopezAG/cvx-kit --skill cvx-kit
+```
+
+The [skills CLI](https://www.skills.sh/docs) lets you choose your agent. Installation
+is project-scoped by default; add `--global` only for a user-wide install. Public
+GitHub installation needs no login. Preview available skills with
+`npx skills add ImRLopezAG/cvx-kit --list`.
+The skill reads the guides needed for each task instead of loading all docs.
+Check your installed package version against the skill's source revision before
+using newer APIs. For a release containing the skill, use its GitHub tag URL
+(`https://github.com/ImRLopezAG/cvx-kit/tree/<tag>/skills/cvx-kit`) as the install source.
+
+Maintainers edit `skills/cvx-kit/references/` directly. CI verifies that relative
+links remain inside the installed skill with `bun run skills:check`.
+
+Guides:
+
+- [`architecture.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/architecture.md) — the layered application shape the kit encodes
+- [`conventions.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/conventions.md) — the doctrine: folder structure, file anatomy, naming grammar, import rules
+- [`zod-table.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/zod-table.md) — one zod shape per entity, masked into every boundary
+- [`auth.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/auth.md) — auth-aware function constructors from injected policy
+- [`commands.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/commands.md) — Effect command declarations, lifecycle, and migration
+- [`effect.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/effect.md) — opt-in Effect v4 registries, injected services, and shared API builders
+- [`domain-operations.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/domain-operations.md) — server domain/API examples, contracts, errors, receipts, workflow steps, and selected tools
+- [`triggers.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/triggers.md) — trigger registry, timestamps/append-only/no-delete
+- [`approvals.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/approvals.md) — declarative approval workflows
+- [`tenancy.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/tenancy.md) — row-level security (roles) with opt-in multi-tenant isolation
+- [`crud.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/crud.md) — the CRUD command factory
+- [`webhooks.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/webhooks.md) — the sanctioned webhook boundary
+- [`agent-tools.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/agent-tools.md) — agent tools that are audited commands
+- [`upgrading.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/upgrading.md) — 0.0.x → 0.1.0, old way → new way
+- [`maintainability.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/maintainability.md) — keeping a Convex app maintainable long-term
+- [`migration.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration.md) — restructuring an existing raw Convex project into this architecture
+- [`llms.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/llms.md) — optional condensed reference for coding agents
 
 ## Modules
 
@@ -85,9 +106,9 @@ LLM-tool JSON schemas primitive while preserving the `Id<...>` type.
 
 ### `cvx-kit/relations` and `cvx-kit/querying`
 
-See the [querying guide](./src/docs/querying.md),
-[DTO parameters](./src/docs/zod-table.md#public-dto-parameters), and
-[consumer rule reference](./src/docs/oxlint.md#dto-and-pagination-diagnostics).
+See the [querying guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/querying.md),
+[DTO parameters](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/zod-table.md#public-dto-parameters), and
+[consumer rule reference](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/oxlint.md#dto-and-pagination-diagnostics).
 
 Declare relationships once in `convex/relations.ts`, then configure the engine
 once in `convex/querying.ts`. Both factories are also available from the package
@@ -131,7 +152,7 @@ One engine serves every registered table. Cursor keys load internally on first
 pagination from server environment variables `CVX_QUERY_CURSOR_KEYS_JSON`
 (key IDs mapped to 128-character hex secrets) and `CVX_QUERY_CURSOR_CURRENT_KEY_ID`.
 Keep key material out of arguments, client code, and logs. Optional overrides
-belong in a separate second argument; see [querying](src/docs/querying.md). The default codec
+belong in a separate second argument; see [querying](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/querying.md). The default codec
 uses authenticated AES-SIV encryption without a plaintext fallback; identical
 payloads under the same binding reveal equality. Tokens bind filters, selected
 output, index, order, relation ancestry, principal/tenant/security scope, and
@@ -324,12 +345,12 @@ export const executeRename = (input: z.input<typeof renameInput>, host: Host) =>
 services and execute it; domain code can compose `Effect.gen` and `Effect.fn`
 without starting another runner. Commands validate inputs and results, enforce
 permissions and guards, and write audit entries in the mutation transaction.
-See [commands](./src/docs/commands.md), [complete Effect wiring](./src/docs/effect.md),
-and [authenticated builders](./src/docs/auth.md).
+See [commands](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/commands.md), [complete Effect wiring](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/effect.md),
+and [authenticated builders](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/auth.md).
 
 The old `Foundation.Command` Promise facade is **deprecated** and retained for
 existing consumers. Its separate executor handler options are covered only in
-the [compatibility reference](./src/docs/commands-legacy.md). The Foundation
+the [compatibility reference](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/commands-legacy.md). The Foundation
 component and its transaction result helpers remain available.
 
 ### `cvx-kit/components/approvals` (component)
@@ -349,7 +370,7 @@ app.use(approvals)
 ## Application lint rules
 
 The TypeScript plugin `cvx-kit/oxlint` checks applications using the kit against
-[`conventions.md`](./src/docs/conventions.md). It targets `convex/`, including
+[`conventions.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/conventions.md). It targets `convex/`, including
 public adapters, domain modules, root facades, and locally authored components.
 Load it in your application's `.oxlintrc.json` and select rules:
 
@@ -390,11 +411,11 @@ module cycles. Run Oxlint on the whole backend, including `convex.config.ts`;
 changed-file-only lint cannot guarantee a project scan. No application-owned
 architecture test framework is required. The plugin also exports `checkArchitecture()`
 for tools that need project diagnostics directly, named `rules`, and `RuleName`. Verified with
-Oxlint 1.87.0 and Vite+ 1.1.0. See [rule coverage and limitations](./src/docs/oxlint.md)
-and the [migration from the initial 0.1.4 plugin](./src/docs/upgrading.md).
+Oxlint 1.87.0 and Vite+ 1.1.0. See [rule coverage and limitations](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/oxlint.md)
+and the [migration from the initial 0.1.4 plugin](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/upgrading.md).
 
 Repository checks and the enforced library rules are documented in
-[`tools/oxlint/README.md`](./tools/oxlint/README.md). Run `bun run lint` for
+[`tools/oxlint/README.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/tools/oxlint/README.md). Run `bun run lint` for
 anti-slop and architecture checks, `bun run test:lint` to test the custom
 rules, and `bun run check` for the full Vite+ lint and formatting check.
 
@@ -425,7 +446,7 @@ registerApprovals(t)
 ## Releasing
 
 Every release also creates a GitHub Release whose notes are the matching
-[CHANGELOG](./CHANGELOG.md) section (extracted by
+[CHANGELOG](https://github.com/ImRLopezAG/cvx-kit/blob/main/CHANGELOG.md) section (extracted by
 `scripts/extract-changelog.mjs` in the release workflow).
 
 ### OIDC setup
@@ -434,10 +455,10 @@ Publishing uses [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishe
 (OIDC) — no tokens stored anywhere. The release workflow authenticates via
 GitHub's OIDC and npm generates provenance attestations automatically.
 
-- `bun run release` — patch version bump, tag, and push; the `v*` tag
-  triggers `.github/workflows/release.yml`, which verifies (typecheck, test,
-  build + publint) and publishes.
-- `bun run release:minor` — same, minor bump.
+Merge the version bump and changelog into `main`, then wait for successful CI
+on that exact commit before pushing its `v<version>` tag. The tag triggers
+`.github/workflows/release.yml`, which checks the main CI result, builds and
+validates the package and skill documentation, and publishes to npm.
 
 One-time setup (already-published package required first):
 
@@ -449,10 +470,10 @@ One-time setup (already-published package required first):
 
 ## Roadmap
 
-See [ROADMAP.md](./ROADMAP.md) — milestones from 0.1.0 through 1.0.0.
+See [ROADMAP.md](https://github.com/ImRLopezAG/cvx-kit/blob/main/ROADMAP.md) — milestones from 0.1.0 through 1.0.0.
 
 Optional request context can be added through the existing Effect API adapter's
 `context` callback. Bind selected registries with `commands.withContext(value)`
 and consume `ctx.commands.exec(name, input)` through the application's existing
 function helper names. Keep dependencies local to each feature; explicit execution
-and input-only command handlers remain supported. See [optional context injection](./src/docs/command-context.md).
+and input-only command handlers remain supported. See [optional context injection](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/command-context.md).

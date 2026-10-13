@@ -17,7 +17,7 @@ const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-effect-'))
 const effectVersion = '4.0.1'
 const helpersVersion = '0.1.127'
 const nodeTypesVersion = '26.6.1'
-const domainGuidePath = join(root, 'src/docs/domain-operations.md')
+const domainGuidePath = join(root, 'skills/cvx-kit/references/domain-operations.md')
 const domainGuideImports = new Set([
 	'./fixture-effect/convex/_generated/api',
 	'./fixture-effect/convex/_generated/server',
@@ -27,12 +27,12 @@ const domainGuideImports = new Set([
 ])
 const extraTypeFixtures = [
 	join(root, 'README.md'),
-	join(root, 'src/docs/effect.md'),
-	join(root, 'src/docs/commands.md'),
-	join(root, 'src/docs/domain-contracts.md'),
-	join(root, 'src/docs/command-context.md'),
-	join(root, 'src/docs/commands-legacy.md'),
-	join(root, 'src/docs/auth.md'),
+	join(root, 'skills/cvx-kit/references/effect.md'),
+	join(root, 'skills/cvx-kit/references/commands.md'),
+	join(root, 'skills/cvx-kit/references/domain-contracts.md'),
+	join(root, 'skills/cvx-kit/references/command-context.md'),
+	join(root, 'skills/cvx-kit/references/commands-legacy.md'),
+	join(root, 'skills/cvx-kit/references/auth.md'),
 	domainGuidePath,
 	...process.argv.slice(2).map((path) => resolve(path)),
 ]

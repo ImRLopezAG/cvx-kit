@@ -45,6 +45,9 @@ jobs:
       - name: Build (vp pack + publint)
         run: bun run build
 
+      - name: Verify bundled skill documentation
+        run: bun run skills:check
+
       - name: Verify packed package contents
         run: bunx vp test run test/package-contents.test.mjs
 

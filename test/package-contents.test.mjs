@@ -22,6 +22,11 @@ const packedFiles = (() => {
 })()
 
 describe('packed Convex components', () => {
+	it('ships the README while keeping full documentation and skills on GitHub', () => {
+		expect(packedFiles).toContain('README.md')
+		expect(packedFiles.filter((file) => /^(docs|skills|scripts)\//.test(file))).toEqual([])
+		expect(packedFiles).not.toContain('AGENTS.md')
+	})
 	it('ships deliberate relations and querying facades', () => {
 		const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
 		for (const [path, stem] of [

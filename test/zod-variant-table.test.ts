@@ -155,11 +155,9 @@ describe('zodVariantTable boundaries', () => {
 		}
 	})
 
-	it('rejects relation registration until union query support exists', () => {
-		expect(() => {
-			// @ts-expect-error variant tables are not supported by object-only relations
-			defineRelations({ payments }, () => ({}))
-		}).toThrow(/variant|union/i)
+	it('registers generated variant boundaries without an object facade', () => {
+		const registry = defineRelations({ payments }, () => ({}))
+		expect(registry.tables.payments).toBeDefined()
 	})
 
 	it('rejects malformed branch masks and unsupported schemas at construction', () => {

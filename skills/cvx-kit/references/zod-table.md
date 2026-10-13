@@ -319,8 +319,12 @@ IDs and branch structure but do not enforce Zod field refinements such as
 positive integers; parse with Zod in the handler. Add authorization before the
 write as appropriate for the application.
 
-Variant tables are not supported by `defineRelations` or the query engine.
-Registration fails explicitly; use native Convex queries and DTO projection.
+The three-argument boundary works with `defineRelations` and the shared query
+engine. Common compatible fields use ordinary references; branch-specific
+references and predicates carry an explicit discriminator guard. See
+[Variant querying](./variant-querying.md) for registration, authenticated
+endpoints, mixed pages, and nested continuation. The legacy two-argument helper
+does not generate the document and public boundaries required by the registry.
 
 ## `jsonSafeZid` — Ids in LLM tool schemas
 

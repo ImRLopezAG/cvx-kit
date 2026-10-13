@@ -1,0 +1,94 @@
+import { z } from 'zod'
+import { v } from 'convex/values'
+import { createAuthFunctions } from 'cvx-kit/auth'
+import { zid } from 'cvx-kit/zod-table'
+import { zodToConvex } from 'convex-helpers/server/zod4'
+import { query, mutation, action, internalQuery, internalMutation, internalAction } from './_generated/server'
+import type { DataModel } from './_generated/dataModel'
+import { payments, ledger } from './schema'
+import { querying, relations, paymentOptions, paymentPage, clientPage, creditorPage, ledgerPage } from './relations'
+
+// Count policy entry, an observable native managed-read boundary. This is not physical I/O accounting.
+let creditorPolicyReads = 0
+const auth = createAuthFunctions<DataModel, 'finance' | 'reader'>({
+ query, mutation, action, internalQuery, internalMutation, internalAction,
+ getAuthUser: async ctx => { const identity = await ctx.auth.getUserIdentity(); return identity ? { id: identity.subject } : null },
+ mapRole: role => role === 'finance' || role === 'reader' ? role : null,
+ adminRoles: [],
+ security: { defaultPolicy: 'deny', rules: bundle => {
+  const active = async (ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }) =>
+   (await ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', bundle.user.id)).first())?.active === true
+  return {
+   members: { read: async () => true },
+   clients: { read: async (ctx, row) => row.allowed && await active(ctx), insert: async () => true },
+   creditors: { read: async (ctx, row) => { creditorPolicyReads++; return row.allowed && await active(ctx) }, insert: async () => true },
+   payments: { read: async (ctx, row) => bundle.role === 'finance' && row.allowed && await active(ctx), insert: async () => bundle.role === 'finance', modify: async (ctx, row) => bundle.role === 'finance' && row.allowed && await active(ctx) },
+   ledger: { read: async (ctx, row) => bundle.role === 'finance' && row.allowed && await active(ctx) },
+   attachments: { read: async (ctx, row) => row.allowed && await active(ctx) },
+   paymentAttachments: { read: async (ctx, row) => row.allowed && await active(ctx) },
+   audits: { read: async () => true, insert: async () => true },
+  }
+ } },
+})
+export const createPayment = auth.authMutation({ args: { input: payments.commandInput }, returns: zid('payments'), handler: async (ctx, { input }) => {
+ const now = Date.now()
+ const stored = payments.storage.parse({ ...input, allowed: true, external: 'PRIVATE-PROVIDER-EVIDENCE', createdAt: now, updatedAt: now })
+ return ctx.db.insert('payments', stored)
+} })
+export const updatePayment = auth.authMutation({ args: payments.tools.update.extend({ failAfterPersist: z.boolean().optional() }), returns: z.null(), handler: async (ctx, { id, data, failAfterPersist }) => {
+ // Wrapped get authorizes the current row before tag verification and full merge validation.
+ const row = await ctx.db.get('payments', id)
+ if (!row) throw new Error('PAYMENT_UNAVAILABLE')
+ if (row.type !== data.type) throw new Error('PAYMENT_TAG_MISMATCH')
+ const { _id, _creationTime, ...stored } = row
+ void _creationTime
+ const merged = payments.storage.parse({ ...stored, ...data, updatedAt: Date.now() })
+ await ctx.db.replace('payments', _id, merged)
+ await ctx.db.insert('audits', { paymentId: id, operation: 'update' })
+ if (failAfterPersist) throw new Error('FIXTURE_ATOMIC_FAILURE')
+ return null
+} })
+export const list = auth.authQuery({ args: paymentOptions, returns: paymentPage, handler: async (ctx, args) =>
+ paymentPage.parse(await querying(ctx).payments.with({ client: true, creditor: true, attachments: true }).paginate(args)) })
+export const plain = auth.authQuery({ args: paymentOptions, returns: relations.tables.payments.pageDto({}), handler: (ctx, args) => querying(ctx).payments.paginate(args) })
+export const byClient = auth.authQuery({ args: paymentOptions.extend({ parent: zid('clients') }), returns: paymentPage, handler: async (ctx, { parent, ...args }) =>
+ paymentPage.parse(await querying(ctx).clients.relation(parent, 'payments').with({ client: true, creditor: true, attachments: true }).paginate(args)) })
+export const clientsPage = auth.authQuery({ args: relations.tables.clients.paginationOpts({ name: true }), returns: clientPage, handler: async (ctx, args) => clientPage.parse(await querying(ctx).clients.with({ payments: { creditor: true } }).paginate(args)) })
+export const creditorsPage = auth.authQuery({ args: relations.tables.creditors.paginationOpts({ name: true }), returns: creditorPage, handler: async (ctx, args) => creditorPage.parse(await querying(ctx).creditors.with({ payments: { client: true } }).paginate(args)) })
+export const ledgerList = auth.authQuery({ args: relations.tables.ledger.paginationOpts({ type: true }), returns: ledgerPage, handler: async (ctx, args) => ledgerPage.parse(await querying(ctx).ledger.with({ client: true, payment: { creditor: true } }).paginate(args)) })
+export const draftGuard = auth.authQuery({ args: paymentOptions, returns: z.object({ result: paymentPage, creditorPolicyReads: z.number() }), handler: async (ctx, args) => {
+ creditorPolicyReads = 0
+ const result = paymentPage.parse(await querying(ctx).payments.with({ client: true, creditor: true, attachments: true }).where({ type: 'client_draft' }).paginate(args))
+ return { result, creditorPolicyReads }
+} })
+export const unmanaged = query({ args: {}, returns: zodToConvex(relations.tables.payments.pageDto({})), handler: ctx => querying(ctx).payments.paginate({ numItems: 2, cursor: null }) })
+// Native-only fixture setup/observer. Never used as a substitute for shared-engine reads.
+export const setup = internalMutation({ args: {}, returns: v.object({ client: v.id('clients'), hiddenClient: v.id('clients'), creditor: v.id('creditors'), hiddenCreditor: v.id('creditors') }), handler: async ctx => {
+ const client = await ctx.db.insert('clients', { name: 'client', allowed: true })
+ const hiddenClient = await ctx.db.insert('clients', { name: 'hidden-client', allowed: false })
+ const creditor = await ctx.db.insert('creditors', { name: 'creditor', allowed: true })
+ const hiddenCreditor = await ctx.db.insert('creditors', { name: 'hidden-creditor', allowed: false })
+ for (const principal of ['alice', 'bob']) await ctx.db.insert('members', { principal, active: true })
+ return { client, hiddenClient, creditor, hiddenCreditor }
+} })
+export const mark = internalMutation({ args: { id: v.id('payments'), allowed: v.boolean() }, returns: v.null(), handler: async (ctx, args) => { await ctx.db.patch('payments', args.id, { allowed: args.allowed }); return null } })
+export const extras = internalMutation({ args: { payment: v.id('payments'), client: v.id('clients') }, returns: v.null(), handler: async (ctx, args) => {
+ for (const [name, targetAllowed, junctionAllowed] of [['visible', true, true], ['hidden-target', false, true], ['hidden-junction', true, false]] satisfies [string, boolean, boolean][]) {
+  const attachmentId = await ctx.db.insert('attachments', { name, allowed: targetAllowed, evidence: 'PRIVATE-ATTACHMENT-EVIDENCE' })
+  await ctx.db.insert('paymentAttachments', { paymentId: args.payment, attachmentId, allowed: junctionAllowed })
+ }
+ for (const input of [{ type: 'payment', clientId: args.client, paymentId: args.payment, amountCents: 1 }, { type: 'payment', amountCents: 2 }, { type: 'adjustment', reason: 'fixture', amountCents: 3 }]) {
+  const command = ledger.commandInput.parse(input)
+  await ctx.db.insert('ledger', ledger.storage.parse({ ...command, allowed: true, evidence: 'PRIVATE-LEDGER-EVIDENCE' }))
+ }
+ return null
+} })
+export const revoke = internalMutation({ args: { principal: v.string(), active: v.boolean() }, returns: v.null(), handler: async (ctx, args) => {
+ const row = await ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', args.principal)).unique()
+ if (!row) throw new Error('MISSING_FIXTURE_MEMBER')
+ await ctx.db.patch('members', row._id, { active: args.active })
+ return null
+} })
+export const state = internalQuery({ args: { id: v.id('payments') }, returns: v.object({ row: v.union(v.null(), zodToConvex(payments.schema)), audits: v.array(v.object({ _id: v.id('audits'), _creationTime: v.number(), paymentId: v.id('payments'), operation: v.string() })) }), handler: async (ctx, { id }) => ({ row: await ctx.db.get('payments', id), audits: await ctx.db.query('audits').withIndex('by_payment', q => q.eq('paymentId', id)).take(10) }) })
+// Native validators admit number refinements; use deliberate invalid storage to prove full merged validation.
+export const corruptAmount = internalMutation({ args: { id: v.id('payments') }, returns: v.null(), handler: async (ctx, { id }) => { await ctx.db.patch('payments', id, { amountCents: -1 }); return null } })

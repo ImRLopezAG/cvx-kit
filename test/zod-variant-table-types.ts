@@ -97,7 +97,6 @@ zodVariantTable('payments', storage, {
 })
 // @ts-expect-error mismatched discriminator
 zodVariantTable('payments', storage, { discriminator: 'type', variants })
-// @ts-expect-error query and relation APIs remain object-only
 defineRelations({ payments: table }, () => ({}))
 
 const timestamped = zodVariantTable('payments', storage, {

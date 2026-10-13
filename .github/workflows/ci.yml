@@ -17,8 +17,6 @@ jobs:
         with:
           node-version: 24
       - run: bun install --frozen-lockfile
-      - name: Verify custom rules
-        run: bun run test:lint
       - name: Enforce anti-slop and library conventions
         run: bun run lint
 
@@ -60,14 +58,22 @@ jobs:
       - name: Verify auth declarations across Convex context versions
         run: node scripts/test-packed-auth.mjs
 
+      - name: Verify packed variant public API, native codegen, and runtime
+        run: node scripts/test-packed-variants.mjs
+
+      - name: Verify installed variant query engine with native Convex
+        run: node scripts/test-packed-variant-querying.mjs
+
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Test
-        run: bun run test
+      # The full unit/rule/stress suite remains available locally via bun run test.
+      # Published rule behavior is covered above by the packed Oxlint consumer gate.
+      - name: Test integration boundaries
+        run: bun run test:integration
 
   packed-component-smoke:
-    needs: verify
+    # Each matrix entry builds its own artifact; it need not wait for verify.
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

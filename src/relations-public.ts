@@ -2,6 +2,7 @@
 export {
 	defineRelations,
 	type FieldReference,
+	type BranchBuilder,
 	type ThroughReference,
 	type RelationEdge,
 	type RelationBuilder,

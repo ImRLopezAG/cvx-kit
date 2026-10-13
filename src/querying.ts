@@ -9,7 +9,7 @@ import type {
 	RelationTables,
 	RelationDeclarations,
 	RelationRegistry,
-	RelationRow,
+	RelationQueryRow,
 	RelationSelection,
 	RelationFilters,
 	RelationFilterSelection,
@@ -37,7 +37,9 @@ import {
 import type { IndexCondition, NativePagination } from './querying/filters'
 
 type FullMask<S> = {
-	[K in keyof S]-?: NonNullable<S[K]> extends true ? true : FullMask<NonNullable<S[K]>>
+	[K in keyof S]-?: NonNullable<S[K]> extends true
+		? true
+		: FullMask<Exclude<NonNullable<S[K]>, true>>
 }
 type Paths<
 	D extends RelationDeclarations,
@@ -57,6 +59,13 @@ type PathTarget<
 > = P extends `${infer Head}.${infer Rest}`
 	? PathTarget<D, D[T][Head]['target'], Rest>
 	: D[T][P]['target']
+type PathScope<
+	D extends RelationDeclarations,
+	T extends string,
+	P extends string,
+> = P extends `${infer Head}.${infer Rest}`
+	? PathScope<D, D[T][Head]['target'], Rest>
+	: Extract<NonNullable<D[T][P]['targetGuard']>['tag'], string>
 type RemainingDepth<P extends string, L extends readonly 1[]> = L extends readonly [
 	1,
 	...infer Rest extends 1[],
@@ -80,16 +89,19 @@ export interface TableQuery<
 	T extends keyof Tables,
 	S = {},
 	L extends readonly 1[] = [1, 1, 1, 1],
+	Scope extends string = never,
 > {
-	when(value: IndexCondition['value'], index: string): TableQuery<Tables, D, T, S, L>
-	where(spec: NonNullable<EngineArgs<Tables, D, T>['filters']>): TableQuery<Tables, D, T, S, L>
+	when(value: IndexCondition['value'], index: string): TableQuery<Tables, D, T, S, L, Scope>
+	where(
+		spec: NonNullable<EngineArgs<Tables, D, T>['filters']>,
+	): TableQuery<Tables, D, T, S, L, Scope>
 	with<const Selection extends RelationSelection<Tables, D, T, L>>(
 		selection: Selection & {
 			[K in keyof Selection]: K extends keyof RelationSelection<Tables, D, T, L>
 				? Selection[K]
 				: never
 		},
-	): TableQuery<Tables, D, T, Selection, L>
+	): TableQuery<Tables, D, T, Selection, L, Scope>
 	relation<const P extends Paths<D, Extract<T, string>>>(
 		parent: GenericId<Tables[T]['tableName']>,
 		path: P,
@@ -99,11 +111,14 @@ export interface TableQuery<
 			D,
 			Extract<PathTarget<D, Extract<T, string>, P>, keyof Tables>,
 			{},
-			RemainingDepth<P, L>
+			RemainingDepth<P, L>,
+			PathScope<D, Extract<T, string>, P>
 		>,
 		'relation'
 	>
-	paginate(args: EngineArgs<Tables, D, T>): Promise<PaginationResult<RelationRow<Tables, D, T, S>>>
+	paginate(
+		args: EngineArgs<Tables, D, T>,
+	): Promise<PaginationResult<RelationQueryRow<Tables, D, T, S, Scope>>>
 }
 export interface QueryEngineDeclaration<
 	Schema extends SchemaDefinition<GenericSchema, boolean>,

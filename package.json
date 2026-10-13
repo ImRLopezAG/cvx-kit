@@ -1,6 +1,6 @@
 {
 	"name": "cvx-kit",
-	"version": "0.1.16",
+	"version": "0.1.17",
 	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
 	"keywords": [
 		"component",
@@ -143,9 +143,11 @@
 		"build": "vp pack && node scripts/convex-config-bridge.mjs && publint",
 		"typecheck": "tsc --noEmit",
 		"test": "vp test run --exclude test/package-contents.test.mjs",
+		"test:integration": "node scripts/test-ci-integration.mjs",
 		"test:package": "bun run build && vp test run test/package-contents.test.mjs",
 		"test:package:ids": "bun run build && node scripts/test-packed-ids.mjs",
 		"test:package:variants": "bun run build && node scripts/test-packed-variants.mjs",
+		"test:package:variant-querying": "bun run build && node scripts/test-packed-variant-querying.mjs",
 		"test:package:oxlint": "bun run build && node scripts/test-packed-oxlint.mjs",
 		"test:package:effect": "bun run build && node scripts/test-packed-effect.mjs",
 		"test:package:auth": "bun run build && node scripts/test-packed-auth.mjs",

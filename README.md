@@ -132,12 +132,18 @@ export const relations = defineRelations({ tasks, labels, edges }, (r) => ({
 }))
 ```
 
-The tables must be object-shaped `zodTable` or `tenantTable` boundaries, with
+The tables can be `zodTable`, `tenantTable`, or three-argument `zodVariantTable` boundaries, with
 indexes supporting each declared lookup. Names can distinguish multiple edges
 to the same table; references can point to the same table. A one edge returns a
 public DTO or `null`. A many edge returns a bounded native page. Junction output
 preserves duplicate edge occurrences, even when target reads are memoized.
 Missing and unreadable targets have the same public result.
+
+Variant tables keep their discriminated public unions. Use the relation callback's
+second argument, `branch('payments', 'creditor_payment').creditorId`, for a
+branch-specific reference; its tag is checked before lookup. See the
+[variant querying guide](skills/cvx-kit/references/variant-querying.md) for the
+complete authenticated flow and branch filter syntax.
 
 ```ts
 // convex/querying.ts
@@ -209,7 +215,7 @@ many reads. Application/helper accounting does not measure physical platform I/O
 Kit auth query contexts carry the engine's private read capability. Unknown
 contexts fail closed unless a centrally configured trusted adapter attests their
 query reader, effective policy, and security scope. Mutation/action contexts,
-variant tables, search/vector optimization, arbitrary predicates/projections,
+search/vector optimization, arbitrary predicates/projections,
 and custom sorts are outside this API.
 
 For manual projection, `tasks.toPublicDto(row)` still omits IDs and unselected

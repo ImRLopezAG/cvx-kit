@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { zodToConvex, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
+import { zodToConvex, convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
 import type { TableDefinition, PaginationResult } from 'convex/server'
 import {
 	v,
@@ -20,11 +20,11 @@ import {
 	type ScalarPredicate,
 } from './querying/filters'
 
-/** Object table boundaries only. Runtime metadata comes from native validators/export. */
+/** Generated object or discriminated-union boundaries. */
 export interface RelationTable {
 	tableName: string
-	schema: z.ZodObject
-	publicDto: z.ZodObject
+	schema: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
+	publicDto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
 	table: TableDefinition
 	dto(includeId: true): z.ZodType
 }
@@ -33,7 +33,71 @@ export type RelationTables = Record<string, RelationTable>
 export interface SelectionMask {
 	[key: string]: true | SelectionMask
 }
-type Fields<T extends RelationTable> = T['schema']['shape']
+type DocumentFields<S> =
+	S extends z.ZodObject<infer F>
+		? F
+		: S extends z.ZodDiscriminatedUnion<infer O, string>
+			? O[number] extends infer B
+				? B extends z.ZodObject<infer F>
+					? F
+					: never
+				: never
+			: never
+type AllKeys<F> = F extends unknown ? keyof F : never
+type FieldAt<F, K extends PropertyKey> = F extends unknown
+	? K extends keyof F
+		? F[K]
+		: never
+	: never
+type NativeDomain<V> = V extends { kind: 'union'; members: infer M extends GenericValidator[] }
+	? NativeDomain<M[number]>
+	: V extends { kind: 'null' }
+		? never
+		: V extends { kind: infer K; type: infer Value }
+			? readonly [K, Exclude<Value, undefined>]
+			: never
+type DomainAt<F, K extends PropertyKey> = F extends unknown
+	? K extends keyof F
+		? F[K] extends z.ZodType
+			? NativeDomain<ConvexValidatorFromZod<F[K], 'required'>>
+			: never
+		: never
+	: never
+type CompatibleBranches<F, K extends keyof F, Domain = DomainAt<F, K>> = F extends unknown
+	? Same<DomainAt<F, K>, Domain>
+	: never
+type Discriminator<T extends RelationTable> =
+	T['schema'] extends z.ZodDiscriminatedUnion<any, string>
+		? T['schema']['_zod']['def']['discriminator']
+		: never
+type Fields<
+	T extends RelationTable,
+	F = DocumentFields<T['schema']>,
+> = string extends T['tableName']
+	? FieldSchemas
+	: T['schema'] extends z.ZodObject<infer ObjectFields>
+		? { [K in keyof ObjectFields]: Extract<ObjectFields[K], z.ZodType> }
+		: {
+				[
+					K in Extract<keyof F, string> as K extends Discriminator<T>
+						? K
+						: false extends CompatibleBranches<F, K>
+							? never
+							: K
+				]: Extract<FieldAt<F, K>, z.ZodType>
+			}
+type BranchFields<T extends RelationTable, Tag extends string> =
+	DocumentFields<T['schema']> extends infer F
+		? F extends Record<Discriminator<T>, z.ZodType>
+			? Tag extends z.output<F[Discriminator<T>]>
+				? F
+				: never
+			: never
+		: never
+type Tags<T extends RelationTable> =
+	T['schema'] extends z.ZodDiscriminatedUnion<any, string>
+		? Extract<z.output<T['schema']>[Discriminator<T>], string>
+		: never
 type Native<T extends RelationTable, K extends keyof Fields<T>> = ConvexValidatorFromZod<
 	Fields<T>[K],
 	'required'
@@ -49,25 +113,36 @@ type Same<A, B> = [Comparable<A> | Comparable<B>] extends [never]
 			: false
 		: false
 
-export interface FieldReference<Table extends string, Field extends string, Value> {
+export interface FieldReference<
+	Table extends string,
+	Field extends string,
+	Value,
+	Scope extends string = never,
+> {
+	readonly guard?: RelationGuard<Scope>
 	readonly [fieldBrand]: Value
 	readonly table: Table
 	readonly field: Field
 	through<J extends AnyField>(
 		junction: J & (Same<Value, J[typeof fieldBrand]> extends true ? {} : never),
-	): ThroughReference<Table, Field, Value, J>
+	): ThroughReference<Table, Field, Value, J, Scope>
 }
-type AnyField = FieldReference<string, string, any>
+export interface RelationGuard<Tag extends string = string> {
+	readonly discriminator: string
+	readonly tag: Tag
+}
+type AnyField = FieldReference<string, string, any, any>
 export interface ThroughReference<
 	Table extends string,
 	Field extends string,
 	Value,
 	Junction extends AnyField,
+	Scope extends string = never,
 > {
-	readonly base: FieldReference<Table, Field, Value>
+	readonly base: FieldReference<Table, Field, Value, Scope>
 	readonly junction: Junction
 }
-type AnyThrough = ThroughReference<string, string, any, AnyField>
+type AnyThrough = ThroughReference<string, string, any, AnyField, any>
 type Leg = AnyField | AnyThrough
 type Base<L extends Leg> = L extends AnyThrough ? L['base'] : L
 type JunctionTable<L extends Leg> = L extends AnyThrough ? L['junction']['table'] : never
@@ -87,7 +162,12 @@ export interface RelationEdge<
 	Source extends string,
 	Target extends string,
 	Cardinality extends 'one' | 'many',
+	SourceScope extends string = never,
+	TargetScope extends string = never,
 > {
+	readonly sourceGuard?: RelationGuard<SourceScope>
+	readonly targetGuard?: RelationGuard<TargetScope>
+	readonly junctionGuard?: RelationGuard
 	readonly [edgeBrand]: true
 	readonly source: Source
 	readonly target: Target
@@ -95,7 +175,7 @@ export interface RelationEdge<
 	readonly from: Leg
 	readonly to: Leg
 }
-type AnyEdge = RelationEdge<string, string, 'one' | 'many'>
+type AnyEdge = RelationEdge<string, string, 'one' | 'many', any, any>
 type FieldReferences<Tables extends RelationTables> = {
 	[T in keyof Tables]: {
 		[K in Extract<keyof Fields<Tables[T]>, string>]: FieldReference<
@@ -105,18 +185,34 @@ type FieldReferences<Tables extends RelationTables> = {
 		>
 	}
 }
+export type BranchBuilder<Tables extends RelationTables> = <
+	const T extends keyof Tables & string,
+	const Tag extends Tags<Tables[T]>,
+>(
+	table: T,
+	tag: Tag,
+) => {
+	[K in keyof BranchFields<Tables[T], Tag> & string]: FieldReference<
+		T,
+		K,
+		ConvexValidatorFromZod<Extract<BranchFields<Tables[T], Tag>[K], z.ZodType>, 'required'>['type'],
+		Tag
+	>
+}
+type Scope<L extends Leg> = NonNullable<Base<L>['guard']>['tag']
 type AllReferences<Tables extends RelationTables> = {
 	[T in keyof Tables]: FieldReferences<Tables>[T][Extract<keyof FieldReferences<Tables>[T], string>]
 }[keyof Tables]
 type Builders<Tables extends RelationTables, C extends 'one' | 'many'> = {
 	[T in keyof Tables]: <
-		F extends AllReferences<Tables> | AnyThrough,
+		F extends AllReferences<Tables> | AnyField | AnyThrough,
 		To extends
 			| FieldReferences<Tables>[T][Extract<keyof FieldReferences<Tables>[T], string>]
+			| AnyField
 			| AnyThrough,
 	>(
 		spec: { from: F; to: To } & CompatibleLegs<F, To> & (Base<To>['table'] extends T ? {} : never),
-	) => RelationEdge<Base<F>['table'], Extract<T, string>, C>
+	) => RelationEdge<Base<F>['table'], Extract<T, string>, C, Scope<F>, Scope<To>>
 }
 export type RelationBuilder<Tables extends RelationTables> = FieldReferences<Tables> & {
 	one: Builders<Tables, 'one'>
@@ -127,12 +223,13 @@ type ExactDeclarations<Tables extends RelationTables, D extends RelationDeclarat
 	[T in keyof D]: T extends keyof Tables
 		? {
 				[K in keyof D[T]]: K extends
-					| keyof Fields<Tables[T]>
+					| AllKeys<DocumentFields<Tables[T]['schema']>>
 					| 'and'
 					| 'or'
 					| 'not'
 					| 'fields'
 					| 'then'
+					| ([Tags<Tables[T]>] extends [never] ? never : 'variant' | 'variants')
 					| '__proto__'
 					| 'constructor'
 					| 'prototype'
@@ -159,12 +256,31 @@ export type RelationSelection<
 				| true
 				| RelationSelection<Tables, D, Extract<Target<Edges<D, T>[K]>, keyof Tables>, Tail<Level>>
 		}
+type BranchTables<Tables extends RelationTables, T extends keyof Tables, Tag extends string> = {
+	[K in keyof Tables]: K extends T
+		? Omit<Tables[K], 'schema'> & { schema: z.ZodObject<BranchFields<Tables[T], Tag>> }
+		: Tables[K]
+}
+type VariantSelections<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+	Level extends readonly 1[],
+> = {
+	[Tag in Tags<Tables[T]>]?: RelationFilterSelection<BranchTables<Tables, T, Tag>, D, T, Level>
+}
 export type RelationFilterSelection<
 	Tables extends RelationTables,
 	D extends RelationDeclarations,
 	T extends keyof Tables,
 	Level extends readonly 1[] = Depth,
-> = ScalarSelection<Fields<Tables[T]>> &
+> = ([Tags<Tables[T]>] extends [never]
+	? ScalarSelection<Fields<Tables[T]>>
+	: Omit<ScalarSelection<Fields<Tables[T]>>, 'variants'> & {
+			variants?:
+				| ('variants' extends keyof ScalarSelection<Fields<Tables[T]>> ? true : never)
+				| VariantSelections<Tables, D, T, Level>
+		}) &
 	(Level extends readonly []
 		? {}
 		: {
@@ -197,17 +313,39 @@ type ExactFilterMask<
 	S,
 	L extends readonly 1[] = Depth,
 > = S & {
-	[K in keyof S]: K extends keyof ScalarSelection<Fields<Tables[T]>>
+	[K in keyof S]: K extends ([Tags<Tables[T]>] extends [never] ? never : 'variants')
 		? S[K] extends true
-			? true
-			: never
-		: L extends readonly []
-			? never
-			: K extends keyof Edges<D, T>
-				? S[K] extends true
-					? never
-					: ExactFilterMask<Tables, D, Extract<Target<Edges<D, T>[K]>, keyof Tables>, S[K], Tail<L>>
+			? K extends keyof ScalarSelection<Fields<Tables[T]>>
+				? true
 				: never
+			: S[K] & {
+					[Tag in keyof S[K]]: Tag extends Tags<Tables[T]>
+						? ExactFilterMask<
+								BranchTables<Tables, T, Extract<Tag, string>>,
+								D,
+								T,
+								S[K][Tag],
+								Tail<L>
+							>
+						: never
+				}
+		: K extends keyof ScalarSelection<Fields<Tables[T]>>
+			? S[K] extends true
+				? true
+				: never
+			: L extends readonly []
+				? never
+				: K extends keyof Edges<D, T>
+					? S[K] extends true
+						? never
+						: ExactFilterMask<
+								Tables,
+								D,
+								Extract<Target<Edges<D, T>[K]>, keyof Tables>,
+								S[K],
+								Tail<L>
+							>
+					: never
 }
 type ScalarValues<T extends RelationTable, S, Side extends 'input' | 'output'> = {
 	[K in Extract<keyof S, keyof Fields<T>>]?: ScalarPredicate<Fields<T>[K], Side>
@@ -219,15 +357,21 @@ export type RelationFilters<
 	S,
 	Side extends 'input' | 'output' = 'output',
 	Level extends readonly 1[] = Depth,
-> = Omit<ScalarValues<Tables[T], S, Side>, 'and' | 'or' | 'not' | 'fields'> & {
+> = Omit<
+	ScalarValues<Tables[T], S, Side>,
+	'and' | 'or' | 'not' | 'fields' | ([Tags<Tables[T]>] extends [never] ? never : 'variant')
+> & {
 	fields?: ScalarValues<Tables[T], S, Side>
-} & (Level extends readonly []
+} & VariantFilters<Tables, D, T, S, Side, Level> &
+	(Level extends readonly []
 		? {}
 		: {
 				[K in Extract<keyof S, keyof Edges<D, T>>]?: Edges<D, T>[K] extends RelationEdge<
 					string,
 					infer Target,
-					infer C
+					infer C,
+					any,
+					any
 				>
 					? C extends 'one'
 						? RelationFilters<
@@ -261,45 +405,119 @@ export type RelationFilters<
 								  }
 					: never
 			} & {
-				and?: RelationFilters<Tables, D, T, S, Side, Tail<Level>>[]
-				or?: RelationFilters<Tables, D, T, S, Side, Tail<Level>>[]
+				and?: readonly RelationFilters<Tables, D, T, S, Side, Tail<Level>>[]
+				or?: readonly RelationFilters<Tables, D, T, S, Side, Tail<Level>>[]
 				not?: RelationFilters<Tables, D, T, S, Side, Tail<Level>>
 			})
+type VariantFilters<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+	S,
+	Side extends 'input' | 'output',
+	L extends readonly 1[],
+> = L extends readonly []
+	? {}
+	: S extends { variants: infer V }
+		? V extends true
+			? {}
+			: {
+					variant?: {
+						[Tag in keyof V]: Tag extends Tags<Tables[T]>
+							? {
+									tag: Tag
+									filters: RelationFilters<
+										BranchTables<Tables, T, Extract<Tag, string>>,
+										D,
+										T,
+										V[Tag] & Omit<S, 'variants'>,
+										Side,
+										Tail<L>
+									>
+								}
+							: never
+					}[keyof V]
+				}
+		: {}
 type PublicRow<T extends RelationTable> = z.output<T['publicDto']> & {
 	_id: GenericId<T['tableName']>
 }
+export type ScopedRelationRow<Row, Scope extends string, Key extends PropertyKey> = [
+	Scope,
+] extends [never]
+	? Row
+	: Extract<Row, Record<Key, Scope>>
+type ComposeRelationRow<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+	S,
+	Level extends readonly 1[],
+	Row,
+> = Row extends unknown
+	? Row &
+			(Level extends readonly []
+				? {}
+				: {
+						[K in keyof S]: K extends keyof Edges<D, T>
+							? Edges<D, T>[K] extends RelationEdge<
+									string,
+									infer Target,
+									infer C,
+									infer SourceScope,
+									infer TargetScope
+								>
+								? C extends 'one'
+									? (
+											[SourceScope] extends [never]
+												? true
+												: Row extends ScopedRelationRow<Row, SourceScope, Discriminator<Tables[T]>>
+													? true
+													: false
+										) extends true
+										? ScopedRelationRow<
+												RelationRow<
+													Tables,
+													D,
+													Extract<Target, keyof Tables>,
+													S[K] extends true ? {} : S[K],
+													Tail<Level>
+												>,
+												TargetScope,
+												Discriminator<Tables[Extract<Target, keyof Tables>]>
+											> | null
+										: null
+									: PaginationResult<
+											ScopedRelationRow<
+												RelationRow<
+													Tables,
+													D,
+													Extract<Target, keyof Tables>,
+													S[K] extends true ? {} : S[K],
+													Tail<Level>
+												>,
+												TargetScope,
+												Discriminator<Tables[Extract<Target, keyof Tables>]>
+											>
+										>
+								: never
+							: never
+					})
+	: never
 export type RelationRow<
 	Tables extends RelationTables,
 	D extends RelationDeclarations,
 	T extends keyof Tables,
 	S,
 	Level extends readonly 1[] = Depth,
-> = PublicRow<Tables[T]> &
-	(Level extends readonly []
-		? {}
-		: {
-				[K in keyof S]: K extends keyof Edges<D, T>
-					? Edges<D, T>[K] extends RelationEdge<string, infer Target, infer C>
-						? C extends 'one'
-							? RelationRow<
-									Tables,
-									D,
-									Extract<Target, keyof Tables>,
-									S[K] extends true ? {} : S[K],
-									Tail<Level>
-								> | null
-							: PaginationResult<
-									RelationRow<
-										Tables,
-										D,
-										Extract<Target, keyof Tables>,
-										S[K] extends true ? {} : S[K],
-										Tail<Level>
-									>
-								>
-						: never
-					: never
-			})
+> = ComposeRelationRow<Tables, D, T, S, Level, PublicRow<Tables[T]>>
+export type RelationQueryRow<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+	S,
+	Scope extends string = never,
+> = ScopedRelationRow<RelationRow<Tables, D, T, S>, Scope, Discriminator<Tables[T]>>
 export interface RelationTableHelpers<
 	Tables extends RelationTables,
 	D extends RelationDeclarations,
@@ -334,12 +552,18 @@ export interface RelationFieldMetadata {
 }
 export interface RelationTableMetadata {
 	readonly fields: Readonly<Record<string, RelationFieldMetadata>>
+	readonly variant?: { readonly discriminator: string; readonly tags: readonly string[] }
 	readonly indexes: readonly { readonly name: string; readonly fields: readonly string[] }[]
 }
 interface TableMetadata {
 	fields: Record<string, GenericValidator>
 	indexes: { name: string; fields: string[] }[]
-	dto: z.ZodObject
+	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
+	branches?: {
+		discriminator: string
+		options: Record<string, { fields: Record<string, GenericValidator>; dto: z.ZodObject }>
+	}
+	allFields: ReadonlySet<string>
 	assertUnchanged(): void
 }
 interface RegistryMetadata {
@@ -375,60 +599,78 @@ export function defineRelations<
 	const D extends RelationDeclarations,
 >(
 	tables: Tables,
-	declare: (r: RelationBuilder<Tables>) => D & ExactDeclarations<Tables, D>,
+	declare: (
+		r: RelationBuilder<Tables>,
+		branch: BranchBuilder<Tables>,
+	) => D & ExactDeclarations<Tables, D>,
 ): RelationRegistry<Tables, D> {
 	const metadata: Record<string, TableMetadata> = {}
 	const ownRefs = new Set<AnyField>()
+	const branchRefs = new Map<string, Record<string, AnyField>>()
 	const fields: Record<string, Record<string, AnyField>> = {}
 	const one: Record<string, (spec: { from: Leg; to: Leg }) => AnyEdge> = {}
 	const many: Record<string, (spec: { from: Leg; to: Leg }) => AnyEdge> = {}
 	for (const [name, table] of Object.entries(tables)) {
-		if (table.schema instanceof z.ZodUnion)
-			throw new Error('Variant tables are not supported by relations or the query engine')
 		if (
 			table.tableName !== name ||
 			['one', 'many', '__proto__', 'constructor', 'prototype'].includes(name)
 		)
 			throw new Error(`Invalid relation table "${name}"`)
 		const dto = table.dto(true)
-		if (!(dto instanceof z.ZodObject)) throw new Error('Expected object DTO')
+		if (!(dto instanceof z.ZodObject) && !(dto instanceof z.ZodDiscriminatedUnion))
+			throw new Error('Expected object or discriminated union DTO')
 		const assertUnchanged = dtoMutationGuard(dto)
-		const native = zodToConvex(table.schema)
 		const exported = nativeTableExport(table.table)
 		assertNativeValidation(exported.documentType)
-		assertStoredDocument(name, native.fields, exported.documentType)
+		const normalized = normalizeTable(name, table.schema, dto, exported.documentType)
 		const indexes = indexExport
 			.parse(exported)
 			.indexes.map((index) => ({ name: index.indexDescriptor, fields: [...index.fields] }))
 			.sort((a, b) => a.name.localeCompare(b.name))
 		assertNativeValidation(nativeJson(zodToConvex(dto)))
-		metadata[name] = { fields: native.fields, indexes, dto, assertUnchanged }
-		const tableRefs: Record<string, AnyField> = Object.create(null)
-		for (const [field, validator] of Object.entries(native.fields)) {
-			const ref: AnyField = {
-				[fieldBrand]: undefined,
-				table: name,
-				field,
-				through<J extends AnyField>(
-					junction: J & (Same<any, J[typeof fieldBrand]> extends true ? {} : never),
-				): ThroughReference<string, string, any, J> {
-					const junctionValidator = refs.get(junction)
-					if (
-						!ownRefs.has(junction) ||
-						!junctionValidator ||
-						!compatible(validator, junctionValidator)
-					)
-						throw new Error('Invalid junction field or registry')
-					const result = Object.freeze({ base: ref, junction })
-					throughRefs.add(result)
-					return result
-				},
+		metadata[name] = { ...normalized, indexes, dto, assertUnchanged }
+		const makeReferences = (
+			validators: Record<string, GenericValidator>,
+			guard?: RelationGuard,
+		) => {
+			const tableRefs: Record<string, AnyField> = Object.create(null)
+			for (const [field, validator] of Object.entries(validators)) {
+				const ref: AnyField = {
+					[fieldBrand]: undefined,
+					table: name,
+					field,
+					guard,
+					through<J extends AnyField>(
+						junction: J & (Same<any, J[typeof fieldBrand]> extends true ? {} : never),
+					): ThroughReference<string, string, any, J, any> {
+						const junctionValidator = refs.get(junction)
+						if (
+							!ownRefs.has(junction) ||
+							!junctionValidator ||
+							!compatible(validator, junctionValidator)
+						)
+							throw new Error('Invalid junction field or registry')
+						const result = Object.freeze({ base: ref, junction })
+						throughRefs.add(result)
+						return result
+					},
+				}
+				refs.set(ref, validator)
+				ownRefs.add(ref)
+				tableRefs[field] = Object.freeze(ref)
 			}
-			refs.set(ref, validator)
-			ownRefs.add(ref)
-			tableRefs[field] = Object.freeze(ref)
+			return Object.freeze(tableRefs)
 		}
-		fields[name] = Object.freeze(tableRefs)
+		fields[name] = makeReferences(normalized.fields)
+		if (normalized.branches)
+			for (const [tag, branch] of Object.entries(normalized.branches.options))
+				branchRefs.set(
+					JSON.stringify([name, tag]),
+					makeReferences(
+						branch.fields,
+						Object.freeze({ discriminator: normalized.branches.discriminator, tag }),
+					),
+				)
 		one[name] = (spec) => makeEdge(name, 'one', spec, ownRefs)
 		many[name] = (spec) => makeEdge(name, 'many', spec, ownRefs)
 	}
@@ -438,7 +680,13 @@ export function defineRelations<
 		one: Object.freeze(one),
 		many: Object.freeze(many),
 	}) as RelationBuilder<Tables>
-	const supplied = declare(builder)
+	// SAFETY: branch references are created only for validated table/tag pairs and retain literal native field types.
+	const branch = ((table: string, tag: string) => {
+		const result = branchRefs.get(JSON.stringify([table, tag]))
+		if (!result) throw new Error(`Unknown variant scope "${table}.${tag}"`)
+		return result
+	}) as BranchBuilder<Tables>
+	const supplied = declare(builder, branch)
 	const declarations: RelationDeclarations = Object.fromEntries(
 		Object.entries(supplied).map(([name, edges]) => [name, Object.freeze({ ...edges })]),
 	)
@@ -447,7 +695,8 @@ export function defineRelations<
 		if (!Object.hasOwn(tables, source)) throw new Error(`Unknown source table "${source}"`)
 		for (const [name, edge] of Object.entries(edges)) {
 			if (
-				Object.hasOwn(metadata[source].fields, name) ||
+				metadata[source].allFields.has(name) ||
+				(metadata[source].branches && ['variant', 'variants'].includes(name)) ||
 				['and', 'or', 'not', 'fields', 'then', '__proto__', 'constructor', 'prototype'].includes(
 					name,
 				)
@@ -494,7 +743,7 @@ export function defineRelations<
 		}
 	// Stable, collision-free canonical metadata encoding. It is an identity, not a secret/hash.
 	const identity = JSON.stringify([
-		1,
+		2,
 		Object.entries(metadata)
 			.sort(([a], [b]) => a.localeCompare(b))
 			.map(([name, data]) => [
@@ -502,6 +751,23 @@ export function defineRelations<
 				Object.entries(data.fields)
 					.sort(([a], [b]) => a.localeCompare(b))
 					.map(([field, validator]) => [field, validator.isOptional, nativeJson(validator)]),
+				data.branches
+					? [
+							data.branches.discriminator,
+							Object.entries(data.branches.options)
+								.sort(([a], [b]) => a.localeCompare(b))
+								.map(([tag, branch]) => [
+									tag,
+									Object.entries(branch.fields)
+										.sort(([a], [b]) => a.localeCompare(b))
+										.map(([field, validator]) => [
+											field,
+											validator.isOptional,
+											nativeJson(validator),
+										]),
+								]),
+						]
+					: null,
 				data.indexes,
 				canonicalNative(nativeJson(zodToConvex(data.dto))),
 			]),
@@ -531,17 +797,31 @@ export function defineRelations<
 	const storedGuards = Object.fromEntries(
 		Object.entries(ownedTables).map(([name, table]) => {
 			const schemaGuard = schemaMutationGuard(table.schema, 'stored')
+			const publicGuard = schemaMutationGuard(table.publicDto, 'dto')
+			const validator = table.table.validator
+			const optional = validator.isOptional
 			const nativeSnapshot = JSON.stringify(nativeTableExport(table.table))
 			return [
 				name,
 				() => {
 					schemaGuard()
+					publicGuard()
+					if (table.table.validator !== validator || validator.isOptional !== optional)
+						throw new Error(`Native schema mutated after registry construction: ${name}`)
 					if (JSON.stringify(nativeTableExport(table.table)) !== nativeSnapshot)
 						throw new Error(`Native schema mutated after registry construction: ${name}`)
 				},
 			]
 		}),
 	)
+	for (const [name, data] of Object.entries(metadata)) {
+		if (!data.branches) continue
+		const dtoGuard = data.assertUnchanged
+		data.assertUnchanged = () => {
+			dtoGuard()
+			storedGuards[name]()
+		}
+	}
 	executorRegistries.set(registry, {
 		internal,
 		tables: ownedTables,
@@ -577,30 +857,73 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 			throw new Error('Native schema/table ownership disagrees with relation registry')
 	}
 	assertUnchanged()
+	const branchValidators = new WeakMap<object, z.ZodType>()
+	function validateDocument(
+		table: string,
+		row: Record<string, import('convex/values').Value>,
+	): void {
+		assertUnchanged()
+		const data = owned!.internal.metadata[table]
+		if (!data) throw new Error('Unknown query table')
+		if (!data.branches) return
+		const tag = z.string().safeParse(row[data.branches.discriminator])
+		const branch =
+			tag.success && Object.hasOwn(data.branches.options, tag.data)
+				? data.branches.options[tag.data]
+				: undefined
+		if (!branch) throw new Error('Invalid variant document')
+		const values = Object.fromEntries(
+			Object.keys(branch.fields)
+				.filter((key) => Object.hasOwn(row, key))
+				.map((key) => [key, row[key]]),
+		)
+		let validator = branchValidators.get(branch)
+		if (!validator) {
+			validator = convexToZod(v.object(branch.fields))
+			branchValidators.set(branch, validator)
+		}
+		validator.parse(values)
+	}
 	return Object.freeze({
 		assertUnchanged,
+		validateDocument,
 		assertNativeTable: owned.assertNativeTable,
 		assertSchema,
 		pagination(table: string) {
 			assertUnchanged()
 			const internal = owned.internal
 			const scalarFields = new Map<string, FieldSchemas>()
-			function grammar(name: string, depth: number): FilterGrammar {
+			function grammar(name: string, depth: number, tag?: string): FilterGrammar {
 				const data = internal.metadata[name]
 				if (!data) throw new Error('Unknown query table')
-				let fields = scalarFields.get(name)
+				const cacheKey = JSON.stringify([name, tag ?? null])
+				let fields = scalarFields.get(cacheKey)
 				if (!fields) {
 					fields = {}
-					for (const [name, validator] of Object.entries(data.fields)) {
+					for (const [name, validator] of Object.entries(
+						tag === undefined ? data.fields : data.branches!.options[tag].fields,
+					)) {
 						// Unsupported stored containers are not scalar-queryable. No validators
 						// are reconstructed from JSON; these are the actual native validators.
 						if (scalarValidator(validator))
 							fields[name] = scalarPredicateSchema(validator).optional()
 					}
-					scalarFields.set(name, fields)
+					scalarFields.set(cacheKey, fields)
 				}
 				return {
 					fields,
+					variants:
+						data.branches && tag === undefined && depth < 4
+							? {
+									discriminator: data.branches.discriminator,
+									options: Object.fromEntries(
+										Object.keys(data.branches.options).map((tag) => [
+											tag,
+											grammar(name, depth + 1, tag),
+										]),
+									),
+								}
+							: undefined,
 					relations:
 						depth >= 4
 							? {}
@@ -633,8 +956,15 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		) {
 			assertSchema(tables)
 			if (!eligible()) return null
-			const dto = owned.internal.metadata[table]?.dto
-			if (!dto) throw new Error('Unknown query table')
+			const data = owned.internal.metadata[table]
+			if (!data) throw new Error('Unknown query table')
+			const branch = data.branches
+				? data.branches.options[String(row[data.branches.discriminator])]
+				: undefined
+			if (data.branches && !branch) throw new Error('Invalid variant document')
+			const dto = branch?.dto ?? data.dto
+			if (!(dto instanceof z.ZodObject)) throw new Error('Invalid variant DTO')
+			validateDocument(table, row)
 			// The strict DTO remains the authority. Pick its fields before parsing,
 			// matching table projection without spreading any storage-only fields.
 			return dto.parse(
@@ -706,9 +1036,19 @@ function makeEdge(
 		cardinality,
 		from: spec.from,
 		to: spec.to,
+		sourceGuard: base(spec.from).guard,
+		targetGuard: base(spec.to).guard,
+		junctionGuard: junctionGuard(spec.from, spec.to),
 	})
 	edgeRefs.add(result)
 	return result
+}
+function junctionGuard(from: Leg, to: Leg): RelationGuard | undefined {
+	const left = 'base' in from ? from.junction.guard : undefined
+	const right = 'base' in to ? to.junction.guard : undefined
+	if (left && right && (left.discriminator !== right.discriminator || left.tag !== right.tag))
+		throw new Error('Contradictory junction scopes')
+	return left ?? right
 }
 function compatible(left: GenericValidator, right: GenericValidator): boolean {
 	const leftDomain = domain(left)
@@ -727,33 +1067,69 @@ function validatePath(edge: AnyEdge, metadata: Record<string, TableMetadata>): v
 	if ('base' in from !== 'base' in to) throw new Error('Both relation legs must use through')
 	if ('base' in from && 'base' in to) {
 		if (from.junction.table !== to.junction.table) throw new Error('Different junction tables')
-		requireIndex(metadata, from.junction.table, from.junction.field)
-		requireIndex(metadata, edge.target, to.base.field)
+		requireIndex(metadata, from.junction.table, from.junction.field, edge.junctionGuard)
+		requireIndex(metadata, edge.target, to.base.field, edge.targetGuard)
 		return
 	}
 	if (!compatible(refs.get(base(from))!, refs.get(base(to))!))
 		throw new Error('Incompatible relation field types')
-	requireIndex(metadata, edge.target, base(to).field)
+	requireIndex(metadata, edge.target, base(to).field, edge.targetGuard)
 }
-function requireIndex(metadata: Record<string, TableMetadata>, table: string, field: string): void {
-	if (field !== '_id' && !metadata[table].indexes.some((index) => index.fields[0] === field))
-		throw new Error(`No active index begins with "${table}.${field}"`)
+function requireIndex(
+	metadata: Record<string, TableMetadata>,
+	table: string,
+	field: string,
+	guard?: RelationGuard,
+): void {
+	if (
+		field !== '_id' &&
+		!metadata[table].indexes.some((index) => {
+			const position = index.fields.indexOf(field)
+			return (
+				position >= 0 &&
+				index.fields.slice(0, position).every((key) => key === guard?.discriminator)
+			)
+		})
+	)
+		throw new Error(`No active index begins with or has a guarded prefix for "${table}.${field}"`)
 }
-function serializeLeg(leg: Leg): string[] {
+function serializeLeg(leg: Leg): unknown[] {
 	return 'base' in leg
-		? [leg.base.table, leg.base.field, leg.junction.table, leg.junction.field]
-		: [leg.table, leg.field]
+		? [
+				leg.base.table,
+				leg.base.field,
+				leg.base.guard ?? null,
+				leg.junction.table,
+				leg.junction.field,
+				leg.junction.guard ?? null,
+			]
+		: [leg.table, leg.field, leg.guard ?? null]
 }
 function filterGrammar(
 	registry: RegistryMetadata,
 	table: string,
 	selection: SelectionMask,
 	depth: number = 0,
+	tag?: string,
 ): FilterGrammar {
 	const fields: FieldSchemas = {}
 	const relations: FilterGrammar['relations'] = {}
+	const data = registry.metadata[table]
+	const variants: Record<string, FilterGrammar> = {}
 	for (const [key, mask] of Object.entries(selection)) {
-		const validator = registry.metadata[table].fields[key]
+		if (key === 'variants' && mask !== true && data.branches && tag === undefined) {
+			if (depth >= 4) throw new Error('Invalid variant selection')
+			for (const [tag, selected] of Object.entries(mask)) {
+				if (!Object.hasOwn(data.branches.options, tag) || selected === true)
+					throw new Error('Unknown variant filter selection')
+				const common = Object.fromEntries(
+					Object.entries(selection).filter(([key]) => key !== 'variants'),
+				)
+				variants[tag] = filterGrammar(registry, table, { ...common, ...selected }, depth + 1, tag)
+			}
+			continue
+		}
+		const validator = (tag === undefined ? data.fields : data.branches!.options[tag].fields)[key]
 		const edge = registry.declarations[table]?.[key]
 		if (mask === true && validator) fields[key] = scalarPredicateSchema(validator).optional()
 		else if (mask !== true && edge && depth < 4)
@@ -763,7 +1139,14 @@ function filterGrammar(
 			}
 		else throw new Error(`Invalid relation filter selection "${table}.${key}"`)
 	}
-	return { fields, relations }
+	return {
+		fields,
+		relations,
+		variants:
+			data.branches && tag === undefined
+				? { discriminator: data.branches.discriminator, options: variants }
+				: undefined,
+	}
 }
 function rowSchema(
 	registry: RegistryMetadata,
@@ -775,16 +1158,114 @@ function rowSchema(
 	for (const [name, mask] of Object.entries(selection)) {
 		const edge = registry.declarations[table]?.[name]
 		if (!edge || depth >= 4) throw new Error(`Unknown or too deep relation "${table}.${name}"`)
-		const target =
+		let target =
 			mask === true
 				? registry.metadata[edge.target].dto
 				: rowSchema(registry, edge.target, mask, depth + 1)
+		if (edge.targetGuard) {
+			if (!(target instanceof z.ZodDiscriminatedUnion)) throw new Error('Invalid target scope')
+			target = target.options.find(
+				(option: z.ZodObject) =>
+					option.shape[edge.targetGuard!.discriminator] instanceof z.ZodLiteral &&
+					option.shape[edge.targetGuard!.discriminator].value === edge.targetGuard!.tag,
+			)!
+		}
 		relationFields[name] = edge.cardinality === 'one' ? target.nullable() : paginated(target).result
 	}
-	// Keep caller validations; guard the supported graph before parsing or native conversion.
-	const dto = registry.metadata[table].dto
-	if (!(dto instanceof z.ZodObject)) throw new Error('Expected object DTO')
-	return guardedDto(dto.extend(relationFields).strict(), () => assertRegistryUnchanged(registry))
+	const data = registry.metadata[table]
+	function compose(dto: z.ZodObject, tag?: string) {
+		const selected = { ...relationFields }
+		for (const name of Object.keys(selected)) {
+			const edge = registry.declarations[table][name]
+			if (edge.sourceGuard && tag !== edge.sourceGuard.tag && edge.cardinality === 'one')
+				selected[name] = z.null()
+		}
+		return guardedDto(dto.extend(selected).strict(), () => assertRegistryUnchanged(registry))
+	}
+	if (data.branches) {
+		const options = Object.entries(data.branches.options).map(([tag, branch]) =>
+			compose(branch.dto, tag),
+		)
+		return guardedUnion(
+			z.discriminatedUnion(data.branches.discriminator, [options[0], ...options.slice(1)]),
+			() => assertRegistryUnchanged(registry),
+		)
+	}
+	if (!(data.dto instanceof z.ZodObject)) throw new Error('Expected object DTO')
+	return compose(data.dto)
+}
+
+function normalizeTable(
+	name: string,
+	schema: RelationTable['schema'],
+	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>,
+	document: ValidatorJSON,
+): Pick<TableMetadata, 'fields' | 'branches' | 'allFields'> {
+	if (schema instanceof z.ZodObject && dto instanceof z.ZodObject) {
+		const fields = zodToConvex(schema).fields
+		assertStoredDocument(name, fields, document)
+		return { fields, allFields: new Set(Object.keys(fields)) }
+	}
+	if (!(schema instanceof z.ZodDiscriminatedUnion) || !(dto instanceof z.ZodDiscriminatedUnion))
+		throw new Error(`Expected matching discriminated union boundaries "${name}"`)
+	const discriminator = schema._zod.def.discriminator
+	if (dto._zod.def.discriminator !== discriminator) throw new Error('DTO discriminator mismatch')
+	function options(union: z.ZodDiscriminatedUnion<any, string>): Record<string, z.ZodObject> {
+		const result: Record<string, z.ZodObject> = Object.create(null)
+		for (const option of union.options) {
+			if (!(option instanceof z.ZodObject)) throw new Error('Variant branches must be objects')
+			const tag = option.shape[discriminator]
+			if (!(tag instanceof z.ZodLiteral) || tag.values.size !== 1)
+				throw new Error('Variant tags must be unique required string literals')
+			const literal = z.string().safeParse(tag.value)
+			if (!literal.success || Object.hasOwn(result, literal.data))
+				throw new Error('Variant tags must be unique required string literals')
+			result[literal.data] = option
+		}
+		if (Object.keys(result).length === 0) throw new Error('Expected at least one variant branch')
+		return result
+	}
+	const documents = options(schema),
+		dtos = options(dto)
+	if (Object.keys(documents).sort().join('\0') !== Object.keys(dtos).sort().join('\0'))
+		throw new Error('DTO variant tags mismatch')
+	const branches: NonNullable<TableMetadata['branches']> = {
+		discriminator,
+		options: Object.create(null),
+	}
+	const stored: GenericValidator[] = []
+	for (const [tag, object] of Object.entries(documents)) {
+		const fields = zodToConvex(object).fields
+		const { _id, _creationTime, ...storage } = fields
+		assertStoredDocument(name, fields, nativeJson(v.object(storage)))
+		stored.push(v.object(storage))
+		branches.options[tag] = { fields, dto: dtos[tag] }
+	}
+	if (canonicalNative(document) !== canonicalNative(nativeJson(v.union(...stored))))
+		throw new Error(`Native stored document disagrees with boundary "${name}"`)
+	const members = Object.values(branches.options).map((branch) => branch.fields)
+	const fields: Record<string, GenericValidator> = {}
+	for (const key of Object.keys(members[0])) {
+		if (!members.every((member) => Object.hasOwn(member, key))) continue
+		if (
+			key !== discriminator &&
+			!members.every((member) => commonCompatible(member[key], members[0][key]))
+		)
+			continue
+		const validators = members.map((member) => member[key])
+		const union = v.union(...validators)
+		fields[key] = validators.some((validator) => validator.isOptional === 'optional')
+			? v.optional(union)
+			: union
+	}
+	return { fields, branches, allFields: new Set(members.flatMap((member) => Object.keys(member))) }
+}
+function commonCompatible(left: GenericValidator, right: GenericValidator): boolean {
+	try {
+		return compatible(left, right)
+	} catch {
+		return canonicalNative(nativeJson(left)) === canonicalNative(nativeJson(right))
+	}
 }
 
 interface NativeTableExport {
@@ -870,7 +1351,7 @@ const builtinObjectGetters = new Set(
  * Functions remain the original validation functions; their captured application state
  * is outside the schema contract. Lazy/transform/default/coercion nodes fail closed.
  */
-function dtoMutationGuard(dto: z.ZodObject): () => void {
+function dtoMutationGuard(dto: z.ZodType): () => void {
 	return schemaMutationGuard(dto, 'dto')
 }
 
@@ -883,7 +1364,7 @@ const builtinPrefaultGetter = Function.prototype.toString.call(
 	Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
 )
 
-function schemaMutationGuard(dto: z.ZodObject, boundary: 'dto' | 'stored'): () => void {
+function schemaMutationGuard(dto: z.ZodType, boundary: 'dto' | 'stored'): () => void {
 	const nodes: DtoGraphNode[] = []
 	const fallbackDefinitions = new Set<object>()
 	const patterns: { expression: RegExp; source: string; flags: string }[] = []
@@ -953,6 +1434,15 @@ function schemaMutationGuard(dto: z.ZodObject, boundary: 'dto' | 'stored'): () =
 						// Snapshot the accessor identity below, never evaluate its fallback.
 						fallbackDefinitions.add(def)
 					}
+				}
+				if (value instanceof z.ZodUnion) {
+					visit(value.options, depth + 1)
+					nodes.push({
+						object: value,
+						exactKeys: false,
+						keys: ['options'],
+						values: [Object.getOwnPropertyDescriptor(value, 'options')!],
+					})
 				}
 				if (def.type === 'object') {
 					const descriptor = Object.getOwnPropertyDescriptor(def, 'shape')
@@ -1098,6 +1588,52 @@ function guardedDto(dto: z.ZodObject, assertUnchanged: () => void): z.ZodObject 
 	return new GuardedDtoObject(def)
 }
 
+interface GuardedUnionDefinition extends z.core.$ZodUnionDef {
+	discriminator: string
+	assertUnchanged(): void
+}
+const GuardedDtoUnion = z.core.$constructor<z.ZodDiscriminatedUnion<any, string>>(
+	'GuardedDtoUnion',
+	(inst, def) => {
+		// SAFETY: guardedUnion alone creates this definition; Zod clones preserve its guard.
+		const guarded = def as GuardedUnionDefinition
+		z.ZodDiscriminatedUnion.init(inst, def)
+		inst._zod.deferred ??= []
+		inst._zod.deferred.push(() => {
+			const run = inst._zod.run
+			inst._zod.run = (payload, ctx) => {
+				try {
+					guarded.assertUnchanged()
+				} catch {
+					payload.issues.push({
+						code: 'custom',
+						input: payload.value,
+						message: 'DTO schema mutated after registry construction',
+					})
+					return payload
+				}
+				return run(payload, ctx)
+			}
+		})
+	},
+)
+function guardedUnion(
+	dto: z.ZodDiscriminatedUnion<any, string>,
+	assertUnchanged: () => void,
+): z.ZodDiscriminatedUnion<any, string> {
+	const options = dto.options
+	const def = { ...dto._zod.def, assertUnchanged }
+	Object.defineProperty(def, 'options', {
+		enumerable: true,
+		configurable: true,
+		get: () => {
+			assertUnchanged()
+			return options
+		},
+	})
+	return new GuardedDtoUnion(def)
+}
+
 function snapshotMetadata(registry: RegistryMetadata): RelationMetadata {
 	const tables: Record<string, RelationTableMetadata> = {}
 	for (const [name, data] of Object.entries(registry.metadata)) {
@@ -1112,6 +1648,12 @@ function snapshotMetadata(registry: RegistryMetadata): RelationMetadata {
 			})
 		tables[name] = Object.freeze({
 			fields: Object.freeze(fields),
+			variant: data.branches
+				? Object.freeze({
+						discriminator: data.branches.discriminator,
+						tags: Object.freeze(Object.keys(data.branches.options)),
+					})
+				: undefined,
 			indexes: Object.freeze(
 				data.indexes.map((index) =>
 					Object.freeze({ name: index.name, fields: Object.freeze([...index.fields]) }),

@@ -1,0 +1,29 @@
+import { defineRelations } from 'cvx-kit/relations'
+import { createQueryEngine } from 'cvx-kit/querying'
+import schema, { clients, creditors, payments, ledger, attachments, paymentAttachments, members, audits } from './schema'
+export const tables = { clients, creditors, payments, ledger, attachments, paymentAttachments, members, audits }
+export const relations = defineRelations(tables, (r, branch) => ({
+ clients: { payments: r.many.payments({ from: r.clients._id, to: r.payments.clientId }) },
+ creditors: { payments: r.many.payments({ from: r.creditors._id, to: branch('payments', 'creditor_payment').creditorId }) },
+ payments: {
+  client: r.one.clients({ from: r.payments.clientId, to: r.clients._id }),
+  creditor: r.one.creditors({ from: branch('payments', 'creditor_payment').creditorId, to: r.creditors._id }),
+  attachments: r.many.attachments({ from: r.payments._id.through(r.paymentAttachments.paymentId), to: r.attachments._id.through(r.paymentAttachments.attachmentId) }),
+ },
+ ledger: {
+  client: r.one.clients({ from: r.ledger.clientId, to: r.clients._id }),
+  payment: r.one.payments({ from: branch('ledger', 'payment').paymentId, to: r.payments._id }),
+ },
+}))
+export const querying = createQueryEngine({ schema, relations }, {
+ cursor: { version: 'v1', currentKeyId: 'fixture', keys: { fixture: new Uint8Array(64).fill(33) } },
+ maxPageSize: 3,
+ budgets: { readOperations: 512, rawCandidates: 512, indexRanges: 256, fanout: 128 },
+})
+export const paymentOptions = relations.tables.payments.paginationOpts({ type: true, clientId: true, amountCents: true,
+ variants: { creditor_payment: { creditorId: true }, client_draft: { draftDate: true } }, creditor: { name: true },
+})
+export const paymentPage = relations.tables.payments.pageDto({ client: true, creditor: true, attachments: true })
+export const clientPage = relations.tables.clients.pageDto({ payments: { creditor: true } })
+export const creditorPage = relations.tables.creditors.pageDto({ payments: { client: true } })
+export const ledgerPage = relations.tables.ledger.pageDto({ client: true, payment: { creditor: true } })

@@ -63,7 +63,7 @@ export type ScalarPredicate<Schema extends z.ZodType, Side extends 'input' | 'ou
 					lt?: OrderedValue<Schema>
 					lte?: OrderedValue<Schema>
 				}) &
-			(NativeField<Schema>['isOptional'] extends 'optional' ? { exists?: boolean } : {}))
+			('optional' extends NativeField<Schema>['isOptional'] ? { exists?: boolean } : {}))
 
 type SelectedFieldFilters<
 	Fields extends FieldSchemas,
@@ -189,6 +189,7 @@ const relationPredicates = new WeakMap<
 	z.core.$ZodType,
 	{ cardinality: 'one' | 'many'; target: FilterGrammar }
 >()
+const variantPredicates = new WeakMap<z.core.$ZodType, NonNullable<FilterGrammar['variants']>>()
 const filterGrammars = new WeakMap<z.core.$ZodType, FilterGrammar>()
 
 const BoundedFilterObject = z.core.$constructor<z.ZodObject>('BoundedFilterObject', (inst, def) => {
@@ -201,6 +202,7 @@ const BoundedFilterObject = z.core.$constructor<z.ZodObject>('BoundedFilterObjec
 			? Object.keys(namespaceObject.shape)
 			: Object.keys(def.shape)
 	const grammar: FilterGrammar = {
+		variants: variantPredicates.get(def.shape.variant),
 		fields: Object.fromEntries(selectedKeys.map((key) => [key, def.shape[key]])),
 		relations: Object.fromEntries(
 			Object.entries(def.shape).flatMap(([key, schema]) => {
@@ -230,6 +232,7 @@ const BoundedFilterObject = z.core.$constructor<z.ZodObject>('BoundedFilterObjec
  */
 export interface FilterGrammar {
 	fields: FieldSchemas
+	variants?: { discriminator: string; options: Record<string, FilterGrammar> }
 	relations: Record<string, { cardinality: 'one' | 'many'; target: FilterGrammar }>
 }
 
@@ -244,6 +247,7 @@ export type FilterOperator = 'eq' | 'in' | 'gt' | 'gte' | 'lt' | 'lte' | 'exists
 export type FilterAst =
 	| { kind: 'and' | 'or'; children: FilterAst[] }
 	| { kind: 'not'; child: FilterAst }
+	| { kind: 'variant'; discriminator: string; tag: string; child: FilterAst }
 	| {
 			kind: 'scalar'
 			field: string
@@ -342,6 +346,7 @@ function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined {
 	if (!(root instanceof z.ZodObject)) return undefined
 	return {
 		fields: root.shape,
+		variants: variantPredicates.get(root.shape.variant),
 		relations: Object.fromEntries(
 			Object.entries(root.shape).flatMap(([name, predicate]) => {
 				// SAFETY: object shapes contain Zod schemas; metadata only recognizes predicates created by our grammar.
@@ -363,6 +368,15 @@ function normalizeFilters(value: FilterTree, grammar?: FilterGrammar): FilterAst
 			children.push({
 				kind: name,
 				children: (predicate as FilterTree[]).map((child) => normalizeFilters(child, grammar)),
+			})
+		} else if (name === 'variant' && grammar?.variants) {
+			// SAFETY: strict branch grammar validates the literal tag and its selected target filters.
+			const scoped = predicate as { tag: string; filters: FilterTree }
+			children.push({
+				kind: 'variant',
+				discriminator: grammar.variants.discriminator,
+				tag: scoped.tag,
+				child: normalizeFilters(scoped.filters, grammar.variants.options[scoped.tag]),
 			})
 		} else if (name === 'not')
 			children.push({ kind: 'not', child: normalizeFilters(predicate, grammar) })
@@ -414,6 +428,14 @@ function valueEqual(left: FilterScalar, right: FilterScalar): boolean {
 }
 function guaranteedBindings(ast: FilterAst): BindingResult {
 	const values = new Map<string, FilterScalar>()
+	if (ast.kind === 'variant')
+		return guaranteedBindings({
+			kind: 'and',
+			children: [
+				{ kind: 'scalar', field: ast.discriminator, operator: 'eq', value: ast.tag },
+				ast.child,
+			],
+		})
 	if (ast.kind === 'scalar') {
 		if (ast.operator === 'eq' && !Array.isArray(ast.value)) values.set(ast.field, ast.value)
 		const choices = Array.isArray(ast.value) ? ast.value : undefined
@@ -424,7 +446,7 @@ function guaranteedBindings(ast: FilterAst): BindingResult {
 	if (ast.kind === 'not' || ast.kind === 'relation') return { values, impossible: false }
 	const branches = ast.children.map(guaranteedBindings)
 	if (ast.kind === 'or') {
-		const viable = branches
+		const viable = branches.filter((branch) => !branch.impossible)
 		for (const [field, value] of viable[0]?.values ?? [])
 			if (
 				viable.every(
@@ -496,7 +518,10 @@ function boundedFilterSchema(predicates: FieldSchemas): z.ZodType {
 function filterNodeSchema(grammar: FilterGrammar, depth: number): z.ZodObject {
 	const predicates = grammar.fields
 	const direct = Object.fromEntries(
-		Object.entries(predicates).filter(([key]) => !['and', 'or', 'not', 'fields'].includes(key)),
+		Object.entries(predicates).filter(
+			([key]) =>
+				!['and', 'or', 'not', 'fields', ...(grammar.variants ? ['variant'] : [])].includes(key),
+		),
 	)
 	const relations: FieldSchemas = {}
 	for (const [name, relation] of Object.entries(grammar.relations)) {
@@ -508,6 +533,15 @@ function filterNodeSchema(grammar: FilterGrammar, depth: number): z.ZodObject {
 				: z.union([z.object({ some: target }).strict(), z.object({ none: target }).strict()])
 		).optional()
 		relationPredicates.set(relations[name], relation)
+	}
+	if (grammar.variants && depth < MAX_FILTER_DEPTH) {
+		const options = Object.entries(grammar.variants.options).map(([tag, branch]) =>
+			z.strictObject({ tag: z.literal(tag), filters: filterNodeSchema(branch, depth + 1) }),
+		)
+		if (options.length) {
+			relations.variant = z.union(options).optional()
+			variantPredicates.set(relations.variant, grammar.variants)
+		}
 	}
 	const node = z
 		.object({ ...direct, ...relations, fields: z.object(predicates).strict().optional() })
@@ -522,7 +556,14 @@ function filterNodeSchema(grammar: FilterGrammar, depth: number): z.ZodObject {
 }
 
 function withinFilterBudget(value: FilterTree, grammar: FilterGrammar): boolean {
-	type Context = 'expression' | 'fields' | 'predicate' | 'composition' | 'many' | 'value'
+	type Context =
+		| 'expression'
+		| 'fields'
+		| 'predicate'
+		| 'composition'
+		| 'many'
+		| 'variant'
+		| 'value'
 	interface Entry {
 		value: FilterTree
 		depth: number
@@ -550,23 +591,34 @@ function withinFilterBudget(value: FilterTree, grammar: FilterGrammar): boolean 
 			(array && keys.length !== array.length + 1)
 		)
 			return false
-		const consumed =
-			entry.context === 'expression'
-				? [
-						...Object.keys(entry.grammar.fields),
-						...Object.keys(entry.grammar.relations),
-						'and',
-						'or',
-						'not',
-						'fields',
-					]
-				: entry.context === 'fields'
-					? Object.keys(entry.grammar.fields)
-					: entry.context === 'predicate'
-						? ['eq', 'in', 'gt', 'gte', 'lt', 'lte', 'exists']
-						: entry.context === 'many'
-							? ['some', 'none']
-							: []
+		let consumed: string[]
+		switch (entry.context) {
+			case 'expression':
+				consumed = [
+					...Object.keys(entry.grammar.fields),
+					...Object.keys(entry.grammar.relations),
+					'and',
+					'or',
+					'not',
+					'fields',
+					...(entry.grammar.variants ? ['variant'] : []),
+				]
+				break
+			case 'variant':
+				consumed = ['tag', 'filters']
+				break
+			case 'fields':
+				consumed = Object.keys(entry.grammar.fields)
+				break
+			case 'predicate':
+				consumed = ['eq', 'in', 'gt', 'gte', 'lt', 'lte', 'exists']
+				break
+			case 'many':
+				consumed = ['some', 'none']
+				break
+			default:
+				consumed = []
+		}
 		for (const key of consumed) if (!Object.hasOwn(object, key) && key in object) return false
 		for (const key of keys) {
 			if (array && key === 'length') continue
@@ -579,7 +631,10 @@ function withinFilterBudget(value: FilterTree, grammar: FilterGrammar): boolean 
 			let target = entry.grammar
 			if (entry.context === 'expression') {
 				context = 'predicate'
-				if (name === 'fields') context = 'fields'
+				if (name === 'variant' && entry.grammar.variants) {
+					context = 'variant'
+					depth++
+				} else if (name === 'fields') context = 'fields'
 				else if (name === 'and' || name === 'or') {
 					context = 'composition'
 					depth++
@@ -592,6 +647,17 @@ function withinFilterBudget(value: FilterTree, grammar: FilterGrammar): boolean 
 					target = relation.target
 					depth++
 				}
+			} else if (entry.context === 'variant' && name === 'filters') {
+				const tag = Object.getOwnPropertyDescriptor(object, 'tag')
+				if (
+					!tag ||
+					!('value' in tag) ||
+					!z.string().safeParse(tag.value).success ||
+					!Object.hasOwn(entry.grammar.variants?.options ?? {}, tag.value)
+				)
+					return false
+				context = 'expression'
+				target = entry.grammar.variants!.options[String(tag.value)]
 			} else if (entry.context === 'fields') context = 'predicate'
 			else if (entry.context === 'composition' || entry.context === 'many') context = 'expression'
 			pending.push({ value: descriptor.value, depth, context, grammar: target })

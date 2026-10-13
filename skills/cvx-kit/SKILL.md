@@ -21,6 +21,7 @@ Read only the guides needed for the task, resolving paths relative to this skill
 | Application structure and ownership                   | [architecture](references/architecture.md), [conventions](references/conventions.md)                     |
 | Tables, masks, DTOs, variants, tool validators        | [zod-table](references/zod-table.md)                                                                     |
 | Relationships, filtering, cursors, bounded pagination | [querying](references/querying.md)                                                                       |
+| Variant joins, branch predicates, mixed pages         | [variant-querying](references/variant-querying.md)                                                       |
 | Authentication, roles, shared Effect context          | [auth](references/auth.md)                                                                               |
 | Tenant isolation and row security                     | [tenancy](references/tenancy.md)                                                                         |
 | Commands, queries, registry wiring, audit             | [commands](references/commands.md), [effect](references/effect.md)                                       |
@@ -53,7 +54,8 @@ for every task. Examples use illustrative entities; adapt them to the app.
   contexts fail closed; do not add an allow-all fallback.
 - For variant patches, require the tag, fetch the expected table, verify the
   stored tag, merge and validate the complete storage row, then write in the
-  same mutation. Variant tables are outside the relation/query engine API.
+  same mutation. Declare branch-specific relation references and filter nodes
+  explicitly; keep the public discriminated union intact.
 - Keep native IDs in storage validators; JSON-safe tool inputs are a separate
   boundary. Let registered triggers maintain timestamps. Consume components
   through their public clients and generated references.

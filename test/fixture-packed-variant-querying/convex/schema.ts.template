@@ -1,0 +1,32 @@
+import { defineSchema } from 'convex/server'
+import { z } from 'zod'
+import { zid, zodTable, zodVariantTable } from 'cvx-kit/zod-table'
+
+export const clients = zodTable('clients', () => ({ name: z.string(), allowed: z.boolean() }), { publicFields: ['name'] })
+export const creditors = zodTable('creditors', () => ({ name: z.string(), allowed: z.boolean() }), { publicFields: ['name'] })
+export const attachments = zodTable('attachments', () => ({ name: z.string(), allowed: z.boolean(), evidence: z.string() }), { publicFields: ['name'] })
+export const paymentAttachments = zodTable('paymentAttachments', () => ({ paymentId: zid('payments'), attachmentId: zid('attachments'), allowed: z.boolean() }), { publicFields: ['paymentId', 'attachmentId'] })
+paymentAttachments.table.index('by_payment', ['paymentId'])
+export const payments = zodVariantTable('payments', z.discriminatedUnion('type', [
+ z.strictObject({ type: z.literal('client_draft'), clientId: zid('clients'), amountCents: z.int().positive(), draftDate: z.int().nonnegative(), allowed: z.boolean(), external: z.string() }),
+ z.strictObject({ type: z.literal('creditor_payment'), clientId: zid('clients'), creditorId: zid('creditors'), amountCents: z.int().positive(), allowed: z.boolean(), external: z.string() }),
+]), { discriminator: 'type', timestamps: true, variants: {
+ client_draft: { serverFields: ['allowed', 'external'], commandFields: ['clientId', 'amountCents', 'draftDate'], publicFields: ['clientId', 'amountCents', 'draftDate'] },
+ creditor_payment: { serverFields: ['allowed', 'external'], commandFields: ['clientId', 'creditorId', 'amountCents'], publicFields: ['clientId', 'creditorId', 'amountCents'] },
+} })
+payments.table.index('by_client', ['clientId']).index('by_type_client', ['type', 'clientId']).index('by_creditor', ['creditorId'])
+export const ledger = zodVariantTable('ledger', z.discriminatedUnion('type', [
+ z.strictObject({ type: z.literal('payment'), clientId: zid('clients').optional(), paymentId: zid('payments').optional(), amountCents: z.int().positive(), allowed: z.boolean(), evidence: z.string() }),
+ z.strictObject({ type: z.literal('adjustment'), clientId: zid('clients').optional(), reason: z.string(), amountCents: z.int(), allowed: z.boolean(), evidence: z.string() }),
+]), { discriminator: 'type', variants: {
+ payment: { serverFields: ['allowed', 'evidence'], commandFields: ['clientId', 'paymentId', 'amountCents'], publicFields: ['clientId', 'paymentId', 'amountCents'] },
+ adjustment: { serverFields: ['allowed', 'evidence'], commandFields: ['clientId', 'reason', 'amountCents'], publicFields: ['clientId', 'reason', 'amountCents'] },
+} })
+export const members = zodTable('members', () => ({ principal: z.string(), active: z.boolean() }), { publicFields: [] })
+export const audits = zodTable('audits', () => ({ paymentId: zid('payments'), operation: z.string() }), { publicFields: [] })
+const memberTable = members.table.index('by_principal', ['principal'])
+const auditTable = audits.table.index('by_payment', ['paymentId'])
+export default defineSchema({ clients: clients.table, creditors: creditors.table, payments: payments.table, ledger: ledger.table, attachments: attachments.table, paymentAttachments: paymentAttachments.table,
+ members: memberTable,
+ audits: auditTable,
+})

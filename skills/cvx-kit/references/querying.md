@@ -88,10 +88,14 @@ r.many.labels({ from: r.tasks._id, to: r.labels.task })
 ```
 
 Relationship names distinguish multiple references to the same table. Self
-references and junctions are supported. Tables must be object-shaped `zodTable`
-or `tenantTable` boundaries; variant tables are outside this API. Declarations
+references and junctions are supported. Tables can be `zodTable`, `tenantTable`,
+or the three-argument `zodVariantTable` boundaries. Declarations
 are validated against table ownership, field compatibility, and supporting
 indexes. Convex does not infer relationships; this registry supplies them.
+
+For branch-specific joins, filters, and a complete variant endpoint, see
+[Variant querying](./variant-querying.md). Common compatible fields use the same
+references shown above; branch references carry a discriminator guard.
 
 ## Configure the engine and authentication
 

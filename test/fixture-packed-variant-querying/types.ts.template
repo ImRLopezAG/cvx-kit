@@ -1,0 +1,68 @@
+import { z } from 'zod'
+import { defineRelations } from 'cvx-kit/relations'
+import type { Id, Doc } from './convex/_generated/dataModel'
+import { relations, tables, paymentPage, creditorPage, querying } from './convex/relations'
+import { payments } from './convex/schema'
+function accepts<T>(_value: T) {}
+declare const page: z.output<typeof paymentPage>
+for (const row of page.page) {
+ accepts<Id<'payments'>>(row._id)
+ accepts<Id<'clients'>>(row.clientId)
+ if (row.type === 'creditor_payment') {
+  accepts<Id<'creditors'>>(row.creditorId)
+  // @ts-expect-error other-branch fields remain absent after relation composition
+  row.draftDate
+ } else {
+  accepts<number>(row.draftDate)
+  // @ts-expect-error draft DTO must not acquire creditorId
+  row.creditorId
+ }
+ // @ts-expect-error private storage evidence is never public
+ row.external
+}
+declare const stored: Doc<'payments'>
+if (stored.type === 'creditor_payment') accepts<Id<'creditors'>>(stored.creditorId)
+else {
+ // @ts-expect-error sanctioned native codegen must preserve the branch distinction
+ stored.creditorId
+}
+declare const scoped: z.output<typeof creditorPage>
+for (const creditor of scoped.page) for (const payment of creditor.payments.page) {
+ accepts<'creditor_payment'>(payment.type)
+ accepts<Id<'creditors'>>(payment.creditorId)
+ // @ts-expect-error target-scoped relation excludes the other branch
+ payment.draftDate
+}
+defineRelations(tables, (r, branch) => {
+ // @ts-expect-error unknown branch scope
+ branch('payments', 'unknown')
+ // @ts-expect-error branch-only fields cannot be addressed through the common field view
+ r.payments.creditorId
+ // @ts-expect-error native join IDs remain tied to their target table
+ r.one.creditors({ from: r.payments.clientId, to: r.creditors._id })
+ return {}
+})
+// @ts-expect-error branch-only masks require variants
+relations.tables.payments.paginationOpts({ creditorId: true })
+// @ts-expect-error unknown variant mask
+relations.tables.payments.paginationOpts({ variants: { unknown: { creditorId: true } } })
+// @ts-expect-error unknown nested evidence fields are not branch scalar mask keys
+relations.tables.payments.paginationOpts({ variants: { creditor_payment: { providerId: true } } })
+// @ts-expect-error wrong branch does not own creditorId
+relations.tables.payments.paginationOpts({ variants: { client_draft: { creditorId: true } } })
+// @ts-expect-error private field cannot become a relation selection
+relations.tables.payments.pageDto({ external: true })
+declare const engine: ReturnType<typeof querying>
+// @ts-expect-error unguarded branch-only predicates
+engine.payments.where({ creditorId: 'not-an-id' })
+// @ts-expect-error unknown branch predicate
+engine.payments.where({ variant: { tag: 'unknown', filters: {} } })
+declare const wrongId: Id<'clients'>
+// @ts-expect-error a client ID cannot populate a creditor join key
+engine.payments.where({ variant: { tag: 'creditor_payment', filters: { creditorId: wrongId } } })
+declare const update: z.output<typeof payments.tools.update>
+if (update.data.type === 'client_draft') {
+ accepts<number | undefined>(update.data.draftDate)
+ // @ts-expect-error tagged partial contracts exclude absent branch fields
+ update.data.creditorId
+}

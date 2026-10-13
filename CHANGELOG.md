@@ -12,6 +12,20 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-10-13
+
+### Added
+
+- Register generated variant boundaries in relations and the shared authorized query engine, retaining discriminated DTOs and native branded IDs.
+- Declare guarded branch references and branch filter allowlists/predicates for direct, nested, and junction relationships.
+- Verify installed variant query consumers with sanctioned Convex codegen and native write/read flows.
+
+### Changed
+
+- Run bounded integration tests in CI while retaining the full local unit and relational stress suites.
+- Run packed component smoke jobs independently of the main verification job.
+- Document complete variant-table registration, authenticated queries, filtering, and continuation in the repository skill.
+
 ## [0.1.16] - 2026-10-13
 
 ### Added

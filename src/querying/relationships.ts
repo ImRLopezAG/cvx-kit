@@ -1,6 +1,6 @@
 import type { GenericSchema, SchemaDefinition, IndexRangeBuilder } from 'convex/server'
 import type { GenericId, Value } from 'convex/values'
-import type { RelationEdge } from '../relations'
+import type { RelationEdge, RelationGuard } from '../relations'
 import type { createPlanner, QueryInput, StoredConstraint } from './planner'
 import { scalarMatches } from './planner'
 import type {
@@ -19,7 +19,7 @@ import { stream, EmptyStream, getIndexFields } from 'convex-helpers/server/strea
 export interface OutputSelection {
 	[name: string]: true | OutputSelection
 }
-type Edge = RelationEdge<string, string, 'one' | 'many'>
+type Edge = RelationEdge<string, string, 'one' | 'many', any, any>
 export type RelationDocument = Record<string, Value> & {
 	_id: GenericId<string>
 	_creationTime: number
@@ -61,11 +61,19 @@ export function relationshipExecutor(
 		if (!declared) throw new RelationshipError('INVALID_RELATION')
 		return declared
 	}
-	function lookup(table: string, field: string) {
+	const guarded = (row: Document | Record<string, Value>, guard?: RelationGuard) =>
+		!guard || row[guard.discriminator] === guard.tag
+	function lookup(table: string, field: string, guard?: RelationGuard) {
 		const index =
 			field === '_id'
 				? { name: 'by_id', fields: ['_id'] }
-				: metadata.tables[table].indexes.find((i) => i.fields[0] === field)
+				: metadata.tables[table].indexes.find((i) => {
+						const position = i.fields.indexOf(field)
+						return (
+							position >= 0 &&
+							i.fields.slice(0, position).every((key) => key === guard?.discriminator)
+						)
+					})
 		if (!index) throw new RelationshipError('INVALID_RELATION')
 		return index
 	}
@@ -74,20 +82,26 @@ export function relationshipExecutor(
 		field: string,
 		plan: ReturnType<Planner['plan']>,
 		conditions: readonly IndexCondition[],
+		guard?: RelationGuard,
 	): QueryIndex {
 		const indexes =
 			field === '_id' ? [{ name: 'by_id', fields: ['_id'] }] : metadata.tables[table].indexes
+		const bound = (key: string) =>
+			key === field || key === guard?.discriminator || plan.bindings.has(key)
+		const usable = (index: QueryIndex) =>
+			index.fields.includes(field) &&
+			index.fields.slice(0, index.fields.indexOf(field)).every(bound)
 		const length = (index: QueryIndex) => {
-			let size = 1
-			for (const key of index.fields.slice(1)) {
-				if (!plan.bindings.has(key)) break
+			let size = 0
+			for (const key of index.fields) {
+				if (!bound(key)) break
 				size++
 			}
 			return size
 		}
 		const condition = conditions.find((c) => c.value !== null && c.value !== undefined)
 		if (condition) {
-			const chosen = indexes.find((i) => i.name === condition.index && i.fields[0] === field)
+			const chosen = indexes.find((i) => i.name === condition.index && usable(i))
 			if (!chosen)
 				throw new Error(
 					`Explicit index "${condition.index}" is incompatible with declared relationship lookup`,
@@ -95,7 +109,7 @@ export function relationshipExecutor(
 			return chosen
 		}
 		const candidates = indexes
-			.filter((i) => i.fields[0] === field)
+			.filter(usable)
 			.sort(
 				(a, b) =>
 					length(b) - length(a) ||
@@ -107,13 +121,17 @@ export function relationshipExecutor(
 	}
 	function relationPrefix(
 		index: QueryIndex,
+		field: string,
 		value: FilterScalar,
-		plan: ReturnType<Planner['plan']>,
+		plan?: ReturnType<Planner['plan']>,
+		guard?: RelationGuard,
 	) {
-		const prefix = [{ field: index.fields[0], value }]
-		for (const field of index.fields.slice(1)) {
-			if (!plan.bindings.has(field)) break
-			prefix.push({ field, value: plan.bindings.get(field)! })
+		const prefix: { field: string; value: FilterScalar }[] = []
+		for (const key of index.fields) {
+			if (key === field) prefix.push({ field: key, value })
+			else if (key === guard?.discriminator) prefix.push({ field: key, value: guard.tag })
+			else if (plan?.bindings.has(key)) prefix.push({ field: key, value: plan.bindings.get(key)! })
+			else break
 		}
 		return prefix
 	}
@@ -125,6 +143,7 @@ export function relationshipExecutor(
 		// SAFETY: normalizeId verifies the declared native table before the authorized metered get.
 		const result = await request.db.get(table, id as GenericId<string>)
 		planner.assertUnchanged()
+		if (result) planner.validateDocument(table, result)
 		// SAFETY: normalizeId checked the table; the authorized native get retains system fields.
 		return result as Document | null
 	}
@@ -133,21 +152,31 @@ export function relationshipExecutor(
 		field: string,
 		value: Value | undefined,
 		depth: number,
+		guard?: RelationGuard,
 	): AsyncGenerator<Document> {
 		request.expand(depth, 0)
 		if (value == null) return
 		if (field === '_id') {
 			const target = await get(table, value)
-			if (target) {
+			if (target && guarded(target, guard)) {
 				request.expand(depth)
 				yield target
 			}
 			return
 		}
 		planner.beforeLeaf(table)
-		const index = lookup(table, field)
+		const index = lookup(table, field, guard)
 		// SAFETY: registry validates the indexed native lookup prefix and compatible values.
-		const source = request.leafQuery(table).withIndex(index.name, (q) => q.eq(field, value))
+		const source = request.leafQuery(table).withIndex(index.name, (q) => {
+			// SAFETY: registration checks the mandatory join and every preceding guard equality.
+			let range = q as IndexRangeBuilder<any, string[], number>
+			// SAFETY: registered relation fields are native scalars; each equality advances the consecutive checked prefix.
+			for (const binding of relationPrefix(index, field, value as FilterScalar, undefined, guard)) {
+				// SAFETY: the prefix comes from the declared index and registry-owned guard.
+				range = range.eq(binding.field, binding.value) as IndexRangeBuilder<any, string[], number>
+			}
+			return range
+		})
 		const iterator = source[Symbol.asyncIterator]()
 		try {
 			while (true) {
@@ -160,6 +189,8 @@ export function relationshipExecutor(
 				// Denials are an await boundary too; never hide them inside an authorized iterator.
 				planner.assertUnchanged()
 				if (!permitted) continue
+				planner.validateDocument(table, next.value)
+				if (!guarded(next.value, guard)) continue
 				request.expand(depth)
 				// SAFETY: native rows include system fields and explicit authorization just completed.
 				yield next.value as Document
@@ -174,6 +205,7 @@ export function relationshipExecutor(
 		depth: number,
 	): AsyncGenerator<Document> {
 		request.expand(depth, 0)
+		if (!guarded(parent, declared.sourceGuard)) return
 		const value = parent[base(declared.from).field]
 		if (value == null) return
 		if ('base' in declared.from && 'base' in declared.to) {
@@ -182,14 +214,17 @@ export function relationshipExecutor(
 				declared.from.junction.field,
 				value,
 				depth,
+				declared.junctionGuard,
 			))
 				yield* targets(
 					declared.target,
 					declared.to.base.field,
 					junction[declared.to.junction.field],
 					depth,
+					declared.targetGuard,
 				)
-		} else yield* targets(declared.target, base(declared.to).field, value, depth)
+		} else
+			yield* targets(declared.target, base(declared.to).field, value, depth, declared.targetGuard)
 	}
 	async function one(declared: Edge, parent: Document, depth: number) {
 		let match: Document | null = null
@@ -207,6 +242,9 @@ export function relationshipExecutor(
 	): Promise<boolean> {
 		request.expand(depth, 0)
 		planner.assertUnchanged()
+		planner.validateDocument(table, parent)
+		if (ast.kind === 'variant')
+			return parent[ast.discriminator] === ast.tag && matches(table, parent, ast.child, depth)
 		if (ast.kind === 'scalar') return scalarMatches(ast, parent)
 		if (ast.kind === 'not') return !(await matches(table, parent, ast.child, depth))
 		if (ast.kind === 'and' || ast.kind === 'or') {
@@ -290,7 +328,15 @@ export function relationshipExecutor(
 		assertRelationshipDepth(selection, path.length)
 		const declared = edge(table, name)
 		if (declared.cardinality !== 'many') throw new RelationshipError('INVALID_RELATION')
-		const plan = planner.plan(declared.target, input, [], constraints)
+		const guardConstraint = declared.targetGuard
+			? { fields: { [declared.targetGuard.discriminator]: declared.targetGuard.tag } }
+			: undefined
+		const plan = planner.plan(
+			declared.target,
+			input,
+			[],
+			guardConstraint ? [...constraints, guardConstraint] : constraints,
+		)
 		const from = declared.from,
 			to = declared.to
 		const through =
@@ -309,8 +355,9 @@ export function relationshipExecutor(
 			through ? through.targetField : field,
 			plan,
 			conditions,
+			declared.targetGuard,
 		)
-		const index = through ? lookup(sourceTable, field) : targetIndex
+		const index = through ? lookup(sourceTable, field, declared.junctionGuard) : targetIndex
 		// SAFETY: planner.page validated the complete output mask before cursor binding.
 		const binding: CursorBinding = {
 			...rootBinding,
@@ -324,6 +371,11 @@ export function relationshipExecutor(
 				scope: { ...request.scope },
 				rootTable: rootBinding.table,
 				lookupIndex: targetIndex.name,
+				guards: {
+					source: declared.sourceGuard ? { ...declared.sourceGuard } : null,
+					target: declared.targetGuard ? { ...declared.targetGuard } : null,
+					junction: declared.junctionGuard ? { ...declared.junctionGuard } : null,
+				},
 			},
 			relationPath: path,
 			parent: rootId,
@@ -362,7 +414,10 @@ export function relationshipExecutor(
 	) {
 		request.expand(depth, 0)
 		const { declared, plan, through, sourceTable, field, index, targetIndex, binding } = prepared
-		const value = parent?.[base(declared.from).field]
+		const value =
+			parent && guarded(parent, declared.sourceGuard)
+				? parent[base(declared.from).field]
+				: undefined
 		const args = { ...plan.args, ...(opened ?? { cursor: null }) }
 		// SAFETY: declarations accept only native scalar lookup values; nullish references are absence.
 		const lookupPlan = {
@@ -372,8 +427,8 @@ export function relationshipExecutor(
 				value == null
 					? []
 					: through
-						? [{ field, value: value as FilterScalar }]
-						: relationPrefix(index, value as FilterScalar, plan),
+						? relationPrefix(index, field, value as FilterScalar, undefined, declared.junctionGuard)
+						: relationPrefix(index, field, value as FilterScalar, plan, declared.targetGuard),
 			unsatisfiable: value == null || plan.unsatisfiable,
 		}
 		const indexedTarget = through && through.targetField !== '_id'
@@ -387,7 +442,9 @@ export function relationshipExecutor(
 			binding,
 			args,
 			async (row, permitted) => {
-				if (!permitted) return null
+				if (permitted) planner.validateDocument(indexedTarget ? declared.target : sourceTable, row)
+				if (!permitted || (through && !indexedTarget && !guarded(row, declared.junctionGuard)))
+					return null
 				request.expand(depth)
 				let target: Document | null
 				if (through && !indexedTarget)
@@ -396,7 +453,12 @@ export function relationshipExecutor(
 					// SAFETY: native direct/flattened target streams retain validated system fields.
 					target = row as Document
 				}
-				if (!target || !(await matches(declared.target, target, plan.residual, depth))) return null
+				if (
+					!target ||
+					!guarded(target, declared.targetGuard) ||
+					!(await matches(declared.target, target, plan.residual, depth))
+				)
+					return null
 				return output(declared.target, target, selection, plan.args, path, depth, parents)
 			},
 			(raw) => codec.seal(JSON.stringify({ cursor: raw, ancestors: parents.slice(1) }), binding),
@@ -416,8 +478,9 @@ export function relationshipExecutor(
 							request.expand(depth)
 							const permitted = await request.authorize(sourceTable, junction)
 							planner.assertUnchanged()
+							if (permitted) planner.validateDocument(sourceTable, junction)
 							const reference = junction[through.targetReference]
-							if (!permitted || reference == null)
+							if (!permitted || !guarded(junction, declared.junctionGuard) || reference == null)
 								return new EmptyStream(plan.args.order ?? 'asc', fields)
 							return stream(db, nativeSchema)
 								.query(declared.target)
@@ -425,7 +488,13 @@ export function relationshipExecutor(
 									// SAFETY: registry validates the native leading lookup; validated filters supply each consecutive trailing binding.
 									let range = q as IndexRangeBuilder<any, string[], number>
 									// SAFETY: junction references are native scalar Values validated by the declared lookup.
-									const prefix = relationPrefix(targetIndex, reference as FilterScalar, plan)
+									const prefix = relationPrefix(
+										targetIndex,
+										through.targetField,
+										reference as FilterScalar,
+										plan,
+										declared.targetGuard,
+									)
 									for (const binding of prefix) {
 										// SAFETY: native eq advances the validated consecutive index prefix.
 										range = range.eq(binding.field, binding.value) as IndexRangeBuilder<

@@ -25,6 +25,7 @@ export function createPlanner(
 	return {
 		metadata,
 		page: owned.page,
+		validateDocument: owned.validateDocument,
 		assertUnchanged,
 		beforeLeaf(table: string) {
 			owned.assertNativeTable(table, schema.tables[table])
@@ -85,6 +86,8 @@ export function scalarMatches(
 			return ast.children.every((child) => scalarMatches(child, document))
 		case 'or':
 			return ast.children.some((child) => scalarMatches(child, document))
+		case 'variant':
+			return document[ast.discriminator] === ast.tag && scalarMatches(ast.child, document)
 		case 'not':
 			return !scalarMatches(ast.child, document)
 		case 'relation':

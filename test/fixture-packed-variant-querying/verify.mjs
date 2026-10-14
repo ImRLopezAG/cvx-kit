@@ -10,6 +10,11 @@ const config = JSON.parse(readFileSync('.convex/local/default/config.json', 'utf
 const queries = new Set(['list', 'plain', 'byClient', 'clientsPage', 'creditorsPage', 'ledgerList', 'draftGuard', 'unmanaged', 'state', 'taskList', 'deepTasks', 'nativeClients', 'taskState', 'ledgerState', 'timestampContracts', 'declarationContracts', 'inverseTasks', 'inverseLeads', 'inverseContacts', 'inverseClients', 'inverseCreditors', 'inverseDeals', 'inversePayments', 'inverseLedger', 'inverseClientsDeclaration', 'inverseClientsPolicy', 'nestedClientTasks', 'nestedReferenceTasks'])
 const internalNames = new Set(['setup', 'mark', 'extras', 'revoke', 'state', 'corruptAmount', 'nativeSetup', 'seedTask', 'taskState', 'ledgerState', 'department', 'nativeNumber', 'timestampContracts', 'declarationContracts', 'rawLedger', 'financeMembership'])
 const evidence = []
+const started = performance.now()
+const timings = { calls: {}, assertions: [] }
+function saveTimings() {
+ writeFileSync('native-timings.json', JSON.stringify({ elapsedMs: performance.now() - started, ...timings }, null, 2))
+}
 const alice = { issuer: 'https://variant-fixture.test.invalid', subject: 'alice', org_id: 'fixture', role: 'finance' }
 const bob = { ...alice, subject: 'bob' }
 const reader = { ...alice, role: 'reader' }
@@ -19,12 +24,24 @@ async function call(name, args = {}, identity = alice) {
  // public endpoints still execute their actual createAuthFunctions policies.
  if (identity || internalNames.has(name)) client.setAdminAuth(config.adminKey, identity ?? undefined)
  const reference = (internalNames.has(name) ? internal : api).app[name]
- return queries.has(name) ? client.query(reference, args) : client.mutation(reference, args)
+ const callStarted = performance.now()
+ try { return await (queries.has(name) ? client.query(reference, args) : client.mutation(reference, args)) }
+ finally {
+  // Record only fixed endpoint names and durations, never arguments, identity or credentials.
+  const timing = timings.calls[name] ??= { kind: queries.has(name) ? 'query' : 'mutation', count: 0, totalMs: 0, maxMs: 0 }
+  const elapsed = performance.now() - callStarted
+  timing.count++; timing.totalMs += elapsed; timing.maxMs = Math.max(timing.maxMs, elapsed)
+ }
 }
 async function check(label, fn) {
+ const checkStarted = performance.now()
  try { await fn(); evidence.push({ label, passed: true }) }
  catch (error) { evidence.push({ label, passed: false, message: error.message }); throw error }
- finally { writeFileSync('native-results.json', JSON.stringify(evidence, null, 2)) }
+ finally {
+  timings.assertions.push({ label, milliseconds: performance.now() - checkStarted })
+  writeFileSync('native-results.json', JSON.stringify(evidence, null, 2))
+  saveTimings()
+ }
 }
 async function rejects(label, name, args, identity = alice, expected) {
  await check(label, async () => assert.rejects(async () => call(name, args, identity), error => {
@@ -67,8 +84,10 @@ for (const n of [1, 4]) await call('mark', { id: created[n], allowed: false })
 await call('extras', { payment: created[0], client: ids.client })
 const expected = created.filter((_, n) => n !== 1 && n !== 4)
 const mixed = await drain('list')
-await check('mixed authorized continuation has exact native IDs and order', async () => assert.deepEqual(mixed.map(row => row._id), expected))
-await check('mixed branches retain generated fields and private evidence is absent', async () => {
+// These assertions read stable state; each drain still follows its cursor serially.
+await Promise.all([
+ check('mixed authorized continuation has exact native IDs and order', async () => assert.deepEqual(mixed.map(row => row._id), expected)),
+ check('mixed branches retain generated fields and private evidence is absent', async () => {
  assert.equal(new Set(mixed.map(row => row._id)).size, expected.length)
  for (const row of mixed) {
   assert.deepEqual(Object.keys(row).sort(), (row.type === 'client_draft'
@@ -79,13 +98,14 @@ await check('mixed branches retain generated fields and private evidence is abse
   else assert.deepEqual(row.creditor, { _id: ids.creditor, name: 'creditor' })
  }
  assert.doesNotMatch(JSON.stringify(mixed), /external|allowed|createdAt|updatedAt|_creationTime|evidence|PRIVATE-/)
-})
-await check('junction and attachment target authorization', async () => assert.deepEqual(mixed[0].attachments.page.map(row => row.name), ['visible']))
-await check('client to mixed payments relation', async () => assert.deepEqual((await drain('byClient', undefined, { parent: ids.client })).map(row => row._id), expected))
-await check('client relation cannot override parent constraint', async () => assert.deepEqual(await drain('byClient', { clientId: ids.hiddenClient }, { parent: ids.client }), []))
-await check('unreadable parent produces no children', async () => assert.deepEqual(await drain('byClient', undefined, { parent: ids.hiddenClient }), []))
-await rejects('wrong-table parent ID', 'byClient', { ...options(), parent: ids.creditor })
-await rejects('malformed parent ID', 'byClient', { ...options(), parent: 'invalid-native-id' })
+}),
+ check('junction and attachment target authorization', async () => assert.deepEqual(mixed[0].attachments.page.map(row => row.name), ['visible'])),
+ check('client to mixed payments relation', async () => assert.deepEqual((await drain('byClient', undefined, { parent: ids.client })).map(row => row._id), expected)),
+ check('client relation cannot override parent constraint', async () => assert.deepEqual(await drain('byClient', { clientId: ids.hiddenClient }, { parent: ids.client }), [])),
+ check('unreadable parent produces no children', async () => assert.deepEqual(await drain('byClient', undefined, { parent: ids.hiddenClient }), [])),
+ rejects('wrong-table parent ID', 'byClient', { ...options(), parent: ids.creditor }),
+ rejects('malformed parent ID', 'byClient', { ...options(), parent: 'invalid-native-id' }),
+])
 const clients = await call('clientsPage', options())
 await check('ordinary client endpoint composes bounded mixed child page', async () => {
  assert.equal(clients.page.length, 1)
@@ -111,24 +131,33 @@ await check('optional ledger relations respect branch and absence', async () => 
 })
 const branchFilter = { variant: { tag: 'creditor_payment', filters: { creditorId: ids.creditor } } }
 const branchFirst = await call('list', options(null, branchFilter))
-await check('scoped branch predicate exact IDs', async () => assert.deepEqual((await drain('list', branchFilter)).map(row => row._id), [created[3], created[5], created[7]]))
-await check('branch relation eligibility predicate without widening', async () => assert.deepEqual((await drain('list', { creditor: { name: 'creditor' } })).map(row => row._id), [created[3], created[5], created[7]]))
-await check('contradictory discriminator stays empty', async () => assert.deepEqual(await drain('list', { and: [{ type: 'client_draft' }, branchFilter] }), []))
-await check('and/or/not branch predicates preserve eligibility', async () => assert.deepEqual((await drain('list', { and: [{ or: [{ type: 'client_draft' }, branchFilter] }, { not: { amountCents: 3 } }] })).map(row => row._id), expected.filter(id => id !== created[2])))
-await rejects('unguarded branch field runtime rejection', 'list', options(null, { creditorId: ids.creditor }))
-await rejects('unknown branch runtime rejection', 'list', options(null, { variant: { tag: 'unknown', filters: {} } }))
-await rejects('wrong branch absent field runtime rejection', 'list', options(null, { variant: { tag: 'client_draft', filters: { creditorId: ids.creditor } } }))
-await rejects('private field runtime rejection', 'list', options(null, { external: 'PRIVATE-REQUEST' }))
-await rejects('wrong-table branch ID runtime rejection', 'list', options(null, { variant: { tag: 'creditor_payment', filters: { creditorId: ids.client } } }))
+// These assertions read stable state; each drain still follows its cursor serially.
+await Promise.all([
+ check('scoped branch predicate exact IDs', async () => assert.deepEqual((await drain('list', branchFilter)).map(row => row._id), [created[3], created[5], created[7]])),
+ check('branch relation eligibility predicate without widening', async () => assert.deepEqual((await drain('list', { creditor: { name: 'creditor' } })).map(row => row._id), [created[3], created[5], created[7]])),
+ check('contradictory discriminator stays empty', async () => assert.deepEqual(await drain('list', { and: [{ type: 'client_draft' }, branchFilter] }), [])),
+ check('and/or/not branch predicates preserve eligibility', async () => assert.deepEqual((await drain('list', { and: [{ or: [{ type: 'client_draft' }, branchFilter] }, { not: { amountCents: 3 } }] })).map(row => row._id), expected.filter(id => id !== created[2]))),
+ rejects('unguarded branch field runtime rejection', 'list', options(null, { creditorId: ids.creditor })),
+ rejects('unknown branch runtime rejection', 'list', options(null, { variant: { tag: 'unknown', filters: {} } })),
+ rejects('wrong branch absent field runtime rejection', 'list', options(null, { variant: { tag: 'client_draft', filters: { creditorId: ids.creditor } } })),
+ rejects('private field runtime rejection', 'list', options(null, { external: 'PRIVATE-REQUEST' })),
+ rejects('wrong-table branch ID runtime rejection', 'list', options(null, { variant: { tag: 'creditor_payment', filters: { creditorId: ids.client } } })),
+])
 const first = await call('list', options())
-await check('first page requires valid continuation', async () => assert.equal(first.isDone, false))
-await rejects('cross-principal cursor replay', 'list', options(first.continueCursor), bob)
-await rejects('changed branch filter cursor replay', 'list', options(first.continueCursor, branchFilter))
-await rejects('changed selection cursor replay', 'plain', options(first.continueCursor))
-await rejects('cross-table cursor replay', 'ledgerList', options(first.continueCursor))
+// These assertions read stable state; each drain still follows its cursor serially.
+await Promise.all([
+ check('first page requires valid continuation', async () => assert.equal(first.isDone, false)),
+ rejects('cross-principal cursor replay', 'list', options(first.continueCursor), bob),
+ rejects('changed branch filter cursor replay', 'list', options(first.continueCursor, branchFilter)),
+ rejects('changed selection cursor replay', 'plain', options(first.continueCursor)),
+ rejects('cross-table cursor replay', 'ledgerList', options(first.continueCursor)),
+])
 const tampered = first.continueCursor.slice(0, -8) + 'AAAAAAAA'
-await rejects('tampered cursor', 'list', options(tampered))
-await check('unchanged cursor continues', async () => assert.ok((await call('list', options(first.continueCursor))).page.length > 0))
+// These assertions read stable state; each drain still follows its cursor serially.
+await Promise.all([
+ rejects('tampered cursor', 'list', options(tampered)),
+ check('unchanged cursor continues', async () => assert.ok((await call('list', options(first.continueCursor))).page.length > 0)),
+])
 await call('revoke', { principal: 'alice', active: false })
 await check('live revocation enforced on continuation', async () => assert.deepEqual((await call('list', options(first.continueCursor))).page, []))
 await check('live revocation enforced on branch-scoped continuation', async () => assert.deepEqual((await call('list', options(branchFirst.continueCursor, branchFilter))).page, []))
@@ -211,21 +240,24 @@ for (const table of members) {
  const children = [task]
  for (let n = 0; n < 3; n++) children.push(await call('createTask', { input: input(name + '-child-' + n, target, n === 1 ? 'done' : 'open') }))
  childIds[table] = children
- await check(`issue36/${table}/public create native union and forward exact target`, async () => {
+ // No writes occur until every independent read assertion finishes.
+ await Promise.all([
+ check(`issue36/${table}/public create native union and forward exact target`, async () => {
   const row = await rowFor(name)
   assert.equal(row._id, task); assert.equal(row.rel, target); assert.equal(row[fields[table]]._id, target)
   for (const other of members.filter(member => member !== table)) assert.equal(row[fields[other]], null)
   publicPages.push(row)
- })
- await check(`issue36/${table}/inverse indexed authorized fill gapless continuation`, async () => {
+ }),
+ check(`issue36/${table}/inverse indexed authorized fill gapless continuation`, async () => {
   const rows = await inverse(table)
   assert.deepEqual(rows.map(row => row._id), children)
   assert.equal(new Set(rows.map(row => row._id)).size, children.length)
   privateScan(rows); publicPages.push(rows)
- })
- await check(`issue36/${table}/inverse filter before page fill logical status`, async () => {
+ }),
+ check(`issue36/${table}/inverse filter before page fill logical status`, async () => {
   assert.deepEqual((await inverse(table, target, { and: [{ status: 'open' }, { not: { name: name + '-child-1' } }] })).map(row => row._id), [children[0], children[1], children[3]])
- })
+ }),
+ ])
  const first = await call(endpoint(table), { ...options(), parent: target })
  assert.equal(first.isDone, false)
  assert.ok(first.continueCursor)
@@ -242,19 +274,18 @@ for (const table of members) {
  const otherTable = members[(members.indexOf(table) + 1) % members.length]
  await rejects(`issue36/${table}/cursor rejects different narrowed member`, endpoint(otherTable), { ...options(first.continueCursor), parent: native.targets[otherTable] })
  await rejects(`issue36/${table}/child cursor rejects root endpoint`, 'taskList', options(first.continueCursor))
+ const [rejectionState, rejectionInverse] = await Promise.all([call('taskState', { id: task }), inverse(table)])
  for (const kind of ['missing', 'denied', 'forbidden', 'otherDepartment']) {
   await check(`issue36/${table}/${kind} link rejection preserves task inverse audit atomically`, async () => {
-   const [before, oldInverse, targetInverse] = await Promise.all([
-    call('taskState', { id: task }), inverse(table), inverse(table, native[kind][table]),
-   ])
+   const targetInverse = await inverse(table, native[kind][table])
    await assert.rejects(() => call('createTask', { input: input('native-rejected-' + table + '-' + kind, native[kind][table]) }))
    await assert.rejects(() => call('updateTask', { id: task, data: { rel: native[kind][table] } }))
    const [after, oldAfter, targetAfter, rejectedRow] = await Promise.all([
     call('taskState', { id: task }), inverse(table), inverse(table, native[kind][table]),
     rowFor('native-rejected-' + table + '-' + kind),
    ])
-   assert.deepEqual(after, before)
-   assert.deepEqual(oldAfter, oldInverse)
+   assert.deepEqual(after, rejectionState)
+   assert.deepEqual(oldAfter, rejectionInverse)
    assert.deepEqual(targetAfter, targetInverse)
    assert.equal(rejectedRow, undefined)
   })
@@ -279,28 +310,35 @@ for (const table of members) {
    assert.deepEqual(children, [])
   })
  }
- await check(`issue36/${table}/department-B cannot read source or inverse`, async () => {
-  assert.equal(await rowFor(name, carol), undefined)
-  assert.deepEqual(await inverse(table, target, undefined, carol), [])
- })
- await check(`issue36/${table}/target-only role cannot inherit task reads`, async () => {
-  assert.equal(await rowFor(name, targetOnly), undefined)
-  assert.deepEqual(await inverse(table, target, undefined, targetOnly), [])
- })
+ // No writes occur until every independent read assertion finishes.
+ await Promise.all([
+ check(`issue36/${table}/department-B cannot read source or inverse`, async () => {
+  const [row, children] = await Promise.all([rowFor(name, carol), inverse(table, target, undefined, carol)])
+  assert.equal(row, undefined)
+  assert.deepEqual(children, [])
+ }),
+ check(`issue36/${table}/target-only role cannot inherit task reads`, async () => {
+  const [row, children] = await Promise.all([rowFor(name, targetOnly), inverse(table, target, undefined, targetOnly)])
+  assert.equal(row, undefined)
+  assert.deepEqual(children, [])
+ }),
+ ])
  await check(`issue36/${table}/source authorization independently rejects target-only and denied task writes`, async () => {
-  const before = await call('taskState', { id: task }); const deniedBefore = await call('taskState', { id: deniedSource })
+  const [before, deniedBefore] = await Promise.all([call('taskState', { id: task }), call('taskState', { id: deniedSource })])
   await assert.rejects(() => call('updateTask', { id: task, data: { rel: null } }, targetOnly))
   await assert.rejects(() => call('updateTask', { id: deniedSource, data: { rel: target } }))
-  assert.deepEqual(await call('taskState', { id: task }), before)
-  assert.deepEqual(await call('taskState', { id: deniedSource }), deniedBefore)
+  const [after, deniedAfter] = await Promise.all([call('taskState', { id: task }), call('taskState', { id: deniedSource })])
+  assert.deepEqual(after, before)
+  assert.deepEqual(deniedAfter, deniedBefore)
  })
  await call('department', { principal: 'alice', department: 'B' })
  await check(`issue36/${table}/live department change reauthorizes continuation`, async () => assert.deepEqual((await call(endpoint(table), { ...options(first.continueCursor), parent: target })).page, []))
  await call('department', { principal: 'alice', department: 'A' })
  await call('revoke', { principal: 'alice', active: false })
  await check(`issue36/${table}/live membership revocation public root and child absence`, async () => {
-  assert.equal(await rowFor(name), undefined)
-  assert.deepEqual((await call(endpoint(table), { ...options(first.continueCursor), parent: target })).page, [])
+  const [row, child] = await Promise.all([rowFor(name), call(endpoint(table), { ...options(first.continueCursor), parent: target })])
+  assert.equal(row, undefined)
+  assert.deepEqual(child.page, [])
  })
  await check(`issue36/${table}/revoked public command leaves task audit unchanged`, async () => {
   const before = await call('taskState', { id: task })
@@ -311,36 +349,36 @@ for (const table of members) {
  await call('revoke', { principal: 'alice', active: true })
  await check(`issue36/${table}/public relink every member removes old inverse adds new`, async () => {
   await call('updateTask', { id: task, data: { rel: native.targets[otherTable] } })
-  const row = await rowFor(name)
+  const [row, oldChildren, newChildren] = await Promise.all([rowFor(name), inverse(table), inverse(otherTable)])
   assert.equal(row[fields[table]], null)
   assert.equal(row[fields[otherTable]]._id, native.targets[otherTable])
-  assert.ok(!(await inverse(table)).some(row => row._id === task))
-  assert.ok((await inverse(otherTable)).some(row => row._id === task))
+  assert.ok(!oldChildren.some(row => row._id === task))
+  assert.ok(newChildren.some(row => row._id === task))
   await call('updateTask', { id: task, data: { rel: target } })
   assert.ok(!(await inverse(otherTable)).some(row => row._id === task))
  })
  await check(`issue36/${table}/omitted link preserves forward inverse and audit intent`, async () => {
   await call('updateTask', { id: task, data: { status: 'done' } })
-  const state = await call('taskState', { id: task })
+  const [state, children] = await Promise.all([call('taskState', { id: task }), inverse(table)])
   assert.equal(state.row.rel, target)
   assert.equal(state.audits.at(-1).operation, 'update')
   assert.equal(state.audits.at(-1).next, target)
-  assert.ok((await inverse(table)).some(row => row._id === task))
+  assert.ok(children.some(row => row._id === task))
  })
  await check(`issue36/${table}/failure after writes rolls back row inverse audit`, async () => {
-  const before = await call('taskState', { id: task }); const childrenBefore = await inverse(table)
+  const [before, childrenBefore] = await Promise.all([call('taskState', { id: task }), inverse(table)])
   await assert.rejects(() => call('updateTask', { id: task, data: { rel: null }, failAfterPersist: true }), /TASK_ATOMIC_FAILURE/)
-  assert.deepEqual(await call('taskState', { id: task }), before)
-  assert.deepEqual(await inverse(table), childrenBefore)
+  const [after, childrenAfter] = await Promise.all([call('taskState', { id: task }), inverse(table)])
+  assert.deepEqual(after, before)
+  assert.deepEqual(childrenAfter, childrenBefore)
  })
  await check(`issue36/${table}/explicit null clears forward inverse with audit`, async () => {
   await call('updateTask', { id: task, data: { rel: null } })
-  const state = await call('taskState', { id: task })
+  const [state, row, children] = await Promise.all([call('taskState', { id: task }), rowFor(name), inverse(table)])
   assert.equal(state.row.rel, null); assert.equal(state.audits.at(-1).operation, 'clear')
   assert.equal(state.audits.at(-1).previous, target); assert.equal(state.audits.at(-1).next, null)
-  const row = await rowFor(name)
   for (const member of members) assert.equal(row[fields[member]], null)
-  assert.ok(!(await inverse(table)).some(child => child._id === task))
+  assert.ok(!children.some(child => child._id === task))
  })
  await call('updateTask', { id: task, data: { rel: target, status: 'open' } })
 }
@@ -370,11 +408,14 @@ await check('issue36/absent command link and explicit null have matching one abs
  }
 })
 await check('issue36/task-only read never inherits client or finance target policy', async () => {
- const client = await rowFor('native-link-clients', taskOnly)
+ const [client, payment, ledger, creditor] = await Promise.all([
+  rowFor('native-link-clients', taskOnly), rowFor('native-link-payments', taskOnly),
+  rowFor('native-link-ledger', reader), rowFor('native-link-creditors', reader),
+ ])
  assert.equal(client._id, taskIds.clients); assert.equal(client.client, null)
- assert.equal((await rowFor('native-link-payments', taskOnly)).payment, null)
- assert.equal((await rowFor('native-link-ledger', reader)).ledgerEntry, null)
- assert.equal((await rowFor('native-link-creditors', reader)).creditor, null)
+ assert.equal(payment.payment, null)
+ assert.equal(ledger.ledgerEntry, null)
+ assert.equal(creditor.creditor, null)
 })
 await check('issue36/current dependent client policy denies deal and payment despite own allowed flag', async () => {
  for (const [table, id] of [['deals', native.deniedAncestorDeal], ['payments', native.deniedAncestorPayment], ['ledger', native.deniedAncestorLedger]]) {
@@ -391,10 +432,14 @@ await check('issue36/current dependent client policy denies deal and payment des
 const financeCursor = (await call('inversePayments', { ...options(), parent: native.targets.payments })).continueCursor
 await call('financeMembership', { principal: 'alice', finance: false })
 await check('issue36/live finance membership revocation denies targets child cursor and link command', async () => {
- assert.equal((await rowFor('native-link-payments')).payment, null)
- assert.equal((await rowFor('native-link-ledger')).ledgerEntry, null)
- assert.equal((await rowFor('native-link-creditors')).creditor, null)
- assert.deepEqual((await call('inversePayments', { ...options(financeCursor), parent: native.targets.payments })).page, [])
+ const [payment, ledger, creditor, child] = await Promise.all([
+  rowFor('native-link-payments'), rowFor('native-link-ledger'), rowFor('native-link-creditors'),
+  call('inversePayments', { ...options(financeCursor), parent: native.targets.payments }),
+ ])
+ assert.equal(payment.payment, null)
+ assert.equal(ledger.ledgerEntry, null)
+ assert.equal(creditor.creditor, null)
+ assert.deepEqual(child.page, [])
  const before = await call('taskState', { id: taskIds.payments })
  await assert.rejects(() => call('updateTask', { id: taskIds.payments, data: { rel: native.targets.payments } }))
  assert.deepEqual(await call('taskState', { id: taskIds.payments }), before)
@@ -403,13 +448,17 @@ await call('financeMembership', { principal: 'alice', finance: true })
 await check('issue36/ordinary union preserves actual payment ledger variant DTOs and target guards', async () => {
  await call('createTask', { input: input('native-draft-branch', native.draft) })
  await call('createTask', { input: input('native-adjustment-branch', native.adjustment) })
- const draft = await rowFor('native-draft-branch'); const adjustment = await rowFor('native-adjustment-branch')
+ const [draft, adjustment, payment, ledger, draftInverse, adjustmentInverse] = await Promise.all([
+  rowFor('native-draft-branch'), rowFor('native-adjustment-branch'),
+  rowFor('native-link-payments'), rowFor('native-link-ledger'),
+  inverse('payments', native.draft), inverse('ledger', native.adjustment),
+ ])
  assert.equal(draft.payment.type, 'client_draft'); assert.equal(draft.draftPayment.type, 'client_draft')
- assert.equal((await rowFor('native-link-payments')).draftPayment, null)
+ assert.equal(payment.draftPayment, null)
  assert.equal(adjustment.ledgerEntry.type, 'adjustment'); assert.equal(adjustment.adjustment.type, 'adjustment')
- assert.equal((await rowFor('native-link-ledger')).adjustment, null)
- assert.equal((await inverse('payments', native.draft))[0]._id, draft._id)
- assert.equal((await inverse('ledger', native.adjustment))[0]._id, adjustment._id)
+ assert.equal(ledger.adjustment, null)
+ assert.equal(draftInverse[0]._id, draft._id)
+ assert.equal(adjustmentInverse[0]._id, adjustment._id)
  privateScan([draft, adjustment])
 })
 await check('issue36/some none null and logical filters use authorized view', async () => {
@@ -471,13 +520,15 @@ await check('issue36/public pages contain only generated DTO fields and opaque c
 
 await check('issue35/full storage refinements and generated command timestamp masks', async () => assert.deepEqual(await call('timestampContracts'), [true, ...Array(10).fill(false)]))
 await check('issue35/required explicit timestamps persisted native row and DTO masks', async () => {
- const payment = await call('ledgerState', { id: native.targets.ledger })
- const adjustment = await call('ledgerState', { id: native.adjustment })
+ const [payment, adjustment, hiddenRow, exposedRow] = await Promise.all([
+  call('ledgerState', { id: native.targets.ledger }), call('ledgerState', { id: native.adjustment }),
+  rowFor('native-link-ledger'), rowFor('native-adjustment-branch'),
+ ])
  assert.equal(payment.createdAt, 10); assert.equal(payment.recordedAt, 20)
  assert.equal(adjustment.createdAt, 30); assert.equal(adjustment.recordedAt, 40)
- const hidden = (await rowFor('native-link-ledger')).ledgerEntry
+ const hidden = hiddenRow.ledgerEntry
  assert.ok(!('createdAt' in hidden)); assert.ok(!('recordedAt' in hidden))
- const exposed = (await rowFor('native-adjustment-branch')).ledgerEntry
+ const exposed = exposedRow.ledgerEntry
  assert.equal(exposed.createdAt, 30); assert.equal(exposed.recordedAt, 40)
  assert.ok(!('updatedAt' in adjustment)); assert.ok(!('archivedAt' in adjustment))
 })
@@ -550,5 +601,6 @@ for (const label of legacyLabels) assert.ok(evidence.some(result => result.label
 assert.equal(new Set(evidence.map(result => result.label)).size, evidence.length)
 assert.ok(evidence.length >= 300, 'Expected all 52 legacy assertions and at least 248 new native assertions')
 writeFileSync('native-results.json', JSON.stringify(evidence, null, 2))
+saveTimings()
 writeFileSync('NATIVE_SUCCESS', `${evidence.length} native assertions passed\n`)
 console.log(`Native variant shared-engine passed: ${evidence.length} assertions`)

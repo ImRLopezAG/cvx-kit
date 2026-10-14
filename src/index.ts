@@ -1,6 +1,7 @@
 export { defaultErrors, KitError, type ErrorFactory } from './errors'
 export {
 	createModule,
+	createTable,
 	jsonSafeZid,
 	paginated,
 	tenantTable,

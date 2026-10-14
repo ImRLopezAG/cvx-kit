@@ -11,22 +11,56 @@ export function processGroupAlive(pid) {
 	}
 }
 const owned = new Set()
+async function recheckGroupExit(pid, error, graceMs) {
+	// macOS can find an exiting group with no signalable members and return
+	// EPERM before reaping it. Only a subsequent ESRCH proves it is gone.
+	// Never send another signal while permission to probe is uncertain.
+	const deadline = performance.now() + graceMs
+	while (performance.now() < deadline) {
+		await delay(Math.min(20, deadline - performance.now()))
+		try {
+			if (!processGroupAlive(pid)) return false
+		} catch (recheckError) {
+			if (recheckError.code === 'EPERM') continue
+			throw recheckError
+		}
+		// A live group does not resolve the original permission failure.
+		throw error
+	}
+	throw error
+}
+async function ownedGroupAlive(pid, graceMs) {
+	try {
+		return processGroupAlive(pid)
+	} catch (error) {
+		if (error.code !== 'EPERM') throw error
+		return recheckGroupExit(pid, error, graceMs)
+	}
+}
 export async function cleanupOwnedProcess(pid, graceMs = 1000) {
 	if (!owned.has(pid)) throw new Error('Process group is not owned by this runner')
 	const signals = [],
 		errors = []
 	for (const signal of ['SIGINT', 'SIGTERM', 'SIGKILL']) {
-		if (!processGroupAlive(pid)) break
+		if (!(await ownedGroupAlive(pid, graceMs))) break
 		try {
 			process.kill(-pid, signal)
 			signals.push(signal)
 		} catch (error) {
+			if (error.code === 'EPERM') {
+				try {
+					await recheckGroupExit(pid, error, graceMs)
+					break // Confirmed ESRCH, just like ESRCH from the signal itself.
+				} catch (recheckError) {
+					if (recheckError.code !== 'EPERM') throw recheckError
+				}
+			}
 			if (error.code !== 'ESRCH') errors.push({ signal, code: error.code })
 		}
 		const deadline = performance.now() + graceMs
-		while (processGroupAlive(pid) && performance.now() < deadline) await delay(20)
+		while ((await ownedGroupAlive(pid, graceMs)) && performance.now() < deadline) await delay(20)
 	}
-	return { pid, groupId: pid, signals, errors, alive: processGroupAlive(pid) }
+	return { pid, groupId: pid, signals, errors, alive: await ownedGroupAlive(pid, graceMs) }
 }
 
 export async function runOwnedProcess({

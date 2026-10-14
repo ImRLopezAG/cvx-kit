@@ -11,7 +11,26 @@ const queries = new Set(['list', 'plain', 'byClient', 'clientsPage', 'creditorsP
 const internalNames = new Set(['setup', 'mark', 'extras', 'revoke', 'state', 'corruptAmount', 'nativeSetup', 'seedTask', 'taskState', 'ledgerState', 'department', 'nativeNumber', 'timestampContracts', 'declarationContracts', 'rawLedger', 'financeMembership'])
 const evidence = []
 const started = performance.now()
-const timings = { calls: {}, assertions: [] }
+const queryLimit = 2
+let activeQueries = 0
+const queryWaiters = []
+const timings = { calls: {}, assertions: [], queryConcurrency: { limit: queryLimit, maxActive: 0, maxQueued: 0 } }
+async function runQuery(request) {
+ if (activeQueries >= queryLimit) {
+  await new Promise(resolve => {
+   queryWaiters.push(resolve)
+   timings.queryConcurrency.maxQueued = Math.max(timings.queryConcurrency.maxQueued, queryWaiters.length)
+  })
+ } else activeQueries++
+ timings.queryConcurrency.maxActive = Math.max(timings.queryConcurrency.maxActive, activeQueries)
+ try { return await request() }
+ finally {
+  // Transfer the occupied slot directly so new calls cannot overtake a queued query.
+  const next = queryWaiters.shift()
+  if (next) next()
+  else activeQueries--
+ }
+}
 function saveTimings() {
  writeFileSync('native-timings.json', JSON.stringify({ elapsedMs: performance.now() - started, ...timings }, null, 2))
 }
@@ -25,7 +44,7 @@ async function call(name, args = {}, identity = alice) {
  if (identity || internalNames.has(name)) client.setAdminAuth(config.adminKey, identity ?? undefined)
  const reference = (internalNames.has(name) ? internal : api).app[name]
  const callStarted = performance.now()
- try { return await (queries.has(name) ? client.query(reference, args) : client.mutation(reference, args)) }
+ try { return await (queries.has(name) ? runQuery(() => client.query(reference, args)) : client.mutation(reference, args)) }
  finally {
   // Record only fixed endpoint names and durations, never arguments, identity or credentials.
   const timing = timings.calls[name] ??= { kind: queries.has(name) ? 'query' : 'mutation', count: 0, totalMs: 0, maxMs: 0 }

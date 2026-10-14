@@ -25,6 +25,41 @@ export const documents = zodTable(
 )
 ```
 
+## Reuse shared fields with `createTable`
+
+Use `createTable` when several tables share the same fields. Pass a plain
+object of Zod validators; the returned function accepts the same arguments
+as `zodTable` and returns the same table boundary.
+
+```ts
+import { z } from 'zod'
+import { createTable } from 'cvx-kit/zod-table'
+
+const customTable = createTable({
+	ref: z.string(),
+	nextActivity: z.string(),
+})
+
+export const tasks = customTable(
+	'tasks',
+	(id) => ({ title: z.string(), ownerId: id('users') }),
+	{ commandFields: ['ref', 'title'], publicFields: ['ref', 'nextActivity', 'title'] },
+)
+
+export const projects = customTable('projects', () => ({ name: z.string() }))
+```
+
+Both tables contain `ref` and `nextActivity` alongside their own fields and
+the usual timestamps. Shared fields participate in storage, insert/update
+schemas, tools, indexes, and the explicit command/public allowlists just like
+fields declared directly with `zodTable`. They are ordinary user fields;
+use `serverFields` explicitly when a field belongs to the server.
+
+Table-specific declarations cannot repeat a shared field name, even with the
+same validator. Shared fields also cannot use reserved document or timestamp
+names (`_id`, `_creationTime`, `createdAt`, `updatedAt`, `archivedAt`).
+`createTable` is also exported from `cvx-kit`.
+
 ## What you get back
 
 ### Shared ID validation (0.1.3)

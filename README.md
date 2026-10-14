@@ -97,6 +97,21 @@ export const documents = zodTable(
 // documents.toPublicDto(row) → projects AND re-parses (runtime redaction)
 ```
 
+For fields shared across tables, create a reusable declaration function:
+
+```ts
+import { createTable } from 'cvx-kit/zod-table'
+
+const customTable = createTable({ ref: z.string(), nextActivity: z.string() })
+const tasks = customTable('tasks', () => ({ title: z.string() }))
+const projects = customTable('projects', () => ({ name: z.string() }))
+```
+
+It accepts the same arguments and returns the same boundary as `zodTable`.
+Table-specific fields cannot repeat shared field names. See the
+[`zod-table` guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/zod-table.md)
+for field masks and examples.
+
 Every table gets `createdAt`, `updatedAt`, and `archivedAt` baked in —
 opinionated, server-owned, always excluded from inserts and commands
 (expose them via `publicFields` when a DTO needs them). Register the

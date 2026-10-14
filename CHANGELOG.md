@@ -12,6 +12,14 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-10-13
+
+### Added
+
+- Export `createTable` to reuse a shared object of Zod field validators across ordinary table declarations, preserving `zodTable` boundaries, native IDs, field masks, tools, and index inference.
+- Reject table-specific declarations that duplicate shared field names, with runtime checks and static rejection for known keys.
+- Document reusable table fields in the README and repository-hosted skill.
+
 ## [0.1.18] - 2026-10-13
 
 ### Added

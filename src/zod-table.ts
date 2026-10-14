@@ -356,6 +356,44 @@ export function zodTable<
 	}
 }
 
+/** Reuses ordinary fields while deriving every boundary through zodTable. */
+export function createTable<Shared extends FieldSchemas>(shared: Shared & OwnedFields<Shared>) {
+	assertOwnedFields(shared, ['_id', '_creationTime', ...TIMESTAMP_FIELDS])
+	return function customTable<
+		Table extends string,
+		Fields extends FieldSchemas,
+		const ServerFields extends readonly FieldKey<Shared & Fields>[] = readonly [],
+		const CommandFields extends readonly FieldKey<Shared & Fields>[] = readonly [],
+		const PublicFields extends readonly FieldKey<Shared & Fields & TimestampFields>[] = readonly [],
+	>(
+		tableName: Table,
+		fields: (id: typeof zid) => Fields &
+			OwnedFields<Fields> & {
+				[Key in keyof Fields]: Key extends (string extends keyof Shared ? never : keyof Shared)
+					? never
+					: Fields[Key]
+			},
+		options: TableBoundaryOptions<Shared & Fields, ServerFields, CommandFields, PublicFields> = {},
+	): TableBoundary<Table, Shared & Fields, ServerFields, CommandFields, PublicFields> {
+		return zodTable<Table, Shared & Fields, ServerFields, CommandFields, PublicFields>(
+			tableName,
+			(id) => {
+				const declared = fields(id)
+				for (const key of Object.keys(declared)) {
+					if (Object.hasOwn(shared, key))
+						throw new Error(`Duplicate shared table field "${key}" on table "${tableName}"`)
+				}
+				assertOwnedFields(declared, ['_id', '_creationTime', ...TIMESTAMP_FIELDS])
+				const combined: Shared & Fields = { ...shared, ...declared }
+				// SAFETY: duplicates and reserved keys are rejected before merging; like
+				// tenantTable, this wrapper forwards the unchanged validators to zodTable.
+				return combined as Shared & Fields & OwnedFields<Shared & Fields>
+			},
+			options,
+		)
+	}
+}
+
 const tenantFields = {
 	tenant: z.string().min(1),
 } satisfies FieldSchemas

@@ -279,7 +279,8 @@ const payments = zodVariantTable(
 Each branch must be a strict object with one string literal discriminator.
 Every tag needs exactly one configuration. Masks accept only that branch's
 fields; the discriminator is always retained and must not appear in a mask.
-System fields and timestamp names are reserved. Root object/union refinements,
+System fields are reserved. Timestamp names remain reserved unless you explicitly
+set `timestamps: false`. Root object/union refinements,
 transforms, defaults, coercion, and other value-changing validators are rejected.
 Pure field refinements are supported. Nested object catchalls are unsupported;
 use a record field instead. Bigint fields may be stored, but cannot be selected
@@ -290,16 +291,55 @@ Convex table-ID validation; generated tool schemas convert IDs to JSON strings.
 The result exposes `table`, `storage`, `schema` (including system fields),
 `insertSchema`, `updateSchema`, `commandInput`, `publicDto`, `dto(includeId?)`,
 `toPublicDto(row, includeId?)`, and `tools.id/insert/update`. Inserts exclude
-server fields and timestamps. Commands select only the configured command
+server fields and managed timestamps. Commands select only the configured command
 fields. Tool inserts use the command boundary; tool updates wrap its partial
 boundary in `{ id, data }`. All boundaries remain strict discriminated unions.
 `dto(true)` includes the table's branded `_id`; DTO extensions are unavailable
 in this mode. `toPublicDto` selects the matching branch's whitelist and re-parses
 it, removing server evidence and fields belonging to other branches.
 
-Timestamps are optional storage fields; existing triggers must maintain them.
+With `timestamps: true`, timestamps are optional storage fields; existing triggers must maintain them.
 They are private unless explicitly selected in `publicFields`. The helper does
 not assign timestamps or server fields.
+
+With `timestamps: false`, declare explicit `createdAt`, `updatedAt`, or
+`archivedAt` fields as needed. Their requiredness and field refinements survive
+in storage and document boundaries. They follow ordinary masks: put server-owned
+fields in `serverFields` to exclude them from insert/update inputs, leave them
+out of `commandFields` to exclude them from command/tool inputs, and select only
+the intended public fields. For example:
+
+```ts
+const ledger = zodVariantTable(
+	'ledger',
+	z.discriminatedUnion('type', [
+		z.strictObject({
+			type: z.literal('adjustment'),
+			amountCents: z.int(),
+			createdAt: z.int().nonnegative(),
+			recordedAt: z.int().nonnegative(),
+		}),
+	]),
+	{
+		discriminator: 'type',
+		timestamps: false,
+		variants: {
+			adjustment: {
+				serverFields: ['createdAt', 'recordedAt'],
+				commandFields: ['amountCents'],
+				publicFields: ['amountCents', 'createdAt'],
+			},
+		},
+	},
+)
+```
+
+The handler supplies both timestamps before parsing the complete storage row.
+Native Convex validators enforce their required numeric shape; parse with Zod
+to enforce integer, nonnegative, and safe-number refinements. Omitting the
+timestamp option preserves the existing behavior: no managed fields are added,
+but explicit timestamp names remain reserved. Use `false` to opt into explicit
+timestamp declarations.
 
 A patch always requires the discriminator. In one Convex mutation, fetch the
 stored row, check the discriminator, merge, validate the complete storage row,

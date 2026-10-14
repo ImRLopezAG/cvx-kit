@@ -55,6 +55,130 @@ const creditor = {
 }
 
 describe('zodVariantTable boundaries', () => {
+	it('retains explicit timestamp validators and masks when managed timestamps are disabled', () => {
+		const storage = z.discriminatedUnion('type', [
+			z.strictObject({
+				type: z.literal('adjustment'),
+				createdAt: z.int().nonnegative(),
+				updatedAt: z.int().nonnegative(),
+				archivedAt: z.int().nonnegative(),
+				recordedAt: z.int().nonnegative(),
+			}),
+		])
+		const variants = {
+			adjustment: {
+				serverFields: ['createdAt', 'updatedAt', 'archivedAt', 'recordedAt'],
+				commandFields: [],
+				publicFields: ['createdAt'],
+			},
+		} as const
+		const table = zodVariantTable('ledger', storage, {
+			discriminator: 'type',
+			timestamps: false,
+			variants,
+		})
+		const row = {
+			type: 'adjustment' as const,
+			createdAt: 0,
+			updatedAt: 1,
+			archivedAt: 2,
+			recordedAt: 3,
+		}
+		const document = { ...row, _id: zid('ledger').parse('ledger:1'), _creationTime: 0 }
+		expect(table.storage.parse(row)).toEqual(row)
+		expect(table.schema.parse(document)).toEqual(document)
+		for (const key of ['createdAt', 'updatedAt', 'archivedAt', 'recordedAt'] as const) {
+			for (const value of [undefined, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+				expect(table.storage.safeParse({ ...row, [key]: value }).success).toBe(false)
+				expect(table.schema.safeParse({ ...document, [key]: value }).success).toBe(false)
+			}
+			for (const schema of [
+				table.commandInput,
+				table.insertSchema,
+				table.updateSchema,
+				table.tools.insert,
+				table.tools.update.shape.data,
+			]) {
+				expect(schema.parse({ type: 'adjustment' })).toEqual({ type: 'adjustment' })
+				expect(schema.safeParse({ type: 'adjustment', [key]: 1 }).success).toBe(false)
+			}
+		}
+		expect(table.toPublicDto(document)).toEqual({ type: 'adjustment', createdAt: 0 })
+		expect(table.dto(true).parse(table.toPublicDto(document, true))).toEqual({
+			type: 'adjustment',
+			createdAt: 0,
+			_id: document._id,
+		})
+		expect(table.publicDto.safeParse({ type: 'adjustment', createdAt: -1 }).success).toBe(false)
+		const native = zodToConvex(table.storage)
+		if (native.kind !== 'union' || native.members[0].kind !== 'object')
+			throw new Error('Expected object union')
+		for (const key of ['createdAt', 'updatedAt', 'archivedAt', 'recordedAt'] as const) {
+			expect(native.members[0].fields[key].kind).toBe('float64')
+			expect(native.members[0].fields[key].isOptional).toBe('required')
+		}
+		expect(defineRelations({ ledger: table }, () => ({})).tables.ledger).toBeDefined()
+		for (const timestamps of [true, undefined])
+			expect(() =>
+				zodVariantTable('ledger', storage, { discriminator: 'type', timestamps, variants }),
+			).toThrow(/Reserved table field/)
+	})
+
+	it('uses normal writable masks for explicit timestamps without server ownership', () => {
+		const table = zodVariantTable(
+			'ledger',
+			z.discriminatedUnion('type', [
+				z.strictObject({ type: z.literal('adjustment'), createdAt: z.int().nonnegative() }),
+			]),
+			{
+				discriminator: 'type',
+				timestamps: false,
+				variants: { adjustment: { commandFields: ['createdAt'], publicFields: [] } },
+			},
+		)
+		for (const schema of [
+			table.commandInput,
+			table.insertSchema,
+			table.updateSchema,
+			table.tools.insert,
+			table.tools.update.shape.data,
+		]) {
+			expect(schema.parse({ type: 'adjustment', createdAt: 1 })).toEqual({
+				type: 'adjustment',
+				createdAt: 1,
+			})
+			expect(schema.safeParse({ type: 'adjustment', createdAt: -1 }).success).toBe(false)
+		}
+		expect(table.insertSchema.safeParse({ type: 'adjustment' }).success).toBe(false)
+		expect(table.updateSchema.parse({ type: 'adjustment' })).toEqual({ type: 'adjustment' })
+		expect(table.toPublicDto({ type: 'adjustment', createdAt: 1 })).toEqual({ type: 'adjustment' })
+		expect(
+			table.storage.safeParse({ type: 'adjustment', createdAt: 1, updatedAt: 1 }).success,
+		).toBe(false)
+	})
+
+	it('keeps managed timestamp collisions and system fields reserved', () => {
+		for (const key of ['createdAt', 'updatedAt', 'archivedAt', '_id', '_creationTime']) {
+			const storage = z.discriminatedUnion('type', [
+				z.strictObject({ type: z.literal('adjustment'), [key]: z.int().nonnegative() }),
+			])
+			expect(() =>
+				zodVariantTable('ledger', storage, {
+					discriminator: 'type',
+					timestamps: true,
+					variants: { adjustment: {} },
+				}),
+			).toThrow(`Reserved table field "${key}" cannot be declared`)
+			if (key === '_id' || key === '_creationTime')
+				expect(() =>
+					zodVariantTable('ledger', storage, {
+						discriminator: 'type',
+						timestamps: false,
+						variants: { adjustment: {} },
+					}),
+				).toThrow(`Reserved table field "${key}" cannot be declared`)
+		}
+	})
 	it('keeps the two-argument helper unchanged', () => {
 		const legacy = zodVariantTable('payments', paymentStorage)
 		expect(legacy.insertSchema).toBe(paymentStorage)

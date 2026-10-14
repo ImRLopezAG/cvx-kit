@@ -3,6 +3,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
 
+// CI selects one package manager; unset preserves local compatibility matrices.
+const installerOverride = process.env.CVX_PACKED_INSTALLER
+if (installerOverride !== undefined && !['bun', 'npm'].includes(installerOverride))
+	throw new Error('CVX_PACKED_INSTALLER must be bun or npm')
+if (process.argv.length > 2) throw new Error('This script accepts no command-line arguments')
+
 const root = resolve(import.meta.dirname, '..')
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-auth-'))
@@ -63,7 +69,7 @@ try {
 				include: ['auth.ts', 'shared-auth.ts'],
 			}),
 		)
-		run('bun', ['install', '--ignore-scripts'], fixture)
+		run(installerOverride ?? 'bun', ['install', '--ignore-scripts'], fixture)
 		run('bun', ['x', '--no-install', 'tsc', '--project', 'tsconfig.json'], fixture)
 		console.log(`Packed auth native contexts pass on Convex ${convex}`)
 	}

@@ -52,6 +52,8 @@ links remain inside the installed skill with `bun run skills:check`.
 
 Guides:
 
+- [`native-id-relations.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/native-id-relations.md) — native-ID union links, authorized inverse pages, and migration
+
 - [`architecture.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/architecture.md) — the layered application shape the kit encodes
 - [`conventions.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/conventions.md) — the doctrine: folder structure, file anatomy, naming grammar, import rules
 - [`zod-table.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/zod-table.md) — one zod shape per entity, masked into every boundary

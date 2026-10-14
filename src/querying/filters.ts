@@ -236,8 +236,11 @@ export interface FilterGrammar {
 	relations: Record<string, { cardinality: 'one' | 'many'; target: FilterGrammar }>
 }
 
-export function relationFilterSchema(grammar: FilterGrammar): z.ZodType {
-	const schema = new BoundedFilterObject(filterNodeSchema(grammar, 0)._zod.def)
+export function relationFilterSchema(
+	grammar: FilterGrammar,
+	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
+): z.ZodType {
+	const schema = new BoundedFilterObject(filterNodeSchema(grammar, 0, cache)._zod.def)
 	filterGrammars.set(schema, grammar)
 	return schema
 }
@@ -515,7 +518,13 @@ function boundedFilterSchema(predicates: FieldSchemas): z.ZodType {
 	return relationFilterSchema({ fields: predicates, relations: {} })
 }
 
-function filterNodeSchema(grammar: FilterGrammar, depth: number): z.ZodObject {
+function filterNodeSchema(
+	grammar: FilterGrammar,
+	depth: number,
+	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
+): z.ZodObject {
+	const cached = cache.get(grammar)?.get(depth)
+	if (cached) return cached
 	const predicates = grammar.fields
 	const direct = Object.fromEntries(
 		Object.entries(predicates).filter(
@@ -526,7 +535,7 @@ function filterNodeSchema(grammar: FilterGrammar, depth: number): z.ZodObject {
 	const relations: FieldSchemas = {}
 	for (const [name, relation] of Object.entries(grammar.relations)) {
 		if (depth === MAX_FILTER_DEPTH) continue
-		const target = filterNodeSchema(relation.target, depth + 1)
+		const target = filterNodeSchema(relation.target, depth + 1, cache)
 		relations[name] = (
 			relation.cardinality === 'one'
 				? target.nullable()
@@ -536,7 +545,7 @@ function filterNodeSchema(grammar: FilterGrammar, depth: number): z.ZodObject {
 	}
 	if (grammar.variants && depth < MAX_FILTER_DEPTH) {
 		const options = Object.entries(grammar.variants.options).map(([tag, branch]) =>
-			z.strictObject({ tag: z.literal(tag), filters: filterNodeSchema(branch, depth + 1) }),
+			z.strictObject({ tag: z.literal(tag), filters: filterNodeSchema(branch, depth + 1, cache) }),
 		)
 		if (options.length) {
 			relations.variant = z.union(options).optional()
@@ -546,13 +555,21 @@ function filterNodeSchema(grammar: FilterGrammar, depth: number): z.ZodObject {
 	const node = z
 		.object({ ...direct, ...relations, fields: z.object(predicates).strict().optional() })
 		.strict()
-	if (depth === MAX_FILTER_DEPTH) return node
-	const child = filterNodeSchema(grammar, depth + 1)
-	return node.extend({
-		and: z.array(child).min(1).max(MAX_FILTER_NODES).optional(),
-		or: z.array(child).min(1).max(MAX_FILTER_NODES).optional(),
-		not: child.optional(),
-	})
+	const child = depth === MAX_FILTER_DEPTH ? undefined : filterNodeSchema(grammar, depth + 1, cache)
+	const result = child
+		? node.extend({
+				and: z.array(child).min(1).max(MAX_FILTER_NODES).optional(),
+				or: z.array(child).min(1).max(MAX_FILTER_NODES).optional(),
+				not: child.optional(),
+			})
+		: node
+	let depths = cache.get(grammar)
+	if (!depths) {
+		depths = new Map()
+		cache.set(grammar, depths)
+	}
+	depths.set(depth, result)
+	return result
 }
 
 function withinFilterBudget(value: FilterTree, grammar: FilterGrammar): boolean {

@@ -2,7 +2,7 @@ import { anyApi } from 'convex/server'
 import { authenticatedFixture } from './fixture-querying/auth'
 import { largeRegistry } from './fixture-querying/large-registry'
 import { privateStoredFixture, privatePrefaultFixture } from './fixture-querying/private-stored'
-import { describe, expect, test } from 'vite-plus/test'
+import { describe, expect, test, vi } from 'vite-plus/test'
 import { stream } from 'convex-helpers/server/stream'
 import { compareValues, getDocumentSize } from 'convex/values'
 import { createPlanner } from '../src/querying/planner'
@@ -19,6 +19,7 @@ import {
 	scope,
 } from './fixture-querying/scalar'
 import type { FilterScalar, ScalarFilters, ScalarSelection } from '../src/querying/filters'
+import { nativePagination } from '../src/querying/filters'
 import type { DM } from './fixture-querying/scalar'
 import type { DataModelFromSchemaDefinition, DocumentByName } from 'convex/server'
 
@@ -40,6 +41,51 @@ function sorted<Row extends { _id: string; _creationTime: number }>(
 }
 
 describe('U5 actual helper scalar engine', () => {
+	test('planner construction defers pagination validators and reuses them after live guards', () => {
+		const f = largeRegistry()
+		const extend = vi.spyOn(nativePagination, 'extend')
+		try {
+			const planner = createPlanner(f.schema, f.relations)
+			expect(extend).not.toHaveBeenCalled()
+			const input = { numItems: 1, cursor: null }
+			planner.plan('tasks', input, [], [])
+			expect(extend).toHaveBeenCalledTimes(1)
+			planner.plan('tasks', input, [], [])
+			expect(extend).toHaveBeenCalledTimes(1)
+			expect(() => planner.plan('missing', input, [], [])).toThrow('Unknown query table')
+		} finally {
+			extend.mockRestore()
+		}
+	})
+	test('scalar Boolean filter depth does not repeat whole-registry serialization per row', async () => {
+		async function extraSerializations(size: number) {
+			const f = harness()
+			await seed(f, size)
+			return f.t.run(async (ctx) => {
+				const q = f.querying(managed<DM>(ctx.db)).tasks
+				// Warm cursor identity and validators before comparing equivalent full scans.
+				await q.paginate({ numItems: 100, cursor: null })
+				const stringify = vi.spyOn(JSON, 'stringify')
+				try {
+					const simple = await q.paginate({ numItems: 100, cursor: null, filters: { tenant: 'one' } })
+					const simpleCalls = stringify.mock.calls.length
+					stringify.mockClear()
+					const nested = await q.paginate({
+						numItems: 100,
+						cursor: null,
+						filters: { not: { not: { and: [{ tenant: 'one' }, { or: [{ tenant: 'one' }] }] } } },
+					})
+					expect(nested.page).toEqual(simple.page)
+					expect(nested.isDone).toBe(true)
+					return stringify.mock.calls.length - simpleCalls
+				} finally {
+					stringify.mockRestore()
+				}
+			})
+		}
+		// Filter validation/encoding has a fixed cost; row count must not amplify it.
+		expect(await extraSerializations(24)).toBe(await extraSerializations(8))
+	})
 	test('private pipe prefault outputs retain raw native string filtering and strict DTOs', async () => {
 		const f = privatePrefaultFixture()
 		const input = { numItems: 1, cursor: null, filters: { hidden: '' } }

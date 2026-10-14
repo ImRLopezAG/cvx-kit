@@ -22,6 +22,11 @@ import {
 	assertLocalConvexState,
 } from './convex-smoke-env.mjs'
 
+// CI selects one package manager; unset preserves local compatibility matrices.
+const installerOverride = process.env.CVX_PACKED_INSTALLER
+if (installerOverride !== undefined && !['bun', 'npm'].includes(installerOverride))
+	throw new Error('CVX_PACKED_INSTALLER must be bun or npm')
+
 const root = resolve(import.meta.dirname, '..')
 const templates = join(root, 'test/fixture-packed-variant-querying')
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
@@ -32,6 +37,43 @@ function files(directory, skipDependencies = false) {
 		const path = join(directory, entry.name)
 		return entry.isDirectory() ? files(path, skipDependencies) : [path]
 	})
+}
+const legacyLabels = JSON.parse(readFileSync(join(templates, 'legacy-labels.json'), 'utf8'))
+const minimumNativeAssertions = 300
+// The expanded 342-assertion matrix takes ~140 s per peer locally; Linux
+// reached the old 180 s runner gate while still making expected write checks.
+// Keep a finite runtime budget without changing the backend's 1 s query limit.
+const nativeRuntimeTimeoutMs = 600000
+function reportNativeProgress(fixture) {
+	const path = join(fixture, 'native-timings.json')
+	if (!existsSync(path)) return
+	try {
+		const timing = JSON.parse(readFileSync(path, 'utf8'))
+		const calls = Object.values(timing.calls)
+		const progress = {
+			checkpointMs: timing.elapsedMs,
+			completedChecks: timing.assertions.length,
+			queries: calls.filter(call => call.kind === 'query').reduce((sum, call) => sum + call.count, 0),
+			mutations: calls.filter(call => call.kind === 'mutation').reduce((sum, call) => sum + call.count, 0),
+			maxActiveQueries: timing.queryConcurrency.maxActive,
+			maxQueuedQueries: timing.queryConcurrency.maxQueued,
+		}
+		// Emit only fixed keys and finite numbers, never labels, arguments or errors.
+		assert.ok(Object.values(progress).every(Number.isFinite))
+		console.error(`Native runtime last completed checkpoint: ${JSON.stringify(progress)}`)
+	} catch {
+		// Optional diagnostics must not replace the original runtime failure.
+		console.error('Native runtime checkpoint unavailable')
+	}
+}
+function assertInventory(results) {
+	assert.equal(legacyLabels.length, 52)
+	assert.equal(new Set(legacyLabels).size, 52)
+	assert.ok(results.length >= minimumNativeAssertions, 'Native acceptance coverage lower bound')
+	assert.ok(results.every(result => result.passed === true))
+	for (const label of legacyLabels) assert.ok(results.some(result => result.label === label), `Missing legacy assertion: ${label}`)
+	assert.equal(new Set(results.map(result => result.label)).size, results.length, 'Native assertion labels must be unique')
+	assert.ok(results.filter(result => /^issue(?:35|36)\//.test(result.label)).length >= minimumNativeAssertions - 52)
 }
 function selfCheck() {
 	const sources = files(templates)
@@ -55,6 +97,38 @@ function selfCheck() {
 		sources.some((path) => path.includes('_generated')),
 		false,
 	)
+	const schema = readFileSync(join(templates, 'convex/schema.ts.template'), 'utf8')
+	const relations = readFileSync(join(templates, 'convex/relations.ts.template'), 'utf8')
+	const app = readFileSync(join(templates, 'convex/app.ts.template'), 'utf8')
+	const types = readFileSync(join(templates, 'types.ts.template'), 'utf8')
+	const verifier = readFileSync(join(templates, 'verify.mjs'), 'utf8')
+	assert.equal(legacyLabels.length, 52)
+	for (const label of legacyLabels) {
+		if (label.startsWith('tagged update rejects ')) {
+			assert.ok(verifier.includes('`tagged update rejects ${label}`'))
+			assert.ok(verifier.includes(`['${label.slice('tagged update rejects '.length)}',`))
+		} else if (['invalid amount', 'absent branch field', 'wrong stored tag', 'tag removal'].some(value => label === `${value} leaves row and audit unchanged`)) {
+			assert.ok(verifier.includes('`${label} leaves row and audit unchanged`'))
+		} else assert.ok(verifier.includes(`'${label}'`), `Legacy label removed: ${label}`)
+	}
+	for (const path of sources) assert.doesNotMatch(readFileSync(path, 'utf8'), /from ['"]cvx-kit\/(?:src|dist|internal)/)
+	assert.match(schema, /timestamps: false/)
+	assert.match(schema, /createdAt: z\.int\(\)\.nonnegative\(\)/)
+	assert.match(schema, /recordedAt: z\.int\(\)\.nonnegative\(\)/)
+	assert.equal((schema.match(/\.index\('by_rel'/g) ?? []).length, 1, 'Only tasks owns by_rel')
+	for (const table of ['tasks', 'leads', 'contacts', 'clients', 'creditors', 'deals', 'payments', 'ledger']) {
+		assert.ok(relations.split(`r.tasks.rel.forTable('${table}')`).length >= 3, `Missing forward/inverse member ${table}`)
+		assert.ok(schema.includes(`zid('${table}')`))
+		assert.ok(app.includes(`export const inverse${table[0].toUpperCase() + table.slice(1)}`))
+	}
+	for (const fragment of ['branch-only source narrowing', 'narrowed source junction', 'narrowed junction leg', 'native member must also be registered', 'mixed scalar-ID union', 'wrong native target table', 'explicit timestamp excluded']) assert.ok(types.includes(fragment), fragment)
+	assert.match(app, /ctx\.db\.normalizeId\(table, rel\)/)
+	assert.ok(app.indexOf('ctx.db.normalizeId(table, rel)') < app.indexOf('ctx.db.get(table, id)'))
+	assert.doesNotMatch(app, /(?:db|schemaDB)\s*:\s*\{\s*(?:get|query|normalizeId)\s*:/)
+	assert.match(verifier, /live\.onUpdate\(/)
+	assert.match(verifier, /finally\s*\{[\s\S]*await live\.close\(\)/)
+	assertInventory([...legacyLabels, ...Array.from({ length: minimumNativeAssertions - 52 }, (_, n) => `issue36/self-check-inventory-${n}`)].map(label => ({ label, passed: true })))
+	assert.throws(() => assertInventory(legacyLabels.slice(1).map(label => ({ label, passed: true }))))
 	console.log(
 		'Variant native fixture structural self-check passed (no install/codegen/runtime performed)',
 	)
@@ -151,8 +225,8 @@ async function availablePort(requested = 0) {
 	return port
 }
 for (const [label, installer, helpers, zod] of [
-	['installed', 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
-	['minimum', 'npm', '0.1.127', '4.5.4'],
+	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
+	['minimum', installerOverride ?? 'npm', '0.1.127', '4.5.4'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -235,12 +309,13 @@ for (const [label, installer, helpers, zod] of [
 			args: [join(fixture, 'node_modules/convex/bin/main.js'), ...cliArgs],
 			cwd: fixture,
 			env: environment,
-			timeoutMs: 180000,
+			timeoutMs: phase === 'runtime' ? nativeRuntimeTimeoutMs : 180000,
 			onSpawn: (pid) => pids.push(pid),
 		})
 		const { stdout, stderr, ...lifecycle } = result
 		writeFileSync(join(fixture, `${phase}.log`), redact(stdout + stderr))
 		writeFileSync(join(fixture, `${phase}-process.json`), JSON.stringify(lifecycle, null, 2))
+		if (phase === 'runtime' && (result.code !== 0 || result.timedOut)) reportNativeProgress(fixture)
 		assert.equal(result.code, 0, `${label}/${phase} failed; see retained proof`)
 		assert.equal(result.timedOut, false, `${label}/${phase} exceeded bounded integration deadline`)
 		assert.equal(result.cleanup?.alive, false, `${label}/${phase} owned group survived cleanup`)
@@ -293,7 +368,7 @@ for (const [label, installer, helpers, zod] of [
 			`${label}: native verifier failed or did not finish; see ${join(fixture, 'runtime.log')}`,
 		)
 		const results = JSON.parse(readFileSync(join(fixture, 'native-results.json'), 'utf8'))
-		assert.ok(results.length >= 40)
+		assertInventory(results)
 		assert.ok(results.every((result) => result.passed === true))
 		assert.equal(
 			new Set(results.map((result) => result.label)).size,
@@ -324,6 +399,10 @@ for (const [label, installer, helpers, zod] of [
 			const contents = readFileSync(path, 'utf8')
 			for (const secret of secrets)
 				assert.ok(!contents.includes(secret), 'Local credential escaped evidence redaction')
+		}
+		if (failure && existsSync(join(fixture, 'runtime.log'))) {
+			console.error(`${label}/runtime failure (redacted log tail):`)
+			console.error(redact(readFileSync(join(fixture, 'runtime.log'), 'utf8')).slice(-16000))
 		}
 		if (!failure) {
 			assert.ok(

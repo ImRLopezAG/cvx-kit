@@ -1,29 +1,46 @@
 import { z } from 'zod'
 import { v } from 'convex/values'
 import { createAuthFunctions } from 'cvx-kit/auth'
-import { zid } from 'cvx-kit/zod-table'
+import { zid, zodTable, zodVariantTable } from 'cvx-kit/zod-table'
 import { zodToConvex } from 'convex-helpers/server/zod4'
 import { query, mutation, action, internalQuery, internalMutation, internalAction } from './_generated/server'
 import type { DataModel } from './_generated/dataModel'
-import { payments, ledger } from './schema'
-import { querying, relations, paymentOptions, paymentPage, clientPage, creditorPage, ledgerPage } from './relations'
+import { payments, ledger, tasks, leads, contacts, clients, creditors, deals, taskRel, targetTables, taskAudits } from './schema'
+import { defineRelations } from 'cvx-kit/relations'
+import { querying, changedQuerying, changedPolicyQuerying, relations, tables, paymentOptions, paymentPage, clientPage, creditorPage, ledgerPage, taskSelection, taskOptions, taskPage, taskChildPage, taskChildOptions, nativeClientPage, nativeClientOptions } from './relations'
 
 // Count policy entry, an observable native managed-read boundary. This is not physical I/O accounting.
 let creditorPolicyReads = 0
-const auth = createAuthFunctions<DataModel, 'finance' | 'reader'>({
+const auth = createAuthFunctions<DataModel, 'finance' | 'reader' | 'taskOnly' | 'targetOnly'>({
  query, mutation, action, internalQuery, internalMutation, internalAction,
  getAuthUser: async ctx => { const identity = await ctx.auth.getUserIdentity(); return identity ? { id: identity.subject } : null },
- mapRole: role => role === 'finance' || role === 'reader' ? role : null,
+ mapRole: role => role === 'finance' || role === 'reader' || role === 'taskOnly' || role === 'targetOnly' ? role : null,
  adminRoles: [],
  security: { defaultPolicy: 'deny', rules: bundle => {
+  const member = async (ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }) =>
+   ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', bundle.user.id)).unique()
   const active = async (ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }) =>
-   (await ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', bundle.user.id)).first())?.active === true
+   bundle.org.organizationId === 'fixture' && (await member(ctx))?.active === true
+  const finance = async (ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }) => bundle.role === 'finance' && (await member(ctx))?.finance === true
+  const scoped = async (ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }, row: { allowed: boolean; department?: string }) => {
+   const current = await member(ctx)
+   return row.allowed && bundle.org.organizationId === 'fixture' && current?.active === true && (row.department === undefined || row.department === current.department)
+  }
+  const target = async (ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }, row: { allowed: boolean; department?: string }) => bundle.role !== 'taskOnly' && await scoped(ctx, row)
+  const clientAccess = async (ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }, id: import('./_generated/dataModel').Id<'clients'>) => {
+   const row = await ctx.db.get('clients', id)
+   return row !== null && await target(ctx, row)
+  }
   return {
    members: { read: async () => true },
-   clients: { read: async (ctx, row) => row.allowed && await active(ctx), insert: async () => true },
-   creditors: { read: async (ctx, row) => { creditorPolicyReads++; return row.allowed && await active(ctx) }, insert: async () => true },
-   payments: { read: async (ctx, row) => bundle.role === 'finance' && row.allowed && await active(ctx), insert: async () => bundle.role === 'finance', modify: async (ctx, row) => bundle.role === 'finance' && row.allowed && await active(ctx) },
-   ledger: { read: async (ctx, row) => bundle.role === 'finance' && row.allowed && await active(ctx) },
+   clients: { read: target, insert: async () => true },
+   creditors: { read: async (ctx, row) => { creditorPolicyReads++; return await target(ctx, row) && (row.department === undefined || await finance(ctx)) }, insert: async () => true },
+   payments: { read: async (ctx, row) => await finance(ctx) && await target(ctx, row) && (!row.dependentClient || await clientAccess(ctx, row.clientId)), insert: async ctx => await finance(ctx) && await active(ctx), modify: async (ctx, row) => await finance(ctx) && row.allowed && await active(ctx) },
+   ledger: { read: async (ctx, row) => await finance(ctx) && await target(ctx, row) && (!row.clientId || await clientAccess(ctx, row.clientId)), modify: async (ctx, row) => await finance(ctx) && await target(ctx, row) },
+   tasks: { read: async (ctx, row) => bundle.role !== 'targetOnly' && await scoped(ctx, row), insert: async ctx => bundle.role !== 'targetOnly' && await active(ctx), modify: async (ctx, row) => bundle.role !== 'targetOnly' && await scoped(ctx, row) },
+   leads: { read: target }, contacts: { read: target },
+   deals: { read: async (ctx, row) => await target(ctx, row) && await clientAccess(ctx, row.clientId) },
+   taskAudits: { insert: async ctx => await active(ctx), read: async () => false },
    attachments: { read: async (ctx, row) => row.allowed && await active(ctx) },
    paymentAttachments: { read: async (ctx, row) => row.allowed && await active(ctx) },
    audits: { read: async () => true, insert: async () => true },
@@ -68,7 +85,7 @@ export const setup = internalMutation({ args: {}, returns: v.object({ client: v.
  const hiddenClient = await ctx.db.insert('clients', { name: 'hidden-client', allowed: false })
  const creditor = await ctx.db.insert('creditors', { name: 'creditor', allowed: true })
  const hiddenCreditor = await ctx.db.insert('creditors', { name: 'hidden-creditor', allowed: false })
- for (const principal of ['alice', 'bob']) await ctx.db.insert('members', { principal, active: true })
+ for (const principal of ['alice', 'bob']) await ctx.db.insert('members', { principal, active: true, department: 'A', finance: true })
  return { client, hiddenClient, creditor, hiddenCreditor }
 } })
 export const mark = internalMutation({ args: { id: v.id('payments'), allowed: v.boolean() }, returns: v.null(), handler: async (ctx, args) => { await ctx.db.patch('payments', args.id, { allowed: args.allowed }); return null } })
@@ -79,7 +96,7 @@ export const extras = internalMutation({ args: { payment: v.id('payments'), clie
  }
  for (const input of [{ type: 'payment', clientId: args.client, paymentId: args.payment, amountCents: 1 }, { type: 'payment', amountCents: 2 }, { type: 'adjustment', reason: 'fixture', amountCents: 3 }]) {
   const command = ledger.commandInput.parse(input)
-  await ctx.db.insert('ledger', ledger.storage.parse({ ...command, allowed: true, evidence: 'PRIVATE-LEDGER-EVIDENCE' }))
+  await ctx.db.insert('ledger', ledger.storage.parse({ ...command, allowed: true, evidence: 'PRIVATE-LEDGER-EVIDENCE', createdAt: 10, recordedAt: 20 }))
  }
  return null
 } })
@@ -92,3 +109,177 @@ export const revoke = internalMutation({ args: { principal: v.string(), active: 
 export const state = internalQuery({ args: { id: v.id('payments') }, returns: v.object({ row: v.union(v.null(), zodToConvex(payments.schema)), audits: v.array(v.object({ _id: v.id('audits'), _creationTime: v.number(), paymentId: v.id('payments'), operation: v.string() })) }), handler: async (ctx, { id }) => ({ row: await ctx.db.get('payments', id), audits: await ctx.db.query('audits').withIndex('by_payment', q => q.eq('paymentId', id)).take(10) }) })
 // Native validators admit number refinements; use deliberate invalid storage to prove full merged validation.
 export const corruptAmount = internalMutation({ args: { id: v.id('payments') }, returns: v.null(), handler: async (ctx, { id }) => { await ctx.db.patch('payments', id, { amountCents: -1 }); return null } })
+
+// Host link authorization is independent of query readability. Normalization identifies
+// the real policy-owned native table before the authorized reader fetches its row.
+async function authorizeLink(ctx: { db: import('convex/server').GenericDatabaseReader<DataModel> }, rel: z.output<typeof taskRel>) {
+ if (rel == null) return
+ for (const table of targetTables) {
+  const id = ctx.db.normalizeId(table, rel)
+  if (id === null) continue
+  const row = await ctx.db.get(table, id)
+  if (!row) throw new Error('TASK_TARGET_UNAVAILABLE')
+  if (row.linkAllowed === false) throw new Error('TASK_LINK_FORBIDDEN')
+  return
+ }
+ throw new Error('TASK_TARGET_TABLE_INVALID')
+}
+export const createTask = auth.authMutation({ args: { input: tasks.commandInput }, returns: zid('tasks'), handler: async (ctx, { input }) => {
+ const bundle = await auth.authenticatedUser(ctx)
+ const member = await ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', bundle.user.id)).unique()
+ if (!member?.active || bundle.org.organizationId !== 'fixture') throw new Error('TASK_MEMBERSHIP_REVOKED')
+ await authorizeLink(ctx, input.rel)
+ const row = tasks.storage.parse({ ...input, allowed: true, department: member.department, linkAllowed: true, secret: 'PRIVATE-TASK-EVIDENCE' })
+ const id = await ctx.db.insert('tasks', row)
+ await ctx.db.insert('taskAudits', { taskId: id, operation: 'create', previous: null, next: input.rel ?? null })
+ return id
+} })
+export const updateTask = auth.authMutation({ args: tasks.tools.update.extend({ failAfterPersist: z.boolean().optional() }), returns: z.null(), handler: async (ctx, { id, data, failAfterPersist }) => {
+ const bundle = await auth.authenticatedUser(ctx)
+ const member = await ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', bundle.user.id)).unique()
+ if (!member?.active || bundle.org.organizationId !== 'fixture') throw new Error('TASK_MEMBERSHIP_REVOKED')
+ const row = await ctx.db.get('tasks', id)
+ if (!row) throw new Error('TASK_SOURCE_UNAVAILABLE')
+ const changedLink = Object.hasOwn(data, 'rel')
+ if (changedLink) await authorizeLink(ctx, data.rel)
+ const { _id, _creationTime, ...stored } = row
+ void _creationTime
+ await ctx.db.replace('tasks', _id, tasks.storage.parse({ ...stored, ...data }))
+ await ctx.db.insert('taskAudits', { taskId: id, operation: changedLink ? data.rel === null ? 'clear' : 'relink' : 'update', previous: row.rel ?? null, next: changedLink ? data.rel ?? null : row.rel ?? null })
+ if (failAfterPersist) throw new Error('TASK_ATOMIC_FAILURE')
+ return null
+} })
+export const taskList = auth.authQuery({ args: taskOptions, returns: taskPage, handler: async (ctx, args) => taskPage.parse(await querying(ctx).tasks.with(taskSelection).paginate(args)) })
+export const inverseTasks = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('tasks') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).tasks.relation(parent, 'referencingTasks').with({ client: true }).paginate(args)) })
+export const inverseLeads = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('leads') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).leads.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const inverseContacts = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('contacts') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).contacts.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const inverseClients = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('clients') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).clients.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const inverseCreditors = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('creditors') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).creditors.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const inverseDeals = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('deals') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).deals.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const inversePayments = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('payments') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).payments.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const inverseLedger = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('ledger') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).ledger.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const deepTasks = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('tasks') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).tasks.relation(parent, 'referenceTask.client.tasks').with({ client: true }).paginate(args)) })
+export const updateLedger = auth.authMutation({ args: ledger.tools.update, returns: z.null(), handler: async (ctx, { id, data }) => {
+ const row = await ctx.db.get('ledger', id)
+ if (!row || row.type !== data.type) throw new Error('LEDGER_UNAVAILABLE')
+ const { _id, _creationTime, ...stored } = row
+ void _creationTime
+ await ctx.db.replace('ledger', _id, ledger.storage.parse({ ...stored, ...data }))
+ return null
+} })
+const nativeTargets = z.object({ tasks: zid('tasks'), leads: zid('leads'), contacts: zid('contacts'), clients: zid('clients'), creditors: zid('creditors'), deals: zid('deals'), payments: zid('payments'), ledger: zid('ledger') })
+export const nativeSetup = internalMutation({ args: {}, returns: zodToConvex(z.object({ targets: nativeTargets, denied: nativeTargets, forbidden: nativeTargets, otherDepartment: nativeTargets, missing: nativeTargets, draft: zid('payments'), adjustment: zid('ledger'), deniedAncestorDeal: zid('deals'), deniedAncestorPayment: zid('payments'), deniedAncestorLedger: zid('ledger'), outsider: zid('attachments') })), handler: async ctx => {
+ for (const [principal, department] of [['carol', 'B'], ['taskOnly', 'A'], ['targetOnly', 'A']]) await ctx.db.insert('members', { principal, department, active: true, finance: principal === 'carol' })
+ async function seed(allowed: boolean, linkAllowed: boolean, department: string, suffix: string) {
+  const fields = { allowed, linkAllowed, department }
+  const client = await ctx.db.insert('clients', clients.storage.parse({ ...fields, name: 'native-client-' + suffix }))
+  const creditor = await ctx.db.insert('creditors', creditors.storage.parse({ ...fields, name: 'native-creditor-' + suffix }))
+  const task = await ctx.db.insert('tasks', tasks.storage.parse({ ...fields, name: 'native-target-' + suffix, status: 'open', secret: 'PRIVATE-TASK-EVIDENCE' }))
+  const lead = await ctx.db.insert('leads', leads.storage.parse({ ...fields, name: 'native-lead-' + suffix, secret: 'PRIVATE-LEAD-EVIDENCE' }))
+  const contact = await ctx.db.insert('contacts', contacts.storage.parse({ ...fields, name: 'native-contact-' + suffix, secret: 'PRIVATE-CONTACT-EVIDENCE' }))
+  const deal = await ctx.db.insert('deals', deals.storage.parse({ ...fields, name: 'native-deal-' + suffix, clientId: client, secret: 'PRIVATE-DEAL-EVIDENCE' }))
+  const payment = await ctx.db.insert('payments', payments.storage.parse({ ...fields, type: 'creditor_payment', clientId: client, creditorId: creditor, amountCents: 501, allowed, external: 'PRIVATE-PROVIDER-EVIDENCE', dependentClient: true, createdAt: 10, updatedAt: 10 }))
+  const entry = await ctx.db.insert('ledger', ledger.storage.parse({ ...fields, type: 'payment', clientId: client, paymentId: payment, amountCents: 501, evidence: 'PRIVATE-LEDGER-EVIDENCE', createdAt: 10, recordedAt: 20 }))
+  return { tasks: task, leads: lead, contacts: contact, clients: client, creditors: creditor, deals: deal, payments: payment, ledger: entry }
+ }
+ const targets = await seed(true, true, 'A', 'allowed')
+ const denied = await seed(false, true, 'A', 'denied')
+ const forbidden = await seed(true, false, 'A', 'forbidden')
+ const otherDepartment = await seed(true, true, 'B', 'department-B')
+ const missing = await seed(true, true, 'A', 'missing')
+ for (const table of targetTables) await ctx.db.delete(table, missing[table])
+ const draft = await ctx.db.insert('payments', payments.storage.parse({ type: 'client_draft', clientId: targets.clients, draftDate: 1, amountCents: 502, allowed: true, external: 'PRIVATE-PROVIDER-EVIDENCE', department: 'A', linkAllowed: true, dependentClient: true, createdAt: 10, updatedAt: 10 }))
+ const adjustment = await ctx.db.insert('ledger', ledger.storage.parse({ type: 'adjustment', reason: 'native', amountCents: 502, allowed: true, evidence: 'PRIVATE-LEDGER-EVIDENCE', department: 'A', linkAllowed: true, createdAt: 30, recordedAt: 40 }))
+ const deniedAncestorDeal = await ctx.db.insert('deals', deals.storage.parse({ name: 'native-denied-ancestor', clientId: denied.clients, allowed: true, department: 'A', linkAllowed: true, secret: 'PRIVATE-DEAL-EVIDENCE' }))
+ const deniedAncestorPayment = await ctx.db.insert('payments', payments.storage.parse({ type: 'client_draft', clientId: denied.clients, draftDate: 1, amountCents: 503, allowed: true, external: 'PRIVATE-PROVIDER-EVIDENCE', department: 'A', linkAllowed: true, dependentClient: true, createdAt: 10, updatedAt: 10 }))
+ const deniedAncestorLedger = await ctx.db.insert('ledger', ledger.storage.parse({ type: 'payment', clientId: denied.clients, amountCents: 503, allowed: true, evidence: 'PRIVATE-LEDGER-EVIDENCE', department: 'A', linkAllowed: true, createdAt: 10, recordedAt: 20 }))
+ const outsider = await ctx.db.insert('attachments', { name: 'native-outsider', allowed: true, evidence: 'PRIVATE-ATTACHMENT-EVIDENCE' })
+ return { targets, denied, forbidden, otherDepartment, missing, draft, adjustment, deniedAncestorDeal, deniedAncestorPayment, deniedAncestorLedger, outsider }
+} })
+export const seedTask = internalMutation({ args: { input: zodToConvex(tasks.commandInput), allowed: v.boolean(), department: v.string() }, returns: v.id('tasks'), handler: async (ctx, { input, allowed, department }) => ctx.db.insert('tasks', tasks.storage.parse({ ...input, allowed, department, linkAllowed: true, secret: 'PRIVATE-TASK-EVIDENCE' })) })
+export const taskState = internalQuery({ args: { id: v.id('tasks') }, returns: v.object({ row: v.union(v.null(), zodToConvex(tasks.schema)), audits: v.array(zodToConvex(taskAudits.schema)) }), handler: async (ctx, { id }) => ({ row: await ctx.db.get('tasks', id), audits: await ctx.db.query('taskAudits').withIndex('by_task', q => q.eq('taskId', id)).take(100) }) })
+export const ledgerState = internalQuery({ args: { id: v.id('ledger') }, returns: v.union(v.null(), zodToConvex(ledger.schema)), handler: (ctx, { id }) => ctx.db.get('ledger', id) })
+export const department = internalMutation({ args: { principal: v.string(), department: v.string() }, returns: v.null(), handler: async (ctx, args) => {
+ const member = await ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', args.principal)).unique()
+ if (!member) throw new Error('MISSING_MEMBER')
+ await ctx.db.patch('members', member._id, { department: args.department })
+ return null
+} })
+export const nativeNumber = internalMutation({ args: { id: v.id('ledger'), value: v.number() }, returns: v.null(), handler: async (ctx, { id, value }) => { await ctx.db.patch('ledger', id, { createdAt: value }); return null } })
+export const timestampContracts = internalQuery({ args: {}, returns: v.array(v.boolean()), handler: () => {
+ const base = { type: 'adjustment', reason: 'check', amountCents: 1, allowed: true, evidence: 'PRIVATE-LEDGER-EVIDENCE', createdAt: 1, recordedAt: 2 }
+ const { createdAt, ...missing } = base
+ void createdAt
+ return [ledger.storage.safeParse(base).success, ledger.storage.safeParse(missing).success,
+  ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(createdAt => ledger.storage.safeParse({ ...base, createdAt }).success),
+  ledger.storage.safeParse({ ...base, recordedAt: undefined }).success,
+  ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1].map(recordedAt => ledger.storage.safeParse({ ...base, recordedAt }).success),
+  ledger.commandInput.safeParse({ type: 'adjustment', reason: 'check', amountCents: 1, createdAt: 1 }).success,
+  ledger.tools.update.shape.data.safeParse({ type: 'adjustment', recordedAt: 2 }).success]
+} })
+
+export const declarationContracts = internalQuery({ args: {}, returns: v.array(v.boolean()), handler: () => {
+ const results: boolean[] = []
+ function rejected(probe: () => unknown, expected: RegExp) {
+  try { probe(); results.push(false) } catch (error) { results.push(error instanceof Error && expected.test(error.message)) }
+ }
+ defineRelations(tables, foreign => {
+  rejected(() => defineRelations(tables, r => ({ tasks: { bad: r.one.tasks({ from: foreign.tasks.rel.forTable('tasks'), to: r.tasks._id }) } })), /Foreign/)
+  return {}
+ })
+ rejected(() => defineRelations(tables, r => {
+  // @ts-expect-error deliberate runtime invalid-member declaration
+  r.tasks.rel.forTable('attachments')
+  return {}
+ }), /member|native|table/i)
+ rejected(() => defineRelations(tables, r => {
+  // @ts-expect-error deliberate runtime wrong-table declaration
+  const bad = r.one.tasks({ from: r.tasks.rel.forTable('clients'), to: r.tasks._id })
+  return { tasks: { bad } }
+ }), /Incompatible/)
+ rejected(() => defineRelations(tables, (r, branch) => {
+  // @ts-expect-error deliberate runtime unsupported branch narrowing
+  branch('payments', 'creditor_payment').creditorId.forTable('creditors')
+  return {}
+ }), /branch-scoped/)
+ rejected(() => defineRelations(tables, r => {
+  // @ts-expect-error deliberate runtime unsupported narrowed junction
+  r.tasks.rel.forTable('clients').through(r.clients._id)
+  return {}
+ }), /through/)
+ rejected(() => defineRelations(tables, r => {
+  // @ts-expect-error deliberate runtime narrowed junction leg rejection
+  r.clients._id.through(r.tasks.rel.forTable('clients'))
+  return {}
+ }), /through/)
+ rejected(() => zodVariantTable('collision', z.discriminatedUnion('type', [z.strictObject({ type: z.literal('one'), createdAt: z.number() })]), { discriminator: 'type', timestamps: true, variants: { one: { publicFields: [] } } }), /Reserved/)
+ const probes = zodTable('tasks', id => ({ mixed: z.union([id('tasks'), z.string()]), rel: z.union([id('tasks'), id('unregistered')]), single: id('tasks').nullable().optional(), duplicate: z.union([id('tasks'), id('tasks')]), scalar: z.union([z.string(), z.number()]) }))
+ rejected(() => defineRelations({ tasks: probes }, r => {
+  // @ts-expect-error deliberate runtime mixed-union declaration
+  r.tasks.mixed.forTable('tasks')
+  return {}
+ }), /native|union|ID/i)
+ rejected(() => defineRelations({ tasks: probes }, r => {
+  // @ts-expect-error deliberate runtime unregistered native member
+  r.tasks.rel.forTable('unregistered')
+  return {}
+ }), /registered/i)
+ rejected(() => defineRelations({ tasks: probes }, r => {
+  // @ts-expect-error ordinary scalar union compatibility remains exact
+  const bad = r.one.tasks({ from: r.tasks.scalar, to: r.tasks._id })
+  return { tasks: { bad } }
+ }), /Incompatible/)
+ defineRelations({ tasks: probes }, r => ({ tasks: {
+  singleReference: r.one.tasks({ from: r.tasks.single.forTable('tasks'), to: r.tasks._id }),
+  duplicateReference: r.one.tasks({ from: r.tasks.duplicate.forTable('tasks'), to: r.tasks._id }),
+ } }))
+ results.push(true)
+ return results
+} })
+export const nativeClients = auth.authQuery({ args: nativeClientOptions, returns: nativeClientPage, handler: async (ctx, args) => nativeClientPage.parse(await querying(ctx).clients.with({ tasks: { client: true } }).paginate(args)) })
+export const rawLedger = internalMutation({ args: { input: zodToConvex(ledger.storage) }, returns: v.id('ledger'), handler: (ctx, { input }) => ctx.db.insert('ledger', input) })
+export const inverseClientsDeclaration = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('clients') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await changedQuerying(ctx).clients.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const inverseClientsPolicy = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('clients') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await changedPolicyQuerying(ctx).clients.relation(parent, 'tasks').with({ client: true }).paginate(args)) })
+export const nestedClientTasks = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('tasks') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).tasks.relation(parent, 'client.tasks').with({ client: true }).paginate(args)) })
+export const nestedReferenceTasks = auth.authQuery({ args: taskChildOptions.extend({ parent: zid('tasks') }), returns: taskChildPage, handler: async (ctx, { parent, ...args }) => taskChildPage.parse(await querying(ctx).tasks.relation(parent, 'referenceTask.referencingTasks').with({ client: true }).paginate(args)) })
+export const financeMembership = internalMutation({ args: { principal: v.string(), finance: v.boolean() }, returns: v.null(), handler: async (ctx, args) => { const member = await ctx.db.query('members').withIndex('by_principal', q => q.eq('principal', args.principal)).unique(); if (!member) throw new Error('MISSING_MEMBER'); await ctx.db.patch('members', member._id, { finance: args.finance }); return null } })

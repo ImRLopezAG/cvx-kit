@@ -1,25 +1,45 @@
 import { defineRelations } from 'cvx-kit/relations'
 import { createQueryEngine } from 'cvx-kit/querying'
-import schema, { clients, creditors, payments, ledger, attachments, paymentAttachments, members, audits } from './schema'
-export const tables = { clients, creditors, payments, ledger, attachments, paymentAttachments, members, audits }
-export const relations = defineRelations(tables, (r, branch) => ({
- clients: { payments: r.many.payments({ from: r.clients._id, to: r.payments.clientId }) },
- creditors: { payments: r.many.payments({ from: r.creditors._id, to: branch('payments', 'creditor_payment').creditorId }) },
+import schema, { clients, creditors, payments, ledger, attachments, paymentAttachments, members, audits, tasks, leads, contacts, deals, taskAudits } from './schema'
+export const tables = { clients, creditors, payments, ledger, attachments, paymentAttachments, members, audits, tasks, leads, contacts, deals, taskAudits }
+function declareRelations(member: 'tasks' | 'clients') { return defineRelations(tables, (r, branch) => ({
+ tasks: {
+  selectedPeers: r.many.tasks({ from: r.tasks.rel.forTable(member), to: r.tasks.rel.forTable(member) }),
+  referencingTasks: r.many.tasks({ from: r.tasks._id, to: r.tasks.rel.forTable('tasks') }),
+  referenceTask: r.one.tasks({ from: r.tasks.rel.forTable('tasks'), to: r.tasks._id }),
+  lead: r.one.leads({ from: r.tasks.rel.forTable('leads'), to: r.leads._id }),
+  contact: r.one.contacts({ from: r.tasks.rel.forTable('contacts'), to: r.contacts._id }),
+  client: r.one.clients({ from: r.tasks.rel.forTable('clients'), to: r.clients._id }),
+  creditor: r.one.creditors({ from: r.tasks.rel.forTable('creditors'), to: r.creditors._id }),
+  deal: r.one.deals({ from: r.tasks.rel.forTable('deals'), to: r.deals._id }),
+  payment: r.one.payments({ from: r.tasks.rel.forTable('payments'), to: r.payments._id }),
+  ledgerEntry: r.one.ledger({ from: r.tasks.rel.forTable('ledger'), to: r.ledger._id }),
+  draftPayment: r.one.payments({ from: r.tasks.rel.forTable('payments'), to: branch('payments', 'client_draft')._id }),
+  adjustment: r.one.ledger({ from: r.tasks.rel.forTable('ledger'), to: branch('ledger', 'adjustment')._id }),
+ },
+ leads: { tasks: r.many.tasks({ from: r.leads._id, to: r.tasks.rel.forTable('leads') }) },
+ contacts: { tasks: r.many.tasks({ from: r.contacts._id, to: r.tasks.rel.forTable('contacts') }) },
+ deals: { tasks: r.many.tasks({ from: r.deals._id, to: r.tasks.rel.forTable('deals') }) },
+ clients: { tasks: r.many.tasks({ from: r.clients._id, to: r.tasks.rel.forTable('clients') }), payments: r.many.payments({ from: r.clients._id, to: r.payments.clientId }) },
+ creditors: { tasks: r.many.tasks({ from: r.creditors._id, to: r.tasks.rel.forTable('creditors') }), payments: r.many.payments({ from: r.creditors._id, to: branch('payments', 'creditor_payment').creditorId }) },
  payments: {
+  tasks: r.many.tasks({ from: r.payments._id, to: r.tasks.rel.forTable('payments') }),
   client: r.one.clients({ from: r.payments.clientId, to: r.clients._id }),
   creditor: r.one.creditors({ from: branch('payments', 'creditor_payment').creditorId, to: r.creditors._id }),
   attachments: r.many.attachments({ from: r.payments._id.through(r.paymentAttachments.paymentId), to: r.attachments._id.through(r.paymentAttachments.attachmentId) }),
  },
  ledger: {
+  tasks: r.many.tasks({ from: r.ledger._id, to: r.tasks.rel.forTable('ledger') }),
   client: r.one.clients({ from: r.ledger.clientId, to: r.clients._id }),
   payment: r.one.payments({ from: branch('ledger', 'payment').paymentId, to: r.payments._id }),
  },
-}))
-export const querying = createQueryEngine({ schema, relations }, {
- cursor: { version: 'v1', currentKeyId: 'fixture', keys: { fixture: new Uint8Array(64).fill(33) } },
- maxPageSize: 3,
- budgets: { readOperations: 512, rawCandidates: 512, indexRanges: 256, fanout: 128 },
-})
+})) }
+export const relations = declareRelations('tasks')
+const changedRelations = declareRelations('clients')
+const settings = { cursor: { version: 'v1', currentKeyId: 'fixture', keys: { fixture: new Uint8Array(64).fill(33) } }, maxPageSize: 3, budgets: { readOperations: 512, rawCandidates: 512, indexRanges: 256, fanout: 128 } } as const
+export const changedQuerying = createQueryEngine({ schema, relations: changedRelations }, settings)
+export const changedPolicyQuerying = createQueryEngine({ schema, relations }, { ...settings, policyVersion: 'fixture-policy-2' })
+export const querying = createQueryEngine({ schema, relations }, settings)
 export const paymentOptions = relations.tables.payments.paginationOpts({ type: true, clientId: true, amountCents: true,
  variants: { creditor_payment: { creditorId: true }, client_draft: { draftDate: true } }, creditor: { name: true },
 })
@@ -27,3 +47,11 @@ export const paymentPage = relations.tables.payments.pageDto({ client: true, cre
 export const clientPage = relations.tables.clients.pageDto({ payments: { creditor: true } })
 export const creditorPage = relations.tables.creditors.pageDto({ payments: { client: true } })
 export const ledgerPage = relations.tables.ledger.pageDto({ client: true, payment: { creditor: true } })
+
+export const taskSelection = { referenceTask: { referencingTasks: { client: true }, client: { tasks: { client: true } } }, referencingTasks: { client: true }, lead: true, contact: true, client: { tasks: { client: true } }, creditor: true, deal: true, payment: true, ledgerEntry: true, draftPayment: true, adjustment: true } as const
+export const taskOptions = relations.tables.tasks.paginationOpts({ name: true, status: true, referenceTask: { status: true }, referencingTasks: { status: true }, client: { name: true }, lead: { name: true }, contact: { name: true }, creditor: { name: true }, deal: { name: true }, payment: { type: true }, ledgerEntry: { type: true } })
+export const taskPage = relations.tables.tasks.pageDto(taskSelection)
+export const taskChildPage = relations.tables.tasks.pageDto({ client: true })
+export const taskChildOptions = relations.tables.tasks.paginationOpts({ name: true, status: true, client: { name: true } })
+export const nativeClientPage = relations.tables.clients.pageDto({ tasks: { client: true } })
+export const nativeClientOptions = relations.tables.clients.paginationOpts({ name: true, tasks: { status: true, client: { name: true } } })

@@ -105,3 +105,78 @@ const timestamped = zodVariantTable('payments', storage, {
 	variants: { ...variants, draft: { publicFields: ['createdAt'] } },
 })
 expectTypeOf(timestamped.storage.parse({}).createdAt).toEqualTypeOf<number | undefined>()
+
+const explicitStorage = z.discriminatedUnion('type', [
+	z.strictObject({
+		type: z.literal('adjustment'),
+		createdAt: z.int().nonnegative(),
+		updatedAt: z.int().nonnegative(),
+		archivedAt: z.int().nonnegative(),
+		recordedAt: z.int().nonnegative(),
+	}),
+])
+const explicit = zodVariantTable('ledger', explicitStorage, {
+	discriminator: 'type',
+	timestamps: false,
+	variants: {
+		adjustment: {
+			serverFields: ['createdAt', 'updatedAt', 'archivedAt', 'recordedAt'],
+			commandFields: [],
+			publicFields: ['createdAt'],
+		},
+	},
+})
+type ExplicitRow = {
+	type: 'adjustment'
+	createdAt: number
+	updatedAt: number
+	archivedAt: number
+	recordedAt: number
+}
+expectTypeOf<z.output<typeof explicit.storage>>().toEqualTypeOf<ExplicitRow>()
+expectTypeOf<z.output<typeof explicit.schema>>().toEqualTypeOf<{
+	type: 'adjustment'
+	createdAt: number
+	updatedAt: number
+	archivedAt: number
+	recordedAt: number
+	_id: GenericId<'ledger'>
+	_creationTime: number
+}>()
+expectTypeOf<z.output<typeof explicit.commandInput>>().toEqualTypeOf<{ type: 'adjustment' }>()
+expectTypeOf<z.output<typeof explicit.insertSchema>>().toEqualTypeOf<{ type: 'adjustment' }>()
+expectTypeOf<z.output<typeof explicit.updateSchema>>().toEqualTypeOf<{ type: 'adjustment' }>()
+expectTypeOf<z.output<typeof explicit.tools.insert>>().toEqualTypeOf<{ type: 'adjustment' }>()
+const explicitToolPatch = explicit.tools.update.shape.data
+expectTypeOf<z.output<typeof explicitToolPatch>>().toEqualTypeOf<{
+	type: 'adjustment'
+}>()
+expectTypeOf<z.output<typeof explicit.publicDto>>().toEqualTypeOf<{
+	type: 'adjustment'
+	createdAt: number
+}>()
+defineRelations({ ledger: explicit }, () => ({}))
+
+const writable = zodVariantTable('ledger', explicitStorage, {
+	discriminator: 'type',
+	timestamps: false,
+	variants: {
+		adjustment: {
+			commandFields: ['createdAt', 'updatedAt', 'archivedAt', 'recordedAt'],
+		},
+	},
+})
+expectTypeOf<z.output<typeof writable.insertSchema>>().toEqualTypeOf<ExplicitRow>()
+expectTypeOf<z.output<typeof writable.commandInput>>().toEqualTypeOf<ExplicitRow>()
+expectTypeOf<z.output<typeof writable.tools.insert>>().toEqualTypeOf<ExplicitRow>()
+expectTypeOf<z.output<typeof writable.updateSchema>>().toEqualTypeOf<{
+	type: 'adjustment'
+	createdAt?: number
+	updatedAt?: number
+	archivedAt?: number
+	recordedAt?: number
+}>()
+const writableToolPatch = writable.tools.update.shape.data
+expectTypeOf<z.output<typeof writableToolPatch>>().toEqualTypeOf<
+	z.output<typeof writable.updateSchema>
+>()

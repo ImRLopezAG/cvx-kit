@@ -105,6 +105,11 @@ type Native<T extends RelationTable, K extends keyof Fields<T>> = ConvexValidato
 const fieldBrand: unique symbol = Symbol('relationField')
 const edgeBrand: unique symbol = Symbol('relationEdge')
 type Comparable<Value> = Exclude<Value, null | undefined>
+type IdMembers<Value, Registered extends string> = [Comparable<Value>] extends [never]
+	? never
+	: [Comparable<Value>] extends [GenericId<string>]
+		? Extract<Comparable<Value>, GenericId<string>>['__tableName'] & Registered
+		: never
 type Same<A, B> = [Comparable<A> | Comparable<B>] extends [never]
 	? false
 	: [Comparable<A>] extends [Comparable<B>]
@@ -118,20 +123,40 @@ export interface FieldReference<
 	Field extends string,
 	Value,
 	Scope extends string = never,
+	Registered extends string = string,
+	Member extends string = never,
 > {
 	readonly guard?: RelationGuard<Scope>
 	readonly [fieldBrand]: Value
 	readonly table: Table
 	readonly field: Field
+	/** Select a registered native-ID member, retaining this field's nullish wrappers. */
+	forTable<const T extends ([Scope] extends [never] ? IdMembers<Value, Registered> : never)>(
+		table: T,
+	): FieldReference<
+		Table,
+		Field,
+		Extract<Value, GenericId<T> | null | undefined>,
+		Scope,
+		Registered,
+		T
+	>
 	through<J extends AnyField>(
-		junction: J & (Same<Value, J[typeof fieldBrand]> extends true ? {} : never),
+		junction: J &
+			([Member] extends [never] ? {} : never) &
+			(J extends FieldReference<string, string, any, any, any, infer M>
+				? [M] extends [never]
+					? {}
+					: never
+				: never) &
+			(Same<Value, J[typeof fieldBrand]> extends true ? {} : never),
 	): ThroughReference<Table, Field, Value, J, Scope>
 }
 export interface RelationGuard<Tag extends string = string> {
 	readonly discriminator: string
 	readonly tag: Tag
 }
-type AnyField = FieldReference<string, string, any, any>
+type AnyField = FieldReference<string, string, any, any, any, any>
 export interface ThroughReference<
 	Table extends string,
 	Field extends string,
@@ -168,6 +193,8 @@ export interface RelationEdge<
 	readonly sourceGuard?: RelationGuard<SourceScope>
 	readonly targetGuard?: RelationGuard<TargetScope>
 	readonly junctionGuard?: RelationGuard
+	readonly sourceMember?: RelationMember
+	readonly targetMember?: RelationMember
 	readonly [edgeBrand]: true
 	readonly source: Source
 	readonly target: Target
@@ -175,13 +202,18 @@ export interface RelationEdge<
 	readonly from: Leg
 	readonly to: Leg
 }
+interface RelationMember {
+	readonly table: string
+}
 type AnyEdge = RelationEdge<string, string, 'one' | 'many', any, any>
 type FieldReferences<Tables extends RelationTables> = {
 	[T in keyof Tables]: {
 		[K in Extract<keyof Fields<Tables[T]>, string>]: FieldReference<
 			Extract<T, string>,
 			K,
-			Native<Tables[T], K>
+			Native<Tables[T], K>,
+			never,
+			Extract<keyof Tables, string>
 		>
 	}
 }
@@ -587,6 +619,7 @@ const executorRegistries = new WeakMap<
 	}
 >()
 const refs = new WeakMap<AnyField, GenericValidator>()
+const memberRefs = new WeakMap<AnyField, RelationMember>()
 const throughRefs = new WeakSet<AnyThrough>()
 const edgeRefs = new WeakSet<AnyEdge>()
 const indexExport = z.object({
@@ -634,15 +667,32 @@ export function defineRelations<
 			guard?: RelationGuard,
 		) => {
 			const tableRefs: Record<string, AnyField> = Object.create(null)
-			for (const [field, validator] of Object.entries(validators)) {
+			function makeReference(
+				field: string,
+				validator: GenericValidator,
+				member?: RelationMember,
+			): AnyField {
 				const ref: AnyField = {
 					[fieldBrand]: undefined,
 					table: name,
 					field,
 					guard,
-					through<J extends AnyField>(
-						junction: J & (Same<any, J[typeof fieldBrand]> extends true ? {} : never),
-					): ThroughReference<string, string, any, J, any> {
+					forTable(table: string) {
+						if (guard) throw new Error('forTable on branch-scoped fields is unsupported')
+						const members = nativeIdMembers(validator)
+						if (!members?.includes(table)) throw new Error('Invalid native ID member selection')
+						if (!Object.hasOwn(metadata, table))
+							throw new Error('Native ID member table is not registered')
+						const selected = hasNull(validator) ? v.union(v.id(table), v.null()) : v.id(table)
+						return makeReference(
+							field,
+							validator.isOptional === 'optional' ? v.optional(selected) : selected,
+							Object.freeze({ table }),
+						)
+					},
+					through<J extends AnyField>(junction: J): ThroughReference<string, string, any, J, any> {
+						if (member || memberRefs.has(junction))
+							throw new Error('forTable with through is unsupported')
 						const junctionValidator = refs.get(junction)
 						if (
 							!ownRefs.has(junction) ||
@@ -656,9 +706,12 @@ export function defineRelations<
 					},
 				}
 				refs.set(ref, validator)
+				if (member) memberRefs.set(ref, member)
 				ownRefs.add(ref)
-				tableRefs[field] = Object.freeze(ref)
+				return Object.freeze(ref)
 			}
+			for (const [field, validator] of Object.entries(validators))
+				tableRefs[field] = makeReference(field, validator)
 			return Object.freeze(tableRefs)
 		}
 		fields[name] = makeReferences(normalized.fields)
@@ -858,6 +911,9 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 	}
 	assertUnchanged()
 	const branchValidators = new WeakMap<object, z.ZodType>()
+	const scalarFields = new Map<string, FieldSchemas>()
+	const grammars = new Map<string, FilterGrammar>()
+	const filterNodes = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>()
 	function validateDocument(
 		table: string,
 		row: Record<string, import('convex/values').Value>,
@@ -892,8 +948,10 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		pagination(table: string) {
 			assertUnchanged()
 			const internal = owned.internal
-			const scalarFields = new Map<string, FieldSchemas>()
 			function grammar(name: string, depth: number, tag?: string): FilterGrammar {
+				const grammarKey = JSON.stringify([name, depth, tag ?? null])
+				const cached = grammars.get(grammarKey)
+				if (cached) return cached
 				const data = internal.metadata[name]
 				if (!data) throw new Error('Unknown query table')
 				const cacheKey = JSON.stringify([name, tag ?? null])
@@ -910,7 +968,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 					}
 					scalarFields.set(cacheKey, fields)
 				}
-				return {
+				const result: FilterGrammar = {
 					fields,
 					variants:
 						data.branches && tag === undefined && depth < 4
@@ -937,9 +995,11 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 									]),
 								),
 				}
+				grammars.set(grammarKey, result)
+				return result
 			}
 			return nativePagination.extend({
-				filters: relationFilterSchema(grammar(table, 0)).optional(),
+				filters: relationFilterSchema(grammar(table, 0), filterNodes).optional(),
 				order: z.enum(['asc', 'desc']).optional(),
 			})
 		},
@@ -1039,6 +1099,8 @@ function makeEdge(
 		sourceGuard: base(spec.from).guard,
 		targetGuard: base(spec.to).guard,
 		junctionGuard: junctionGuard(spec.from, spec.to),
+		sourceMember: memberRefs.get(base(spec.from)),
+		targetMember: memberRefs.get(base(spec.to)),
 	})
 	edgeRefs.add(result)
 	return result
@@ -1049,6 +1111,15 @@ function junctionGuard(from: Leg, to: Leg): RelationGuard | undefined {
 	if (left && right && (left.discriminator !== right.discriminator || left.tag !== right.tag))
 		throw new Error('Contradictory junction scopes')
 	return left ?? right
+}
+function nativeIdMembers(validator: GenericValidator): string[] | null {
+	if (validator.kind === 'id') return [validator.tableName]
+	if (validator.kind === 'null') return []
+	if (validator.kind !== 'union') return null
+	const members = validator.members.map(nativeIdMembers)
+	return members.some((member) => member === null)
+		? null
+		: [...new Set(members.flatMap((member) => member!))].sort()
 }
 function compatible(left: GenericValidator, right: GenericValidator): boolean {
 	const leftDomain = domain(left)
@@ -1103,7 +1174,9 @@ function serializeLeg(leg: Leg): unknown[] {
 				leg.junction.field,
 				leg.junction.guard ?? null,
 			]
-		: [leg.table, leg.field, leg.guard ?? null]
+		: memberRefs.has(leg)
+			? [leg.table, leg.field, leg.guard ?? null, memberRefs.get(leg)]
+			: [leg.table, leg.field, leg.guard ?? null]
 }
 function filterGrammar(
 	registry: RegistryMetadata,

@@ -63,6 +63,20 @@ export function relationshipExecutor(
 	}
 	const guarded = (row: Document | Record<string, Value>, guard?: RelationGuard) =>
 		!guard || row[guard.discriminator] === guard.tag
+	const memberIdSchema = z.string()
+	function memberMatches(value: Value | undefined, member: Edge['sourceMember']): boolean {
+		if (!member) return true
+		const id = memberIdSchema.safeParse(value)
+		return id.success && request.db.normalizeId(member.table, id.data) !== null
+	}
+	function sourceValue(declared: Edge, parent: Document | null): Value | undefined {
+		if (!parent || !guarded(parent, declared.sourceGuard)) return undefined
+		const value = parent[base(declared.from).field]
+		return memberMatches(value, declared.sourceMember) &&
+			memberMatches(value, declared.targetMember)
+			? value
+			: undefined
+	}
 	function lookup(table: string, field: string, guard?: RelationGuard) {
 		const index =
 			field === '_id'
@@ -153,12 +167,13 @@ export function relationshipExecutor(
 		value: Value | undefined,
 		depth: number,
 		guard?: RelationGuard,
+		member?: Edge['targetMember'],
 	): AsyncGenerator<Document> {
 		request.expand(depth, 0)
-		if (value == null) return
+		if (value == null || !memberMatches(value, member)) return
 		if (field === '_id') {
 			const target = await get(table, value)
-			if (target && guarded(target, guard)) {
+			if (target && guarded(target, guard) && memberMatches(target[field], member)) {
 				request.expand(depth)
 				yield target
 			}
@@ -190,7 +205,7 @@ export function relationshipExecutor(
 				planner.assertUnchanged()
 				if (!permitted) continue
 				planner.validateDocument(table, next.value)
-				if (!guarded(next.value, guard)) continue
+				if (!guarded(next.value, guard) || !memberMatches(next.value[field], member)) continue
 				request.expand(depth)
 				// SAFETY: native rows include system fields and explicit authorization just completed.
 				yield next.value as Document
@@ -205,8 +220,7 @@ export function relationshipExecutor(
 		depth: number,
 	): AsyncGenerator<Document> {
 		request.expand(depth, 0)
-		if (!guarded(parent, declared.sourceGuard)) return
-		const value = parent[base(declared.from).field]
+		const value = sourceValue(declared, parent)
 		if (value == null) return
 		if ('base' in declared.from && 'base' in declared.to) {
 			for await (const junction of targets(
@@ -224,7 +238,14 @@ export function relationshipExecutor(
 					declared.targetGuard,
 				)
 		} else
-			yield* targets(declared.target, base(declared.to).field, value, depth, declared.targetGuard)
+			yield* targets(
+				declared.target,
+				base(declared.to).field,
+				value,
+				depth,
+				declared.targetGuard,
+				declared.targetMember,
+			)
 	}
 	async function one(declared: Edge, parent: Document, depth: number) {
 		let match: Document | null = null
@@ -242,7 +263,12 @@ export function relationshipExecutor(
 	): Promise<boolean> {
 		request.expand(depth, 0)
 		planner.assertUnchanged()
-		planner.validateDocument(table, parent)
+		// Ordinary tables have no variant document validation. The live schema
+		// guard above still covers them; variant rows retain full stored validation.
+		if (metadata.tables[table].variant) planner.validateDocument(table, parent)
+		// Evaluate a scalar Boolean tree synchronously under that same guard,
+		// rather than rechecking every registry schema at each predicate node.
+		if (scalarOnly(ast)) return scalarMatches(ast, parent)
 		if (ast.kind === 'variant')
 			return parent[ast.discriminator] === ast.tag && matches(table, parent, ast.child, depth)
 		if (ast.kind === 'scalar') return scalarMatches(ast, parent)
@@ -376,6 +402,12 @@ export function relationshipExecutor(
 					target: declared.targetGuard ? { ...declared.targetGuard } : null,
 					junction: declared.junctionGuard ? { ...declared.junctionGuard } : null,
 				},
+				...((declared.sourceMember || declared.targetMember) && {
+					members: {
+						source: declared.sourceMember ? { ...declared.sourceMember } : null,
+						target: declared.targetMember ? { ...declared.targetMember } : null,
+					},
+				}),
 			},
 			relationPath: path,
 			parent: rootId,
@@ -414,10 +446,7 @@ export function relationshipExecutor(
 	) {
 		request.expand(depth, 0)
 		const { declared, plan, through, sourceTable, field, index, targetIndex, binding } = prepared
-		const value =
-			parent && guarded(parent, declared.sourceGuard)
-				? parent[base(declared.from).field]
-				: undefined
+		const value = sourceValue(declared, parent)
 		const args = { ...plan.args, ...(opened ?? { cursor: null }) }
 		// SAFETY: declarations accept only native scalar lookup values; nullish references are absence.
 		const lookupPlan = {
@@ -456,6 +485,7 @@ export function relationshipExecutor(
 				if (
 					!target ||
 					!guarded(target, declared.targetGuard) ||
+					!memberMatches(target[base(declared.to).field], declared.targetMember) ||
 					!(await matches(declared.target, target, plan.residual, depth))
 				)
 					return null
@@ -590,4 +620,12 @@ export function relationshipExecutor(
 		}
 	}
 	return { matches, output, continuation, edge }
+}
+
+/** Scalar subtrees have no reads or await boundaries requiring another live guard. */
+function scalarOnly(ast: FilterAst): boolean {
+	if (ast.kind === 'relation') return false
+	if (ast.kind === 'and' || ast.kind === 'or') return ast.children.every(scalarOnly)
+	if (ast.kind === 'not' || ast.kind === 'variant') return scalarOnly(ast.child)
+	return true
 }

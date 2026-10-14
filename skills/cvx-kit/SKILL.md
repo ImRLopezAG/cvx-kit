@@ -22,6 +22,7 @@ Read only the guides needed for the task, resolving paths relative to this skill
 | Tables, masks, DTOs, variants, tool validators        | [zod-table](references/zod-table.md)                                                                     |
 | Relationships, filtering, cursors, bounded pagination | [querying](references/querying.md)                                                                       |
 | Variant joins, branch predicates, mixed pages         | [variant-querying](references/variant-querying.md)                                                       |
+| Native-ID union links, inverse pages, link migration  | [native-id-relations](references/native-id-relations.md)                                                 |
 | Authentication, roles, shared Effect context          | [auth](references/auth.md)                                                                               |
 | Tenant isolation and row security                     | [tenancy](references/tenancy.md)                                                                         |
 | Commands, queries, registry wiring, audit             | [commands](references/commands.md), [effect](references/effect.md)                                       |

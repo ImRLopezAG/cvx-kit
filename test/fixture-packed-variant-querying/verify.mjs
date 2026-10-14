@@ -248,6 +248,53 @@ const inverse = (table, parent = native.targets[table], filters, identity = alic
 function privateScan(value) {
  assert.doesNotMatch(JSON.stringify(value), /"(?:allowed|department|linkAllowed|dependentClient|secret|evidence|external|previous|next|operation|_creationTime|updatedAt|finance)"|PRIVATE-/)
 }
+// Observe reactivity before the member matrix accumulates unrelated tasks.
+// The root name predicate is residual (no name index), so a two-item page
+// still authorizes every candidate. Keep all three live observers and their
+// public query shapes, but run against nativeSetup's bounded task inventory.
+// Use the same native WebSocket constructor resolution as fixture-effect/pagination.mjs.
+// Each observation is bounded, and every subscription/socket is closed on failure.
+const require = createRequire(import.meta.url)
+const WebSocket = require(require.resolve('ws', { paths: [require.resolve('convex/package.json')] }))
+const live = new ConvexClient(url, { webSocketConstructor: WebSocket })
+live.setAdminAuth(config.adminKey, alice)
+const unsubscribers = []; const observations = new Map(); const waiters = new Set()
+let subscriptionError
+function signal() { for (const waiter of waiters) waiter() }
+function observed(accept) {
+ return new Promise((resolve, reject) => {
+  const finish = () => {
+   if (subscriptionError) { clearTimeout(timer); waiters.delete(finish); reject(subscriptionError) }
+   else if (accept()) { clearTimeout(timer); waiters.delete(finish); resolve() }
+  }
+  const timer = setTimeout(() => { waiters.delete(finish); reject(new Error('ISSUE36_SUBSCRIPTION_TIMEOUT_25000MS')) }, 25000)
+  waiters.add(finish); finish()
+ })
+}
+try {
+ const reactive = await call('createTask', { input: input('native-reactive', native.targets.clients) })
+ for (const [key, reference, args] of [
+  ['root', api.app.taskList, options(null, { name: 'native-reactive' })],
+  ['old', api.app.inverseClients, { ...options(null, { name: 'native-reactive' }), parent: native.targets.clients }],
+  ['next', api.app.inverseLeads, { ...options(null, { name: 'native-reactive' }), parent: native.targets.leads }],
+ ]) unsubscribers.push(live.onUpdate(reference, args, page => { observations.set(key, page); signal() }, error => { subscriptionError = error; signal() }))
+ await check('issue36/native subscriptions observe initial public root and inverse', async () => {
+  await observed(() => observations.get('root')?.page[0]?.client?._id === native.targets.clients && observations.get('old')?.page[0]?._id === reactive && observations.get('next')?.page.length === 0)
+ })
+ await call('updateTask', { id: reactive, data: { rel: native.targets.leads } })
+ await check('issue36/native subscriptions react to relink old and new inverse', async () => {
+  await observed(() => observations.get('root')?.page[0]?.lead?._id === native.targets.leads && observations.get('old')?.page.length === 0 && observations.get('next')?.page[0]?._id === reactive)
+ })
+ await call('updateTask', { id: reactive, data: { rel: null } })
+ await check('issue36/native subscriptions react to clear root and both inverse', async () => {
+  await observed(() => observations.get('root')?.page[0]?.rel === null && observations.get('old')?.page.length === 0 && observations.get('next')?.page.length === 0)
+  privateScan([...observations.values()])
+ })
+} finally {
+ for (const unsubscribe of unsubscribers) unsubscribe()
+ await live.close()
+}
+
 await check('issue36/declarations runtime ownership and invalid narrowing contracts', async () => assert.deepEqual(await call('declarationContracts'), Array(11).fill(true)))
 for (const table of members) {
  const name = 'native-link-' + table
@@ -572,48 +619,6 @@ await check('issue35/native number shape admits fraction while full storage pars
  await call('nativeNumber', { id: native.adjustment, value: 30 })
 })
 
-// Use the same native WebSocket constructor resolution as fixture-effect/pagination.mjs.
-// Each observation is bounded, and every subscription/socket is closed on failure.
-const require = createRequire(import.meta.url)
-const WebSocket = require(require.resolve('ws', { paths: [require.resolve('convex/package.json')] }))
-const live = new ConvexClient(url, { webSocketConstructor: WebSocket })
-live.setAdminAuth(config.adminKey, alice)
-const unsubscribers = []; const observations = new Map(); const waiters = new Set()
-let subscriptionError
-function signal() { for (const waiter of waiters) waiter() }
-function observed(accept) {
- return new Promise((resolve, reject) => {
-  const finish = () => {
-   if (subscriptionError) { clearTimeout(timer); waiters.delete(finish); reject(subscriptionError) }
-   else if (accept()) { clearTimeout(timer); waiters.delete(finish); resolve() }
-  }
-  const timer = setTimeout(() => { waiters.delete(finish); reject(new Error('ISSUE36_SUBSCRIPTION_TIMEOUT_25000MS')) }, 25000)
-  waiters.add(finish); finish()
- })
-}
-try {
- const reactive = await call('createTask', { input: input('native-reactive', native.targets.clients) })
- for (const [key, reference, args] of [
-  ['root', api.app.taskList, options(null, { name: 'native-reactive' })],
-  ['old', api.app.inverseClients, { ...options(null, { name: 'native-reactive' }), parent: native.targets.clients }],
-  ['next', api.app.inverseLeads, { ...options(null, { name: 'native-reactive' }), parent: native.targets.leads }],
- ]) unsubscribers.push(live.onUpdate(reference, args, page => { observations.set(key, page); signal() }, error => { subscriptionError = error; signal() }))
- await check('issue36/native subscriptions observe initial public root and inverse', async () => {
-  await observed(() => observations.get('root')?.page[0]?.client?._id === native.targets.clients && observations.get('old')?.page[0]?._id === reactive && observations.get('next')?.page.length === 0)
- })
- await call('updateTask', { id: reactive, data: { rel: native.targets.leads } })
- await check('issue36/native subscriptions react to relink old and new inverse', async () => {
-  await observed(() => observations.get('root')?.page[0]?.lead?._id === native.targets.leads && observations.get('old')?.page.length === 0 && observations.get('next')?.page[0]?._id === reactive)
- })
- await call('updateTask', { id: reactive, data: { rel: null } })
- await check('issue36/native subscriptions react to clear root and both inverse', async () => {
-  await observed(() => observations.get('root')?.page[0]?.rel === null && observations.get('old')?.page.length === 0 && observations.get('next')?.page.length === 0)
-  privateScan([...observations.values()])
- })
-} finally {
- for (const unsubscribe of unsubscribers) unsubscribe()
- await live.close()
-}
 const legacyLabels = JSON.parse(readFileSync('legacy-labels.json', 'utf8'))
 assert.equal(legacyLabels.length, 52)
 for (const label of legacyLabels) assert.ok(evidence.some(result => result.label === label && result.passed), `Missing legacy assertion: ${label}`)

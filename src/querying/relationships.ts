@@ -263,7 +263,12 @@ export function relationshipExecutor(
 	): Promise<boolean> {
 		request.expand(depth, 0)
 		planner.assertUnchanged()
-		planner.validateDocument(table, parent)
+		// Ordinary tables have no variant document validation. The live schema
+		// guard above still covers them; variant rows retain full stored validation.
+		if (metadata.tables[table].variant) planner.validateDocument(table, parent)
+		// Evaluate a scalar Boolean tree synchronously under that same guard,
+		// rather than rechecking every registry schema at each predicate node.
+		if (scalarOnly(ast)) return scalarMatches(ast, parent)
 		if (ast.kind === 'variant')
 			return parent[ast.discriminator] === ast.tag && matches(table, parent, ast.child, depth)
 		if (ast.kind === 'scalar') return scalarMatches(ast, parent)
@@ -615,4 +620,12 @@ export function relationshipExecutor(
 		}
 	}
 	return { matches, output, continuation, edge }
+}
+
+/** Scalar subtrees have no reads or await boundaries requiring another live guard. */
+function scalarOnly(ast: FilterAst): boolean {
+	if (ast.kind === 'relation') return false
+	if (ast.kind === 'and' || ast.kind === 'or') return ast.children.every(scalarOnly)
+	if (ast.kind === 'not' || ast.kind === 'variant') return scalarOnly(ast.child)
+	return true
 }

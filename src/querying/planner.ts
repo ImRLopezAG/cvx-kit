@@ -19,9 +19,9 @@ export function createPlanner(
 	const assertUnchanged = () => owned.assertSchema(schema.tables)
 	assertUnchanged()
 	const metadata = getRelationMetadata(relations)
-	const inputs = new Map(
-		Object.keys(metadata.tables).map((table) => [table, owned.pagination(table)]),
-	)
+	// Build each immutable filter grammar only when that table is queried. Engine
+	// declarations also load in mutations, which never need pagination validators.
+	const inputs = new Map<string, ReturnType<typeof owned.pagination>>()
 	return {
 		metadata,
 		page: owned.page,
@@ -50,8 +50,12 @@ export function createPlanner(
 			constraints: readonly StoredConstraint[],
 		) {
 			assertUnchanged()
-			const validator = inputs.get(table)
-			if (!validator) throw new Error('Unknown query table')
+			if (!Object.hasOwn(metadata.tables, table)) throw new Error('Unknown query table')
+			let validator = inputs.get(table)
+			if (!validator) {
+				validator = owned.pagination(table)
+				inputs.set(table, validator)
+			}
 			const args = validator.parse(input)
 			// Server constraints are independently validated against stored fields,
 			// not the endpoint's public input/filter mask. Client values cannot replace them.

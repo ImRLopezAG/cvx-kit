@@ -35,6 +35,32 @@ function files(directory, skipDependencies = false) {
 }
 const legacyLabels = JSON.parse(readFileSync(join(templates, 'legacy-labels.json'), 'utf8'))
 const minimumNativeAssertions = 300
+// The expanded 342-assertion matrix takes ~140 s per peer locally; Linux
+// reached the old 180 s runner gate while still making expected write checks.
+// Keep a finite runtime budget without changing the backend's 1 s query limit.
+const nativeRuntimeTimeoutMs = 600000
+function reportNativeProgress(fixture) {
+	const path = join(fixture, 'native-timings.json')
+	if (!existsSync(path)) return
+	try {
+		const timing = JSON.parse(readFileSync(path, 'utf8'))
+		const calls = Object.values(timing.calls)
+		const progress = {
+			checkpointMs: timing.elapsedMs,
+			completedChecks: timing.assertions.length,
+			queries: calls.filter(call => call.kind === 'query').reduce((sum, call) => sum + call.count, 0),
+			mutations: calls.filter(call => call.kind === 'mutation').reduce((sum, call) => sum + call.count, 0),
+			maxActiveQueries: timing.queryConcurrency.maxActive,
+			maxQueuedQueries: timing.queryConcurrency.maxQueued,
+		}
+		// Emit only fixed keys and finite numbers, never labels, arguments or errors.
+		assert.ok(Object.values(progress).every(Number.isFinite))
+		console.error(`Native runtime last completed checkpoint: ${JSON.stringify(progress)}`)
+	} catch {
+		// Optional diagnostics must not replace the original runtime failure.
+		console.error('Native runtime checkpoint unavailable')
+	}
+}
 function assertInventory(results) {
 	assert.equal(legacyLabels.length, 52)
 	assert.equal(new Set(legacyLabels).size, 52)
@@ -278,12 +304,13 @@ for (const [label, installer, helpers, zod] of [
 			args: [join(fixture, 'node_modules/convex/bin/main.js'), ...cliArgs],
 			cwd: fixture,
 			env: environment,
-			timeoutMs: 180000,
+			timeoutMs: phase === 'runtime' ? nativeRuntimeTimeoutMs : 180000,
 			onSpawn: (pid) => pids.push(pid),
 		})
 		const { stdout, stderr, ...lifecycle } = result
 		writeFileSync(join(fixture, `${phase}.log`), redact(stdout + stderr))
 		writeFileSync(join(fixture, `${phase}-process.json`), JSON.stringify(lifecycle, null, 2))
+		if (phase === 'runtime' && (result.code !== 0 || result.timedOut)) reportNativeProgress(fixture)
 		assert.equal(result.code, 0, `${label}/${phase} failed; see retained proof`)
 		assert.equal(result.timedOut, false, `${label}/${phase} exceeded bounded integration deadline`)
 		assert.equal(result.cleanup?.alive, false, `${label}/${phase} owned group survived cleanup`)

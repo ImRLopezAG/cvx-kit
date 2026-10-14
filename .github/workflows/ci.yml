@@ -62,6 +62,9 @@ jobs:
         run: node scripts/test-packed-variants.mjs
 
       - name: Verify installed variant query engine with native Convex
+        # Both peers run serially with 10 min runtime gates; leave 5 min for setup.
+        # This bounds the entire matrix as well as each owned native process.
+        timeout-minutes: 25
         run: node scripts/test-packed-variant-querying.mjs
 
       - name: Typecheck

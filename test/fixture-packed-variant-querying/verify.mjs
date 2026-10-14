@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
-import { ConvexHttpClient } from 'convex/browser'
+import { createRequire } from 'node:module'
+import { ConvexHttpClient, ConvexClient } from 'convex/browser'
 import { api, internal } from './convex/_generated/api.js'
 
 const url = `http://127.0.0.1:${process.argv[2]}`
 const config = JSON.parse(readFileSync('.convex/local/default/config.json', 'utf8'))
-const queries = new Set(['list', 'plain', 'byClient', 'clientsPage', 'creditorsPage', 'ledgerList', 'draftGuard', 'unmanaged', 'state'])
-const internalNames = new Set(['setup', 'mark', 'extras', 'revoke', 'state', 'corruptAmount'])
+const queries = new Set(['list', 'plain', 'byClient', 'clientsPage', 'creditorsPage', 'ledgerList', 'draftGuard', 'unmanaged', 'state', 'taskList', 'deepTasks', 'nativeClients', 'taskState', 'ledgerState', 'timestampContracts', 'declarationContracts', 'inverseTasks', 'inverseLeads', 'inverseContacts', 'inverseClients', 'inverseCreditors', 'inverseDeals', 'inversePayments', 'inverseLedger', 'inverseClientsDeclaration', 'inverseClientsPolicy', 'nestedClientTasks', 'nestedReferenceTasks'])
+const internalNames = new Set(['setup', 'mark', 'extras', 'revoke', 'state', 'corruptAmount', 'nativeSetup', 'seedTask', 'taskState', 'ledgerState', 'department', 'nativeNumber', 'timestampContracts', 'declarationContracts', 'rawLedger', 'financeMembership'])
 const evidence = []
 const alice = { issuer: 'https://variant-fixture.test.invalid', subject: 'alice', org_id: 'fixture', role: 'finance' }
 const bob = { ...alice, subject: 'bob' }
@@ -38,10 +39,10 @@ const options = (cursor = null, filters) => {
  if (filters) args.filters = filters
  return args
 }
-async function drain(name, filters, extra = {}) {
+async function drain(name, filters, extra = {}, identity = alice, maxPages = 12) {
  const rows = []; let cursor = null
- for (let n = 0; n < 12; n++) {
-  const result = await call(name, { ...options(cursor, filters), ...extra })
+ for (let n = 0; n < maxPages; n++) {
+  const result = await call(name, { ...options(cursor, filters), ...extra }, identity)
   assert.ok(result.page.length <= 2)
   rows.push(...result.page)
   if (result.isDone) return rows
@@ -183,6 +184,371 @@ await call('corruptAmount', { id: created[0] })
 const invalidStored = await call('state', { id: created[0] })
 await rejects('valid partial input cannot persist invalid merged storage', 'updatePayment', { id: created[0], data: { type: 'client_draft', draftDate: 99 } })
 await check('full merged validation failure leaves row and audit unchanged', async () => assert.deepEqual(await call('state', { id: created[0] }), invalidStored))
+// Issue 36 native-ID union acceptance. All setup/inspection remains internal;
+// every successful create/relink/clear and all reads below use generated public APIs.
+const native = await call('nativeSetup')
+const members = ['tasks', 'leads', 'contacts', 'clients', 'creditors', 'deals', 'payments', 'ledger']
+const fields = { tasks: 'referenceTask', leads: 'lead', contacts: 'contact', clients: 'client', creditors: 'creditor', deals: 'deal', payments: 'payment', ledger: 'ledgerEntry' }
+const endpoint = table => 'inverse' + table[0].toUpperCase() + table.slice(1)
+const input = (name, rel, status = 'open') => ({ name, status, rel })
+const taskIds = {}; const childIds = {}; const publicPages = []
+const taskOnly = { ...alice, subject: 'taskOnly', role: 'taskOnly' }
+const targetOnly = { ...alice, subject: 'targetOnly', role: 'targetOnly' }
+const carol = { ...alice, subject: 'carol' }
+const rowFor = async (name, identity = alice) => (await drain('taskList', { name }, {}, identity))[0]
+const inverse = (table, parent = native.targets[table], filters, identity = alice) => drain(endpoint(table), filters, { parent }, identity)
+function privateScan(value) {
+ assert.doesNotMatch(JSON.stringify(value), /"(?:allowed|department|linkAllowed|dependentClient|secret|evidence|external|previous|next|operation|_creationTime|updatedAt|finance)"|PRIVATE-/)
+}
+await check('issue36/declarations runtime ownership and invalid narrowing contracts', async () => assert.deepEqual(await call('declarationContracts'), Array(11).fill(true)))
+for (const table of members) {
+ const name = 'native-link-' + table
+ const target = native.targets[table]
+ const deniedSource = await call('seedTask', { input: input('native-denied-source-' + table, target), allowed: false, department: 'A' })
+ await call('seedTask', { input: input('native-other-source-' + table, target), allowed: true, department: 'B' })
+ const task = await call('createTask', { input: input(name, target) })
+ taskIds[table] = task
+ const children = [task]
+ for (let n = 0; n < 3; n++) children.push(await call('createTask', { input: input(name + '-child-' + n, target, n === 1 ? 'done' : 'open') }))
+ childIds[table] = children
+ await check(`issue36/${table}/public create native union and forward exact target`, async () => {
+  const row = await rowFor(name)
+  assert.equal(row._id, task); assert.equal(row.rel, target); assert.equal(row[fields[table]]._id, target)
+  for (const other of members.filter(member => member !== table)) assert.equal(row[fields[other]], null)
+  publicPages.push(row)
+ })
+ await check(`issue36/${table}/inverse indexed authorized fill gapless continuation`, async () => {
+  const rows = await inverse(table)
+  assert.deepEqual(rows.map(row => row._id), children)
+  assert.equal(new Set(rows.map(row => row._id)).size, children.length)
+  privateScan(rows); publicPages.push(rows)
+ })
+ await check(`issue36/${table}/inverse filter before page fill logical status`, async () => {
+  assert.deepEqual((await inverse(table, target, { and: [{ status: 'open' }, { not: { name: name + '-child-1' } }] })).map(row => row._id), [children[0], children[1], children[3]])
+ })
+ const first = await call(endpoint(table), { ...options(), parent: target })
+ assert.equal(first.isDone, false)
+ assert.ok(first.continueCursor)
+ await check(`issue36/${table}/unchanged child cursor continues exact remainder`, async () => assert.deepEqual((await call(endpoint(table), { ...options(first.continueCursor), parent: target })).page.map(row => row._id), children.slice(2)))
+ await Promise.all([
+  ['parent', { ...options(first.continueCursor), parent: native.forbidden[table] }, alice],
+  ['actor', { ...options(first.continueCursor), parent: target }, bob],
+  ['scope', { ...options(first.continueCursor), parent: target }, { ...alice, org_id: 'other-scope' }],
+  ['filter', { ...options(first.continueCursor, { status: 'done' }), parent: target }, alice],
+  ['order', { ...options(first.continueCursor), parent: target, order: 'desc' }, alice],
+  ['malformed', { ...options('malformed'), parent: target }, alice],
+  ['tampered', { ...options(first.continueCursor.slice(0, -8) + 'AAAAAAAA'), parent: target }, alice],
+ ].map(([axis, replay, actor]) => rejects(`issue36/${table}/cursor rejects ${axis}`, endpoint(table), replay, actor)))
+ const otherTable = members[(members.indexOf(table) + 1) % members.length]
+ await rejects(`issue36/${table}/cursor rejects different narrowed member`, endpoint(otherTable), { ...options(first.continueCursor), parent: native.targets[otherTable] })
+ await rejects(`issue36/${table}/child cursor rejects root endpoint`, 'taskList', options(first.continueCursor))
+ for (const kind of ['missing', 'denied', 'forbidden', 'otherDepartment']) {
+  await check(`issue36/${table}/${kind} link rejection preserves task inverse audit atomically`, async () => {
+   const [before, oldInverse, targetInverse] = await Promise.all([
+    call('taskState', { id: task }), inverse(table), inverse(table, native[kind][table]),
+   ])
+   await assert.rejects(() => call('createTask', { input: input('native-rejected-' + table + '-' + kind, native[kind][table]) }))
+   await assert.rejects(() => call('updateTask', { id: task, data: { rel: native[kind][table] } }))
+   const [after, oldAfter, targetAfter, rejectedRow] = await Promise.all([
+    call('taskState', { id: task }), inverse(table), inverse(table, native[kind][table]),
+    rowFor('native-rejected-' + table + '-' + kind),
+   ])
+   assert.deepEqual(after, before)
+   assert.deepEqual(oldAfter, oldInverse)
+   assert.deepEqual(targetAfter, targetInverse)
+   assert.equal(rejectedRow, undefined)
+  })
+ }
+ await check(`issue36/${table}/readable link-forbidden target still resolves`, async () => {
+  const id = await call('seedTask', { input: input('native-forbidden-read-' + table, native.forbidden[table]), allowed: true, department: 'A' })
+  const row = await rowFor('native-forbidden-read-' + table)
+  assert.equal(row._id, id); assert.equal(row[fields[table]]._id, native.forbidden[table])
+ })
+ for (const kind of ['missing', 'denied', 'otherDepartment']) {
+  const absenceName = 'native-absence-' + table + '-' + kind
+  await call('seedTask', { input: input(absenceName, native[kind][table]), allowed: true, department: 'A' })
+  await check(`issue36/${table}/${kind} one target absence and authorized predicates`, async () => {
+   const [row, absent, present, children] = await Promise.all([
+    rowFor(absenceName), drain('taskList', { name: absenceName, [fields[table]]: null }),
+    drain('taskList', { name: absenceName, not: { [fields[table]]: null } }),
+    inverse(table, native[kind][table]),
+   ])
+   assert.equal(row[fields[table]], null); privateScan(row)
+   assert.equal(absent.length, 1)
+   assert.deepEqual(present, [])
+   assert.deepEqual(children, [])
+  })
+ }
+ await check(`issue36/${table}/department-B cannot read source or inverse`, async () => {
+  assert.equal(await rowFor(name, carol), undefined)
+  assert.deepEqual(await inverse(table, target, undefined, carol), [])
+ })
+ await check(`issue36/${table}/target-only role cannot inherit task reads`, async () => {
+  assert.equal(await rowFor(name, targetOnly), undefined)
+  assert.deepEqual(await inverse(table, target, undefined, targetOnly), [])
+ })
+ await check(`issue36/${table}/source authorization independently rejects target-only and denied task writes`, async () => {
+  const before = await call('taskState', { id: task }); const deniedBefore = await call('taskState', { id: deniedSource })
+  await assert.rejects(() => call('updateTask', { id: task, data: { rel: null } }, targetOnly))
+  await assert.rejects(() => call('updateTask', { id: deniedSource, data: { rel: target } }))
+  assert.deepEqual(await call('taskState', { id: task }), before)
+  assert.deepEqual(await call('taskState', { id: deniedSource }), deniedBefore)
+ })
+ await call('department', { principal: 'alice', department: 'B' })
+ await check(`issue36/${table}/live department change reauthorizes continuation`, async () => assert.deepEqual((await call(endpoint(table), { ...options(first.continueCursor), parent: target })).page, []))
+ await call('department', { principal: 'alice', department: 'A' })
+ await call('revoke', { principal: 'alice', active: false })
+ await check(`issue36/${table}/live membership revocation public root and child absence`, async () => {
+  assert.equal(await rowFor(name), undefined)
+  assert.deepEqual((await call(endpoint(table), { ...options(first.continueCursor), parent: target })).page, [])
+ })
+ await check(`issue36/${table}/revoked public command leaves task audit unchanged`, async () => {
+  const before = await call('taskState', { id: task })
+  await assert.rejects(() => call('updateTask', { id: task, data: { rel: null } }))
+  await assert.rejects(() => call('createTask', { input: input('native-revoked-' + table, target) }))
+  assert.deepEqual(await call('taskState', { id: task }), before)
+ })
+ await call('revoke', { principal: 'alice', active: true })
+ await check(`issue36/${table}/public relink every member removes old inverse adds new`, async () => {
+  await call('updateTask', { id: task, data: { rel: native.targets[otherTable] } })
+  const row = await rowFor(name)
+  assert.equal(row[fields[table]], null)
+  assert.equal(row[fields[otherTable]]._id, native.targets[otherTable])
+  assert.ok(!(await inverse(table)).some(row => row._id === task))
+  assert.ok((await inverse(otherTable)).some(row => row._id === task))
+  await call('updateTask', { id: task, data: { rel: target } })
+  assert.ok(!(await inverse(otherTable)).some(row => row._id === task))
+ })
+ await check(`issue36/${table}/omitted link preserves forward inverse and audit intent`, async () => {
+  await call('updateTask', { id: task, data: { status: 'done' } })
+  const state = await call('taskState', { id: task })
+  assert.equal(state.row.rel, target)
+  assert.equal(state.audits.at(-1).operation, 'update')
+  assert.equal(state.audits.at(-1).next, target)
+  assert.ok((await inverse(table)).some(row => row._id === task))
+ })
+ await check(`issue36/${table}/failure after writes rolls back row inverse audit`, async () => {
+  const before = await call('taskState', { id: task }); const childrenBefore = await inverse(table)
+  await assert.rejects(() => call('updateTask', { id: task, data: { rel: null }, failAfterPersist: true }), /TASK_ATOMIC_FAILURE/)
+  assert.deepEqual(await call('taskState', { id: task }), before)
+  assert.deepEqual(await inverse(table), childrenBefore)
+ })
+ await check(`issue36/${table}/explicit null clears forward inverse with audit`, async () => {
+  await call('updateTask', { id: task, data: { rel: null } })
+  const state = await call('taskState', { id: task })
+  assert.equal(state.row.rel, null); assert.equal(state.audits.at(-1).operation, 'clear')
+  assert.equal(state.audits.at(-1).previous, target); assert.equal(state.audits.at(-1).next, null)
+  const row = await rowFor(name)
+  for (const member of members) assert.equal(row[fields[member]], null)
+  assert.ok(!(await inverse(table)).some(child => child._id === task))
+ })
+ await call('updateTask', { id: task, data: { rel: target, status: 'open' } })
+}
+await check('issue36/public root continuation exact authorized inventory no gaps duplicates', async () => {
+ const rows = await drain('taskList', { or: members.flatMap(table => [{ name: 'native-link-' + table }, ...[0, 1, 2].map(n => ({ name: 'native-link-' + table + '-child-' + n }))]) }, {}, alice, 32)
+ assert.deepEqual(new Set(rows.map(row => row._id)), new Set(Object.values(childIds).flat()))
+ assert.equal(rows.length, 32); privateScan(rows)
+})
+const nativeRootFilters = { or: members.flatMap(table => [{ name: 'native-link-' + table }, ...[0, 1, 2].map(n => ({ name: 'native-link-' + table + '-child-' + n }))]) }
+const nativeRootFirst = await call('taskList', options(null, nativeRootFilters))
+for (const [axis, args, identity] of [
+ ['actor', options(nativeRootFirst.continueCursor, nativeRootFilters), bob],
+ ['scope', options(nativeRootFirst.continueCursor, nativeRootFilters), { ...alice, org_id: 'other-scope' }],
+ ['filter', options(nativeRootFirst.continueCursor, { status: 'done' }), alice],
+ ['order', { ...options(nativeRootFirst.continueCursor, nativeRootFilters), order: 'desc' }, alice],
+]) await rejects(`issue36/root cursor rejects ${axis}`, 'taskList', args, identity)
+const nativeClientCursor = (await call('inverseClients', { ...options(), parent: native.targets.clients })).continueCursor
+await rejects('issue36/cursor rejects changed member declaration registry', 'inverseClientsDeclaration', { ...options(nativeClientCursor), parent: native.targets.clients })
+await rejects('issue36/cursor rejects changed policy epoch', 'inverseClientsPolicy', { ...options(nativeClientCursor), parent: native.targets.clients })
+await rejects('issue36/root cursor rejects inverse endpoint', 'inverseClients', { ...options(nativeRootFirst.continueCursor, nativeRootFilters), parent: native.targets.clients })
+await check('issue36/absent command link and explicit null have matching one absence', async () => {
+ const absent = await call('createTask', { input: { name: 'native-omitted', status: 'open' } })
+ const cleared = await call('createTask', { input: input('native-null', null) })
+ for (const [name, id] of [['native-omitted', absent], ['native-null', cleared]]) {
+  const row = await rowFor(name); assert.equal(row._id, id)
+  for (const table of members) assert.equal(row[fields[table]], null)
+ }
+})
+await check('issue36/task-only read never inherits client or finance target policy', async () => {
+ const client = await rowFor('native-link-clients', taskOnly)
+ assert.equal(client._id, taskIds.clients); assert.equal(client.client, null)
+ assert.equal((await rowFor('native-link-payments', taskOnly)).payment, null)
+ assert.equal((await rowFor('native-link-ledger', reader)).ledgerEntry, null)
+ assert.equal((await rowFor('native-link-creditors', reader)).creditor, null)
+})
+await check('issue36/current dependent client policy denies deal and payment despite own allowed flag', async () => {
+ for (const [table, id] of [['deals', native.deniedAncestorDeal], ['payments', native.deniedAncestorPayment], ['ledger', native.deniedAncestorLedger]]) {
+  const name = 'native-dependent-' + table
+  await call('seedTask', { input: input(name, id), allowed: true, department: 'A' })
+  assert.equal((await rowFor(name))[fields[table]], null)
+  const before = await call('taskState', { id: taskIds[table] }); const childrenBefore = await inverse(table)
+  await assert.rejects(() => call('createTask', { input: input(name + '-command', id) }))
+  await assert.rejects(() => call('updateTask', { id: taskIds[table], data: { rel: id } }))
+  assert.deepEqual(await call('taskState', { id: taskIds[table] }), before)
+  assert.deepEqual(await inverse(table), childrenBefore)
+ }
+})
+const financeCursor = (await call('inversePayments', { ...options(), parent: native.targets.payments })).continueCursor
+await call('financeMembership', { principal: 'alice', finance: false })
+await check('issue36/live finance membership revocation denies targets child cursor and link command', async () => {
+ assert.equal((await rowFor('native-link-payments')).payment, null)
+ assert.equal((await rowFor('native-link-ledger')).ledgerEntry, null)
+ assert.equal((await rowFor('native-link-creditors')).creditor, null)
+ assert.deepEqual((await call('inversePayments', { ...options(financeCursor), parent: native.targets.payments })).page, [])
+ const before = await call('taskState', { id: taskIds.payments })
+ await assert.rejects(() => call('updateTask', { id: taskIds.payments, data: { rel: native.targets.payments } }))
+ assert.deepEqual(await call('taskState', { id: taskIds.payments }), before)
+})
+await call('financeMembership', { principal: 'alice', finance: true })
+await check('issue36/ordinary union preserves actual payment ledger variant DTOs and target guards', async () => {
+ await call('createTask', { input: input('native-draft-branch', native.draft) })
+ await call('createTask', { input: input('native-adjustment-branch', native.adjustment) })
+ const draft = await rowFor('native-draft-branch'); const adjustment = await rowFor('native-adjustment-branch')
+ assert.equal(draft.payment.type, 'client_draft'); assert.equal(draft.draftPayment.type, 'client_draft')
+ assert.equal((await rowFor('native-link-payments')).draftPayment, null)
+ assert.equal(adjustment.ledgerEntry.type, 'adjustment'); assert.equal(adjustment.adjustment.type, 'adjustment')
+ assert.equal((await rowFor('native-link-ledger')).adjustment, null)
+ assert.equal((await inverse('payments', native.draft))[0]._id, draft._id)
+ assert.equal((await inverse('ledger', native.adjustment))[0]._id, adjustment._id)
+ privateScan([draft, adjustment])
+})
+await check('issue36/some none null and logical filters use authorized view', async () => {
+ const some = await drain('nativeClients', { name: 'native-client-allowed', tasks: { some: { status: 'open', client: { name: 'native-client-allowed' } } } })
+ assert.deepEqual(some.map(row => row._id), [native.targets.clients])
+ assert.deepEqual(await drain('nativeClients', { name: 'native-client-allowed', tasks: { none: { status: 'open' } } }), [])
+ assert.deepEqual((await drain('nativeClients', { name: 'native-client-forbidden', tasks: { none: { status: 'done' } } })).map(row => row._id), [native.forbidden.clients])
+ const matching = await drain('taskList', { and: [{ name: 'native-link-clients' }, { not: { client: null } }, { or: [{ client: { name: 'native-client-allowed' } }, { status: 'done' }] }] })
+ assert.deepEqual(matching.map(row => row._id), [taskIds.clients])
+ assert.deepEqual(await drain('taskList', { name: 'native-absence-clients-denied', client: { name: 'native-client-denied' } }), [])
+})
+await check('issue36/nested inverse child page and standalone continuation exact union IDs', async () => {
+ const root = await rowFor('native-link-clients')
+ const nested = root.client.tasks
+ assert.ok(nested.page.length > 0 && nested.page.length <= 3); assert.equal(nested.isDone, false)
+ const continued = await call('nestedClientTasks', { ...options(nested.continueCursor), parent: taskIds.clients })
+ assert.deepEqual([...nested.page, ...continued.page].map(row => row._id), childIds.clients)
+ const first = await call('nativeClients', options(null, { name: 'native-client-allowed' }))
+ assert.deepEqual(first.page[0].tasks.page.map(row => row._id), nested.page.map(row => row._id))
+})
+await check('issue36/task self-member nested inverse continuation', async () => {
+ const root = await rowFor('native-link-tasks')
+ const nested = root.referenceTask.referencingTasks
+ const continued = await call('nestedReferenceTasks', { ...options(nested.continueCursor), parent: taskIds.tasks })
+ assert.deepEqual([...nested.page, ...continued.page].map(row => row._id), childIds.tasks)
+})
+// A two-hop ancestor path must be rechecked even when the signed child token opens.
+const ancestor = await call('createTask', { input: input('native-ancestor', native.targets.clients) })
+const rootTask = await call('createTask', { input: input('native-deep-root', ancestor) })
+const deepRoot = await rowFor('native-deep-root')
+const deepChild = deepRoot.referenceTask.client.tasks
+await check('issue36/task reference nested deep child continuation', async () => {
+ const rows = [...deepChild.page]; let child = deepChild
+ for (let n = 0; !child.isDone && n < 8; n++) {
+  child = await call('deepTasks', { ...options(child.continueCursor), parent: rootTask })
+  rows.push(...child.page)
+ }
+ assert.equal(child.isDone, true)
+ assert.deepEqual(rows.map(row => row._id), [...childIds.clients, ancestor])
+ assert.equal(deepRoot.referenceTask._id, ancestor)
+ assert.equal(deepChild.isDone, false)
+})
+await rejects('issue36/deep cursor rejects different ancestor parent', 'deepTasks', { ...options(deepChild.continueCursor), parent: taskIds.tasks })
+await call('updateTask', { id: ancestor, data: { rel: native.targets.leads } })
+await check('issue36/relinked ancestor cannot resume old child cursor', async () => {
+ assert.deepEqual((await call('deepTasks', { ...options(deepChild.continueCursor), parent: rootTask })).page, [])
+})
+await call('updateTask', { id: ancestor, data: { rel: native.targets.clients } })
+await call('revoke', { principal: 'alice', active: false })
+await check('issue36/revoked ancestor authority cannot resume deep child cursor', async () => assert.deepEqual((await call('deepTasks', { ...options(deepChild.continueCursor), parent: rootTask })).page, []))
+await call('revoke', { principal: 'alice', active: true })
+for (const [label, rel] of [['arbitrary-string', 'arbitrary'], ['malformed-id', '!invalid'], ['ninth-table', native.outsider]]) {
+ await rejects(`issue36/native command union rejects ${label}`, 'createTask', { input: input('native-invalid-' + label, rel) })
+ await rejects(`issue36/native relink union rejects ${label}`, 'updateTask', { id: taskIds.tasks, data: { rel } })
+}
+await rejects('issue36/native inverse argument rejects wrong allowed table ID', 'inverseClients', { ...options(), parent: native.targets.leads })
+await rejects('issue36/private command field cannot bypass generated mask', 'createTask', { input: { ...input('native-private', native.targets.clients), secret: 'injected' } })
+await check('issue36/public pages contain only generated DTO fields and opaque cursors', async () => privateScan(publicPages))
+
+await check('issue35/full storage refinements and generated command timestamp masks', async () => assert.deepEqual(await call('timestampContracts'), [true, ...Array(10).fill(false)]))
+await check('issue35/required explicit timestamps persisted native row and DTO masks', async () => {
+ const payment = await call('ledgerState', { id: native.targets.ledger })
+ const adjustment = await call('ledgerState', { id: native.adjustment })
+ assert.equal(payment.createdAt, 10); assert.equal(payment.recordedAt, 20)
+ assert.equal(adjustment.createdAt, 30); assert.equal(adjustment.recordedAt, 40)
+ const hidden = (await rowFor('native-link-ledger')).ledgerEntry
+ assert.ok(!('createdAt' in hidden)); assert.ok(!('recordedAt' in hidden))
+ const exposed = (await rowFor('native-adjustment-branch')).ledgerEntry
+ assert.equal(exposed.createdAt, 30); assert.equal(exposed.recordedAt, 40)
+ assert.ok(!('updatedAt' in adjustment)); assert.ok(!('archivedAt' in adjustment))
+})
+await rejects('issue35/command cannot inject server createdAt', 'updateLedger', { id: native.adjustment, data: { type: 'adjustment', createdAt: 100 } })
+await rejects('issue35/command cannot inject server recordedAt', 'updateLedger', { id: native.adjustment, data: { type: 'adjustment', recordedAt: 100 } })
+await check('issue35/allowed generated ledger update preserves recordedAt and createdAt', async () => {
+ await call('updateLedger', { id: native.adjustment, data: { type: 'adjustment', reason: 'updated' } })
+ const row = await call('ledgerState', { id: native.adjustment })
+ assert.equal(row.reason, 'updated'); assert.equal(row.createdAt, 30); assert.equal(row.recordedAt, 40)
+})
+const rawEntry = { type: 'adjustment', reason: 'raw-validator', amountCents: 1, allowed: true, evidence: 'raw-validator-input', createdAt: 1, recordedAt: 2 }
+const { createdAt: rawCreatedAt, ...noCreatedAt } = rawEntry
+const { recordedAt: rawRecordedAt, ...noRecordedAt } = rawEntry
+void rawCreatedAt; void rawRecordedAt
+await rejects('issue35/native validator requires createdAt', 'rawLedger', { input: noCreatedAt })
+await rejects('issue35/native validator requires recordedAt', 'rawLedger', { input: noRecordedAt })
+await rejects('issue35/native validator requires number timestamp', 'rawLedger', { input: { ...rawEntry, createdAt: 'one' } })
+await check('issue35/native number shape admits fraction while full storage parser rejects', async () => {
+ await call('nativeNumber', { id: native.adjustment, value: 1.5 })
+ assert.equal((await call('ledgerState', { id: native.adjustment })).createdAt, 1.5)
+ await assert.rejects(() => call('updateLedger', { id: native.adjustment, data: { type: 'adjustment', reason: 'must-not-persist' } }))
+ await call('nativeNumber', { id: native.adjustment, value: 30 })
+})
+
+// Use the same native WebSocket constructor resolution as fixture-effect/pagination.mjs.
+// Each observation is bounded, and every subscription/socket is closed on failure.
+const require = createRequire(import.meta.url)
+const WebSocket = require(require.resolve('ws', { paths: [require.resolve('convex/package.json')] }))
+const live = new ConvexClient(url, { webSocketConstructor: WebSocket })
+live.setAdminAuth(config.adminKey, alice)
+const unsubscribers = []; const observations = new Map(); const waiters = new Set()
+let subscriptionError
+function signal() { for (const waiter of waiters) waiter() }
+function observed(accept) {
+ return new Promise((resolve, reject) => {
+  const finish = () => {
+   if (subscriptionError) { clearTimeout(timer); waiters.delete(finish); reject(subscriptionError) }
+   else if (accept()) { clearTimeout(timer); waiters.delete(finish); resolve() }
+  }
+  const timer = setTimeout(() => { waiters.delete(finish); reject(new Error('ISSUE36_SUBSCRIPTION_TIMEOUT_25000MS')) }, 25000)
+  waiters.add(finish); finish()
+ })
+}
+try {
+ const reactive = await call('createTask', { input: input('native-reactive', native.targets.clients) })
+ for (const [key, reference, args] of [
+  ['root', api.app.taskList, options(null, { name: 'native-reactive' })],
+  ['old', api.app.inverseClients, { ...options(null, { name: 'native-reactive' }), parent: native.targets.clients }],
+  ['next', api.app.inverseLeads, { ...options(null, { name: 'native-reactive' }), parent: native.targets.leads }],
+ ]) unsubscribers.push(live.onUpdate(reference, args, page => { observations.set(key, page); signal() }, error => { subscriptionError = error; signal() }))
+ await check('issue36/native subscriptions observe initial public root and inverse', async () => {
+  await observed(() => observations.get('root')?.page[0]?.client?._id === native.targets.clients && observations.get('old')?.page[0]?._id === reactive && observations.get('next')?.page.length === 0)
+ })
+ await call('updateTask', { id: reactive, data: { rel: native.targets.leads } })
+ await check('issue36/native subscriptions react to relink old and new inverse', async () => {
+  await observed(() => observations.get('root')?.page[0]?.lead?._id === native.targets.leads && observations.get('old')?.page.length === 0 && observations.get('next')?.page[0]?._id === reactive)
+ })
+ await call('updateTask', { id: reactive, data: { rel: null } })
+ await check('issue36/native subscriptions react to clear root and both inverse', async () => {
+  await observed(() => observations.get('root')?.page[0]?.rel === null && observations.get('old')?.page.length === 0 && observations.get('next')?.page.length === 0)
+  privateScan([...observations.values()])
+ })
+} finally {
+ for (const unsubscribe of unsubscribers) unsubscribe()
+ await live.close()
+}
+const legacyLabels = JSON.parse(readFileSync('legacy-labels.json', 'utf8'))
+assert.equal(legacyLabels.length, 52)
+for (const label of legacyLabels) assert.ok(evidence.some(result => result.label === label && result.passed), `Missing legacy assertion: ${label}`)
+assert.equal(new Set(evidence.map(result => result.label)).size, evidence.length)
+assert.ok(evidence.length >= 300, 'Expected all 52 legacy assertions and at least 248 new native assertions')
 writeFileSync('native-results.json', JSON.stringify(evidence, null, 2))
 writeFileSync('NATIVE_SUCCESS', `${evidence.length} native assertions passed\n`)
 console.log(`Native variant shared-engine passed: ${evidence.length} assertions`)

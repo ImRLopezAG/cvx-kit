@@ -12,6 +12,24 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-10-13
+
+### Added
+
+- Select registered native-ID union members with `forTable` for direct forward and indexed inverse relations, including generated variant-table targets.
+- Preserve authorization, bounded pagination, and cursor identity for selected ID members without changing the stored union or root DTO.
+- Document native-ID relation wiring, independent link authorization, and additive migration with resumable backfill and rollback.
+
+### Fixed
+
+- Preserve explicit timestamp validators and ordinary boundary masks in `zodVariantTable` when `timestamps: false`, including required server-owned ledger timestamps.
+- Reuse equivalent bounded filter grammar and schema nodes so dense relation graphs fit within Convex's module memory limit.
+
+### Compatibility
+
+- Branch-scoped field narrowing and narrowed junction joins are explicitly unsupported in this release; existing branch and junction declarations remain supported.
+- Relation declaration changes invalidate prior cursors and require pagination to restart.
+
 ## [0.1.17] - 2026-10-13
 
 ### Added

@@ -63,9 +63,10 @@ export function relationshipExecutor(
 	}
 	const guarded = (row: Document | Record<string, Value>, guard?: RelationGuard) =>
 		!guard || row[guard.discriminator] === guard.tag
+	const memberIdSchema = z.string()
 	function memberMatches(value: Value | undefined, member: Edge['sourceMember']): boolean {
 		if (!member) return true
-		const id = z.string().safeParse(value)
+		const id = memberIdSchema.safeParse(value)
 		return id.success && request.db.normalizeId(member.table, id.data) !== null
 	}
 	function sourceValue(declared: Edge, parent: Document | null): Value | undefined {
@@ -396,10 +397,12 @@ export function relationshipExecutor(
 					target: declared.targetGuard ? { ...declared.targetGuard } : null,
 					junction: declared.junctionGuard ? { ...declared.junctionGuard } : null,
 				},
-				members: {
-					source: declared.sourceMember ? { ...declared.sourceMember } : null,
-					target: declared.targetMember ? { ...declared.targetMember } : null,
-				},
+				...((declared.sourceMember || declared.targetMember) && {
+					members: {
+						source: declared.sourceMember ? { ...declared.sourceMember } : null,
+						target: declared.targetMember ? { ...declared.targetMember } : null,
+					},
+				}),
 			},
 			relationPath: path,
 			parent: rootId,

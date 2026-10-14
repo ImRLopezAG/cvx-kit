@@ -1,5 +1,8 @@
 # `cvx-kit/querying` — typed, authorized stream pagination
 
+For a field containing IDs from several tables, see
+[native-ID union relations](./native-id-relations.md).
+
 Declare relationships with `cvx-kit/relations`, configure one query engine, then
 paginate with a small declarative chain. The engine runs streams and relationship
 lookups in the caller's Convex query transaction. Filtering determines eligible

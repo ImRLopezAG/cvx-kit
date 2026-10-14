@@ -911,6 +911,9 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 	}
 	assertUnchanged()
 	const branchValidators = new WeakMap<object, z.ZodType>()
+	const scalarFields = new Map<string, FieldSchemas>()
+	const grammars = new Map<string, FilterGrammar>()
+	const filterNodes = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>()
 	function validateDocument(
 		table: string,
 		row: Record<string, import('convex/values').Value>,
@@ -945,8 +948,10 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		pagination(table: string) {
 			assertUnchanged()
 			const internal = owned.internal
-			const scalarFields = new Map<string, FieldSchemas>()
 			function grammar(name: string, depth: number, tag?: string): FilterGrammar {
+				const grammarKey = JSON.stringify([name, depth, tag ?? null])
+				const cached = grammars.get(grammarKey)
+				if (cached) return cached
 				const data = internal.metadata[name]
 				if (!data) throw new Error('Unknown query table')
 				const cacheKey = JSON.stringify([name, tag ?? null])
@@ -963,7 +968,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 					}
 					scalarFields.set(cacheKey, fields)
 				}
-				return {
+				const result: FilterGrammar = {
 					fields,
 					variants:
 						data.branches && tag === undefined && depth < 4
@@ -990,9 +995,11 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 									]),
 								),
 				}
+				grammars.set(grammarKey, result)
+				return result
 			}
 			return nativePagination.extend({
-				filters: relationFilterSchema(grammar(table, 0)).optional(),
+				filters: relationFilterSchema(grammar(table, 0), filterNodes).optional(),
 				order: z.enum(['asc', 'desc']).optional(),
 			})
 		},

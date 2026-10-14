@@ -368,6 +368,10 @@ for (const [label, installer, helpers, zod] of [
 			for (const secret of secrets)
 				assert.ok(!contents.includes(secret), 'Local credential escaped evidence redaction')
 		}
+		if (failure && existsSync(join(fixture, 'runtime.log'))) {
+			console.error(`${label}/runtime failure (redacted log tail):`)
+			console.error(redact(readFileSync(join(fixture, 'runtime.log'), 'utf8')).slice(-16000))
+		}
 		if (!failure) {
 			assert.ok(
 				cleanup.groups.every((group) => !group.alive && !group.error && group.errors.length === 0),

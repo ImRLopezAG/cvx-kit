@@ -22,6 +22,11 @@ import {
 	assertLocalConvexState,
 } from './convex-smoke-env.mjs'
 
+// CI selects one package manager; unset preserves local compatibility matrices.
+const installerOverride = process.env.CVX_PACKED_INSTALLER
+if (installerOverride !== undefined && !['bun', 'npm'].includes(installerOverride))
+	throw new Error('CVX_PACKED_INSTALLER must be bun or npm')
+
 const root = resolve(import.meta.dirname, '..')
 const templates = join(root, 'test/fixture-packed-variant-querying')
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
@@ -220,8 +225,8 @@ async function availablePort(requested = 0) {
 	return port
 }
 for (const [label, installer, helpers, zod] of [
-	['installed', 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
-	['minimum', 'npm', '0.1.127', '4.5.4'],
+	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
+	['minimum', installerOverride ?? 'npm', '0.1.127', '4.5.4'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vite-plus/test'
@@ -9,7 +10,25 @@ const packedFiles = (() => {
 	const env = { ...process.env }
 	delete env.NODE_AUTH_TOKEN
 	delete env.NPM_CONFIG_USERCONFIG
-	// Manifest inspection uses npm; repository development still requires the configured Bun.
+	const installer = env.CVX_PACKED_INSTALLER ?? 'npm'
+	if (!['bun', 'npm'].includes(installer))
+		throw new Error('CVX_PACKED_INSTALLER must be bun or npm')
+	if (installer === 'bun') {
+		const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-contents-'))
+		try {
+			const tarball = join(temporary, 'package.tgz')
+			execFileSync('bun', ['pm', 'pack', '--ignore-scripts', '--filename', tarball], {
+				cwd: process.cwd(),
+				env,
+				stdio: 'pipe',
+			})
+			return execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
+				.trim().split('\n').map((file) => file.replace(/^package\//, '')).sort()
+		} finally {
+			rmSync(temporary, { recursive: true, force: true })
+		}
+	}
+	// Keep npm's published manifest compatibility check available locally.
 	const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--force'], {
 		cwd: process.cwd(),
 		encoding: 'utf8',

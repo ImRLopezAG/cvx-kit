@@ -3,6 +3,12 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+// CI selects one package manager; unset preserves local compatibility matrices.
+const installerOverride = process.env.CVX_PACKED_INSTALLER
+if (installerOverride !== undefined && !['bun', 'npm'].includes(installerOverride))
+	throw new Error('CVX_PACKED_INSTALLER must be bun or npm')
+if (process.argv.length > 2) throw new Error('This script accepts no command-line arguments')
+
 const root = join(import.meta.dirname, '..')
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-ids-'))
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
@@ -15,7 +21,7 @@ function run(command, args, cwd) {
 }
 try {
 	run('bun', ['pm', 'pack', '--destination', temporary, '--ignore-scripts'], root)
-	for (const installer of ['npm', 'bun']) {
+	for (const installer of installerOverride ? [installerOverride] : ['npm', 'bun']) {
 		const fixture = join(temporary, installer)
 		mkdirSync(fixture)
 		writeFileSync(

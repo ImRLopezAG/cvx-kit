@@ -156,6 +156,16 @@ public DTO or `null`. A many edge returns a bounded native page. Junction output
 preserves duplicate edge occurrences, even when target reads are memoized.
 Missing and unreadable targets have the same public result.
 
+`defineRelations` captures table names, stored field semantics, public DTO
+validation, variants, active indexes, and relation declarations. Complete schema
+and index configuration before calling it. Later changes to source declarations
+do not affect existing registries, helpers or engines. Create a new registry to
+adopt changes. Caller-owned declarations remain mutable.
+
+Relation DTOs support `.refine()`. They reject opaque `.superRefine()` and
+`.check()` callbacks; express those validations with `.refine()` instead.
+Captured callbacks still observe application state through their closures.
+
 Variant tables keep their discriminated public unions. Use the relation callback's
 second argument, `branch('payments', 'creditor_payment').creditorId`, for a
 branch-specific reference; its tag is checked before lookup. See the

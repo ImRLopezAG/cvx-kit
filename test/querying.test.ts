@@ -1,4 +1,7 @@
-import { anyApi } from 'convex/server'
+import { anyApi, defineSchema } from 'convex/server'
+import { defineTestApp } from 'convex-test'
+import { zodTable } from '../src/zod-table'
+import { defineRelations } from '../src/relations-public'
 import { authenticatedFixture } from './fixture-querying/auth'
 import { largeRegistry } from './fixture-querying/large-registry'
 import { privateStoredFixture, privatePrefaultFixture } from './fixture-querying/private-stored'
@@ -19,7 +22,7 @@ import {
 	scope,
 } from './fixture-querying/scalar'
 import type { FilterScalar, ScalarFilters, ScalarSelection } from '../src/querying/filters'
-import { nativePagination } from '../src/querying/filters'
+import { z } from 'zod'
 import type { DM } from './fixture-querying/scalar'
 import type { DataModelFromSchemaDefinition, DocumentByName } from 'convex/server'
 
@@ -41,20 +44,53 @@ function sorted<Row extends { _id: string; _creationTime: number }>(
 }
 
 describe('U5 actual helper scalar engine', () => {
-	test('planner construction defers pagination validators and reuses them after live guards', () => {
+	test('private output validation runs once per row and still rejects invalid public values', async () => {
+		let validations = 0
+		const text = z.string().refine((value): boolean => {
+			validations++
+			return value === 'valid'
+		})
+		const items = zodTable('items', () => ({ text, secret: z.string() }), {
+			publicFields: ['text'],
+		})
+		const relations = defineRelations({ items }, () => ({}))
+		const schema = defineSchema({ items: items.table })
+		const querying = createQueryEngine({ schema, relations, cursor })
+		const { createTest } = defineTestApp({ schema }).defineModules({})
+		const t = createTest()
+		expect(validations).toBe(0)
+		await t.run(async (ctx) => {
+			await ctx.db.insert('items', { text: 'valid', secret: 'private' })
+			await ctx.db.insert('items', { text: 'valid', secret: 'private' })
+			const query = querying(managed<DataModelFromSchemaDefinition<typeof schema>>(ctx.db)).items
+			const args = { numItems: 10, cursor: null }
+			for (const pass of [1, 2]) {
+				const result = await query.paginate(args)
+				expect(result.page).toHaveLength(2)
+				expect(result.page.every((row) => !Object.hasOwn(row, 'secret'))).toBe(true)
+				expect(validations).toBe(2 * pass)
+			}
+			// Changing the original check cannot admit an invalid stored public field.
+			Reflect.set(text._zod.def.checks![0]._zod.def, 'fn', () => true)
+			await ctx.db.insert('items', { text: 'invalid', secret: 'private' })
+			await expect(query.paginate(args)).rejects.toThrow()
+		})
+	})
+	test('planner construction defers private pagination validators and reuses them', () => {
 		const f = largeRegistry()
-		const extend = vi.spyOn(nativePagination, 'extend')
+		const initialize = vi.spyOn(z.ZodObject.prototype, 'extend', 'get')
 		try {
 			const planner = createPlanner(f.schema, f.relations)
-			expect(extend).not.toHaveBeenCalled()
+			expect(initialize).not.toHaveBeenCalled()
 			const input = { numItems: 1, cursor: null }
 			planner.plan('tasks', input, [], [])
-			expect(extend).toHaveBeenCalledTimes(1)
+			const first = initialize.mock.calls.length
+			expect(first).toBeGreaterThan(0)
 			planner.plan('tasks', input, [], [])
-			expect(extend).toHaveBeenCalledTimes(1)
+			expect(initialize).toHaveBeenCalledTimes(first)
 			expect(() => planner.plan('missing', input, [], [])).toThrow('Unknown query table')
 		} finally {
-			extend.mockRestore()
+			initialize.mockRestore()
 		}
 	})
 	test('scalar Boolean filter depth does not repeat whole-registry serialization per row', async () => {
@@ -67,7 +103,11 @@ describe('U5 actual helper scalar engine', () => {
 				await q.paginate({ numItems: 100, cursor: null })
 				const stringify = vi.spyOn(JSON, 'stringify')
 				try {
-					const simple = await q.paginate({ numItems: 100, cursor: null, filters: { tenant: 'one' } })
+					const simple = await q.paginate({
+						numItems: 100,
+						cursor: null,
+						filters: { tenant: 'one' },
+					})
 					const simpleCalls = stringify.mock.calls.length
 					stringify.mockClear()
 					const nested = await q.paginate({
@@ -125,7 +165,7 @@ describe('U5 actual helper scalar engine', () => {
 		})
 		expect(f.calls.prefault).toBe(0)
 	}, 10000)
-	test('pipe prefault graph mutations fail cached execution and after awaited policy before more reads', async () => {
+	test('pipe prefault graph mutations leave cached execution and post-policy snapshots stable', async () => {
 		const mutations = [
 			(f: ReturnType<typeof privatePrefaultFixture>) =>
 				Reflect.set(f.tasks.schema.shape, 'hidden', f.tasks.schema.shape.title),
@@ -159,11 +199,14 @@ describe('U5 actual helper scalar engine', () => {
 				await q.paginate({ numItems: 1, cursor: null })
 				const before = { ...o.counts }
 				mutate(f)
-				await expect(q.paginate({ numItems: 1, cursor: null })).rejects.toThrow(/mutat/)
-				expect(o.counts).toEqual(before)
+				await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
+					page: [{ title: 'visible' }],
+				})
+				expect(o.counts.next).toBeGreaterThan(before.next)
+				expect(o.counts.closes).toBe(before.closes + 1)
 				expect(() =>
 					createQueryEngine({ schema: f.schema, relations: f.relations, cursor }),
-				).toThrow(/mutat/)
+				).not.toThrow()
 			})
 			expect(f.calls.prefault).toBe(0)
 		}
@@ -186,10 +229,10 @@ describe('U5 actual helper scalar engine', () => {
 						}),
 					)
 					.tasks.where({ hidden: '' })
-				await expect(q.paginate({ numItems: 100, cursor: null })).rejects.toThrow(
-					'Query execution failed',
-				)
-				expect(o.counts).toEqual({ next: 1, returned: 1, ranges: 1, gets: 0, closes: 1 })
+				await expect(q.paginate({ numItems: 100, cursor: null })).resolves.toMatchObject({
+					page: [{ title: 'visible0' }, { title: 'visible1' }],
+				})
+				expect(o.counts).toEqual({ next: 3, returned: 2, ranges: 1, gets: 0, closes: 1 })
 			})
 			expect(f.calls.prefault).toBe(0)
 		}
@@ -248,7 +291,7 @@ describe('U5 actual helper scalar engine', () => {
 		})
 		expect(f.calls).toEqual({ transform: 0, default: 0, coercion: 0 })
 	}, 10000)
-	test('private stored graph mutations reject cached execution and live post-policy projection', async () => {
+	test('private stored graph mutations leave cached execution and post-policy projection stable', async () => {
 		for (const mutate of [
 			(f: ReturnType<typeof privateStoredFixture>) =>
 				Reflect.set(f.numeric._zod.def.in._zod, 'def', { type: 'string' }),
@@ -273,11 +316,14 @@ describe('U5 actual helper scalar engine', () => {
 				await q.paginate({ numItems: 1, cursor: null })
 				const before = { ...o.counts }
 				mutate(f)
-				await expect(q.paginate({ numItems: 1, cursor: null })).rejects.toThrow(/mutat/)
-				expect(o.counts).toEqual(before)
+				await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
+					page: [{ title: 'visible' }],
+				})
+				expect(o.counts.next).toBeGreaterThan(before.next)
+				expect(o.counts.closes).toBe(before.closes + 1)
 				expect(() =>
 					createQueryEngine({ schema: f.schema, relations: f.relations, cursor }),
-				).toThrow(/mutat/)
+				).not.toThrow()
 			})
 			expect(f.calls).toEqual({ transform: 0, default: 0, coercion: 0 })
 		}
@@ -297,9 +343,9 @@ describe('U5 actual helper scalar engine', () => {
 					}),
 				)
 				.tasks.where({ numeric: 1 })
-			await expect(q.paginate({ numItems: 1, cursor: null })).rejects.toThrow(
-				'Query execution failed',
-			)
+			await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
+				page: [{ title: 'visible' }],
+			})
 			expect(o.counts).toEqual({ next: 1, returned: 1, ranges: 1, gets: 0, closes: 1 })
 		})
 		expect(f.calls).toEqual({ transform: 0, default: 0, coercion: 0 })
@@ -662,7 +708,7 @@ describe('U5 actual helper scalar engine', () => {
 			).resolves.toMatchObject({ page: [], isDone: true })
 		})
 	})
-	test('native schema ownership and live index mutations fail before reads', () => {
+	test('native ownership is checked at engine creation while later indexes remain isolated', () => {
 		const f = declarations()
 		const other = declarations()
 		expect(() =>
@@ -670,8 +716,8 @@ describe('U5 actual helper scalar engine', () => {
 		).toThrow(/schema|ownership/i)
 		const q = createQueryEngine({ schema: f.schema, relations: f.relations, cursor })
 		f.tasks.table.index('late', ['status'])
-		// SAFETY: mutation validation must precede even invalid context use.
-		expect(() => q({ db: {} as never })).toThrow(/mutat/i)
+		// SAFETY: the malformed capability still proves authorization remains enforced.
+		expect(() => q({ db: {} as never })).toThrow('UNMANAGED_QUERY_CONTEXT')
 	})
 	test('unsafe/common OR, conflicting equality, ranges and absent filters match a table-array oracle', async () => {
 		const f = harness()
@@ -1031,14 +1077,16 @@ describe('U5 actual helper scalar engine', () => {
 			expect(later.page.some((r) => r.ordinal === 99)).toBe(order === 'asc')
 		}
 	})
-	test('live DTO and stored validator mutation is guarded after a cached plan and before projection', async () => {
+	test('live DTO and stored validator mutation is isolated after a cached plan and before projection', async () => {
 		const f = harness()
 		await seed(f, 1)
 		await f.t.run(async (ctx) => {
 			const q = f.querying(managed(ctx.db)).tasks
 			await q.paginate({ numItems: 1, cursor: null })
 			Reflect.set(f.tasks.schema.shape, 'count', f.tasks.schema.shape.code)
-			await expect(q.paginate({ numItems: 1, cursor: null })).rejects.toThrow(/mutat/)
+			await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
+				page: [{ ordinal: 0 }],
+			})
 		})
 		const f2 = harness()
 		await seed(f2, 1)
@@ -1054,9 +1102,9 @@ describe('U5 actual helper scalar engine', () => {
 					},
 				}),
 			).tasks
-			await expect(q.paginate({ numItems: 1, cursor: null })).rejects.toThrow(
-				'Query execution failed',
-			)
+			await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
+				page: [{ ordinal: 0 }],
+			})
 			expect(o.counts.closes).toBe(1)
 		})
 		const f3 = harness()
@@ -1073,10 +1121,44 @@ describe('U5 actual helper scalar engine', () => {
 					},
 				}),
 			).tasks
-			await expect(q.paginate({ numItems: 1, cursor: null })).rejects.toThrow(
-				'Query execution failed',
-			)
+			await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
+				page: [{ ordinal: 0 }],
+			})
 			expect(o.counts.closes).toBe(1)
 		})
 	})
+})
+
+test('unqueried native mutation has no effect after awaited policy with or without restoration', async () => {
+	for (const restoreBeforeReturn of [false, true]) {
+		const f = harness()
+		await seed(f, 2)
+		await f.t.run(async (ctx) => {
+			const o = observed<DM>(ctx.db)
+			const target = f.permissions.table.validator.fields.allowed
+			const original = target.isOptional
+			const q = f.querying(
+				managed(o.raw, {
+					tasks: {
+						read: async () => {
+							Reflect.set(target, 'isOptional', 'optional')
+							await Promise.resolve()
+							if (restoreBeforeReturn) Reflect.set(target, 'isOptional', original)
+							return true
+						},
+					},
+				}),
+			).tasks
+			const pending = q.paginate({ numItems: 1, cursor: null })
+			try {
+				await expect(pending).resolves.toMatchObject({ page: [{ ordinal: 0 }] })
+				expect(o.counts.closes).toBe(1)
+			} finally {
+				Reflect.set(target, 'isOptional', original)
+			}
+			const before = { ...o.counts }
+			await expect(pending).resolves.toMatchObject({ page: [{ ordinal: 0 }] })
+			expect(o.counts).toEqual(before)
+		})
+	}
 })

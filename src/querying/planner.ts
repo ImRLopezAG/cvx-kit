@@ -16,19 +16,18 @@ export function createPlanner(
 	relations: RelationRegistryIdentity,
 ) {
 	const owned = getRelationExecutor(relations)
-	const assertUnchanged = () => owned.assertSchema(schema.tables)
-	assertUnchanged()
+	owned.assertSchema(schema.tables)
 	const metadata = getRelationMetadata(relations)
 	// Build each immutable filter grammar only when that table is queried. Engine
 	// declarations also load in mutations, which never need pagination validators.
 	const inputs = new Map<string, ReturnType<typeof owned.pagination>>()
 	return {
 		metadata,
-		page: owned.page,
+		select: owned.select,
 		validateDocument: owned.validateDocument,
-		assertUnchanged,
+		streamSchema: owned.streamSchema,
 		beforeLeaf(table: string) {
-			owned.assertNativeTable(table, schema.tables[table])
+			if (!Object.hasOwn(metadata.tables, table)) throw new Error('Unknown query table')
 		},
 		complete(
 			table: string,
@@ -36,12 +35,7 @@ export function createPlanner(
 			permitted: boolean,
 			residual: FilterAst,
 		) {
-			return owned.project(
-				schema.tables,
-				table,
-				document,
-				() => permitted && scalarMatches(residual, document),
-			)
+			return owned.project(table, document, () => permitted && scalarMatches(residual, document))
 		},
 		plan(
 			table: string,
@@ -49,7 +43,6 @@ export function createPlanner(
 			conditions: readonly IndexCondition[],
 			constraints: readonly StoredConstraint[],
 		) {
-			assertUnchanged()
 			if (!Object.hasOwn(metadata.tables, table)) throw new Error('Unknown query table')
 			let validator = inputs.get(table)
 			if (!validator) {
@@ -72,10 +65,18 @@ export function createPlanner(
 				conditions,
 				where,
 			)
-			const client = compileFilters(validator, args, []).residual
-			const server = compileFilters(validator, { ...args, filters: where }, []).residual
+			if (compiled.residual.kind !== 'and') throw new Error('Invalid compiled filter root')
+			const [client, server] = compiled.residual.children
+			const empty: FilterAst = { kind: 'and', children: [] }
+			const clientIdentity = { kind: 'and', children: [client, empty] }
+			const serverIdentity = { kind: 'and', children: [server, empty] }
 			// SAFETY: normalized AST nodes contain only validated native scalar Values.
-			return { ...compiled, args, clientIdentity: client as Value, serverIdentity: server as Value }
+			return {
+				...compiled,
+				args,
+				clientIdentity: clientIdentity as Value,
+				serverIdentity: serverIdentity as Value,
+			}
 		},
 	}
 }

@@ -186,10 +186,11 @@ export function createQueryEngine<
 	config: QueryEngineDeclaration<Schema, Tables, D> & QueryEngineOptions<Schema>,
 	options?: QueryEngineOptions<Schema>,
 ) {
-	const { schema, relations } = config
+	const { relations } = config
 	// Retain released one-argument calls; a second argument overrides legacy fields.
 	const settings = { ...config, ...options }
-	const planner = createPlanner(schema, relations)
+	const planner = createPlanner(config.schema, relations)
+	const schema = planner.streamSchema
 	let cursorCodec = settings.cursor === undefined ? undefined : createCursorCodec(settings.cursor)
 	const maxPageSize = settings.maxPageSize ?? 100
 	if (!Number.isSafeInteger(maxPageSize) || maxPageSize <= 0 || maxPageSize > 100)
@@ -197,8 +198,7 @@ export function createQueryEngine<
 	const engineVersion = settings.engineVersion ?? 'scalar-1'
 	const policyVersion = settings.policyVersion ?? '1'
 	// Bind the full immutable identity through a collision-resistant digest so
-	// real application registries fit the codec's bounded AAD. Live guards still
-	// inspect current schemas; this caches only the immutable version identity.
+	// real application registries fit the codec's bounded AAD.
 	let registryDigest: string | undefined
 	const security = createManagedSecurity<DataModelFromSchemaDefinition<Schema>>({
 		tables: Object.keys(relations.tables),
@@ -207,7 +207,6 @@ export function createQueryEngine<
 		trustedAdapter: settings.trustedAdapter,
 	})
 	function querying(ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>) {
-		planner.assertUnchanged()
 		const request = security(ctx)
 		function tableQuery(
 			table: string,
@@ -237,8 +236,7 @@ export function createQueryEngine<
 				async paginate(input: QueryInput) {
 					// Resolve once per global engine, before any native query or policy reads.
 					const codec = (cursorCodec ??= createEnvironmentCursorCodec())
-					planner.assertUnchanged()
-					const pageSchema = planner.page(table, selection)
+					planner.select(table, selection)
 					assertRelationshipDepth(selection, route?.path.length ?? 0)
 					const plan = planner.plan(table, input, route ? [] : conditions, constraints)
 					if (plan.args.numItems > maxPageSize) throw new Error('Page size exceeds central ceiling')
@@ -258,10 +256,7 @@ export function createQueryEngine<
 						),
 						(byte) => byte.toString(16).padStart(2, '0'),
 					).join('')
-					// The digest await is a boundary too: mutation must be detected
-					// before authenticated cursor validation or native query construction.
-					planner.assertUnchanged()
-					// SAFETY: selection has passed the registry page validator before binding.
+					// SAFETY: selection has passed registry admission before cursor binding.
 					const binding: CursorBinding = {
 						table: route?.table ?? table,
 						index: plan.index?.name ?? 'by_creation_time',
@@ -290,37 +285,40 @@ export function createQueryEngine<
 						codec,
 						binding,
 					)
-					if (route)
-						return executor.continuation(
-							route.table,
-							route.parent,
-							route.path,
-							selection,
-							plan.args,
-							conditions,
-							constraints,
-						)
-					const result = await executeQuery(
-						schema,
-						request,
-						table,
-						plan,
-						planner,
-						codec,
-						binding,
-						async (row, permitted) => {
-							// SAFETY: metered native stream rows contain the validated system fields.
-							if (
-								!permitted ||
-								!(await executor.matches(table, row as RelationDocument, plan.residual))
+					const result = route
+						? await executor.continuation(
+								route.table,
+								route.parent,
+								route.path,
+								selection,
+								plan.args,
+								conditions,
+								constraints,
 							)
-								return null
-							// SAFETY: the same native row is authorized and matches the declared predicates.
-							return executor.output(table, row as RelationDocument, selection, plan.args)
-						},
-					)
-					planner.assertUnchanged()
-					return pageSchema.parse(result)
+						: await executeQuery(
+								schema,
+								request,
+								table,
+								plan,
+								planner,
+								codec,
+								binding,
+								async (row, permitted) => {
+									// SAFETY: metered native stream rows contain the validated system fields.
+									if (
+										!permitted ||
+										!(await executor.matches(table, row as RelationDocument, plan.residual))
+									)
+										return null
+									// SAFETY: the same native row is authorized and matches the declared predicates.
+									return executor.output(table, row as RelationDocument, selection, plan.args)
+								},
+							)
+					// SAFETY: the private executor validated and projected every row against
+					// this registry's DTO and selected edges before assembling the page.
+					return result as PaginationResult<
+						RelationQueryRow<Tables, D, keyof Tables, OutputSelection>
+					>
 				},
 			})
 		}

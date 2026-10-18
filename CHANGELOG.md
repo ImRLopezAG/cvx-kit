@@ -12,6 +12,17 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-10-18
+
+### Changed
+
+- Reduce repeated schema integrity checks, filter parsing, and DTO construction work during relational queries while preserving existing public APIs.
+- Reuse variant field lists and DTO reconstruction factories while validating current row values on every call and returning independent mutable schemas.
+
+### Fixed
+
+- Preserve supported Zod constructor compatibility, live refinement callbacks, native ID validation, and schema mutation isolation across optimized query boundaries.
+
 ## [0.1.19] - 2026-10-13
 
 ### Added

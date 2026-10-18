@@ -96,6 +96,19 @@ or the three-argument `zodVariantTable` boundaries. Declarations
 are validated against table ownership, field compatibility, and supporting
 indexes. Convex does not infer relationships; this registry supplies them.
 
+`defineRelations` captures table names, stored field semantics, public DTO
+validation, variants, active indexes, and relation declarations before invoking
+the declaration callback. Complete schema and index configuration before calling
+it. Later changes to source declarations do not affect existing registries,
+helpers or engines. Create a new registry to adopt changes. Caller-owned
+declarations remain mutable. Each returned schema helper owns its validation
+graph; editing one helper does not change other helpers or private engine parsers.
+
+Relation DTOs support `.refine()`, including captured callback references and
+copied check definitions. They reject opaque `.superRefine()` and `.check()`
+callbacks at registration; express those validations with `.refine()` instead.
+Application state accessed by callback closures remains live.
+
 For branch-specific joins, filters, and a complete variant endpoint, see
 [Variant querying](./variant-querying.md). Common compatible fields use the same
 references shown above; branch references carry a discriminator guard.

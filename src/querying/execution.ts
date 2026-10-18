@@ -302,7 +302,6 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 				const candidatesBefore = this.request.counters.rawCandidates
 				try {
 					next = await iterator.next()
-					this.planner.assertUnchanged()
 				} catch (error) {
 					// A reservation failure BEFORE the next root is safe to stop at
 					// completed progress. Authorization errors below are never partialized.
@@ -323,9 +322,6 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 				if (document) {
 					// SAFETY: metered native stream documents contain their system IDs.
 					const permitted = await this.request.authorize(this.table, document as GenericDocument)
-					this.planner.assertUnchanged()
-					// One live whole-registry guard covers the synchronous residual
-					// and strict projection step AFTER the asynchronous policy finishes.
 					// SAFETY: the registry DTO validates declared public native values only.
 					output = this.complete
 						? await this.complete(document, permitted)

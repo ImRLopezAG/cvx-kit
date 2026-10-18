@@ -1,4 +1,4 @@
-import { expect, test } from 'vite-plus/test'
+import { expect, test, vi } from 'vite-plus/test'
 import { relationshipFixture, seedRelationships } from './fixture-querying/relationships'
 import { createQueryEngine } from '../src/querying'
 import { cursor, managed, scope } from './fixture-querying/scalar'
@@ -6,6 +6,22 @@ import { ManagedReadError, MAX_DOCUMENT_BYTES } from '../src/querying/security'
 import { ConvexError, getDocumentSize, type Value } from 'convex/values'
 import { anyApi } from 'convex/server'
 import { relationshipAuthFixture } from './fixture-querying/relationships-auth'
+
+test('owned root, direct and flattened streams ignore later source index and table replacements', async () => {
+	const f = relationshipFixture()
+	await seedRelationships(f)
+	await f.t.run(async (ctx) => {
+		const query = f.querying(f.context(ctx.db).ctx).tasks.with({ direct: true, codeLabels: true })
+		const args = { numItems: 2, cursor: null, filters: { code: 'shared' } }
+		const first = await query.paginate(args)
+		const indexes = Object.getOwnPropertyDescriptor(f.labels.table, 'indexes')!.value
+		for (const index of indexes) index.fields.reverse()
+		f.tasks.table.index('added_later', ['ordinal'])
+		Reflect.set(f.schema.tables, 'tasks', relationshipFixture().tasks.table)
+		Reflect.set(f.labels.schema.shape, 'code', f.labels.schema.shape.ordinal)
+		expect(await query.paginate(args)).toEqual(first)
+	})
+})
 
 test('U6 one/self/named/direct/junction output is authorized and preserves edge multiplicity', async () => {
 	const f = relationshipFixture()
@@ -725,7 +741,7 @@ for (const kind of ['plain', 'structured'] as const)
 		})
 
 for (const permitted of [false, true])
-	test(`U6 correction guards indexed target after async policy ${permitted} before next read`, async () => {
+	test(`U6 owned indexed target remains isolated after async policy ${permitted} with live authorization`, async () => {
 		const f = relationshipFixture(),
 			rows = await seedRelationships(f)
 		await f.t.run(async (ctx) => {
@@ -744,18 +760,18 @@ for (const permitted of [false, true])
 				},
 			})
 			try {
-				await expect(
-					f
-						.querying(policy)
-						.tasks.with({ byCode: true })
-						.paginate({
-							numItems: 1,
-							cursor: null,
-							filters: { _id: rows.tasks[1]._id },
-						}),
-				).rejects.toThrow('Query execution failed')
-				expect.soft(policies).toBe(1)
-				expect.soft(o.counts).toEqual({ next: 3, returned: 3, ranges: 2, gets: 0, closes: 2 })
+				const pending = f
+					.querying(policy)
+					.tasks.with({ byCode: true })
+					.paginate({
+						numItems: 1,
+						cursor: null,
+						filters: { _id: rows.tasks[1]._id },
+					})
+				if (permitted) await expect(pending).rejects.toThrow('AMBIGUOUS_RELATION')
+				else await expect(pending).resolves.toMatchObject({ page: [{ byCode: null }] })
+				expect(policies).toBe(2)
+				expect(o.counts.closes).toBe(2)
 			} finally {
 				Reflect.set(def, 'type', 'number')
 			}
@@ -852,3 +868,93 @@ test('U6 correction registered continuation retains safe typed budget and cursor
 		expect(error?.data).toBeUndefined()
 	}
 })
+
+test.each([0, 60])(
+	'registry with %i unrelated tables does not rebuild serialized native exports per relational row',
+	async (extra) => {
+		const f = relationshipFixture(undefined, extra)
+		const seeded = await seedRelationships(f)
+		await f.t.run(async (ctx) => {
+			for (const task of seeded.tasks) await ctx.db.delete(task._id)
+			for (let ordinal = 0; ordinal < 11; ordinal++)
+				await ctx.db.insert('tasks', {
+					ordinal,
+					code: 'probe',
+					required: seeded.labels[1]._id,
+					allowed: true,
+					tenant: 'one',
+				})
+		})
+		await f.t.run(async (ctx) => {
+			const o = f.context(ctx.db)
+			const originals = new Set<object>()
+			// oxlint-disable-next-line anti-slop/no-object-parameters -- Collect identity targets without reading any caller accessor.
+			function collect(object: object): void {
+				if (originals.has(object)) return
+				originals.add(object)
+				for (const property of Object.values(Object.getOwnPropertyDescriptors(object)))
+					if (
+						'value' in property &&
+						property.value instanceof Object &&
+						!(property.value instanceof Function)
+					)
+						collect(property.value)
+			}
+			collect(f.schema.tables)
+			collect(f.tasks.schema)
+			collect(f.labels.schema)
+			collect(f.edges.schema)
+			const descriptor = Object.getOwnPropertyDescriptor
+			let originalReads = 0
+			const descriptors = vi
+				.spyOn(Object, 'getOwnPropertyDescriptor')
+				.mockImplementation((object, key) => {
+					if (originals.has(object)) originalReads++
+					return descriptor(object, key)
+				})
+			const original = JSON.stringify
+			let exports = 0
+			const spy = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+				if (args[0] && Object.hasOwn(args[0], 'documentType') && Object.hasOwn(args[0], 'indexes'))
+					exports++
+				return original(...args)
+			})
+			try {
+				const query = f
+					.querying(o.ctx)
+					.tasks.with({ referenceTask: true, requiredLabel: true, direct: true })
+				for (const pass of [1, 2]) {
+					const result = await query.paginate({
+						numItems: 10,
+						cursor: null,
+						filters: { code: 'probe' },
+					})
+					expect(result.page.map((row) => row.ordinal)).toEqual(
+						Array.from({ length: 10 }, (_, i) => i),
+					)
+					expect(
+						result.page.every(
+							(row) =>
+								row.requiredLabel?._id === seeded.labels[1]._id &&
+								row.referenceTask === null &&
+								row.direct.page.length === 0,
+						),
+					).toBe(true)
+					expect(o.counts).toEqual({
+						next: 20 * pass,
+						returned: 10 * pass,
+						ranges: 11 * pass,
+						gets: 1,
+						closes: 11 * pass,
+					})
+				}
+				expect(exports).toBe(0)
+				expect(originalReads).toBe(0)
+			} finally {
+				spy.mockRestore()
+				descriptors.mockRestore()
+			}
+		})
+	},
+	20000,
+)

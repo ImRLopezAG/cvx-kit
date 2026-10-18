@@ -295,8 +295,20 @@ export function compileFilters<Schema extends z.ZodType>(
 	conditions: readonly IndexCondition[] = [],
 	where?: FilterSpec<Schema>,
 ): CompiledFilters {
+	return parseFilterPlan(schema, input, indexes, conditions, where).compiled
+}
+
+/** Internal planner boundary: retain the parsed arguments without parsing them again. */
+export function parseFilterPlan<Schema extends z.ZodType>(
+	schema: Schema,
+	input: z.input<Schema>,
+	indexes: readonly QueryIndex[],
+	conditions: readonly IndexCondition[] = [],
+	where?: FilterSpec<Schema>,
+) {
+	const args = schema.parse(input)
 	// SAFETY: pagination schemas validate filters before this internal AST adapter reads them.
-	const parsed = schema.parse(input) as { filters?: FilterTree }
+	const parsed = args as { filters?: FilterTree }
 	// SAFETY: server filters use the same validation boundary as client filters.
 	const server =
 		where === undefined
@@ -331,13 +343,14 @@ export function compileFilters<Schema extends z.ZodType>(
 			}
 		}
 	}
-	return {
+	const compiled: CompiledFilters = {
 		residual,
 		bindings: guaranteed.values,
 		unsatisfiable: guaranteed.impossible,
 		index,
 		prefix: index ? prefixBindings(index, guaranteed.values) : [],
 	}
+	return { args, compiled }
 }
 function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined {
 	if (!(schema instanceof z.ZodObject)) return undefined

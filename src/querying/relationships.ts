@@ -26,6 +26,7 @@ export type RelationDocument = Record<string, Value> & {
 }
 type Document = RelationDocument
 type Planner = ReturnType<typeof createPlanner>
+const navigation = z.object({ cursor: z.string(), ancestors: z.array(z.string()).max(3) }).strict()
 
 export class RelationshipError extends Error {
 	constructor(readonly code: 'AMBIGUOUS_RELATION' | 'INVALID_RELATION') {
@@ -51,12 +52,8 @@ export function relationshipExecutor(
 	rootBinding: CursorBinding,
 ) {
 	const metadata = planner.metadata
-	const navigation = z
-		.object({ cursor: z.string(), ancestors: z.array(z.string()).max(3) })
-		.strict()
 	const base = (leg: Edge['from']) => ('base' in leg ? leg.base : leg)
 	function edge(table: string, name: string): Edge {
-		planner.assertUnchanged()
 		const declared = metadata.declarations[table]?.[name]
 		if (!declared) throw new RelationshipError('INVALID_RELATION')
 		return declared
@@ -156,7 +153,6 @@ export function relationshipExecutor(
 		if (id == null || !request.db.normalizeId(table, id as string)) return null
 		// SAFETY: normalizeId verifies the declared native table before the authorized metered get.
 		const result = await request.db.get(table, id as GenericId<string>)
-		planner.assertUnchanged()
 		if (result) planner.validateDocument(table, result)
 		// SAFETY: normalizeId checked the table; the authorized native get retains system fields.
 		return result as Document | null
@@ -195,14 +191,11 @@ export function relationshipExecutor(
 		const iterator = source[Symbol.asyncIterator]()
 		try {
 			while (true) {
-				planner.assertUnchanged()
 				planner.beforeLeaf(table)
 				const next = await iterator.next()
-				planner.assertUnchanged()
 				if (next.done) return
 				const permitted = await request.authorize(table, next.value)
 				// Denials are an await boundary too; never hide them inside an authorized iterator.
-				planner.assertUnchanged()
 				if (!permitted) continue
 				planner.validateDocument(table, next.value)
 				if (!guarded(next.value, guard) || !memberMatches(next.value[field], member)) continue
@@ -262,12 +255,9 @@ export function relationshipExecutor(
 		depth = 0,
 	): Promise<boolean> {
 		request.expand(depth, 0)
-		planner.assertUnchanged()
-		// Ordinary tables have no variant document validation. The live schema
-		// guard above still covers them; variant rows retain full stored validation.
+		// Variant rows must satisfy the captured stored branch before predicates
+		// inspect branch fields. Ordinary output rows are validated by projection.
 		if (metadata.tables[table].variant) planner.validateDocument(table, parent)
-		// Evaluate a scalar Boolean tree synchronously under that same guard,
-		// rather than rechecking every registry schema at each predicate node.
 		if (scalarOnly(ast)) return scalarMatches(ast, parent)
 		if (ast.kind === 'variant')
 			return parent[ast.discriminator] === ast.tag && matches(table, parent, ast.child, depth)
@@ -334,7 +324,7 @@ export function relationshipExecutor(
 					depth + 1,
 					[...parents, parent._id],
 				)
-				// SAFETY: the declared page validator has parsed this nested DTO page.
+				// SAFETY: pageRelation projects and validates each nested DTO row.
 				dto[name] = page as Value
 			}
 		}
@@ -350,7 +340,7 @@ export function relationshipExecutor(
 		path: readonly string[],
 		rootId: string,
 	) {
-		planner.page(edge(table, name).target, selection)
+		planner.select(edge(table, name).target, selection)
 		assertRelationshipDepth(selection, path.length)
 		const declared = edge(table, name)
 		if (declared.cardinality !== 'many') throw new RelationshipError('INVALID_RELATION')
@@ -507,7 +497,6 @@ export function relationshipExecutor(
 						return source.flatMap(async (junction) => {
 							request.expand(depth)
 							const permitted = await request.authorize(sourceTable, junction)
-							planner.assertUnchanged()
 							if (permitted) planner.validateDocument(sourceTable, junction)
 							const reference = junction[through.targetReference]
 							if (!permitted || !guarded(junction, declared.junctionGuard) || reference == null)
@@ -541,8 +530,7 @@ export function relationshipExecutor(
 				: undefined,
 			indexedTarget ? declared.target : sourceTable,
 		)
-		planner.assertUnchanged()
-		return planner.page(declared.target, selection).parse(result)
+		return result
 	}
 	async function continuation(
 		rootTable: string,
@@ -622,7 +610,6 @@ export function relationshipExecutor(
 	return { matches, output, continuation, edge }
 }
 
-/** Scalar subtrees have no reads or await boundaries requiring another live guard. */
 function scalarOnly(ast: FilterAst): boolean {
 	if (ast.kind === 'relation') return false
 	if (ast.kind === 'and' || ast.kind === 'or') return ast.children.every(scalarOnly)

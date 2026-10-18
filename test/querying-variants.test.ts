@@ -561,7 +561,7 @@ test.each([
 		},
 	],
 ] as const)(
-	'%s mutation invalidates continuations and captured registry contracts',
+	'%s source mutation preserves continuations and captured registry contracts',
 	async (_name, mutate) => {
 		const f = variantFixture()
 		await seedVariants(f)
@@ -570,7 +570,7 @@ test.each([
 		)
 		const output = f.relations.tables.payments.pageDto({})
 		const input = f.relations.tables.payments.paginationOpts({ type: true })
-		// A frozen declaration rejects the attack at mutation time; mutable schema graphs must be detected at read time.
+		// Owned declarations reject edits; source schema edits leave the snapshot stable.
 		if (!mutate(f)) return
 		await f.t.run(async (ctx) => {
 			const o = f.context(ctx.db)
@@ -578,11 +578,11 @@ test.each([
 				Promise.resolve().then(() =>
 					f.querying(o.ctx).payments.paginate({ numItems: 1, cursor: first.continueCursor }),
 				),
-			).rejects.toThrow()
-			expect(o.counts.next + o.counts.gets).toBe(0)
+			).resolves.toMatchObject({ page: [expect.any(Object)] })
+			expect(o.counts.next + o.counts.gets).toBeGreaterThan(0)
 		})
-		expect(output.safeParse({ page: [], isDone: true, continueCursor: '' }).success).toBe(false)
-		expect(input.safeParse({ numItems: 1, cursor: null }).success).toBe(false)
+		expect(output.safeParse({ page: [], isDone: true, continueCursor: '' }).success).toBe(true)
+		expect(input.safeParse({ numItems: 1, cursor: null }).success).toBe(true)
 	},
 )
 

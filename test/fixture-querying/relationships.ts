@@ -7,7 +7,7 @@ import { createQueryEngine } from '../../src/querying'
 import { cursor, managed, observed } from './scalar'
 import type { ManagedBudgets } from '../../src/querying/security'
 
-export function relationshipFixture(budgets?: Partial<ManagedBudgets>) {
+export function relationshipFixture(budgets?: Partial<ManagedBudgets>, extraCount = 0) {
 	const tasks = zodTable(
 		'tasks',
 		(id) => ({
@@ -44,7 +44,29 @@ export function relationshipFixture(budgets?: Partial<ManagedBudgets>) {
 		.index('by_task_code', ['task', 'code'])
 		.index('by_code_ordinal', ['code', 'ordinal'])
 	edges.table.index('by_task', ['task'])
-	const relations = defineRelations({ tasks, labels, edges }, (r) => ({
+	const extras = Object.fromEntries(
+		Array.from({ length: extraCount }, (_, i) => {
+			const name = `unrelated${i}`
+			const fields = Object.fromEntries(
+				Array.from({ length: 12 }, (_, j) => [
+					`field${j}`,
+					z
+						.object({
+							title: z.string(),
+							active: z.boolean(),
+							amount: z.number(),
+							tags: z.array(z.string()),
+							address: z.object({ city: z.string(), zip: z.string() }).optional(),
+						})
+						.optional(),
+				]),
+			)
+			const table = zodTable(name, () => ({ tenant: z.string(), status: z.string(), ...fields }))
+			table.table.index('by_tenant', ['tenant']).index('by_status', ['status'])
+			return [name, table]
+		}),
+	)
+	const relations = defineRelations({ tasks, labels, edges, ...extras }, (r) => ({
 		tasks: {
 			referenceTask: r.one.tasks({ from: r.tasks.reference, to: r.tasks._id }),
 			requiredLabel: r.one.labels({ from: r.tasks.required, to: r.labels._id }),
@@ -65,7 +87,12 @@ export function relationshipFixture(budgets?: Partial<ManagedBudgets>) {
 		},
 		labels: { owner: r.one.tasks({ from: r.labels.task, to: r.tasks._id }) },
 	}))
-	const schema = defineSchema({ tasks: tasks.table, labels: labels.table, edges: edges.table })
+	const schema = defineSchema({
+		tasks: tasks.table,
+		labels: labels.table,
+		edges: edges.table,
+		...Object.fromEntries(Object.entries(extras).map(([name, table]) => [name, table.table])),
+	})
 	const { createTest } = defineTestApp({ schema }).defineModules({})
 	const t = createTest()
 	const querying = createQueryEngine({ schema, relations, cursor, budgets })

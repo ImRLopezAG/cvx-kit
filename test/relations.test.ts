@@ -5,6 +5,7 @@ import { v } from 'convex/values'
 import { defineTestApp } from 'convex-test'
 import {
 	defineRelations,
+	getRelationExecutor,
 	getRelationMetadata,
 	type RelationTables,
 	type RelationBuilder,
@@ -431,6 +432,132 @@ describe('finite shared grammar and selections', () => {
 })
 
 describe('immutable registry identity', () => {
+	test('mutating a helper output graph changes only that result, preserving private projection', () => {
+		const items = zodTable('items', () => ({ profile: z.object({ text: z.string() }) }), {
+			publicFields: ['profile'],
+		})
+		const registry = defineRelations({ items }, () => ({}))
+		const first = registry.tables.items.pageDto({})
+		const second = registry.tables.items.pageDto({})
+		if (!(first instanceof z.ZodObject) || !(second instanceof z.ZodObject))
+			throw new Error('Expected object helper')
+		const identity = registry.identity
+		Reflect.set(first.shape.page.element.shape.profile.shape, 'text', z.number())
+		const row = { _id: 'items:1', profile: { text: 'ok' }, private: 'secret' }
+		const page = {
+			page: [{ _id: row._id, profile: row.profile }],
+			isDone: true,
+			continueCursor: '',
+		}
+		expect(first.safeParse(page).success).toBe(false)
+		expect(second.parse(page)).toEqual(page)
+		expect(registry.tables.items.pageDto({}).parse(page)).toEqual(page)
+		expect(getRelationExecutor(registry).project('items', row, () => true)).toEqual(page.page[0])
+		expect(registry.identity).toBe(identity)
+		expect(() => second.clone().extend({ extra: z.string().optional() }).partial()).not.toThrow()
+	})
+	test('each pagination helper owns its scalar checks independently of private parsing', () => {
+		const { relations } = fixture()
+		const first = relations.tables.tasks.paginationOpts({ title: true })
+		const second = relations.tables.tasks.paginationOpts({ title: true })
+		const executor = getRelationExecutor(relations)
+		const privateInput = executor.pagination('tasks')
+		Reflect.set(first.shape.numItems._zod.def.checks![1]._zod.def, 'value', 99)
+		const args = { numItems: 1, cursor: null }
+		expect(first.safeParse(args).success).toBe(false)
+		expect(second.safeParse(args).success).toBe(true)
+		expect(privateInput.safeParse(args).success).toBe(true)
+		const filters = first.shape.filters.unwrap()
+		if (!(filters instanceof z.ZodObject)) throw new Error('Expected filter object')
+		Reflect.set(filters.shape.fields.unwrap().shape, 'title', z.number().optional())
+		const filtered = { ...args, filters: { fields: { title: 'valid' } } }
+		expect(first.safeParse(filtered).success).toBe(false)
+		expect(second.safeParse(filtered).success).toBe(true)
+		expect(privateInput.safeParse(filtered).success).toBe(true)
+	})
+	test('new registries adopt valid source refinement and index changes', () => {
+		const text = z.string().refine((value) => value === 'valid')
+		const items = zodTable('items', () => ({ text }), { publicFields: ['text'] })
+		const first = defineRelations({ items }, () => ({}))
+		Reflect.set(text._zod.def.checks![0]._zod.def, 'fn', () => false)
+		items.table.index('late', ['text'])
+		const second = defineRelations({ items }, () => ({}))
+		const page = { page: [{ _id: 'items:1', text: 'valid' }], isDone: true, continueCursor: '' }
+		expect(first.tables.items.pageDto({}).safeParse(page).success).toBe(true)
+		expect(second.tables.items.pageDto({}).safeParse(page).success).toBe(false)
+		expect(getRelationMetadata(first).tables.items.indexes).toEqual([])
+		expect(getRelationMetadata(second).tables.items.indexes).toEqual([
+			{ name: 'late', fields: ['text'] },
+		])
+	})
+	test('registration captures validation before declaration callbacks can mutate the source', () => {
+		const expression = /^valid$/
+		const text = z
+			.string()
+			.regex(expression)
+			.refine((value) => value === 'valid')
+		const profile = z.object({ text })
+		const items = zodTable('items', () => ({ profile }), { publicFields: ['profile'] })
+		const registry = defineRelations({ items }, () => {
+			Reflect.set(profile.shape, 'text', z.number())
+			Reflect.set(text._zod.def.checks![1]._zod.def, 'fn', () => false)
+			expression.compile('changed')
+			return {}
+		})
+		const output = registry.tables.items.pageDto({})
+		const page = (text: string) => ({
+			page: [{ _id: 'items:1', profile: { text } }],
+			isDone: true,
+			continueCursor: '',
+		})
+		expect(output.safeParse(page('valid')).success).toBe(true)
+		expect(output.safeParse(page('changed')).success).toBe(false)
+		expect(Object.isFrozen(profile.shape)).toBe(false)
+	})
+	test('relation DTO registration rejects opaque superRefine and check validators', () => {
+		for (const text of [z.string().superRefine(() => {}), z.string().check(() => {})]) {
+			const items = zodTable('items', () => ({ text }), { publicFields: ['text'] })
+			expect(() => defineRelations({ items }, () => ({}))).toThrow(/opaque.*refine/i)
+		}
+	})
+	test('registration owns array, union, record and specialized scalar definitions', () => {
+		const text = z.string().min(2)
+		const list = z.array(text)
+		const choice = z.union([text, z.number().int().min(3)])
+		const record = z.record(z.string(), text)
+		const email = z.email()
+		const formatted = z.stringFormat('owned', (value) => value === 'valid')
+		const tuple = z.tuple([z.int32(), z.uint64(), z.string().nullable()])
+		const optional = z.string().optional().nonoptional().optional()
+		const items = zodTable(
+			'items',
+			() => ({ list, choice, record, email, formatted, tuple, optional }),
+			{
+				publicFields: ['list', 'choice', 'record', 'email', 'formatted', 'tuple', 'optional'],
+			},
+		)
+		const registry = defineRelations({ items }, () => ({}))
+		Reflect.set(list._zod.def, 'element', z.number())
+		Reflect.set(choice._zod.def.options, '0', z.number())
+		Reflect.set(record._zod.def, 'valueType', z.number())
+		Reflect.set(text._zod.def.checks![0]._zod.def, 'minimum', 20)
+		const schema = registry.tables.items.pageDto({})
+		const row = {
+			_id: 'items:1',
+			list: ['ok'],
+			choice: 'ok',
+			record: { key: 'ok' },
+			email: 'a@example.com',
+			formatted: 'valid',
+			tuple: [1, 1n, null],
+		}
+		const page = (value: typeof row) => ({ page: [value], isDone: true, continueCursor: '' })
+		expect(schema.safeParse(page(row)).success).toBe(true)
+		expect(schema.safeParse(page({ ...row, email: 'invalid' })).success).toBe(false)
+		expect(schema.safeParse(page({ ...row, record: { key: '' } })).success).toBe(false)
+		expect(schema.safeParse(page({ ...row, formatted: 'invalid' })).success).toBe(false)
+		expect(schema.safeParse(page({ ...row, tuple: [1.5, -1n, null] })).success).toBe(false)
+	})
 	test('capture preserves caller object definition and parsing semantics', () => {
 		const fields = { code: z.string() }
 		const controlFields = { code: z.string() }
@@ -466,7 +593,23 @@ describe('immutable registry identity', () => {
 			expect(reads).toBe(0)
 		}
 	})
-	test('refined object capture preserves checks and rejects drift before first cloned parse', async () => {
+	test('definition replacement getters fail before invocation and specialized coercion stays inadmissible', () => {
+		const text = z.string()
+		const items = zodTable('items', () => ({ text }), { publicFields: ['text'] })
+		let calls = 0
+		Object.defineProperty(text._zod, 'def', {
+			get: () => {
+				calls++
+				return { type: 'string' }
+			},
+		})
+		expect(() => defineRelations({ items }, () => ({}))).toThrow(/accessor/)
+		expect(calls).toBe(0)
+		const numeric = z.coerce.number().int()
+		const coerced = zodTable('coerced', () => ({ numeric }), { publicFields: ['numeric'] })
+		expect(() => defineRelations({ coerced }, () => ({}))).toThrow(/Unsupported DTO/)
+	})
+	test('refined object capture preserves checks and ignores drift before first cloned parse', async () => {
 		const profile = z.object({ code: z.string() }).refine((value) => value.code === 'valid')
 		const boundary = zodTable('items', () => ({ profile }), { publicFields: ['profile'] })
 		const registry = defineRelations({ items: boundary }, () => ({}))
@@ -479,13 +622,13 @@ describe('immutable registry identity', () => {
 		expect(Object.isFrozen(profile.shape)).toBe(false)
 		Reflect.set(profile.shape, 'secret', z.string())
 		for (const schema of [output, clone]) {
-			expect(schema.safeParse(empty).success).toBe(false)
-			expect((await schema.safeParseAsync(empty)).success).toBe(false)
-			expect(() => zodToConvex(schema)).toThrow(/mutat/)
+			expect(schema.safeParse(empty).success).toBe(true)
+			expect((await schema.safeParseAsync(empty)).success).toBe(true)
+			expect(() => zodToConvex(schema)).not.toThrow()
 		}
-		expect(options.safeParse({ numItems: 1, cursor: null }).success).toBe(false)
-		expect(() => zodToConvex(options)).toThrow(/mutat/)
-		expect(() => registry.tables.items.pageDto({})).toThrow(/mutat/)
+		expect(options.safeParse({ numItems: 1, cursor: null }).success).toBe(true)
+		expect(() => zodToConvex(options)).not.toThrow()
+		expect(() => registry.tables.items.pageDto({})).not.toThrow()
 	})
 	test('actual native stored document must agree with boundary kinds, optionality and ID brands', () => {
 		for (const field of [v.number(), v.optional(v.string()), v.id('other')]) {
@@ -497,7 +640,7 @@ describe('immutable registry identity', () => {
 		Reflect.set(boundary, 'table', defineTable({ owner: v.id('other') }))
 		expect(() => defineRelations({ items: boundary }, () => ({}))).toThrow(/document|boundary/)
 	})
-	test('nested DTO mutation rejects later helpers and already-created output schemas', () => {
+	test('nested DTO mutation leaves later helpers and already-created output schemas stable', () => {
 		for (const mutate of [
 			(profile: z.ZodObject) => Reflect.set(profile.shape, 'secret', z.string()),
 			(profile: z.ZodObject) => Reflect.set(profile.shape, 'x', z.number()),
@@ -510,23 +653,23 @@ describe('immutable registry identity', () => {
 			const clonedOutput = output.clone()
 			const identity = registry.identity
 			mutate(profile)
-			expect(() => registry.tables.items.pageDto({})).toThrow(/mutat/)
-			expect(() => registry.tables.items.paginationOpts({})).toThrow(/mutat/)
+			expect(() => registry.tables.items.pageDto({})).not.toThrow()
+			expect(() => registry.tables.items.paginationOpts({})).not.toThrow()
 			expect(
-				output.safeParse({
+				output.parse({
 					page: [{ _id: 'items:1', profile: { x: 'ok', secret: 'leak' } }],
 					isDone: true,
 					continueCursor: '',
-				}).success,
-			).toBe(false)
-			expect(() => zodToConvex(output)).toThrow(/mutat/)
+				}).page[0].profile,
+			).toEqual({ x: 'ok' })
+			expect(() => zodToConvex(output)).not.toThrow()
 			for (const schema of [output, clonedOutput])
-				expect(schema.safeParse({ page: [], isDone: true, continueCursor: '' }).success).toBe(false)
-			expect(options.safeParse({ numItems: 1, cursor: null }).success).toBe(false)
+				expect(schema.safeParse({ page: [], isDone: true, continueCursor: '' }).success).toBe(true)
+			expect(options.safeParse({ numItems: 1, cursor: null }).success).toBe(true)
 			expect(registry.identity).toBe(identity)
 		}
 	})
-	test('array element, union options and custom check mutations are detected', () => {
+	test('array element, union options and custom check mutations leave snapshots stable', () => {
 		for (const mutate of [
 			(list: z.ZodArray, _choice: z.ZodUnion, _text: z.ZodString) =>
 				Reflect.set(list._zod.def, 'element', z.number()),
@@ -544,8 +687,15 @@ describe('immutable registry identity', () => {
 			const registry = defineRelations({ items: boundary }, () => ({}))
 			const output = registry.tables.items.pageDto({})
 			mutate(list, choice, text)
-			expect(() => registry.tables.items.pageDto({})).toThrow(/mutat/)
-			expect(output.safeParse({ page: [], isDone: true, continueCursor: '' }).success).toBe(false)
+			const page = (value: string) => ({
+				page: [{ _id: 'items:1', list: [value], choice: value }],
+				isDone: true,
+				continueCursor: '',
+			})
+			expect(output.safeParse(page('valid')).success).toBe(true)
+			expect(output.safeParse(page('invalid')).success).toBe(false)
+			expect(() => registry.tables.items.pageDto({})).not.toThrow()
+			expect(output.safeParse({ page: [], isDone: true, continueCursor: '' }).success).toBe(true)
 		}
 	})
 	test('unsupported dynamic or value-changing DTO nodes fail closed', () => {
@@ -701,7 +851,7 @@ describe('immutable registry identity', () => {
 			expect(output.safeParse(page('other')).success).toBe(false)
 		}
 	})
-	test('array and union DTO graph mutation rejects while original refinements remain active', () => {
+	test('array and union DTO graph mutation is isolated while captured refinements remain active', () => {
 		const profile = z.object({ x: z.string().refine((value) => value === 'valid') })
 		const list = z.array(profile)
 		const choice = z.union([profile, z.string().min(3)])
@@ -718,8 +868,9 @@ describe('immutable registry identity', () => {
 		expect(output.safeParse(page('valid')).success).toBe(true)
 		expect(output.safeParse(page('invalid')).success).toBe(false)
 		Reflect.set(profile.shape, 'x', z.number())
-		expect(output.safeParse(page('valid')).success).toBe(false)
-		expect(() => registry.tables.items.pageDto({})).toThrow(/mutat/)
+		expect(output.safeParse(page('valid')).success).toBe(true)
+		expect(output.safeParse(page('invalid')).success).toBe(false)
+		expect(() => registry.tables.items.pageDto({})).not.toThrow()
 	})
 	test('caller table map, declaration buckets and metadata cannot change later helpers', () => {
 		const { tables } = fixture()
@@ -936,4 +1087,282 @@ test('native nested output and selected relation filter validators reject real f
 			// @ts-expect-error deliberately send foreign-table IDs to exercise native validation
 			t.query(app.api.functions.input, { options: { numItems: 1, cursor: null, filters } }),
 		).rejects.toThrow()
+})
+
+function nativeGuardFixture() {
+	const items = zodTable(
+		'items',
+		() => ({
+			text: z.string(),
+			vector: z.array(z.number()),
+			nested: z.object({
+				list: z.array(z.union([z.literal('a'), z.literal('b')])).optional(),
+				map: z.record(z.string(), z.number()),
+			}),
+		}),
+		{ publicFields: ['text'] },
+	)
+	items.table
+		.index('by_text', ['text'])
+		.index('staged_text', { fields: ['text'], staged: true })
+		.searchIndex('search_text', { searchField: 'text', filterFields: ['nested.list'] })
+		.searchIndex('staged_search', { searchField: 'text', staged: true })
+		.vectorIndex('vector', { vectorField: 'vector', dimensions: 3, filterFields: ['text'] })
+		.vectorIndex('staged_vector', { vectorField: 'vector', dimensions: 3, staged: true })
+	// Convex 1.46 strips this runtime @internal method from declarations.
+	const stage = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(items.table), 'staged')!.value
+	stage.call(items.table, {
+		text: v.string(),
+		vector: v.array(v.number()),
+		nested: v.object({
+			list: v.optional(v.array(v.union(v.literal('a'), v.literal('b')))),
+			map: v.record(v.string(), v.number()),
+		}),
+	})
+	return items
+}
+
+test('native structural mutations leave captured executor semantics stable including staged and nested data', () => {
+	const mutations: ((items: ReturnType<typeof nativeGuardFixture>) => void)[] = [
+		(items) => {
+			Reflect.set(items, 'table', nativeGuardFixture().table)
+		},
+		(items) => {
+			Reflect.set(items.table.validator.fields.nested.fields.list, 'isOptional', 'required')
+		},
+		(items) => {
+			Reflect.set(
+				items.table.validator.fields.nested.fields.list.element.members[0],
+				'value',
+				'changed',
+			)
+		},
+		(items) => {
+			Reflect.set(items.table.validator.fields.nested.fields.map, 'key', v.literal('changed'))
+		},
+		(items) => {
+			Reflect.set(items.table.validator.fields.nested.fields.map, 'value', v.string())
+		},
+		(items) => {
+			Reflect.set(items.table.validator.fields.vector, 'element', v.string())
+		},
+		(items) => {
+			Reflect.set(items.table.validator.fields.nested.fields, 'added', v.string())
+		},
+		(items) => {
+			Reflect.deleteProperty(items.table.validator.fields.nested.fields, 'map')
+		},
+		(items) => {
+			Reflect.set(items.table.validator.fields, 'text', v.string())
+		},
+		(items) => {
+			Reflect.set(items.table, 'validator', v.object({ text: v.string() }))
+		},
+		...[
+			'indexes',
+			'stagedDbIndexes',
+			'searchIndexes',
+			'stagedSearchIndexes',
+			'vectorIndexes',
+			'stagedVectorIndexes',
+		].flatMap((key) => [
+			(items: ReturnType<typeof nativeGuardFixture>) => {
+				Reflect.set(
+					Object.getOwnPropertyDescriptor(items.table, key)!.value[0],
+					'indexDescriptor',
+					'changed',
+				)
+			},
+			(items: ReturnType<typeof nativeGuardFixture>) => {
+				Object.getOwnPropertyDescriptor(items.table, key)!.value.pop()
+			},
+		]),
+		(items) => {
+			Object.getOwnPropertyDescriptor(items.table, 'indexes')!.value[0].fields.push('vector')
+		},
+		(items) => {
+			Object.getOwnPropertyDescriptor(items.table, 'searchIndexes')!.value[0].filterFields.push(
+				'text',
+			)
+		},
+		(items) => {
+			Object.getOwnPropertyDescriptor(items.table, 'vectorIndexes')!.value[0].dimensions = 4
+		},
+		(items) => {
+			Reflect.set(
+				Object.getOwnPropertyDescriptor(items.table, 'stagedValidator')!.value.fields,
+				'text',
+				v.number(),
+			)
+		},
+		(items) => {
+			Object.setPrototypeOf(items.table.validator.fields.text, {})
+		},
+	]
+	for (const mutate of mutations) {
+		const items = nativeGuardFixture()
+		const relations = defineRelations({ items }, () => ({}))
+		const executor = getRelationExecutor(relations)
+		executor.project('items', { _id: 'items:1', text: 'valid' }, () => true)
+		mutate(items)
+		expect(executor.project('items', { _id: 'items:1', text: 'valid' }, () => true)).toEqual({
+			_id: 'items:1',
+			text: 'valid',
+		})
+	}
+})
+
+test('native getters and custom prototypes fail closed without executing caller accessors', () => {
+	for (const initial of [true, false])
+		for (const site of ['table', 'validator', 'field', 'index', 'prototype']) {
+			const items = nativeGuardFixture()
+			const executor = initial
+				? undefined
+				: getRelationExecutor(defineRelations({ items }, () => ({})))
+			let calls = 0
+			const getter = {
+				configurable: true,
+				enumerable: true,
+				get: () => {
+					calls++
+					throw new Error('caller getter executed')
+				},
+			}
+			if (site === 'table') Object.defineProperty(items.table, 'validator', getter)
+			if (site === 'validator') Object.defineProperty(items.table.validator, 'json', getter)
+			if (site === 'field')
+				Object.defineProperty(items.table.validator.fields.nested.fields, 'list', getter)
+			if (site === 'index')
+				Object.defineProperty(
+					Object.getOwnPropertyDescriptor(items.table, 'indexes')!.value[0],
+					'fields',
+					getter,
+				)
+			if (site === 'prototype')
+				Object.setPrototypeOf(items.table.validator, {
+					get json() {
+						calls++
+						throw new Error('caller prototype executed')
+					},
+				})
+			if (initial) expect(() => defineRelations({ items }, () => ({}))).toThrow(/native|Native/)
+			else
+				expect(executor!.project('items', { _id: 'items:1', text: 'valid' }, () => true)).toEqual({
+					_id: 'items:1',
+					text: 'valid',
+				})
+			expect(calls).toBe(0)
+		}
+})
+
+test('native prototype getter replacement is rejected at registration and isolated after capture', () => {
+	for (const initial of [true, false]) {
+		const items = nativeGuardFixture()
+		const executor = initial
+			? undefined
+			: getRelationExecutor(defineRelations({ items }, () => ({})))
+		const prototype = Object.getPrototypeOf(items.table.validator.fields.text)
+		const before = Object.getOwnPropertyDescriptor(prototype, 'json')!
+		let calls = 0
+		try {
+			Object.defineProperty(prototype, 'json', {
+				...before,
+				get: () => {
+					calls++
+					throw new Error('caller prototype executed')
+				},
+			})
+			if (initial) expect(() => defineRelations({ items }, () => ({}))).toThrow(/native|Native/)
+			else
+				expect(executor!.project('items', { _id: 'items:1', text: 'valid' }, () => true)).toEqual({
+					_id: 'items:1',
+					text: 'valid',
+				})
+			expect(calls).toBe(0)
+		} finally {
+			Object.defineProperty(prototype, 'json', before)
+		}
+	}
+})
+
+test('native table ownership is captured before the caller declaration runs', () => {
+	const items = nativeGuardFixture()
+	const original = items.table
+	const replacement = nativeGuardFixture()
+	const relations = defineRelations({ items }, () => {
+		Reflect.set(items, 'table', replacement.table)
+		return {}
+	})
+	const executor = getRelationExecutor(relations)
+	expect(() => executor.assertSchema({ items: original })).not.toThrow()
+	expect(() => executor.assertSchema({ items: replacement.table })).toThrow(/ownership/)
+	expect(() => executor.assertSchema({})).toThrow(/ownership/)
+	expect(() => executor.assertSchema({ items: original, extra: original })).toThrow(/ownership/)
+	let reads = 0
+	const accessor = {
+		get items() {
+			reads++
+			return original
+		},
+	}
+	expect(() => executor.assertSchema(accessor)).toThrow(/ownership/)
+	expect(reads).toBe(0)
+	expect(executor.project('items', { _id: 'items:1', text: 'valid' }, () => true)).toEqual({
+		_id: 'items:1',
+		text: 'valid',
+	})
+})
+
+test('execution performs zero descriptor reads of the original semantic graph', () => {
+	const text = z.string().regex(/valid/g)
+	const items = zodTable('items', () => ({ text }), { publicFields: ['text'] })
+	const others = zodTable('others', () => ({ text }), { publicFields: ['text'] })
+	const relations = defineRelations({ items, others }, () => ({}))
+	const executor = getRelationExecutor(relations)
+	const output = relations.tables.items.pageDto({}).clone()
+	const targets = new Set<object>([
+		text._zod,
+		text._zod.def,
+		items.table,
+		items.table.validator.fields.text,
+	])
+	const original = Object.getOwnPropertyDescriptor
+	for (let boundary = 0; boundary < 2; boundary++) {
+		const reads = new Map<object, Map<PropertyKey, number>>()
+		Object.getOwnPropertyDescriptor = (object, key) => {
+			let counts = reads.get(object)
+			if (!counts) reads.set(object, (counts = new Map()))
+			counts.set(key, (counts.get(key) ?? 0) + 1)
+			return original(object, key)
+		}
+		try {
+			executor.project('items', { _id: 'items:1', text: 'valid' }, () => true)
+		} finally {
+			Object.getOwnPropertyDescriptor = original
+		}
+		for (const target of targets) expect(reads.has(target)).toBe(false)
+	}
+	Reflect.set(text._zod.def, 'checks', [])
+	expect(executor.project('items', { _id: 'items:1', text: 'valid' }, () => true)).toEqual({
+		_id: 'items:1',
+		text: 'valid',
+	})
+	expect(output.safeParse({ page: [], isDone: true, continueCursor: '' }).success).toBe(true)
+})
+
+test('snapshot regex validation ignores caller lastIndex changes during construction and parsing', () => {
+	const expression = /valid/g
+	const text = z.string().regex(expression)
+	const items = zodTable('items', () => ({ text }), { publicFields: ['text'] })
+	const relations = defineRelations({ items }, () => {
+		expression.lastIndex = 2
+		return {}
+	})
+	const executor = getRelationExecutor(relations)
+	for (const lastIndex of [0, 4, 9]) {
+		expression.lastIndex = lastIndex
+		expect(() =>
+			executor.project('items', { _id: 'items:1', text: 'valid' }, () => true),
+		).not.toThrow()
+	}
 })

@@ -906,7 +906,10 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		)
 			throw new Error('Native schema/table ownership disagrees with relation registry')
 	}
-	const branchValidators = new WeakMap<object, z.ZodType>()
+	const branchValidators = new WeakMap<
+		object,
+		{ validator: z.ZodType; fieldKeys: readonly string[] }
+	>()
 	const projectionKeys = new WeakMap<z.ZodObject, readonly string[]>()
 	const scalarFields = new Map<string, FieldSchemas>()
 	const grammars = new Map<string, FilterGrammar>()
@@ -925,17 +928,18 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 				? data.branches.options[tag]
 				: undefined
 		if (!branch) throw new Error('Invalid variant document')
-		const values = Object.fromEntries(
-			Object.keys(branch.fields)
-				.filter((key) => Object.hasOwn(row, key))
-				.map((key) => [key, row[key]]),
-		)
-		let validator = branchValidators.get(branch)
-		if (!validator) {
-			validator = convexToZod(v.object(branch.fields))
-			branchValidators.set(branch, validator)
+		let cached = branchValidators.get(branch)
+		const fieldKeys = cached?.fieldKeys ?? Object.keys(branch.fields)
+		const entries: [string, import('convex/values').Value | undefined][] = []
+		// Snapshot ownership before reading getters, as filter().map() did.
+		for (const key of fieldKeys) if (Object.hasOwn(row, key)) entries.push([key, undefined])
+		for (const entry of entries) entry[1] = row[entry[0]]
+		const values = Object.fromEntries(entries)
+		if (!cached) {
+			cached = { validator: convexToZod(v.object(branch.fields)), fieldKeys }
+			branchValidators.set(branch, cached)
 		}
-		validator.parse(values)
+		cached.validator.parse(values)
 	}
 	return Object.freeze({
 		streamSchema: owned.streamSchema,

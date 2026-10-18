@@ -201,36 +201,60 @@ export function captureDto<Schema extends z.ZodType>(schema: Schema): DtoRecipe<
 	return Object.freeze({ root: capture(schema, 0) })
 }
 
-export function materializeDto<Schema extends z.ZodType>(recipe: DtoRecipe<Schema>): Schema {
-	// oxlint-disable-next-line anti-slop/no-unknown-returns, anti-slop/no-known-value-widening -- A recursive recipe restores heterogeneous constructor definitions, never external input.
-	function restore(recipe: Recipe): unknown {
-		switch (recipe.kind) {
-			case 'value':
-				return recipe.value
-			case 'regexp':
-				// oxlint-disable-next-line anti-slop/no-known-value-widening -- RegExp is one of the heterogeneous recipe result types.
-				return new RegExp(recipe.source, recipe.flags)
-			case 'array':
-				return recipe.items.map(restore)
-			case 'record':
-				return Object.fromEntries(recipe.entries.map(([key, child]) => [key, restore(child)]))
-			case 'node': {
-				const definition = restore(recipe.definition)
-				if (recipe.id !== undefined) {
-					const result = zid(recipe.id)
+// Factories share immutable instructions only. Every occurrence invokes its factory
+// again, so shared recipe nodes never share mutable materialized definitions.
+type Factory = () => unknown
+const factories = new WeakMap<Recipe, Factory>()
+
+function compile(recipe: Recipe): Factory {
+	const cached = factories.get(recipe)
+	if (cached) return cached
+	let factory: Factory
+	switch (recipe.kind) {
+		case 'value':
+			factory = () => recipe.value
+			break
+		case 'regexp':
+			factory = () => new RegExp(recipe.source, recipe.flags)
+			break
+		case 'array': {
+			const items = recipe.items.map(compile)
+			factory = () => items.map((item) => item())
+			break
+		}
+		case 'record': {
+			const entries = recipe.entries.map(([key, child]) => [key, compile(child)] as const)
+			factory = () => Object.fromEntries(entries.map(([key, child]) => [key, child()]))
+			break
+		}
+		case 'node': {
+			const definition = compile(recipe.definition)
+			if (recipe.id !== undefined) {
+				const id = recipe.id
+				factory = () => {
+					const restored = definition()
+					const result = zid(id)
 					// The new zid is registered with convex-helpers. Added refinements are
 					// reconstructed independently, never inherited via _zod.parent.
-					if (definition instanceof Object && 'checks' in definition) {
-						const checks = definition.checks
+					if (restored instanceof Object && 'checks' in restored) {
+						const checks = restored.checks
 						if (Array.isArray(checks)) return result.check(...checks)
 					}
 					return result
 				}
-				return constructors.get(recipe.constructor)!.create(definition)
+			} else {
+				const constructor = constructors.get(recipe.constructor)!
+				factory = () => constructor.create(definition())
 			}
+			break
 		}
 	}
-	const result = restore(recipe.root)
+	factories.set(recipe, factory)
+	return factory
+}
+
+export function materializeDto<Schema extends z.ZodType>(recipe: DtoRecipe<Schema>): Schema {
+	const result = compile(recipe.root)()
 	if (!(result instanceof z.ZodType)) throw new Error('Expected classic DTO schema')
 	// SAFETY: the recipe preserves the captured schema constructor and definition.
 	return result as Schema

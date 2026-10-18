@@ -6,7 +6,7 @@ import {
 	getRelationMetadata,
 	type RelationRegistryIdentity,
 } from '../relations'
-import { compileFilters, type FilterAst, type IndexCondition } from './filters'
+import { parseFilterPlan, type FilterAst, type IndexCondition } from './filters'
 
 export type QueryInput = z.input<ReturnType<ReturnType<typeof getRelationExecutor>['pagination']>>
 export type StoredConstraint = NonNullable<QueryInput['filters']>
@@ -49,7 +49,6 @@ export function createPlanner(
 				validator = owned.pagination(table)
 				inputs.set(table, validator)
 			}
-			const args = validator.parse(input)
 			// Server constraints are independently validated against stored fields,
 			// not the endpoint's public input/filter mask. Client values cannot replace them.
 			const where =
@@ -58,9 +57,9 @@ export function createPlanner(
 					: constraints.length
 						? { and: constraints }
 						: undefined
-			const compiled = compileFilters(
+			const { args, compiled } = parseFilterPlan(
 				validator,
-				args,
+				input,
 				metadata.tables[table].indexes,
 				conditions,
 				where,

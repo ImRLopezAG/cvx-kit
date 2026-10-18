@@ -223,6 +223,8 @@ export function zodTable<
 	type RuntimeDtoFields = Public & FieldSchemas
 	type RuntimeDto = z.output<StrictObject<RuntimeDtoFields>> & { _id?: GenericId<Table> }
 	type RuntimeOptions = { _id?: boolean; extend?: FieldSchemas; values?: unknown }
+	// Private to this boundary: callers cannot mutate a shared empty validator.
+	const emptyDtoExtension = z.strictObject({})
 	const reservedDtoFields = new Set<string>([
 		'_id',
 		'_creationTime',
@@ -248,15 +250,19 @@ export function zodTable<
 	function deriveDto(options?: boolean | RuntimeOptions) {
 		const normalized = options === true || options === false ? { _id: options } : options
 		const extension = normalized?.extend ?? {}
+		assertDtoExtension(extension)
+		if (!normalized?._id && Object.keys(extension).length === 0) return publicDto
+		const resultSchema = z.object({ ...publicDto.shape, ...extension }).strict()
+		return normalized?._id ? resultSchema.extend({ _id: schema.shape._id }) : resultSchema
+	}
+
+	function assertDtoExtension(extension: FieldSchemas) {
 		for (const key of Object.keys(extension)) {
 			if (reservedDtoFields.has(key) || Object.hasOwn(publicDto.shape, key)) {
 				throw new Error(`DTO extension collision for field "${key}" on table "${tableName}"`)
 			}
 			assertDtoValidationSchema(extension[key])
 		}
-		if (!normalized?._id && Object.keys(extension).length === 0) return publicDto
-		const resultSchema = z.object({ ...publicDto.shape, ...extension }).strict()
-		return normalized?._id ? resultSchema.extend({ _id: schema.shape._id }) : resultSchema
 	}
 
 	function toPublicDto(row: Row): z.output<typeof publicDto>
@@ -280,7 +286,7 @@ export function zodTable<
 	function toPublicDto(row: Row, options?: boolean | RuntimeOptions): RuntimeDto {
 		const normalized = options === true || options === false ? { _id: options } : options
 		// Enforce extension collisions and validation-only schemas before parsing values.
-		deriveDto(options)
+		assertDtoExtension(normalized?.extend ?? {})
 		const projected = publicDto.parse(
 			Object.fromEntries(
 				Object.keys(publicDto.shape).map((key) => {
@@ -289,10 +295,10 @@ export function zodTable<
 				}),
 			),
 		)
-		const extension = z
-			.object(normalized?.extend ?? {})
-			.strict()
-			.parse(normalized?.values ?? {})
+		const extensionFields = normalized?.extend
+		const extensionSchema =
+			extensionFields == null ? emptyDtoExtension : z.object(extensionFields).strict()
+		const extension = extensionSchema.parse(normalized?.values ?? {})
 		const result: RuntimeDto = { ...projected, ...extension }
 		if (normalized?._id) {
 			result._id = schema.shape._id.parse('_id' in row ? row._id : undefined)
@@ -881,11 +887,15 @@ function deriveVariantTable(
 	function dto(includeId = false) {
 		return includeId ? union('public', true) : publicDto
 	}
+	// Projection-only ID schema is never returned by dto() or exposed on the declaration.
+	let projectionId: Zid<string> | undefined
 	function toPublicDto(row: z.input<StrictObject<FieldSchemas>>, includeId = false) {
 		const tag = z.string().parse(row[discriminator])
 		const branch = branches.get(tag)
 		if (!branch) throw new Error(`Unknown variant discriminator "${tag}"`)
-		const projection = includeId ? branch.public.extend({ _id: zid(tableName) }) : branch.public
+		const projection = includeId
+			? branch.public.extend({ _id: (projectionId ??= zid(tableName)) })
+			: branch.public
 		return projection.parse(
 			Object.fromEntries(
 				Object.keys(projection.shape)

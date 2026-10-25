@@ -1,6 +1,7 @@
+import { evaluateFilter } from './shared/evaluate'
 import type { z } from 'zod'
 import type { SchemaDefinition, GenericSchema } from 'convex/server'
-import { compareValues, type Value } from 'convex/values'
+import { type Value } from 'convex/values'
 import {
 	getRelationExecutor,
 	getRelationMetadata,
@@ -96,43 +97,9 @@ export function createPlanner(
 	}
 }
 
-/** Native scalar ordering/equality, including missing vs null, without coercion. */
 export function scalarMatches(
 	ast: FilterAst,
 	document: Record<string, Value | undefined>,
 ): boolean {
-	switch (ast.kind) {
-		case 'and':
-			return ast.children.every((child) => scalarMatches(child, document))
-		case 'or':
-			return ast.children.some((child) => scalarMatches(child, document))
-		case 'variant':
-			return document[ast.discriminator] === ast.tag && scalarMatches(ast.child, document)
-		case 'not':
-			return !scalarMatches(ast.child, document)
-		case 'relation':
-			throw new Error('Relation execution requires U6')
-		case 'scalar': {
-			const actual = document[ast.field]
-			if (ast.operator === 'exists') return (actual !== undefined) === ast.value
-			if (ast.operator === 'in')
-				return (
-					Array.isArray(ast.value) && ast.value.some((value) => compareValues(actual, value) === 0)
-				)
-			if (Array.isArray(ast.value)) throw new Error('Invalid scalar predicate')
-			const compared = compareValues(actual, ast.value)
-			switch (ast.operator) {
-				case 'eq':
-					return compared === 0
-				case 'gt':
-					return compared > 0
-				case 'gte':
-					return compared >= 0
-				case 'lt':
-					return compared < 0
-				case 'lte':
-					return compared <= 0
-			}
-		}
-	}
+	return evaluateFilter(ast, document) === true
 }

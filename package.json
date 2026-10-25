@@ -134,6 +134,10 @@
 		"./oxlint": {
 			"types": "./dist/oxlint.d.mts",
 			"import": "./dist/oxlint.mjs"
+		},
+		"./filters": {
+			"types": "./dist/filters.d.mts",
+			"import": "./dist/filters.mjs"
 		}
 	},
 	"scripts": {

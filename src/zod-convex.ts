@@ -1,3 +1,4 @@
+import { sharedNativeValidator } from './querying/shared/contract'
 import {
 	zodToConvex as helperZodToConvex,
 	type ConvexValidatorFromZod,
@@ -24,7 +25,10 @@ export function zodToConvex<Z extends z.core.$ZodType>(
 		try {
 			let result: GenericValidator
 			// Public core definitions work for both standard Zod and Zod Mini.
-			if (node instanceof z.core.$ZodObject) {
+			const shared = sharedNativeValidator(node)
+			if (shared) {
+				result = shared
+			} else if (node instanceof z.core.$ZodObject) {
 				result = v.object(
 					Object.fromEntries(
 						Object.entries(node._zod.def.shape).map(([key, child]) => [key, convert(child)]),

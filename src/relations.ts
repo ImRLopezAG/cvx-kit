@@ -1,6 +1,8 @@
+import type { FilterContract, SharedFilters } from './filters'
 import { z } from 'zod'
 import { captureDto, materializeDto, type DtoRecipe } from './querying/schema-snapshot'
-import { zodToConvex, convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
+import { convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
+import { zodToConvex } from './zod-convex'
 import { defineSchema, defineTable, type TableDefinition } from 'convex/server'
 import {
 	v,
@@ -668,6 +670,9 @@ export interface RelationTableHelpers<
 	D extends RelationDeclarations,
 	T extends keyof Tables,
 > {
+	filters<F extends Record<string, GenericValidator>>(
+		contract: FilterContract<F>,
+	): PaginationOptionsSchema<SharedFilters<F>, SharedFilters<F, 'input'>>
 	paginationOpts<const S extends RelationFilterSelection<Tables, D, T>>(
 		selection: ExactFilterMask<Tables, D, T, S>,
 	): PaginationOptionsSchema<
@@ -966,12 +971,30 @@ export function defineRelations<
 	const helpers: Record<
 		string,
 		{
+			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>): z.ZodType
 			paginationOpts(selection: SelectionMask): z.ZodType
 			pageDto(selection: SelectionMask, groups?: GroupSelection): z.ZodType
 		}
 	> = {}
 	for (const table of Object.keys(metadata))
 		helpers[table] = {
+			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>) {
+				if (metadata[table].branches)
+					throw new Error('Shared scalar contracts do not support variant tables')
+				for (const [field, expected] of Object.entries(contract.native)) {
+					const actual = metadata[table].fields[field]
+					if (
+						!actual ||
+						JSON.stringify(nativeJson(actual)) !== JSON.stringify(expected.json) ||
+						(actual.isOptional === 'optional') !== expected.optional
+					)
+						throw new Error(`Shared filter field mismatch "${field}"`)
+				}
+				return materializeDto(paginationRecipe).extend({
+					filters: contract.schema.optional(),
+					order: z.enum(['asc', 'desc']).optional(),
+				})
+			},
 			paginationOpts(selection: SelectionMask): z.ZodType {
 				assertSelection(selection)
 				return materializeDto(paginationRecipe).extend({

@@ -1,0 +1,168 @@
+import assert from 'node:assert/strict'
+import { z } from 'zod'
+import { convexTest } from 'convex-test'
+import {
+	defineSchema,
+	queryGeneric,
+	mutationGeneric,
+	actionGeneric,
+	internalQueryGeneric,
+	internalMutationGeneric,
+	internalActionGeneric,
+	anyApi,
+	type DataModelFromSchemaDefinition,
+	type GenericQueryCtx,
+} from 'convex/server'
+import { zodTable, zodToConvex } from 'cvx-kit/zod-table'
+import { defineRelations } from 'cvx-kit/relations'
+import { createQueryEngine } from 'cvx-kit/querying'
+import { createAuthFunctions } from 'cvx-kit/auth'
+import { filters, encoded } from './filters.ts'
+const records = zodTable('records', () => filters.fields)
+const targets = zodTable('targets', () => ({ active: z.boolean() }))
+const relations = defineRelations({ records, targets }, () => ({}))
+const schema = defineSchema({ records: records.table, targets: targets.table })
+type DM = DataModelFromSchemaDefinition<typeof schema>
+const builders = {
+	query: queryGeneric,
+	mutation: mutationGeneric,
+	action: actionGeneric,
+	internalQuery: internalQueryGeneric,
+	internalMutation: internalMutationGeneric,
+	internalAction: internalActionGeneric,
+}
+const auth = createAuthFunctions<DM, 'reader'>({
+	...builders,
+	getAuthUser: async (ctx: GenericQueryCtx<DM> | { auth: GenericQueryCtx<DM>['auth'] }) => {
+		const identity = await ctx.auth.getUserIdentity()
+		return identity ? { id: identity.subject } : null
+	},
+	mapRole: () => 'reader',
+	adminRoles: [],
+})
+const querying = createQueryEngine(
+	{ schema, relations },
+	{ cursor: { version: 'u7', currentKeyId: 'one', keys: { one: new Uint8Array(64).fill(7) } } },
+)
+const options = relations.tables.records.filters(filters)
+assert.equal(options.shape.filters.unwrap(), filters.schema)
+const endpoint = auth.authQuery({
+	args: options,
+	returns: relations.tables.records.pageDto({}),
+	handler: (ctx, args) => querying(ctx).records.paginate(args),
+})
+const t = convexTest(schema, {
+	'./_generated/server.ts': async () => builders,
+	'./functions.ts': async () => ({ endpoint }),
+})
+const id = await t.run((ctx) => ctx.db.insert('targets', { active: true }))
+const ownId = await t.run((ctx) =>
+	ctx.db.insert('records', {
+		status: 'open',
+		title: 'one',
+		score: 5,
+		count: 2n,
+		active: true,
+		nullable: null,
+		reference: id,
+	}),
+)
+const client = t.withIdentity({ subject: 'reader', org_id: 'org', role: 'reader' })
+const valid: z.input<typeof filters.schema>[] = [
+	{ status: { in: ['open', 'done'] } },
+	{ count: { gte: 1n, lt: 3n } },
+	{ nullable: null },
+	{ reference: id },
+	{ title: { gt: 'a' } },
+	{ score: { gte: 4, lt: 6 } },
+	{ active: true },
+	{ not: { count: { exists: false } } },
+]
+for (const value of valid) {
+	const round = filters.searchParam.encode(value)
+	assert.equal(round.success, true)
+	const parsed = filters.searchParam.decode(round.value)
+	assert.equal(parsed.success, true)
+	const page = await client.query(anyApi.functions.endpoint, {
+		numItems: 10,
+		cursor: null,
+		filters: parsed.value,
+	})
+	assert.deepEqual(
+		page.page.map((r: any) => r._id),
+		[ownId],
+	)
+}
+for (const value of [
+	{ status: 'invalid' },
+	{ count: 2 },
+	{ score: '5' },
+	{ active: { gt: true } },
+	{ reference: 42 },
+	{ nullable: { exists: false } },
+]) {
+	assert.equal(filters.schema.safeParse(value).success, false)
+	await assert.rejects(
+		client.query(anyApi.functions.endpoint, { numItems: 1, cursor: null, filters: value }),
+	)
+}
+await assert.rejects(
+	client.query(anyApi.functions.endpoint, {
+		numItems: 1,
+		cursor: null,
+		filters: { reference: ownId },
+	}),
+)
+assert.ok(encoded.success)
+const invalid: import('cvx-kit/filters').SharedFilters<{
+	active: ReturnType<typeof import('convex/values').v.boolean>
+}> = {
+	// @ts-expect-error boolean predicates cannot accept ranges
+	active: { gt: true },
+}
+void invalid
+console.log('U7 packed registered auth endpoint, native ID rejection, engine and URL passed')
+
+const cyclic: any = {}
+cyclic.not = cyclic
+assert.equal(filters.schema.clone().safeParse(cyclic).success, false)
+assert.equal(filters.evaluate({ not: { count: { exists: false } } }, {}, new Set()), 'unknown')
+
+const missingId = await t.run((ctx) =>
+	ctx.db.insert('records', {
+		status: 'done',
+		title: 'missing',
+		score: 0,
+		active: false,
+		nullable: 'present',
+		reference: id,
+	}),
+)
+const missing = await client.query(anyApi.functions.endpoint, {
+	numItems: 10,
+	cursor: null,
+	filters: { count: { exists: false } },
+})
+assert.deepEqual(
+	missing.page.map((row: any) => row._id),
+	[missingId],
+)
+assert.equal(filters.evaluate({ count: { exists: false } }, {}, new Set(['count'])), true)
+
+// Derived shared IDs retain native validation, including immutable table snapshots.
+for (const field of [filters.fields.reference.clone(), filters.fields.reference.describe('Reference'), filters.fields.reference.meta({ title: 'Reference' }), filters.fields.reference.refine(() => true)]) {
+ const derived = zodTable('derived', () => ({ reference: field }), { publicFields: ['reference'] })
+ const registry = defineRelations({ derived }, () => ({}))
+ assert.ok(JSON.stringify(zodToConvex(registry.tables.derived.pageDto({}))).includes('"tableName":"targets"'))
+ const derivedEndpoint = auth.authQuery({ args: { reference: field }, returns: z.any(), handler: (_ctx, args) => args.reference })
+ const derivedTest = convexTest(schema, {
+  './_generated/server.ts': async () => builders,
+  './functions.ts': async () => ({ derivedEndpoint }),
+ })
+ const target = await derivedTest.run((ctx) => ctx.db.insert('targets', { active: true }))
+ const wrong = await derivedTest.run((ctx) => ctx.db.insert('records', { status: 'open', title: 'wrong', score: 0, active: false, nullable: null, reference: target }))
+ const derivedClient = derivedTest.withIdentity({ subject: 'reader', org_id: 'org', role: 'reader' })
+ assert.equal(await derivedClient.query(anyApi.functions.derivedEndpoint, { reference: target }), target)
+ await assert.rejects(derivedClient.query(anyApi.functions.derivedEndpoint, { reference: wrong }))
+ await assert.rejects(derivedClient.query(anyApi.functions.derivedEndpoint, { reference: 'not-an-id' }))
+}

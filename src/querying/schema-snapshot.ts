@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { GenericValidator } from 'convex/values'
-import { zid, zodToConvex } from 'convex-helpers/server/zod4'
+import { zid } from 'convex-helpers/server/zod4'
+import { zodToConvex } from '../zod-convex'
 
 // Recipes contain semantic definitions only. No source parser, constructor,
 // parent, hooks or lazy caches survive registration.

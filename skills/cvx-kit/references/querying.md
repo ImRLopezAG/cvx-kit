@@ -8,6 +8,59 @@ paginate with a small declarative chain. The engine runs streams and relationshi
 lookups in the caller's Convex query transaction. Filtering determines eligible
 parents before they fill a page. Native `paginated(dto)` remains independent.
 
+## Browser-safe scalar filters
+
+Declare selected fields in a pure module with `cvx-kit/filters` and
+`convex/values`; import that module from both the browser and the stored table.
+Keep the live relation registry in server code.
+
+```ts
+// contracts/task-filters.ts (browser safe)
+import { v } from 'convex/values'
+import { defineFilterContract } from 'cvx-kit/filters'
+export const taskFilters = defineFilterContract({
+	status: v.union(v.literal('open'), v.literal('done')),
+	dueAt: v.optional(v.number()),
+	assignee: v.id('users'),
+})
+// server table declaration
+const tasks = zodTable('tasks', () => ({ ...taskFilters.fields, secret: z.string() }))
+const relations = defineRelations({ tasks }, () => ({}))
+const args = relations.tables.tasks.filters(taskFilters)
+const list = authQuery({
+	args,
+	returns: relations.tables.tasks.pageDto({}),
+	handler: (ctx, input) => querying(ctx).tasks.paginate(input),
+})
+```
+
+Binding checks native field types, ID table names and optionality, and uses the
+exact shared filter schema in the pagination input. Kit table/auth constructors
+preserve native ID validation; browser validation checks ID strings and retains
+their output brands. Do not register the pure ID schemas directly through
+convex-helpers' server constructors: its private ID registry cannot recognize
+them. Existing `paginationOpts(selection)` keeps its relation/variant grammar.
+The shared contract is scalar only: unsupported objects, arrays and variant
+tables are explicitly rejected, as are relation/variant filter expressions.
+
+`schema` validates direct fields, `fields`, `and`, `or`, `not` and native scalar
+operators under the same depth/node/in-value ceilings. `describe()` reports
+literal enum values, unions, ID tables, nullable/optional and bigint metadata.
+Number fields have no implicit date semantics; finite numbers follow legacy
+Zod validation. Bytes are outside this scalar grammar.
+
+`searchParam.encode(filters)` and `.decode(text)` return either
+`{ success: true, value }` or `{ success: false, error }`. Version 1 uses Convex
+value serialization, preserves bigint and array order, and sorts object keys.
+Inputs are bounded to 32,768 encoded characters, four expression edges and 256
+grammar nodes. Getters, cycles, malformed versions and invalid values reject.
+
+`evaluate(filters, document, accessibleFields)` returns `true`, `false` or
+`'unknown'`. The set lists accessible fields even when their stored value is
+missing. A field outside that set stays unknown through negation and boolean
+composition unless another branch decides the result. Omit the set only for a
+complete server row; inaccessible fields must never be treated as missing.
+
 ## Stored field groups
 
 Register whole stored fields alongside the table boundary. The registry captures
@@ -527,13 +580,11 @@ Use the configured engine for native pagination that requires its own traversal:
 
 ```ts
 const codec = querying.cursorCodec(ctx, {
-  domain: 'clients-search-v1',
-  bind: { filters, sort, departments: serverDerivedDepartments },
-  schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+	domain: 'clients-search-v1',
+	bind: { filters, sort, departments: serverDerivedDepartments },
+	schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
 })
-const position = args.cursor
-  ? codec.open(args.cursor)
-  : { native: null, seen: 0n }
+const position = args.cursor ? codec.open(args.cursor) : { native: null, seen: 0n }
 // Recheck current permissions and authorize every native row before returning it.
 const nextCursor = codec.seal({ native: nativeResult.continueCursor, seen: position.seen + 1n })
 ```

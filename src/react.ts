@@ -14,3 +14,10 @@ export {
 	type PaginatedListOptions,
 	type ListQueryReference,
 } from './react/use-paginated-list'
+export {
+	defineOptimisticList,
+	type OptimisticList,
+	type OptimisticListDescriptor,
+	type OptimisticInterval,
+	type OptimisticOrder,
+} from './react/optimistic'

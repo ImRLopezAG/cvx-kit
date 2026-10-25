@@ -76,3 +76,4 @@ Maintainers edit `skills/cvx-kit/references/*.md` directly. CI verifies portable
 relative links with `bun run skills:check`.
 
 - Reactive paginated lists: [client-list.md](references/client-list.md)
+- Conservative optimistic lists: [client-optimistic.md](references/client-optimistic.md)

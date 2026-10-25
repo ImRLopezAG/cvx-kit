@@ -46,7 +46,9 @@ writeFileSync(
 )
 for (const [label, helpers, zod, react, reactTypes] of [
 	['current', '0.1.128', '4.6.5', '19.2.8', '19.2.2'],
-	['minimum', '0.1.127', '4.5.4', '18.0.0', '18.0.0'],
+	// Convex 1.46 declarations use React.JSX. Runtime React 18.0.0 is supported,
+	// but @types/react 18.0.0 predates that namespace; use compatible React 18 declarations.
+	['minimum', '0.1.127', '4.5.4', '18.0.0', '18.3.0'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -112,6 +114,12 @@ for (const [label, helpers, zod, react, reactTypes] of [
 			.replaceAll('../../src/react', 'cvx-kit/react')
 			.replaceAll('../../src/errors', 'cvx-kit/errors'),
 	)
+	writeFileSync(
+		join(fixture, 'optimistic.tsx'),
+		readFileSync(join(root, 'test/fixture-packed-client/optimistic.tsx'), 'utf8')
+			.replaceAll('../../src/react', 'cvx-kit/react')
+			.replaceAll('../../src/errors', 'cvx-kit/errors'),
+	)
 	run('bun', ['--no-env-file', 'install', '--ignore-scripts'], fixture, label + '-install')
 	writeFileSync(
 		join(fixture, 'versions.json'),
@@ -174,7 +182,11 @@ for (const [label, helpers, zod, react, reactTypes] of [
 	run('node', ['--import', './register.mjs', 'failures.ts'], fixture, label + '-raw-failures')
 
 	const reactBundle = await build({
-		entryPoints: [join(fixture, 'react.tsx'), join(fixture, 'list.tsx')],
+		entryPoints: [
+			join(fixture, 'react.tsx'),
+			join(fixture, 'list.tsx'),
+			join(fixture, 'optimistic.tsx'),
+		],
 		outdir: join(proof, label + '-react-bundles'),
 		bundle: true,
 		platform: 'browser',
@@ -194,6 +206,10 @@ for (const [label, helpers, zod, react, reactTypes] of [
 		),
 	)
 	assert.ok(reactInputs.some((p) => p.includes('cvx-kit/dist/react')))
+	assert.ok([...emittedInputs].some((p) => p.endsWith('/cvx-kit/dist/react/optimistic.mjs')))
+	assert.ok(
+		[...emittedInputs].some((p) => p.endsWith('/cvx-kit/dist/querying/shared/evaluate.mjs')),
+	)
 	const clientSharedConvex = new Set([
 		'functionName.js',
 		'components/paths.js',
@@ -206,7 +222,9 @@ for (const [label, helpers, zod, react, reactTypes] of [
 		const serverPart = path.split('/convex/dist/esm/server/')[1]
 		if (serverPart !== undefined && emittedInputs.has(path))
 			assert.ok(clientSharedConvex.has(serverPart), `Unexpected Convex server module: ${path}`)
-		assert.doesNotMatch(path, /cvx-kit\/dist\/querying\//)
+		// U10 reuses U7's pure scalar evaluator. No other querying module is browser-safe here.
+		if (!path.endsWith('/cvx-kit/dist/querying/shared/evaluate.mjs'))
+			assert.doesNotMatch(path, /cvx-kit\/dist\/querying\//)
 	}
 	for (const path of reactInputs)
 		assert.doesNotMatch(

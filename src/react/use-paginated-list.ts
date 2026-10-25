@@ -38,7 +38,7 @@ export type PaginatedList<
 	failure: FailureOf<Contract> | undefined
 }
 export type PaginatedListOptions<Contract extends FailureContract = typeof queryErrors> = {
-	/** Integer 1..100, the engine's hard ceiling. A server may configure a lower ceiling. */
+	/** Integer 1..100. Initial target for native search; browse uses fixed adjacent pages. */
 	pageSize: number
 	onInvalidCursor?: 'restart' | 'throw'
 	/** Explicit server contract; generated references do not carry error metadata. Defaults to queryErrors. */
@@ -53,7 +53,7 @@ type IntervalPagination = {
 	endCursor?: string
 }
 let epoch = 0
-/** Reactive engine-backed list using only public Convex subscriptions. No automatic loading loop. */
+/** Reactive engine-backed list: fixed browse ranges or SDK-journal search windows. Empty pages advance manually. */
 export function usePaginatedList<
 	Query extends ListQueryReference,
 	Contract extends FailureContract = typeof queryErrors,

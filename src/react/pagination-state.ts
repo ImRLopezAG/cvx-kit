@@ -6,6 +6,7 @@ export type ListPage = {
 	completeness?: string
 	splitCursor?: string | null
 	pageStatus?: 'SplitRecommended' | 'SplitRequired' | null
+	paginationMode?: 'native-search'
 }
 type Interval<Page extends ListPage> = {
 	cursor: string | null
@@ -20,6 +21,7 @@ export type PaginationState<Page extends ListPage> = {
 	next: number
 	order: string[]
 	intervals: Record<string, Interval<Page>>
+	mode?: 'browse' | 'native-search'
 	error?: Error
 }
 export function initialPagination<Page extends ListPage>(
@@ -59,6 +61,20 @@ export function reconcilePagination<Page extends ListPage>(
 			changed = true
 		}
 	}
+	// The first result chooses the protocol for this epoch, including on reactive reruns.
+	const first = intervals[state.order[0]]?.value
+	const mode = state.mode ?? (first ? (first.paginationMode ?? 'browse') : undefined)
+	for (const interval of Object.values(intervals)) {
+		const value = interval.value
+		if (!value) continue
+		if (
+			(value.paginationMode !== undefined && value.paginationMode !== 'native-search') ||
+			(mode !== undefined && (value.paginationMode ?? 'browse') !== mode) ||
+			value.completeness === 'searchSplitRequired' ||
+			(mode === 'native-search' && (value.pageStatus != null || value.splitCursor != null))
+		)
+			return failPagination(state, new Error('Invalid pagination protocol'))
+	}
 	let order = state.order,
 		next = state.next
 	for (const key of state.order) {
@@ -96,7 +112,7 @@ export function reconcilePagination<Page extends ListPage>(
 			return failPagination(state, new Error('Non-progressing pagination cursor'))
 		}
 	}
-	return changed ? { ...state, next, order, intervals } : state
+	return changed ? { ...state, mode, next, order, intervals } : state
 }
 export function paginationView<Page extends ListPage>(state: PaginationState<Page>) {
 	const rows: Page['page'][number][] = []
@@ -137,7 +153,8 @@ export function nextPagination<Page extends ListPage>(
 		intervals: {
 			...state.intervals,
 			// Fixed adjacent ranges keep reactive inserts/deletes from moving rows across a loaded boundary.
-			[lastKey]: { ...last, endCursor },
+			// Native search windows are maintained by SDK journals; their original inputs stay immutable.
+			[lastKey]: state.mode === 'native-search' ? last : { ...last, endCursor },
 			[key]: { cursor: endCursor },
 		},
 	}

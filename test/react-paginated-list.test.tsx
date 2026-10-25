@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vite-plus/test'
 import { queryErrors, usePaginatedList } from '../src/react'
 
 type Page = {
+	paginationMode?: 'native-search'
 	page: { id: string }[]
 	continueCursor: string
 	isDone: boolean
@@ -488,4 +489,126 @@ describe('usePaginatedList public Convex subscriptions', () => {
 			await f.close()
 		}
 	})
+})
+
+describe('usePaginatedList native search transport', () => {
+	it('adds only one successor and keeps its protected token when the parent grows and caps', async () => {
+		const f = await fixture()
+		try {
+			const first = f.adds()[0]
+			await f.deliver(
+				first.queryId,
+				page(['A', 'B'], 'sealed-2', false, { paginationMode: 'native-search' }),
+			)
+			await f.fetch()
+			expect(f.adds()).toHaveLength(2)
+			expect(f.active()[0]).toEqual(first)
+			const child = f.adds()[1]
+			expect(child.args[0].paginationOpts.cursor).toBe('sealed-2')
+			expect(first.args[0].paginationOpts.endCursor).toBeUndefined()
+			await f.deliver(
+				child.queryId,
+				page(['C'], 'sealed-3', false, { paginationMode: 'native-search' }),
+			)
+			await f.deliver(
+				first.queryId,
+				page(['X', 'A', 'B'], 'sealed-new-seen', true, { paginationMode: 'native-search' }),
+			)
+			expect(f.adds()).toHaveLength(2)
+			expect(f.list().rows.map((row) => row.id)).toEqual(['X', 'A', 'B', 'C'])
+			expect(f.list().hasNextPage).toBe(true)
+			expect(f.active().find((entry) => entry.queryId === child.queryId).args).toEqual(child.args)
+		} finally {
+			await f.close()
+		}
+	})
+	it('continues empty windows manually, rejects mixed modes and clears cached rows', async () => {
+		const f = await fixture()
+		try {
+			await f.deliver(
+				f.adds()[0].queryId,
+				page([], 'empty-next', false, { paginationMode: 'native-search' }),
+			)
+			expect(f.adds()).toHaveLength(1)
+			expect(f.list().hasNextPage).toBe(true)
+			await f.fetch()
+			expect(f.adds()).toHaveLength(2)
+			await f.deliver(
+				f.adds()[1].queryId,
+				page(['private'], 'tail', false, { paginationMode: 'native-search' }),
+			)
+			expect(f.list().rows).toEqual([{ id: 'private' }])
+			await f.deliver(f.adds()[0].queryId, page(['browse'], 'other'))
+			expect(f.list().rows).toEqual([])
+			expect(f.list().failure).toBeDefined()
+			expect(f.active()).toHaveLength(0)
+		} finally {
+			await f.close()
+		}
+	})
+	for (const extra of [
+		{ pageStatus: 'SplitRequired' as const, splitCursor: 'mid' },
+		{ completeness: 'searchSplitRequired' },
+	])
+		it('fails closed for search split protocol ' + JSON.stringify(extra), async () => {
+			const f = await fixture()
+			try {
+				await f.deliver(
+					f.adds()[0].queryId,
+					// SAFETY: inject unsupported search completeness to test transported protocol rejection.
+					page(['private'], 'next', false, {
+						paginationMode: 'native-search',
+						...extra,
+					} as Partial<Page>),
+				)
+				expect(f.list().rows).toEqual([])
+				expect(f.list().failure).toBeDefined()
+				expect(f.active()).toHaveLength(0)
+				expect(f.adds()).toHaveLength(1)
+			} finally {
+				await f.close()
+			}
+		})
+})
+
+it('resets search capability on identity changes and ignores late frames and fetch callbacks', async () => {
+	const f = await fixture()
+	try {
+		const old = f.adds()[0]
+		await f.deliver(
+			old.queryId,
+			page(['a', 'a'], 'search-token', false, { paginationMode: 'native-search' }),
+		)
+		expect(f.list().rows).toEqual([{ id: 'a' }, { id: 'a' }])
+		const staleFetch = f.list().fetchNextPage
+		await f.change({ filters: { a: 1 } })
+		expect(f.list().rows).toEqual([])
+		await f.deliver(
+			old.queryId,
+			page(['late'], 'late-token', false, { paginationMode: 'native-search' }),
+		)
+		await act(async () => staleFetch())
+		expect(f.list().rows).toEqual([])
+		const browse = f.adds().at(-1)!
+		await f.deliver(browse.queryId, page(['browse'], 'browse-token'))
+		await f.fetch()
+		expect(
+			f.active().find((entry) => entry.args[0].paginationOpts.cursor === null)!.args[0]
+				.paginationOpts.endCursor,
+		).toBe('browse-token')
+		await f.change({}, query, 'new-search')
+		expect(f.list().rows).toEqual([])
+		await f.deliver(
+			f.adds().at(-1)!.queryId,
+			page(['search'], 'new-token', false, { paginationMode: 'native-search' }),
+		)
+		const count = f.adds().length
+		await f.fetch()
+		expect(f.adds()).toHaveLength(count + 1)
+		await f.change('skip')
+		expect(f.list().rows).toEqual([])
+		expect(f.active()).toHaveLength(0)
+	} finally {
+		await f.close()
+	}
 })

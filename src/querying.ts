@@ -258,7 +258,14 @@ export function createQueryEngine<
 					const codec = (cursorCodec ??= createEnvironmentCursorCodec())
 					planner.select(table, selection)
 					assertRelationshipDepth(selection, route?.path.length ?? 0)
-					const plan = planner.plan(table, input, route ? [] : conditions, constraints, ordering)
+					const plan = planner.plan(
+						table,
+						input,
+						route ? [] : conditions,
+						constraints,
+						ordering,
+						route ? 'relation' : 'root',
+					)
 					if (plan.args.numItems > maxPageSize) throw new Error('Page size exceeds central ceiling')
 					// Native root limits stay native; lowering those limits cannot raise
 					// the independent shared request meter.

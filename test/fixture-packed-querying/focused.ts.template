@@ -34,6 +34,10 @@ const deepEngine = createQueryEngine({ schema, relations, cursor, budgets: { dep
 const rowEngine = createQueryEngine({ schema, relations, cursor, budgets: { readOperations: 2 } })
 const byteEngine = createQueryEngine({ schema, relations, cursor, budgets: { documentBytes: 1024 * 1024 } })
 const probes = {
+ multiAutomatic: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => eqEngine(ctx).tasks.where({department: 'u4'}).paginate(args) }),
+ multiOrdered: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => eqEngine(ctx).tasks.where({department: 'u4'}).orderBy('by_priority').paginate(args) }),
  progress: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
   handler: (ctx, args) => rowEngine(ctx).tasks.paginate(args) }),
  bytes: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
@@ -191,3 +195,32 @@ const revokedParent = contract.queries.next.result.parse(await client.query(anyA
 assert.deepEqual(revokedParent.page, [])
 record({ name: 'child-replay-and-parent-junction-revocation', passed: true })
 writeFileSync('FOCUSED_SUCCESS', 'Public registered focused tie/output/depth/metadata/registry/revocation probes passed.\n')
+
+// U4: installed public helper, registered managed endpoint, tied native keys.
+const multiRows = await t.run(async ctx => {
+ const rows = []
+ for (let ordinal=100;ordinal<124;ordinal++) {
+  const id = await ctx.db.insert('tasks', {ordinal, tenant:'a', authorized:ordinal%5!==0,
+   department:'u4', status:'open', active:false, priority:ordinal%3, code:'', secret:'U4_PRIVATE'})
+  rows.push((await ctx.db.get(id))!)
+ }
+ return rows
+})
+for (const order of ['asc','desc'] as const) for (const explicit of [false,true]) {
+ const ref=explicit ? anyApi.api.probes.multiOrdered : anyApi.api.probes.multiAutomatic
+ const expected=multiRows.filter(row=>row.authorized && [0,2].includes(row.priority)).sort((a,b)=> {
+  const priority=explicit ? a.priority-b.priority : 0
+  return (priority || a._creationTime-b._creationTime || a._id.localeCompare(b._id)) * (order==='asc'?1:-1)
+ }).map(row=>row._id)
+ const actual:string[]=[];let token:string|null=null
+ for(let i=0;i<30;i++) {
+  const page=contract.queries.list.result.parse(await client.query(ref,{numItems:i%2+1,cursor:token,order,
+   filters:{priority:{in:i%2 ? [0,2] : [2,0,2]}}}))
+  actual.push(...page.page.map(row=>row._id));if(page.isDone)break;token=page.continueCursor
+ }
+ assert.deepEqual(actual,expected)
+}
+const emptySet=await client.query(anyApi.api.probes.multiAutomatic,{numItems:1,cursor:null,filters:{priority:{in:[]}}})
+assert.deepEqual(emptySet.page,[])
+await assert.rejects(client.query(anyApi.api.probes.multiAutomatic,{numItems:1,cursor:null,filters:{priority:{in:[0,1,2,3,4,5,6,7,8]}}}), /QUERY_FANOUT/)
+record({name:'u4-installed-merged-stream-normalized-full-and-tail',passed:true})

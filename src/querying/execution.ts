@@ -1,5 +1,7 @@
 import {
 	EmptyStream,
+	mergedStream,
+	getIndexFields,
 	QueryStream,
 	stream,
 	type IndexBounds,
@@ -19,7 +21,12 @@ import type { Value } from 'convex/values'
 import type { createPlanner } from './planner'
 import { MAX_DOCUMENT_BYTES, ManagedReadError, type ManagedReadRequest } from './security'
 import { CursorError, type CursorBinding, type createCursorCodec } from './cursors'
-import type { NativePagination, NativeRange, FilterScalar } from './filters'
+import {
+	rangeForIndex,
+	type NativePagination,
+	type NativeRange,
+	type FilterScalar,
+} from './filters'
 import { RelationshipError } from './relationships'
 import type { EnginePaginationResult, PageCompleteness } from '../zod-table'
 
@@ -94,11 +101,30 @@ export async function executeStream(
 	try {
 		// SAFETY: runtime ownership/index validation precedes this dynamic table
 		// adapter. Public generics retain the original application's schema.
-		const base = stream(leaves.db, schema as ExecutionSchema).query(table)
+		const nativeSchema = schema as ExecutionSchema
+		const base = stream(leaves.db, nativeSchema).query(table)
 		const selected = plan.index
 			? base.withIndex(plan.index.name, (q) => nativeIndexRange(q, plan.prefix, plan.range))
 			: base
-		const ordered = selected.order(plan.args.order ?? 'asc')
+		const order = plan.args.order ?? 'asc'
+		const expansion = plan.expansion
+		const ordered =
+			expansion && plan.index && !plan.unsatisfiable
+				? mergedStream(
+						expansion.values.map((value) => {
+							const prefix = [...plan.prefix, { field: expansion.field, value }]
+							// SAFETY: each stream binds the same admitted index at one consecutive position.
+							return base
+								.withIndex(plan.index!.name, (q) =>
+									nativeIndexRange(q, prefix, rangeForIndex(plan.index!, prefix, plan.ranges)),
+								)
+								.order(order)
+						}),
+						expansion.comparator === 'full-index'
+							? getIndexFields(table, plan.index.name, nativeSchema)
+							: getIndexFields(table, plan.index.name, nativeSchema).slice(plan.prefix.length + 1),
+					)
+				: selected.order(order)
 		const source = transform ? transform(ordered, leaves.db) : ordered
 		const result: EnginePaginationResult<Record<string, Value>> = plan.unsatisfiable
 			? await new EmptyStream<Record<string, Value>>(
@@ -158,6 +184,7 @@ export function nativeIndexRange(
  */
 function leafReader(request: Request, planner: ReturnType<typeof createPlanner>) {
 	const active = new Set<AsyncIterator<GenericDocument>>()
+	const pending = new Set<Promise<IteratorResult<GenericDocument>>>()
 	function wrap<Source extends AsyncIterable<GenericDocument>>(
 		table: string,
 		source: Source,
@@ -185,7 +212,13 @@ function leafReader(request: Request, planner: ReturnType<typeof createPlanner>)
 						return {
 							next: () => {
 								planner.beforeLeaf(table)
-								return iterator.next()
+								const next = iterator.next()
+								pending.add(next)
+								void next.then(
+									() => pending.delete(next),
+									() => pending.delete(next),
+								)
+								return next
 							},
 						}
 					}
@@ -205,6 +238,7 @@ function leafReader(request: Request, planner: ReturnType<typeof createPlanner>)
 	return {
 		db,
 		async close() {
+			await Promise.allSettled(pending)
 			let failed = false
 			for (const iterator of active) {
 				try {

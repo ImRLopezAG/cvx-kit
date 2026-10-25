@@ -10,7 +10,7 @@ import type {
 	NativePagination,
 	QueryIndex,
 } from './filters'
-import { rangeForIndex, withinRange } from './filters'
+import { expansionForIndex, rangeForIndex, withinRange } from './filters'
 import {
 	executeStream,
 	nativeIndexRange,
@@ -130,6 +130,7 @@ export function relationshipExecutor(
 			.sort(
 				(a, b) =>
 					length(b) - length(a) ||
+					Number(plan.sets.has(b.fields[length(b)])) - Number(plan.sets.has(a.fields[length(a)])) ||
 					Number(plan.ranges.has(b.fields[length(b)])) -
 						Number(plan.ranges.has(a.fields[length(a)])) ||
 					a.name.localeCompare(b.name) ||
@@ -364,6 +365,7 @@ export function relationshipExecutor(
 			[],
 			guardConstraint ? [...constraints, guardConstraint] : constraints,
 			ordering,
+			'relation',
 		)
 		const from = declared.from,
 			to = declared.to
@@ -388,6 +390,17 @@ export function relationshipExecutor(
 			declared.targetGuard,
 		)
 		const index = through ? lookup(sourceTable, field, declared.junctionGuard) : targetIndex
+		// The lookup value changes only values, not prefix positions or comparator.
+		const expansion =
+			through || plan.unsatisfiable
+				? null
+				: expansionForIndex(
+						index,
+						relationPrefix(index, field, null, plan, declared.targetGuard),
+						plan.sets,
+						ordering !== undefined ||
+							conditions.some((c) => c.value !== null && c.value !== undefined),
+					)
 		// SAFETY: planner.page validated the complete output mask before cursor binding.
 		const binding: CursorBinding = {
 			...rootBinding,
@@ -396,7 +409,12 @@ export function relationshipExecutor(
 			order: plan.args.order ?? 'asc',
 			clientFilters: plan.clientIdentity,
 			serverFilters: {
-				predicates: plan.serverIdentity,
+				predicates: plan.sets.size
+					? {
+							predicates: plan.serverIdentity,
+							traversal: { version: 2, expansion: expansion ? { ...expansion } : null },
+						}
+					: plan.serverIdentity,
 				selection: selection as Value,
 				scope: { ...request.scope },
 				rootTable: rootBinding.table,
@@ -423,7 +441,18 @@ export function relationshipExecutor(
 				throw new CursorError()
 			}
 		}
-		return { declared, plan, through, sourceTable, field, index, targetIndex, binding, open }
+		return {
+			declared,
+			plan,
+			through,
+			sourceTable,
+			field,
+			index,
+			targetIndex,
+			binding,
+			open,
+			expansion,
+		}
 	}
 	async function pageRelation(
 		table: string,
@@ -449,12 +478,14 @@ export function relationshipExecutor(
 		opened?: { cursor: string | null; endCursor?: string | null },
 	) {
 		request.expand(depth, 0)
-		const { declared, plan, through, sourceTable, field, index, targetIndex, binding } = prepared
+		const { declared, plan, through, sourceTable, field, index, targetIndex, binding, expansion } =
+			prepared
 		const value = sourceValue(declared, parent)
 		const args = { ...plan.args, ...(opened ?? { cursor: null }) }
 		// SAFETY: declarations accept only native scalar lookup values; nullish references are absence.
 		const lookupPlan = {
 			...plan,
+			expansion,
 			index,
 			prefix:
 				value == null

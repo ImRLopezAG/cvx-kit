@@ -43,6 +43,7 @@ export function createPlanner(
 			conditions: readonly IndexCondition[],
 			constraints: readonly StoredConstraint[],
 			ordering?: string,
+			traversal: 'root' | 'relation' = 'root',
 		) {
 			if (!Object.hasOwn(metadata.tables, table)) throw new Error('Unknown query table')
 			let validator = inputs.get(table)
@@ -61,7 +62,7 @@ export function createPlanner(
 			const { args, compiled } = parseFilterPlan(
 				validator,
 				input,
-				metadata.tables[table].indexes,
+				traversal === 'relation' && ordering === undefined ? [] : metadata.tables[table].indexes,
 				conditions,
 				where,
 				ordering,
@@ -70,7 +71,13 @@ export function createPlanner(
 			const [client, server] = compiled.residual.children
 			const empty: FilterAst = { kind: 'and', children: [] }
 			const clientIdentity = { kind: 'and', children: [client, empty] }
-			const serverIdentity = { kind: 'and', children: [server, empty] }
+			const serverIdentity = compiled.sets.size
+				? {
+						kind: 'and',
+						children: [server, empty],
+						traversal: { version: 2, expansion: compiled.expansion },
+					}
+				: { kind: 'and', children: [server, empty] }
 			// SAFETY: normalized AST nodes contain only validated native scalar Values.
 			return {
 				...compiled,

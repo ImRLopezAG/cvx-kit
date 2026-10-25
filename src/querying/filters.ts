@@ -153,7 +153,7 @@ export function scalarPredicateSchema(validator: GenericValidator): z.ZodType {
 	const scalar = convexToZod(validator).nonoptional()
 	const equality = z.object({
 		eq: scalar.optional(),
-		in: z.array(scalar).min(1).max(MAX_FILTER_IN_VALUES).optional(),
+		in: z.array(scalar).max(MAX_FILTER_IN_VALUES).optional(),
 	})
 	const ranged = supportsRange(validator)
 		? equality.extend({
@@ -279,7 +279,16 @@ export interface FieldRange {
 export interface NativeRange extends FieldRange {
 	field: string
 }
+export const MAX_INDEX_EXPANSION = 8
+export interface IndexExpansion {
+	field: string
+	values: FilterScalar[]
+	comparator: 'tail' | 'full-index'
+}
 export interface CompiledFilters {
+	expansion: IndexExpansion | null
+	sets: ReadonlyMap<string, FilterScalar[]>
+
 	residual: FilterAst
 	bindings: ReadonlyMap<string, FilterScalar>
 	ranges: ReadonlyMap<string, FieldRange>
@@ -301,7 +310,7 @@ interface BindingResult {
 }
 
 /** Validate first; where is independently validated and ANDed with client predicates.
- * OR remains a residual expression over one traversal, never multiple streams.
+ * Only guaranteed sets at one consecutive index position may expand.
  */
 export function compileFilters<Schema extends z.ZodType>(
 	schema: Schema,
@@ -334,12 +343,22 @@ export function parseFilterPlan<Schema extends z.ZodType>(
 	const residual: FilterAst = {
 		kind: 'and',
 		children: [
-			normalizeFilters(parsed.filters, grammar),
-			normalizeFilters(server?.filters, grammar),
+			canonicalSets(normalizeFilters(parsed.filters, grammar)),
+			canonicalSets(normalizeFilters(server?.filters, grammar)),
 		],
 	}
 	const guaranteed = guaranteedBindings(residual)
 	const ranges = guaranteedRanges(residual)
+	const sets = guaranteedSets(residual)
+	for (const [field, values] of sets) {
+		const eligible = values.filter(
+			(value) =>
+				(!guaranteed.values.has(field) || valueEqual(value, guaranteed.values.get(field)!)) &&
+				(!ranges.has(field) || withinRange(value, ranges.get(field)!)),
+		)
+		sets.set(field, eligible)
+		if (!eligible.length) guaranteed.impossible = true
+	}
 	for (const [field, range] of ranges) {
 		if (range.lower && range.upper) {
 			const compared = compareValues(range.lower.value, range.upper.value)
@@ -368,8 +387,9 @@ export function parseFilterPlan<Schema extends z.ZodType>(
 		let ranged = false
 		for (const candidate of sorted) {
 			const prefix = prefixBindings(candidate, guaranteed.values)
-			const usable = prefix.length
-			const hasRange = rangeForIndex(candidate, prefix, ranges) !== null
+			const expanded = sets.has(candidate.fields[prefix.length])
+			const usable = prefix.length + Number(expanded)
+			const hasRange = ranges.has(candidate.fields[usable])
 			if (usable > length || (usable === length && hasRange && !ranged)) {
 				index = candidate
 				length = usable
@@ -377,7 +397,14 @@ export function parseFilterPlan<Schema extends z.ZodType>(
 			}
 		}
 	}
+	const prefix = index ? prefixBindings(index, guaranteed.values) : []
+	const expansion =
+		index && !guaranteed.impossible
+			? expansionForIndex(index, prefix, sets, ordering !== undefined || !!condition)
+			: null
 	const compiled: CompiledFilters = {
+		sets,
+		expansion,
 		residual,
 		bindings: guaranteed.values,
 		ranges,
@@ -405,6 +432,71 @@ export function rangeForIndex(
 	const field = index.fields[prefix.length]
 	const range = ranges.get(field)
 	return range ? { field, ...range } : null
+}
+/** Recompute for the actual lookup prefix on direct relationships, too. */
+export function expansionForIndex(
+	index: QueryIndex,
+	prefix: readonly { field: string; value: FilterScalar }[],
+	sets: ReadonlyMap<string, FilterScalar[]>,
+	explicit: boolean,
+): IndexExpansion | null {
+	const field = index.fields[prefix.length]
+	const values = sets.get(field)
+	if (!values?.length) return null
+	if (values.length > MAX_INDEX_EXPANSION) {
+		if (explicit) return null
+		throw new Error('QUERY_FANOUT')
+	}
+	return { field, values, comparator: explicit ? 'full-index' : 'tail' }
+}
+
+/** Normalize only membership sets; unrelated boolean expressions retain their identity. */
+function canonicalSets(ast: FilterAst): FilterAst {
+	if (ast.kind === 'scalar' && ast.operator === 'in' && Array.isArray(ast.value))
+		return { ...ast, value: uniqueValues(ast.value) }
+	if (ast.kind === 'and' || ast.kind === 'or') {
+		const children = ast.children.map(canonicalSets)
+		const scalar = (node: FilterAst): { field: string; value: FilterScalar } | undefined => {
+			if (node.kind === 'scalar' && node.operator === 'eq' && !Array.isArray(node.value))
+				return { field: node.field, value: node.value }
+			if (node.kind === 'and' && node.children.length === 1) return scalar(node.children[0])
+			return undefined
+		}
+		const branches = children.map(scalar)
+		const first = branches[0]
+		if (ast.kind === 'or' && first && branches.every((branch) => branch?.field === first.field))
+			return {
+				kind: 'scalar',
+				field: first.field,
+				operator: 'in',
+				value: uniqueValues(branches.map((branch) => branch!.value)),
+			}
+		return { ...ast, children }
+	}
+	if (ast.kind === 'not') return { ...ast, child: canonicalSets(ast.child) }
+	if (ast.kind === 'variant') return { ...ast, child: canonicalSets(ast.child) }
+	if (ast.kind === 'relation' && ast.predicate)
+		return { ...ast, predicate: canonicalSets(ast.predicate) }
+	return ast
+}
+function uniqueValues(values: FilterScalar[]): FilterScalar[] {
+	return [...values]
+		.sort(compareValues)
+		.filter((value, i, sorted) => i === 0 || !valueEqual(value, sorted[i - 1]))
+}
+function guaranteedSets(ast: FilterAst, sets = new Map<string, FilterScalar[]>()) {
+	if (ast.kind === 'and') for (const child of ast.children) guaranteedSets(child, sets)
+	else if (ast.kind === 'variant') guaranteedSets(ast.child, sets)
+	else if (ast.kind === 'scalar' && ast.operator === 'in' && Array.isArray(ast.value)) {
+		const previous = sets.get(ast.field)
+		sets.set(
+			ast.field,
+			previous
+				? ast.value.filter((value) => previous.some((other) => valueEqual(value, other)))
+				: ast.value,
+		)
+	}
+	return sets
 }
 function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined {
 	if (!(schema instanceof z.ZodObject)) return undefined
@@ -509,9 +601,13 @@ function guaranteedBindings(ast: FilterAst): BindingResult {
 	if (ast.kind === 'scalar') {
 		if (ast.operator === 'eq' && !Array.isArray(ast.value)) values.set(ast.field, ast.value)
 		const choices = Array.isArray(ast.value) ? ast.value : undefined
-		if (ast.operator === 'in' && choices && choices.every((value) => valueEqual(value, choices[0])))
+		if (
+			ast.operator === 'in' &&
+			choices?.length &&
+			choices.every((value) => valueEqual(value, choices[0]))
+		)
 			values.set(ast.field, choices[0])
-		return { values, impossible: false }
+		return { values, impossible: ast.operator === 'in' && choices?.length === 0 }
 	}
 	if (ast.kind === 'not' || ast.kind === 'relation') return { values, impossible: false }
 	const branches = ast.children.map(guaranteedBindings)

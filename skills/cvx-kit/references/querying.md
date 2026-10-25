@@ -275,6 +275,32 @@ missing values; no null/existence guard is added. Use `exists: true` when needed
 Nullable fields keep their existing grammar, which rejects range operators; null
 and missing values still retain their native index order and equality behavior.
 
+Guaranteed `in` filters and OR expressions consisting only of equalities on the
+same field can expand one consecutive index position into up to eight unique
+ranges. Values are deduplicated and sorted using Convex ordering. No Cartesian
+product is built for multiple sets. An empty `in` returns an empty page.
+
+With explicit `orderBy`, the comparator includes the **full index**, including
+the expanded field. Automatic expansion merges by the remaining index tail,
+then native `_creationTime`/`_id` ties. For example, automatic status expansion
+interleaves creation times; `orderBy('by_status')` groups by status first.
+Both honor `order: 'asc' | 'desc'`. Range bounds on the immediately following
+field push down into every value's range; all predicates still run after auth.
+
+The expansion ceiling of eight is independent of managed `indexRanges`.
+An eligible automatic plan above eight throws `QUERY_FANOUT`; it never silently
+changes comparator. Explicit full-index ordering may instead scan the same
+index with a residual set predicate. Other OR expressions remain residual.
+Direct relationships expand only lookup-compatible indexes; junction traversal
+retains its existing edge order and multiplicity. Explicit ordering across any
+junction remains unsupported and fails before reads.
+
+Protected cursors bind the normalized set, comparator and plan mode with a new
+traversal semantics version. Duplicate/permuted values can resume the same
+query; changing the set rejects its cursor. Each merged input may prefetch one
+candidate. These reads, authorization dependencies and every active iterator
+share the request budget and cleanup; rows read can exceed rows returned.
+
 For relation continuations, `orderBy` supports only direct paths whose target
 index is compatible with the mandatory lookup equality prefix. Incompatible
 indexes and every junction/through path reject before parent or candidate reads.

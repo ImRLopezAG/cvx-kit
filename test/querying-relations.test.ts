@@ -1054,3 +1054,78 @@ test('phase A direct ordering and ranges retain cursors; unsupported paths rejec
 			expect(o.counts).toEqual(before)
 		})
 })
+
+test('U4 direct lookup expansion and through residuals retain authorized edge occurrences', async () => {
+	const f = relationshipFixture()
+	const rows = await seedRelationships(f)
+	await f.t.run(async (ctx) => {
+		const o = f.context(ctx.db)
+		const q = f.querying(o.ctx).tasks
+		const values = ['shared', 'c3', 'c4', 'c5']
+		for (const relation of ['direct', 'labels', 'codeLabels'] as const) {
+			const query = q.relation(rows.tasks[1]._id, relation)
+			const expected = await query.paginate({
+				numItems: 100,
+				cursor: null,
+				filters: { or: [{ code: 'shared' }, { code: 'c3' }, { code: 'c4' }, { code: 'c5' }] },
+			})
+			const seen: string[] = []
+			let token: string | null = null
+			for (let i = 0; i < 30; i++) {
+				const page = await query.paginate({
+					numItems: 1,
+					cursor: token,
+					filters: { code: { in: values } },
+				})
+				seen.push(...page.page.map((row) => row._id))
+				if (page.isDone) break
+				token = page.continueCursor
+			}
+			expect(seen).toEqual(expected.page.map((row) => row._id))
+			const partial = await query.paginate({
+				numItems: 100,
+				cursor: null,
+				maximumRowsRead: 2,
+				filters: { code: { in: values } },
+			})
+			expect(partial.splitCursor).toBeTruthy()
+			const left = await query.paginate({
+				numItems: 100,
+				cursor: null,
+				endCursor: partial.splitCursor,
+				filters: { code: { in: values } },
+			})
+			const right = await query.paginate({
+				numItems: 100,
+				cursor: partial.splitCursor!,
+				endCursor: partial.continueCursor,
+				filters: { code: { in: values.slice().reverse() } },
+			})
+			expect([...left.page, ...right.page]).toEqual(partial.page)
+			if (relation !== 'direct')
+				expect(seen.filter((id) => id === rows.labels[1]._id)).toHaveLength(
+					rows.edges.filter(
+						(edge) =>
+							edge.task === rows.tasks[1]._id &&
+							edge.allowed &&
+							(relation === 'labels'
+								? edge.label === rows.labels[1]._id
+								: edge.labelCode === rows.labels[1].code),
+					).length,
+				)
+			if (relation === 'direct') {
+				for (const order of ['asc', 'desc'] as const) {
+					// SAFETY: this fixture mutates labels.table to declare by_task_code; its schema type erases those index names.
+					const full = await query
+						.orderBy('by_task_code' as never)
+						.paginate({ numItems: 100, cursor: null, order, filters: { code: { in: values } } })
+					const codes = full.page.map((row) => row.code)
+					expect(codes).toEqual(
+						[...codes].sort((a, b) => a.localeCompare(b) * (order === 'asc' ? 1 : -1)),
+					)
+				}
+			}
+		}
+		expect(o.counts.closes).toBe(o.counts.ranges)
+	})
+})

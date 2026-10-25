@@ -115,7 +115,9 @@ describe('guaranteed equality compiler', () => {
 		expect(compile({ and: [{ count: 1 }, { count: 2 }] }).unsatisfiable).toBe(true)
 		expect(compile({ not: { count: 1 } }).index).toBeNull()
 		expect(compile({ count: { in: [1, 1] } }).index?.name).toBe('by_count')
-		expect(compile({ count: { in: [1, 2] } }).index).toBeNull()
+		const multi = compile({ count: { in: [1, 2] } })
+		expect(multi.index?.name).toBe('by_count')
+		expect(multi.expansion).toEqual({ field: 'count', values: [1, 2], comparator: 'tail' })
 	})
 	test('present gates do not bind fields', () => {
 		const { tables } = fixture()

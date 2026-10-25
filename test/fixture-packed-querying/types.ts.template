@@ -24,6 +24,8 @@ const identity: RelationRegistryIdentity = relations
 void identity
 function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
  querying(ctx).tasks.orderBy('by_priority').where({ priority: { gte: 0, lt: 10 } }).with({}).paginate({ numItems: 1, cursor: null, order: 'desc' })
+ querying(ctx).tasks.where({ priority: { in: [0, 2, 0] } }).paginate({ numItems: 2, cursor: null })
+ querying(ctx).tasks.orderBy('by_priority').paginate({numItems: 1, cursor: null, filters: { priority: {in: []} }})
  querying(ctx).tasks.relation(row._id, 'direct').orderBy('by_task')
  // @ts-expect-error schema names must not widen to arbitrary strings
  querying(ctx).tasks.orderBy('unknown')

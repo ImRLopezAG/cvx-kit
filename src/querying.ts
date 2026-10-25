@@ -27,6 +27,9 @@ import {
 } from './querying/relationships'
 import {
 	createCursorCodec,
+	createScopedCursorCodec,
+	type ScopedCursorOptions,
+	type ScopedCursorCodec,
 	createEnvironmentCursorCodec,
 	type CursorCodecConfig,
 	type CursorBinding,
@@ -42,6 +45,9 @@ import {
 import type { FilterAst, IndexCondition, NativePagination } from './querying/filters'
 import type { GenericDatabaseReader } from 'convex/server'
 import type { Value } from 'convex/values'
+
+export { CursorError } from './querying/cursors'
+export type { ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
 
 const emptyGroups: ResolvedGroups = { fieldGroups: {}, relations: {} }
 
@@ -209,6 +215,11 @@ type QueryEngine<
 	(ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>): {
 		[T in keyof Tables]: TableQuery<Tables, D, T, {}, [1, 1, 1, 1], never, Schema>
 	}
+	/** Opens prove integrity only; native consumers must enforce current row authorization. */
+	cursorCodec<S extends z.ZodType<Value>>(
+		ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>,
+		options: ScopedCursorOptions<S>,
+	): ScopedCursorCodec<S>
 	tables: RelationRegistry<Tables, D>['tables']
 }
 
@@ -531,7 +542,18 @@ export function createQueryEngine<
 			Object.fromEntries(Object.keys(relations.tables).map((table) => [table, tableQuery(table)])),
 		) as { [T in keyof Tables]: TableQuery<Tables, D, T, {}, [1, 1, 1, 1], never, Schema> }
 	}
-	return Object.assign(querying, { tables: relations.tables })
+	return Object.assign(querying, {
+		tables: relations.tables,
+		cursorCodec<S extends z.ZodType<Value>>(
+			ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>,
+			options: ScopedCursorOptions<S>,
+		): ScopedCursorCodec<S> {
+			// Admission precedes lazy key loading and all schema/codec operations.
+			const scope = security.cursorScope(ctx)
+			cursorCodec ??= createEnvironmentCursorCodec()
+			return createScopedCursorCodec(cursorCodec.custom, scope, options)
+		},
+	})
 }
 
 function hasGroups(groups: ResolvedGroups): boolean {

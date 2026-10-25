@@ -16,6 +16,9 @@ import { v } from 'convex/values'
 import { z } from 'zod'
 import { describe, expect, it } from 'vite-plus/test'
 import { createAuthFunctions } from '../src/auth'
+import { createQueryEngine, CursorError } from '../src/querying'
+import { groupDeclarations } from './fixture-querying/field-groups'
+import { cursor as codecKeys } from './fixture-querying/scalar'
 import { createManagedSecurity } from '../src/querying/security'
 import { fieldGroupFixture, seedFieldGroups } from './fixture-querying/field-groups'
 
@@ -416,4 +419,243 @@ describe('managed security through actual Convex auth constructors (in memory)',
 		expect(await asOne.mutation(api.changedDependency, { permission })).toBe(true)
 		expect((await asOne.query(api.read, {})).names).toEqual([])
 	})
+})
+
+// U6: use the actual auth constructors, not private reader registration.
+it('seals and opens a bigint payload through a registered authenticated query', async () => {
+	const f = groupDeclarations()
+	const engine = createQueryEngine(f, { cursor: codecKeys })
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	const endpoint = codecAuth.authQuery({
+		args: { token: z.string().optional() },
+		handler: (ctx, args) => {
+			const codec = engine.cursorCodec(ctx, {
+				domain: 'native-clients-v1',
+				bind: { sort: 'asc' },
+				schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+			})
+			return args.token ? codec.open(args.token) : codec.seal({ native: null, seen: 42n })
+		},
+	})
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ endpoint }),
+	})
+	const user = t.withIdentity(identity)
+	const token = await user.query(anyApi.codec.endpoint, {})
+	expect(await user.query(anyApi.codec.endpoint, { token })).toEqual({ native: null, seen: 42n })
+	await expect(
+		t.withIdentity({ ...identity, subject: 'other' }).query(anyApi.codec.endpoint, { token }),
+	).rejects.toThrow('Invalid cursor')
+	expect(new CursorError()).toMatchObject({ code: 'invalid-cursor', message: 'Invalid cursor' })
+})
+
+it('rejects native, mutation and action contexts before adapters, keys or schemas can be used', async () => {
+	const f = groupDeclarations()
+	let adapterCalls = 0
+	let schemaCalls = 0
+	// Lazy environment configuration must never be reached by rejected contexts.
+	const engine = createQueryEngine(f)
+	const adapting = createQueryEngine(f, {
+		cursor: codecKeys,
+		trustedAdapter: () => {
+			adapterCalls++
+			return null
+		},
+	})
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	function reject(ctx: { auth: GenericQueryCtx<DM>['auth'] }, adapter = false) {
+		// SAFETY: intentionally supply invalid JS contexts to the public boundary.
+		return (adapter ? adapting : engine)
+			.cursorCodec(ctx as never, {
+				domain: 'native',
+				bind: null,
+				schema: z.string().transform((value) => {
+					schemaCalls++
+					return value
+				}),
+			})
+			.seal('native')
+	}
+	const native = queryGeneric({ args: {}, handler: (ctx) => reject(ctx) })
+	const mutation = codecAuth.authMutation({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const action = codecAuth.authAction({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const systemMutation = codecAuth.systemMutation({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const systemAction = codecAuth.systemAction({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ native, mutation, action, systemMutation, systemAction }),
+	})
+	const user = t.withIdentity(identity)
+	await expect(user.query(anyApi.codec.native, {})).rejects.toThrow('UNMANAGED_QUERY_CONTEXT')
+	for (const name of ['mutation', 'systemMutation'])
+		await expect(user.mutation(anyApi.codec[name], {})).rejects.toThrow('UNMANAGED_QUERY_CONTEXT')
+	for (const name of ['action', 'systemAction'])
+		await expect(user.action(anyApi.codec[name], {})).rejects.toThrow('UNMANAGED_QUERY_CONTEXT')
+	expect(adapterCalls).toBe(0)
+	expect(schemaCalls).toBe(0)
+})
+
+it('keeps public cursor integrity separate from current native consumer authorization', async () => {
+	const f = groupDeclarations()
+	const engine = createQueryEngine(f, { cursor: codecKeys })
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	const options = { domain: 'native', bind: null, schema: z.strictObject({ seen: z.bigint() }) }
+	const issue = codecAuth.authQuery({
+		args: {},
+		handler: (ctx) => engine.cursorCodec(ctx, options).seal({ seen: 1n }),
+	})
+	const resume = codecAuth.authQuery({
+		args: { cursor: z.string() },
+		handler: async (ctx, args) => {
+			const value = engine.cursorCodec(ctx, options).open(args.cursor)
+			if (!(await ctx.db.query('permissions').first())?.clients) throw new Error('DENIED')
+			return value
+		},
+	})
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ issue, resume }),
+	})
+	const permission = await t.run(({ db }) =>
+		db.insert('permissions', { tenant: 'one', user: 'one-user', clients: true, accounts: true }),
+	)
+	const user = t.withIdentity(identity)
+	const token = await user.query(anyApi.codec.issue, {})
+	expect(await user.query(anyApi.codec.resume, { cursor: token })).toEqual({ seen: 1n })
+	await t.run(({ db }) => db.patch('permissions', permission, { clients: false }))
+	await expect(user.query(anyApi.codec.resume, { cursor: token })).rejects.toThrow('DENIED')
+})
+
+it('contains rejecting async schema transforms and refinements on both synchronous codec operations', async () => {
+	const f = groupDeclarations()
+	const engine = createQueryEngine(f, { cursor: codecKeys })
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	const endpoint = codecAuth.authQuery({
+		args: {},
+		handler: (ctx) => {
+			type Tree = { native: string; children: Tree[] }
+			const tree: Tree = { native: 'root', children: [{ native: 'leaf', children: [] }] }
+			const invalidTree = { native: 'root', children: [{ native: 42, children: [] }] }
+			for (const warmed of [false, true]) {
+				const schema: z.ZodType<Tree> = z.lazy(() =>
+					z.object({ native: z.string(), children: z.array(schema) }),
+				)
+				if (warmed) expect(schema.parse(tree)).toEqual(tree)
+				const binding = { domain: 'recursive-schema', bind: warmed }
+				const codec = engine.cursorCodec(ctx, { ...binding, schema })
+				expect(codec.open(codec.seal(tree))).toEqual(tree)
+				expect(() => codec.seal(invalidTree)).toThrow('Invalid cursor')
+				const invalidToken = engine
+					.cursorCodec(ctx, { ...binding, schema: z.any() })
+					.seal(invalidTree)
+				expect(() => codec.open(invalidToken)).toThrow('Invalid cursor')
+			}
+			const options = { domain: 'reject-async', bind: null }
+			const payload = { native: 'position' }
+			const token = engine.cursorCodec(ctx, { ...options, schema: z.any() }).seal(payload)
+			for (const schema of [
+				z.any().transform(async () => {
+					throw new Error('private-async-transform')
+				}),
+				z.any().refine(async () => {
+					throw new Error('private-async-refinement')
+				}),
+				z.any().transform(() => Promise.reject(new Error('private-promise-transform'))),
+				z.any().refine(() => Promise.reject(new Error('private-promise-refinement'))),
+				z.object({
+					native: z.string().transform(() => Promise.reject(new Error('private-nested-promise'))),
+				}),
+				z.any().superRefine(() => Promise.reject(new Error('private-super-refinement'))),
+				z.any().check(() => Promise.reject(new Error('private-check'))),
+				z
+					.any()
+					.transform(() => Promise.reject<string>(new Error('private-caught-transform')))
+					.catch('fallback'),
+				z
+					.any()
+					.refine(() => Promise.reject(new Error('private-caught-refinement')))
+					.catch('fallback'),
+				z.object({
+					native: z.string().refine(() => Promise.reject(new Error('private-nested-refinement'))),
+				}),
+				z.preprocess(() => Promise.reject(new Error('private-preprocess')), z.any()),
+				z.object({ missing: z.any().default(() => Promise.reject(new Error('private-default'))) }),
+				z.object({
+					missing: z.any().prefault(() => Promise.reject(new Error('private-prefault'))),
+				}),
+				z
+					.promise(z.any().transform(() => Promise.reject(new Error('private-promise-schema'))))
+					.transform(() => 'unused'),
+				z.lazy(() => z.any().transform(() => Promise.reject(new Error('private-lazy-transform')))),
+				z.any().transform(() =>
+					Promise.resolve().then(() => {
+						throw new Error('private-deferred-transform')
+					}),
+				),
+				z.object({
+					native: z.string().transform(async () => {
+						throw new Error('private-nested-transform')
+					}),
+				}),
+			]) {
+				const codec = engine.cursorCodec(ctx, { ...options, schema })
+				for (const run of [() => codec.seal(payload), () => codec.open(token)]) {
+					expect(run).toThrow(CursorError)
+					expect(run).toThrow('Invalid cursor')
+				}
+			}
+			return null
+		},
+	})
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ endpoint }),
+	})
+	const unhandled: unknown[] = []
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Capture runtime rejection payloads verbatim for the no-leak proof.
+	const capture = (reason: unknown) => {
+		unhandled.push(reason)
+	}
+	process.on('unhandledRejection', capture)
+	try {
+		await t.withIdentity(identity).query(anyApi.codec.endpoint, {})
+		// Drain the event-loop turn so rejected callbacks cannot escape after the assertion.
+		await new Promise<void>((resolve) => setImmediate(resolve))
+		expect(unhandled).toEqual([])
+	} finally {
+		process.off('unhandledRejection', capture)
+	}
 })

@@ -173,17 +173,27 @@ export function createManagedSecurity<DM extends GenericDataModel = GenericDataM
 	const central = Object.freeze({ ...defaultBudgets, ...config.budgets })
 	const policyVersion = config.policyVersion
 	const trustedAdapter = config.trustedAdapter
-	return <Ctx extends ManagedQueryContext<DM>>(
-		ctx: Ctx,
-		lower?: Partial<ManagedBudgets>,
-	): ManagedReadRequest<DM> => {
+	function admit(ctx: ManagedQueryContext<DM>): Capability<DM> {
 		// SAFETY: identity is registered privately by the query constructor for this DM.
 		const registered = capabilities.get(ctx.db) as Capability<DM> | undefined
 		const adapted = registered ? undefined : trustedAdapter?.(ctx)
 		if (!registered && !adapted) throw new ManagedReadError('UNMANAGED_QUERY_CONTEXT')
-		const cap = registered ?? { ...adapted!, ...snapshot(adapted!) }
-		return request(cap, tables, limits(lower, central), policyVersion)
+		return registered ?? { ...adapted!, ...snapshot(adapted!) }
 	}
+	function managed<Ctx extends ManagedQueryContext<DM>>(
+		ctx: Ctx,
+		lower?: Partial<ManagedBudgets>,
+	): ManagedReadRequest<DM> {
+		return request(admit(ctx), tables, limits(lower, central), policyVersion)
+	}
+	return Object.assign(managed, {
+		/** Scope-only admission for public cursors. Never returns the registered reader. */
+		cursorScope(ctx: ManagedQueryContext<DM>): ManagedScope & { readonly policyVersion: string } {
+			if (!ctx?.db || ['insert', 'patch', 'replace', 'delete'].some((key) => key in ctx.db))
+				throw new ManagedReadError('UNMANAGED_QUERY_CONTEXT')
+			return Object.freeze({ ...admit(ctx).scope, policyVersion })
+		},
+	})
 }
 
 /** Ordinary rule invocations share a policy-only meter. Ordinary db reads stay

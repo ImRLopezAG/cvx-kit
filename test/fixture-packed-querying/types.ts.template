@@ -86,3 +86,19 @@ import type { SelectionMask } from 'cvx-kit/relations'
 import type { SelectionMask as RootMask } from 'cvx-kit'
 const privateMasks: SelectionMask | RootMask | undefined = undefined
 void privateMasks
+
+// U6 public consumer contract: opening proves integrity, never row authorization.
+function cursorTypes(ctx: QueryCtx) {
+ const codec = querying.cursorCodec(ctx, { domain: 'custom-native', bind: { sort: 'asc' }, schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }) })
+ const opened: { native: string | null; seen: bigint } = codec.open(codec.seal({ native: null, seen: 2n }))
+ // @ts-expect-error input bigint cannot be a string
+ codec.seal({ native: null, seen: '2' })
+ // @ts-expect-error no reader escapes through the codec
+ void codec.db
+ // @ts-expect-error no caller-provided key ring on the configured facade
+ querying.cursorCodec(ctx, { domain: 'native', bind: null, schema: z.string(), keys: {} })
+ // @ts-expect-error actions without a reader cannot use the facade
+ querying.cursorCodec({}, { domain: 'native', bind: null, schema: z.string() })
+ void opened
+}
+void cursorTypes

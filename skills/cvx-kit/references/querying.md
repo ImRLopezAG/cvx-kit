@@ -520,3 +520,49 @@ plus an aggregate for duplicate child continuations. Reports include sample
 counts and use nearest-rank percentiles. A small sample's p99 is its maximum;
 the measurements include `convex-test` and instrumentation overhead. Read
 counters and ordered-result assertions remain separate from latency measurements.
+
+### Custom native cursor payloads
+
+Use the configured engine for native pagination that requires its own traversal:
+
+```ts
+const codec = querying.cursorCodec(ctx, {
+  domain: 'clients-search-v1',
+  bind: { filters, sort, departments: serverDerivedDepartments },
+  schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+})
+const position = args.cursor
+  ? codec.open(args.cursor)
+  : { native: null, seen: 0n }
+// Recheck current permissions and authorize every native row before returning it.
+const nextCursor = codec.seal({ native: nativeResult.continueCursor, seen: position.seen + 1n })
+```
+
+The facade uses the engine's captured key ring (or its lazy environment configuration),
+rotation and central policy version. Managed query registration supplies mode, principal,
+organization, tenant and role; registered authority takes precedence over a trusted adapter.
+Native contexts require the engine's explicit trusted query adapter. Unmanaged contexts,
+mutations and actions are rejected before codec use. No reader is returned.
+
+**A successful `open` proves integrity only. It never authorizes a row or a request.**
+Recheck current authorization on every request. Bind server-derived permissions,
+departments and other dynamic claims not represented by managed scope explicitly.
+Treat client filters and sort as binding data, never as authority.
+
+`seal` and `open` synchronously validate the payload schema. Schema transforms must be
+synchronous and produce supported Convex values; both input and output are bounded.
+`seal` retains canonical input bytes after validation; `open` returns the parsed output,
+so input-to-output transforms run once per operation.
+Signed 64-bit bigint, bytes and Convex float values are supported. Accessors, cycles,
+unsupported values and excessive depth, node count or size are rejected. Serialized
+payloads are limited to 8 KiB; domain and binding data are bounded too. Schema failures
+and malformed, tampered or mismatched tokens throw the exported `CursorError` with
+`code: 'invalid-cursor'` and the fixed message `Invalid cursor`, without validation details.
+Key configuration failures retain the engine's separate configuration error.
+
+AES-SIV is deterministic: equal payloads with equal bindings reveal equality. Public
+codec tokens and engine pagination tokens are isolated in both directions. A changed
+domain, caller binding, managed scope or central policy version invalidates the token.
+Retain old keys during rotation to accept their tokens; removing a key rejects them.
+There is no `wrap` helper: seal continuation and split payloads separately, with each
+boundary's own counters and traversal state.

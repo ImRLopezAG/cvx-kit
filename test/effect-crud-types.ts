@@ -745,6 +745,7 @@ const paginationAssertions: [
 				continueCursor: string
 				splitCursor?: string | null
 				pageStatus?: 'SplitRecommended' | 'SplitRequired' | null
+				completeness?: 'complete' | 'row-budget' | 'byte-budget' | 'native-limit' | 'result-cap'
 			}
 		>
 	>,

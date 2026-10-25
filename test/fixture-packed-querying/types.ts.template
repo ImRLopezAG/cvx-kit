@@ -1,6 +1,7 @@
 import { tenantTable, createQueryEngine, type QueryEngineConfig, type RelationRegistryIdentity } from 'cvx-kit'
 import { defineRelations } from 'cvx-kit/relations'
 import type { TableQuery } from 'cvx-kit/querying'
+import type { PageCompleteness } from 'cvx-kit/zod-table'
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 import { tasks, labels } from './convex/domain/tasks/schema'
@@ -47,7 +48,10 @@ function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
  // @ts-expect-error command inputs do not contain server-owned fields
  const input: z.input<typeof tasks.commandInput> = { authorized: true }
  void input
- querying(ctx).tasks.with({ labels: { owner: true }, referenceTask: true }).paginate({ numItems: 1, cursor: null }).then((p) => {
+ querying(ctx).tasks.with({ labels: { owner: true }, referenceTask: true }).paginate({ numItems: 1, cursor: null, onEmptyBudget: 'split' }).then((p) => {
+  const completeness: PageCompleteness | undefined = p.completeness
+  const relatedCompleteness: PageCompleteness | undefined = p.page[0].labels.completeness
+  void [completeness, relatedCompleteness]
   const parent: GenericId<'tasks'> = p.page[0]._id
   const label: GenericId<'labels'> = p.page[0].labels.page[0]._id
   const nested: GenericId<'tasks'> | undefined = p.page[0].labels.page[0].owner?._id

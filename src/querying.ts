@@ -1,10 +1,6 @@
-import type {
-	GenericSchema,
-	SchemaDefinition,
-	DataModelFromSchemaDefinition,
-	PaginationResult,
-} from 'convex/server'
+import type { GenericSchema, SchemaDefinition, DataModelFromSchemaDefinition } from 'convex/server'
 import type { GenericId } from 'convex/values'
+import type { EnginePaginationResult } from './zod-table'
 import { z } from 'zod'
 import type {
 	RelationTables,
@@ -130,7 +126,7 @@ export interface TableQuery<
 	>
 	paginate(
 		args: EngineArgs<Tables, D, T>,
-	): Promise<PaginationResult<RelationQueryRow<Tables, D, T, S, Scope>>>
+	): Promise<EnginePaginationResult<RelationQueryRow<Tables, D, T, S, Scope>>>
 }
 export interface QueryEngineDeclaration<
 	Schema extends SchemaDefinition<GenericSchema, boolean>,
@@ -341,7 +337,7 @@ export function createQueryEngine<
 							)
 					// SAFETY: the private executor validated and projected every row against
 					// this registry's DTO and selected edges before assembling the page.
-					return result as PaginationResult<
+					return result as EnginePaginationResult<
 						RelationQueryRow<Tables, D, keyof Tables, OutputSelection>
 					>
 				},

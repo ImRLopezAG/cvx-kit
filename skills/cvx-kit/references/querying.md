@@ -349,6 +349,26 @@ operations, index ranges, raw candidates, document bytes, fan-out, traversal
 depth, and memo entries, including managed policy reads. Native request read
 limits may lower ceilings. Output relationship depth is at most four.
 
+Engine pages include optional `completeness`: `complete`, `row-budget`,
+`byte-budget`, or `native-limit`. `result-cap` is reserved for future search.
+`complete` describes the requested page or end-cursor interval; use `isDone`
+to determine global exhaustion. A full requested page can be complete while
+`isDone` is false or native split metadata is present. Managed read-operation
+and raw-candidate stops report `row-budget`; byte reservation stops report
+`byte-budget`. The helper's combined row/byte limit reports `native-limit`.
+The first boundary that actually stops iteration wins; merely consuming the
+last available reservation does not mark a full page incomplete. Simultaneous
+managed row and byte admission failures check rows first.
+
+Pass `onEmptyBudget: 'split'` to `.paginate(...)` (also accepted by table and
+relation `paginationOpts(...)` schemas) to explicitly request safe empty
+progress. Existing all-denied and residual-rejected pages already advance by
+default and retain that behavior. Only fully processed candidate keys advance:
+an empty budget split stays `isDone: false` and provides protected continuation
+and split cursors. Keep loading from `continueCursor`, or use the usual split
+intervals. No-progress, unfinished policy/related reads, and DTO validation
+failures still throw, including when this option is set.
+
 If eligibility cannot be established within the budget, execution throws
 `MANAGED_READ_BUDGET`; it does not return a misleading exhausted page or conclude
 that a negative relationship predicate matched. Policy errors propagate rather

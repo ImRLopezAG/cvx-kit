@@ -1,12 +1,7 @@
 import { z } from 'zod'
 import { captureDto, materializeDto, type DtoRecipe } from './querying/schema-snapshot'
 import { zodToConvex, convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
-import {
-	defineSchema,
-	defineTable,
-	type TableDefinition,
-	type PaginationResult,
-} from 'convex/server'
+import { defineSchema, defineTable, type TableDefinition } from 'convex/server'
 import {
 	v,
 	type GenericId,
@@ -14,7 +9,7 @@ import {
 	type ValidatorJSON,
 	type JSONValue,
 } from 'convex/values'
-import { paginated } from './zod-table'
+import { paginated, type EnginePaginationResult } from './zod-table'
 import {
 	nativePagination,
 	relationFilterSchema,
@@ -527,7 +522,7 @@ type ComposeRelationRow<
 												Discriminator<Tables[Extract<Target, keyof Tables>]>
 											> | null
 										: null
-									: PaginationResult<
+									: EnginePaginationResult<
 											ScopedRelationRow<
 												RelationRow<
 													Tables,
@@ -571,7 +566,7 @@ export interface RelationTableHelpers<
 	>
 	pageDto<const S extends RelationSelection<Tables, D, T>>(
 		selection: ExactOutputMask<Tables, D, T, S>,
-	): z.ZodType<PaginationResult<RelationRow<Tables, D, T, S>>>
+	): z.ZodType<EnginePaginationResult<RelationRow<Tables, D, T, S>>>
 }
 export interface RelationRegistryIdentity {
 	readonly identity: string

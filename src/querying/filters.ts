@@ -98,6 +98,8 @@ export type ScalarFilters<
 
 const nativeOptions = convexToZod(paginationOptsValidator)
 export const nativePagination = nativeOptions.strict().extend({
+	/** Explicitly accept safe progressing empty splits; legacy safe splits remain supported. */
+	onEmptyBudget: z.literal('split').optional(),
 	numItems: nativeOptions.shape.numItems.int().positive().max(MAX_PAGE_SIZE),
 	maximumRowsRead: nativeOptions.shape.maximumRowsRead.unwrap().int().positive().optional(),
 	maximumBytesRead: nativeOptions.shape.maximumBytesRead.unwrap().int().positive().optional(),

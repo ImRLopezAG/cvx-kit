@@ -31,7 +31,13 @@ const changed = defineRelations({ tasks, labels, edges }, (r) => ({ tasks: {
 const eqEngine = createQueryEngine({ schema, relations: equivalent, cursor })
 const changedEngine = createQueryEngine({ schema, relations: changed, cursor })
 const deepEngine = createQueryEngine({ schema, relations, cursor, budgets: { depth: 1 } })
+const rowEngine = createQueryEngine({ schema, relations, cursor, budgets: { readOperations: 2 } })
+const byteEngine = createQueryEngine({ schema, relations, cursor, budgets: { documentBytes: 1024 * 1024 } })
 const probes = {
+ progress: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => rowEngine(ctx).tasks.paginate(args) }),
+ bytes: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => byteEngine(ctx).tasks.paginate(args) }),
  ordered: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
   handler: (ctx, args) => eqEngine(ctx).tasks.orderBy('by_priority').paginate(args) }),
  unmanaged: query({ args: {}, handler: (ctx) => eqEngine(ctx).tasks.paginate({ numItems: 1, cursor: null }) }),
@@ -88,6 +94,22 @@ const ids = await t.run(async (ctx) => {
 }).finally(() => { Date.now = original })
 const results: object[] = []
 const record = (value: object) => { results.push(value); writeFileSync('focused-results.json', JSON.stringify(results, null, 2)); console.log(JSON.stringify(value)) }
+const partial = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: null })
+assert.equal(partial.completeness, 'row-budget')
+assert.equal(partial.isDone, false)
+const fullPage = await client.query(anyApi.api.probes.progress, { numItems: 2, cursor: null })
+assert.equal(fullPage.completeness, 'complete')
+const nativePage = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: null, maximumRowsRead: 1 })
+assert.equal(nativePage.completeness, 'native-limit')
+const bytesPage = await client.query(anyApi.api.probes.bytes, { numItems: 10, cursor: null })
+assert.equal(bytesPage.completeness, 'byte-budget')
+const emptyProgress = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: null, filters: { ordinal: { lt: 0 } }, onEmptyBudget: 'split' })
+assert.deepEqual(emptyProgress.page, [])
+assert.equal(emptyProgress.completeness, 'row-budget')
+assert.equal(emptyProgress.isDone, false)
+const emptyTail = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: emptyProgress.continueCursor, filters: { ordinal: { lt: 0 } }, onEmptyBudget: 'split' })
+assert.notEqual(emptyTail.continueCursor, emptyProgress.continueCursor)
+record({ name: 'page-completeness', row: partial.completeness, byte: bytesPage.completeness, native: nativePage.completeness, full: fullPage.completeness, emptyProgress: true })
 await assert.rejects(client.query(anyApi.api.probes.unmanaged, {}), /UNMANAGED_QUERY_CONTEXT/)
 // Every timestamp is equal; the independent tie-break oracle is the ID's lexical order.
 for (const order of ['asc', 'desc'] as const) for (const size of [1, 7, 25, 100]) {

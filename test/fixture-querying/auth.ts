@@ -11,8 +11,9 @@ import {
 import { createAuthFunctions } from '../../src/auth'
 import { createQueryEngine } from '../../src/querying'
 import { declarations, cursor, type DM } from './scalar'
+import type { ManagedBudgets } from '../../src/querying/security'
 
-export function authenticatedFixture() {
+export function authenticatedFixture(budgets?: Partial<ManagedBudgets>) {
 	const f = declarations()
 	const builders = {
 		query: queryGeneric,
@@ -45,7 +46,7 @@ export function authenticatedFixture() {
 			}),
 		},
 	})
-	const querying = createQueryEngine({ schema: f.schema, relations: f.relations, cursor })
+	const querying = createQueryEngine({ schema: f.schema, relations: f.relations, cursor, budgets })
 	const args = f.tasks.paginationOpts({ status: true })
 	const returns = f.relations.tables.tasks.pageDto({})
 	const open = defaultAuth.authQuery({

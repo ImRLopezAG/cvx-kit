@@ -123,6 +123,8 @@ export interface ManagedReadRequest<DM extends GenericDataModel> {
 	readonly counters: ManagedCounters
 	/** Future native leaf adapter reserves BEFORE every actual next/get, not an outer stream. */
 	reserveLeaf(): LeafReservation
+	/** Only raw leaf reservation failures from this request can be resumed by the executor. */
+	leafBudgetFailure(error: ManagedReadError): 'row-budget' | 'byte-budget' | undefined
 	openRange(): void
 	expand(depth: number, count?: number): void
 	/** Raw candidate visibility for the private executor; every leaf is metered.
@@ -336,6 +338,20 @@ function request<DM extends GenericDataModel>(
 	const memo = new Map<string, GenericDocument | null>()
 	let pendingMemo = 0
 	let pendingCandidates = 0
+	const leafFailures = new WeakMap<ManagedReadError, 'row-budget' | 'byte-budget'>()
+	const leafLimit = () => {
+		if (
+			counts.readOperations >= budgets.readOperations ||
+			counts.rawCandidates + pendingCandidates >= budgets.rawCandidates
+		)
+			return 'row-budget'
+		if (
+			counts.documentBytesObserved + counts.documentBytesReserved + MAX_DOCUMENT_BYTES >
+			budgets.documentBytes
+		)
+			return 'byte-budget'
+		return undefined
+	}
 	const fail = (): never => {
 		throw new ManagedReadError('MANAGED_READ_BUDGET')
 	}
@@ -348,13 +364,7 @@ function request<DM extends GenericDataModel>(
 		counts.indexRanges++
 	}
 	const reserveLeaf = (): LeafReservation => {
-		if (
-			counts.readOperations >= budgets.readOperations ||
-			counts.rawCandidates + pendingCandidates >= budgets.rawCandidates ||
-			counts.documentBytesObserved + counts.documentBytesReserved + MAX_DOCUMENT_BYTES >
-				budgets.documentBytes
-		)
-			fail()
+		if (leafLimit()) fail()
 		counts.readOperations++
 		pendingCandidates++
 		counts.documentBytesReserved += MAX_DOCUMENT_BYTES
@@ -448,6 +458,13 @@ function request<DM extends GenericDataModel>(
 			let iterator: AsyncIterator<GenericDocument> | undefined
 			try {
 				while (true) {
+					// Mark only this raw leaf's pre-fetch reservation, never native or policy errors.
+					const reason = !authorized && leafLimit()
+					if (reason) {
+						const error = new ManagedReadError('MANAGED_READ_BUDGET')
+						leafFailures.set(error, reason)
+						throw error
+					}
 					const reservation = reserveLeaf()
 					let next: IteratorResult<GenericDocument>
 					try {
@@ -534,6 +551,7 @@ function request<DM extends GenericDataModel>(
 		budgets,
 		counters: view,
 		reserveLeaf,
+		leafBudgetFailure: (error: ManagedReadError) => leafFailures.get(error),
 		openRange,
 		expand(depth: number, count = 1) {
 			if (

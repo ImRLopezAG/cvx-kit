@@ -26,4 +26,28 @@ Only a `ConvexError.data` envelope validated by both the selected contract and f
 
 Ordered intervals honor native `endCursor` boundaries. Required and recommended splits retain their parent until both children arrive, then replace it atomically. Completeness comes from the latest committed interval, including while children load. Rows preserve repeated relation-edge occurrences; no ID deduplication occurs. Every loaded interval stays subscribed for reactive updates and Convex-owned optimistic rollback. Reset epochs prevent late results and old fetch callbacks from reviving earlier lists; unmount uses the public subscription cleanup.
 
-Suspense, optimistic membership helpers and native search pagination are outside this API.
+Root native search is supported. Return the root `paginationMode: 'native-search'`
+marker through the registered page validator. The first page fixes browse or search
+mode for that epoch; mixed modes or required search splits fail closed and clear
+cached rows. A search endpoint maps `paginationOpts` to
+`engine(ctx).tasks.search('search_text', text).paginate({ ...paginationOpts, scanLimit })`.
+Select filters, groups and `.with(...)` before pagination as on the server.
+
+Search appends one successor without pinning a predecessor `endCursor` or creating
+split children. Already-loaded child input tokens stay immutable when parent
+windows rerun. Native SDK journals are opaque and own reactive boundaries; never
+decode, manufacture or replace them. The hook performs no ID deduplication or refill.
+An earlier capped window retains loaded descendants; a capped tail stops new loads.
+`numItems`/`pageSize` is an initial target, so a live search window may exceed it.
+Short and denied-empty continuing windows require an explicit user action:
+
+```tsx
+<button disabled={!list.hasNextPage || list.isFetchingNextPage}
+ onClick={() => list.fetchNextPage()}>Load more</button>
+```
+
+Changing text, filters, cap, page size, query or `resetIdentity` starts a fresh epoch;
+use reset identity on principal/role/scope changes. Existing skip, failure, invalid
+cursor recovery and late-frame protections apply equally to search.
+
+Suspense and optimistic membership helpers are outside this API.

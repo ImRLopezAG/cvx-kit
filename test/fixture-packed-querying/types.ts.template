@@ -102,3 +102,38 @@ function cursorTypes(ctx: QueryCtx) {
  void opened
 }
 void cursorTypes
+
+// U11: strict public search consumer, including mode-preserving registered return types.
+import { engine as searchEngine, relations as searchRelations, page as searchPage, effectPage as searchEffectPage } from './search-fixture'
+import type { SearchPaginationResult } from 'cvx-kit/querying'
+import type { FunctionReturnType, ApiFromModules } from 'convex/server'
+declare const searchCtx: Parameters<typeof searchEngine>[0]
+const searched = searchEngine(searchCtx).docs.search('search_text', 'orchid')
+searched.where({ status: 'active' }).with({ children: true }).paginate({ cursor: null, numItems: 2, scanLimit: 9 }).then(page => {
+ const mode: 'native-search' = page.paginationMode
+ const result: SearchPaginationResult<{ _id: GenericId<'docs'> }> = page
+ const child: GenericId<'children'> = page.page[0].children.page[0]._id
+ // @ts-expect-error private storage remains excluded
+ void page.page[0].secret
+ void [mode, result, child]
+})
+// @ts-expect-error search index names remain closed
+searchEngine(searchCtx).docs.search('missing', 'orchid')
+// @ts-expect-error staged indexes cannot be selected
+searchEngine(searchCtx).docs.search('staged', 'orchid')
+// @ts-expect-error search cannot choose browse ordering
+searched.orderBy('by_creation_time')
+// @ts-expect-error search has no caller-pinned end boundary
+searched.paginate({ cursor: null, numItems: 2, endCursor: 'opaque' })
+// @ts-expect-error search cannot open a direct relation
+searched.relation('synthetic', 'children')
+// @ts-expect-error direct relations cannot search
+searchEngine(searchCtx).docs.relation('synthetic' as GenericId<'docs'>, 'children').search('search_text', 'orchid')
+const parsedSearch = searchRelations.tables.docs.pageDto({}).parse({})
+const declaredMode: 'native-search' | undefined = parsedSearch.paginationMode
+// The shared DTO admits both modes; search-specific registered validators require the marker.
+type SearchApi = ApiFromModules<{ search: { page: typeof searchPage; effectPage: typeof searchEffectPage } }>
+type AuthSearch = FunctionReturnType<SearchApi['search']['page']>
+type EffectSearch = FunctionReturnType<SearchApi['search']['effectPage']>
+const registeredMode = (page: AuthSearch | EffectSearch): 'native-search' => page.paginationMode
+void [declaredMode, registeredMode]

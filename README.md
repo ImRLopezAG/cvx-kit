@@ -230,7 +230,7 @@ usable equality prefix, then stable index-name order, with creation-time fallbac
 `order: 'desc'` reverses the chosen native index order. Native continuation,
 split/end cursors, and page status are preserved, with external tokens protected.
 
-Page sizes are positive integers up to 100; central `maxPageSize` may lower that
+Browse page sizes are positive integers up to 100; central `maxPageSize` may lower that
 ceiling. Central budgets bound read operations, index ranges, raw candidates,
 observed/reserved document bytes, fan-out, depth, and memo entries across a
 request, including policy reads. Native request read limits may lower ceilings.
@@ -242,8 +242,46 @@ many reads. Application/helper accounting does not measure physical platform I/O
 Kit auth query contexts carry the engine's private read capability. Unknown
 contexts fail closed unless a centrally configured trusted adapter attests their
 query reader, effective policy, and security scope. Mutation/action contexts,
-search/vector optimization, arbitrary predicates/projections,
+vector search, arbitrary predicates/projections,
 and custom sorts are outside this API.
+
+Root full-text search uses a declared native search index and keeps native relevance order:
+
+```ts
+const page = await querying(ctx).tasks
+ .search('search_text', input.text)
+ .where({ status: 'open' })
+ .include({ finance: 'if-permitted' })
+ .with({ labels: true })
+ .paginate({ numItems: 25, cursor: input.cursor, scanLimit: 250 })
+```
+
+Declare `search_text` on the exact native table registered in `relations`.
+Search supports the existing root filters, field groups and nested output;
+direct `.relation(...).search(...)` is unsupported. Nested relationship pages
+remain ordinary browse pages. Root search returns `paginationMode: 'native-search'`,
+null split metadata, and no caller-pinned `endCursor`, custom order or refill.
+A short or denied-empty page can still have `isDone: false`: continue manually
+with its `continueCursor` (or `usePaginatedList().fetchNextPage()`).
+
+Search `numItems` requests a positive integer initial native target, clamped by
+central limits and the remaining branch threshold. Live windows can return more raw rows.
+`scanLimit` is a cursor-branch admission threshold: all raw candidates, including
+denied rows, count in authenticated `seen` state. A whole window can overshoot
+(e.g. seen 6 + 5 rows with limit 9 returns all authorized rows, then stops with
+`result-cap`). Replaying a cursor repeats that branch; this is no global quota.
+Root search payload accounting is separate from shared policy/relationship read,
+byte, depth and fan-out budgets. Any unfinished nested read, policy exception or
+DTO failure aborts the whole page and mints no new continuation.
+
+Project errors explicitly at registered endpoint boundaries: ordinary `authQuery`
+handlers catch and throw `new ConvexError(queryFailureContract.project(error))`
+from `cvx-kit/querying`. Effect constructors configure
+`query: { errors: queryFailureContract }` and wrap the promise in
+`Effect.tryPromise({ try: () => /* search page */, catch: error => error })`.
+The declared contract sanitizes unknown failures; do not transport raw exceptions.
+See the [search contract](skills/cvx-kit/references/querying.md#root-full-text-search)
+and [React list protocol](skills/cvx-kit/references/client-list.md).
 
 For manual projection, `tasks.toPublicDto(row)` still omits IDs and unselected
 storage fields. `tasks.toPublicDto(row, true)` or `{ _id: true }` adds the branded

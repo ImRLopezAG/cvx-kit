@@ -1,4 +1,4 @@
-import { authQuery } from '../functions'
+import { authQuery, listAuth } from '../functions'
 import { contract } from '../domain/tasks/contracts'
 import { queries } from '../domain/tasks/queries'
 export const list = authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
@@ -15,18 +15,8 @@ import { Effect } from 'effect'
 import { z } from 'zod'
 import { convexToZod } from 'convex-helpers/server/zod4'
 import { paginationOptsValidator } from 'convex/server'
-import { createEffectAuthFunctions } from 'cvx-kit/effect'
-import { queryFailureContract } from 'cvx-kit/querying'
-import { query, mutation, action, internalQuery, internalMutation, internalAction } from '../_generated/server'
-import type { DataModel } from '../_generated/dataModel'
-import { getAuthUser, mapRole, readRules } from '../domain/tasks/security'
 import { listOptions } from '../domain/tasks/contracts'
 import { querying } from '../querying'
-const listAuth = createEffectAuthFunctions<DataModel, 'owner' | 'reader'>({
- query, mutation, action, internalQuery, internalMutation, internalAction,
- getAuthUser, mapRole, adminRoles: ['owner'],
- security: { tenancy: { tables: ['tasks', 'labels'] }, rules: readRules },
-}, { query: { errors: queryFailureContract }, mutation: {}, action: {}, systemQuery: {}, systemMutation: {}, systemAction: {} })
 export const paginatedList = listAuth.authQuery({
  args: z.object({ paginationOpts: convexToZod(paginationOptsValidator), filters: listOptions.shape.filters, order: listOptions.shape.order }),
  returns: contract.queries.list.result,

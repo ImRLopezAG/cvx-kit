@@ -1,4 +1,6 @@
 import { createAuthFunctions } from 'cvx-kit/auth'
+import { createEffectAuthFunctions } from 'cvx-kit/effect'
+import { queryFailureContract } from 'cvx-kit/querying'
 import { query, mutation, action, internalQuery, internalMutation, internalAction } from './_generated/server'
 import type { DataModel } from './_generated/dataModel'
 import { getAuthUser, mapRole, readRules } from './domain/tasks/security'
@@ -7,6 +9,12 @@ export const { authQuery } = createAuthFunctions<DataModel, 'owner' | 'reader'>(
  getAuthUser, mapRole, adminRoles: ['owner'],
  security: { tenancy: { tables: ['tasks', 'labels'] }, rules: readRules },
 })
+
+export const listAuth = createEffectAuthFunctions<DataModel, 'owner' | 'reader'>({
+ query, mutation, action, internalQuery, internalMutation, internalAction,
+ getAuthUser, mapRole, adminRoles: ['owner'],
+ security: { tenancy: { tables: ['tasks', 'labels'] }, rules: readRules },
+}, { query: { errors: queryFailureContract }, mutation: {}, action: {}, systemQuery: {}, systemMutation: {}, systemAction: {} })
 
 // Synthetic fixture key only. Applications load their own 64-byte server secret.
 export const cursor = { version: 'v1', currentKeyId: 'fixture', keys: { fixture: new Uint8Array(64).fill(7) } }

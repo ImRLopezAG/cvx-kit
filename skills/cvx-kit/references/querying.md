@@ -514,13 +514,13 @@ those fields to the second argument when migrating. To preserve pre-migration
 cursors, keep the existing explicit cursor version and key ring until those
 cursors have expired.
 
-Page sizes are positive integers up to 100. Shared request budgets cover read
+Browse page sizes are positive integers up to 100. Shared request budgets cover read
 operations, index ranges, raw candidates, document bytes, fan-out, traversal
 depth, and memo entries, including managed policy reads. Native request read
 limits may lower ceilings. Output relationship depth is at most four.
 
 Engine pages include optional `completeness`: `complete`, `row-budget`,
-`byte-budget`, or `native-limit`. `result-cap` is reserved for future search.
+`byte-budget`, `native-limit`, or search-only `result-cap`.
 `complete` describes the requested page or end-cursor interval; use `isDone`
 to determine global exhaustion. A full requested page can be complete while
 `isDone` is false or native split metadata is present. Managed read-operation
@@ -548,9 +548,100 @@ query does not imply one physical read. Document accounting is an application
 bound, not a measurement of Convex storage/index/prefetch I/O.
 
 Arbitrary async predicates, custom projections/sorts, mutation/action execution,
-search/vector optimization, and global caching are outside this API. Index
+vector search, and global caching are outside this API. Index
 selection reduces candidates where possible; filtering every supported scalar
 field does not guarantee an efficient index for every filter combination.
+
+## Root full-text search
+
+Register the native `.searchIndex('search_text', { searchField: 'text',
+filterFields: ['status'] })` table object in both the schema and relation registry.
+Only declared, nonstaged indexes are accepted. Search text must be nonblank;
+results retain native relevance order. Index filter equalities can reduce native
+candidates; other supported filters run as residual eligibility checks.
+
+```ts
+const selection = { labels: true } as const
+const result = relations.tables.tasks.pageDto(selection)
+ .and(z.object({ paginationMode: z.literal('native-search') }))
+const run = (ctx, input) => querying(ctx).tasks
+ .search('search_text', input.text)
+ .where({ status: 'open' })
+ .include({ finance: 'if-permitted' })
+ .with(selection)
+ .paginate({ numItems: 25, cursor: input.cursor, scanLimit: 250 })
+
+// Ordinary registered authQuery boundary:
+const search = authQuery({ args, returns: result, handler: async (ctx, input) => {
+ try { return await run(ctx, input) }
+ catch (error) { throw new ConvexError(queryFailureContract.project(error)) }
+} })
+```
+
+Import `ConvexError` from `convex/values` and `queryFailureContract` from
+`cvx-kit/querying`. With `createEffectAuthFunctions`, configure
+`query: { errors: queryFailureContract }` and return
+`Effect.tryPromise({ try: () => run(ctx, input), catch: error => error })`.
+Do not throw a pretransported foreign envelope through a different Effect error
+policy. Declared search admission failures and invalid cursors carry fixed codes;
+the admission codes are `SEARCH_TEXT_REQUIRED`, `SEARCH_END_CURSOR_UNSUPPORTED`,
+`SEARCH_ORDER_UNSUPPORTED`, `SEARCH_RELATION_UNSUPPORTED`,
+`SEARCH_OPTIONS_UNSUPPORTED`, and `SEARCH_PROTOCOL_UNSUPPORTED`.
+Unknown policy/DTO exceptions become `{ _tag: 'UnknownFailure', version: 1 }`,
+without private messages, IDs or partial rows. Direct engine callers retain native errors.
+
+Search is a root entrypoint. `.with(...)`, `.include(...)`, existing scalar and
+relationship predicates and their authorization checks remain supported. Direct
+`.relation(...).search(...)`, `.search(...).relation(...)`, `.orderBy(...)` and
+active index `.when(...)` selection are unsupported. Search accepts no nonnull
+`endCursor`, `order`, `maximumRowsRead`, `maximumBytesRead`, or `onEmptyBudget`.
+There is exactly one native search pagination call per admitted request, no
+refill to compensate for denied/residual-rejected rows, and no engine splits.
+`splitCursor` and `pageStatus` are null; the root has
+`paginationMode: 'native-search'`. Nested many pages retain browse semantics and
+can be resumed through authenticated relation endpoints; they have no search marker.
+
+For a new window, the native initial target is the minimum of requested
+`numItems`, central `maxPageSize`, `budgets.searchCandidates`, and the remaining
+`scanLimit - seen` when configured. It is a positive integer target, not a bound
+on a reactive window's actual raw row count. Live native windows can grow beyond
+that target. Search processes every actual raw row, including denied rows, before
+issuing an authenticated continuation carrying the new branch-local `seen` count.
+`scanLimit` is an admission threshold, not an exact live quota: seen 6 plus an
+actual five-row window under limit 9 yields seen 11, retains every authorized row,
+and returns `isDone: true`, `completeness: 'result-cap'`. A capped input admits no
+new native call. Cap completion does not assert database exhaustion. Replaying an
+old input repeats its branch; page-size changes do not reset seen or create a global quota.
+Tokens bind text/index, filters, selection/groups, cap, principal/security scope
+and engine/registry versions. Role, text or cap changes require a new chain.
+
+Root raw payloads use a separate search accounting contract: `searchCandidates`
+limits the initial target; actual root candidate counts and payload bytes are
+observed separately, without imposing the browse raw-candidate/byte ceilings on
+a live root window. Convex platform limits still apply. Root raw rows do not
+consume the browse raw-candidate/byte ledger merely for being search results. Policy reads, relationship eligibility/output and all
+secondary reads still share managed read-operation, index-range, raw-candidate,
+byte, memo, depth and fan-out budgets across the request. Search candidate and
+byte counters do not grant separate nested budgets. A nested budget stop before
+its requested page is fulfilled aborts the entire root page, including a nested
+browse executor's otherwise-partial split. A fully fulfilled nested page with
+more data can succeed with its browse continuation. Policy/DTO/deeper-descendant
+failures also abort atomically: no partial root page and no newly minted cursor;
+retry the original input after remediation.
+
+A short or denied-empty page with native `isDone: false` remains loadable. Always
+continue from `continueCursor` manually, independent of `page.length`:
+
+```ts
+const next = page.isDone ? null : page.continueCursor
+// One explicit user action loads the next window; no automatic empty-page loop.
+```
+
+For React, use `usePaginatedList` with a public `paginationOpts` endpoint. Preserve
+all already-loaded child inputs while SDK-owned opaque journals track live window
+boundaries. Do not decode journals or replace child input cursors with rerun parent
+output tokens. An earlier window reaching cap retains loaded children; only the
+tail determines further continuation. See [reactive lists](client-list.md).
 
 ## Migration and verification
 

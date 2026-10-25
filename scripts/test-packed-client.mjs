@@ -6,8 +6,8 @@ import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 const root = resolve(import.meta.dirname, '..')
 assert.equal(existsSync(join(root, '.env')), false, 'Run only in a nonsecret source snapshot')
-const proof = mkdtempSync('/tmp/cvx-u8-packed-')
-console.log(`U8 packed proof: ${proof}`)
+const proof = mkdtempSync('/tmp/cvx-u9-packed-')
+console.log(`Client packed proof: ${proof}`)
 function run(command, args, cwd, label) {
 	try {
 		const out = execFileSync(command, args, {
@@ -106,6 +106,12 @@ for (const [label, helpers, zod, react, reactTypes] of [
 			.replaceAll('../../src/react', 'cvx-kit/react')
 			.replaceAll('../../src/errors', 'cvx-kit/errors'),
 	)
+	writeFileSync(
+		join(fixture, 'list.tsx'),
+		readFileSync(join(root, 'test/fixture-packed-client/list.tsx'), 'utf8')
+			.replaceAll('../../src/react', 'cvx-kit/react')
+			.replaceAll('../../src/errors', 'cvx-kit/errors'),
+	)
 	run('bun', ['--no-env-file', 'install', '--ignore-scripts'], fixture, label + '-install')
 	writeFileSync(
 		join(fixture, 'versions.json'),
@@ -168,22 +174,37 @@ for (const [label, helpers, zod, react, reactTypes] of [
 	run('node', ['--import', './register.mjs', 'failures.ts'], fixture, label + '-raw-failures')
 
 	const reactBundle = await build({
-		entryPoints: [join(fixture, 'react.tsx')],
+		entryPoints: [join(fixture, 'react.tsx'), join(fixture, 'list.tsx')],
+		outdir: join(proof, label + '-react-bundles'),
 		bundle: true,
 		platform: 'browser',
 		format: 'esm',
 		target: 'es2022',
 		write: false,
 		metafile: true,
-		treeShaking: false,
+		treeShaking: true,
 		define: { 'process.env.NODE_ENV': '"production"' },
 	})
 	const reactInputs = Object.keys(reactBundle.metafile.inputs)
+	const emittedInputs = new Set(
+		Object.values(reactBundle.metafile.outputs).flatMap((output) =>
+			Object.entries(output.inputs)
+				.filter(([, input]) => input.bytesInOutput > 0)
+				.map(([path]) => path),
+		),
+	)
 	assert.ok(reactInputs.some((p) => p.includes('cvx-kit/dist/react')))
-	const clientSharedConvex = new Set(['functionName.js', 'components/paths.js', 'api.js'])
+	const clientSharedConvex = new Set([
+		'functionName.js',
+		'components/paths.js',
+		'api.js',
+		'pagination.js',
+		'logVars.js',
+		'schema.js',
+	])
 	for (const path of reactInputs) {
 		const serverPart = path.split('/convex/dist/esm/server/')[1]
-		if (serverPart !== undefined)
+		if (serverPart !== undefined && emittedInputs.has(path))
 			assert.ok(clientSharedConvex.has(serverPart), `Unexpected Convex server module: ${path}`)
 		assert.doesNotMatch(path, /cvx-kit\/dist\/querying\//)
 	}

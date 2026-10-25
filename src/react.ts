@@ -8,3 +8,9 @@ export {
 	type UnknownFailure,
 	type ErrorContract,
 } from './modules/contracts/errors'
+export {
+	usePaginatedList,
+	type PaginatedList,
+	type PaginatedListOptions,
+	type ListQueryReference,
+} from './react/use-paginated-list'

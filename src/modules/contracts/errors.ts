@@ -45,8 +45,7 @@ export type DeclaredFailure<Definitions extends ErrorDefinitions> = {
 
 export type UnknownFailure = Readonly<{ _tag: 'UnknownFailure'; version: 1 }>
 export type DecodedFailure<Definitions extends ErrorDefinitions> =
-	| DeclaredFailure<Definitions>
-	| UnknownFailure
+	DeclaredFailure<Definitions> | UnknownFailure
 
 export type ErrorContract<Definitions extends ErrorDefinitions> = Readonly<{
 	create: <Key extends Code<Definitions>>(
@@ -58,7 +57,10 @@ export type ErrorContract<Definitions extends ErrorDefinitions> = Readonly<{
 	decode: (payload: unknown) => DecodedFailure<Definitions>
 }>
 
-const unknownFailure: UnknownFailure = Object.freeze({ _tag: 'UnknownFailure', version: 1 })
+const unknownFailure: UnknownFailure = Object.freeze({
+	_tag: 'UnknownFailure',
+	version: 1,
+})
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 
 /** Closed safe codes, allowlisted details, and a versioned checked transport union. */
@@ -147,6 +149,27 @@ export const queryErrors = defineErrorContract({
 	'invalid-cursor': { message: 'Invalid cursor', details: {} },
 	FIELD_GROUP_DENIED: { message: 'Field group access denied', details: {} },
 	QUERY_FANOUT: { message: 'Query fan-out limit exceeded', details: {} },
+	SEARCH_TEXT_REQUIRED: { message: 'Search text required', details: {} },
+	SEARCH_END_CURSOR_UNSUPPORTED: {
+		message: 'Search end cursor unsupported',
+		details: {},
+	},
+	SEARCH_ORDER_UNSUPPORTED: {
+		message: 'Search ordering unsupported',
+		details: {},
+	},
+	SEARCH_RELATION_UNSUPPORTED: {
+		message: 'Relation search unsupported',
+		details: {},
+	},
+	SEARCH_OPTIONS_UNSUPPORTED: {
+		message: 'Search options unsupported',
+		details: {},
+	},
+	SEARCH_PROTOCOL_UNSUPPORTED: {
+		message: 'Search pagination protocol unsupported',
+		details: {},
+	},
 })
 
 function isRecord(value: unknown): value is Record<string, unknown> {

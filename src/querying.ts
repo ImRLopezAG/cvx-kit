@@ -46,6 +46,9 @@ import type { FilterAst, IndexCondition, NativePagination } from './querying/fil
 import type { GenericDatabaseReader } from 'convex/server'
 import type { Value } from 'convex/values'
 
+import { planSearch, executeSearch, SearchError } from './querying/search'
+export { SearchError } from './querying/search'
+export type { SearchPaginationResult } from './querying/search'
 export { queryFailureContract } from './querying/failures'
 export { CursorError } from './querying/cursors'
 export type { ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
@@ -111,23 +114,43 @@ export interface TableQuery<
 		boolean
 	>,
 	G = {},
+	Root extends boolean = true,
 > {
+	search: Root extends true
+		? (
+				index: Extract<
+					keyof DataModelFromSchemaDefinition<Schema>[Extract<T, string>]['searchIndexes'],
+					string
+				>,
+				text: string,
+			) => SearchQuery<Tables, D, T, S, L, Scope, Schema, G>
+		: never
 	include<const Groups extends FieldGroupRequest<Tables[T]>>(
 		groups: Groups & Record<Exclude<keyof Groups, keyof FieldGroupRequest<Tables[T]>>, never>,
-	): TableQuery<Tables, D, T, S, L, Scope, Schema, Omit<G, 'fieldGroups'> & { fieldGroups: Groups }>
+	): TableQuery<
+		Tables,
+		D,
+		T,
+		S,
+		L,
+		Scope,
+		Schema,
+		Omit<G, 'fieldGroups'> & { fieldGroups: Groups },
+		Root
+	>
 	orderBy(
 		index: Exclude<
 			Extract<keyof DataModelFromSchemaDefinition<Schema>[Extract<T, string>]['indexes'], string>,
 			'by_id' | 'by_creation_time'
 		>,
-	): TableQuery<Tables, D, T, S, L, Scope, Schema, G>
+	): TableQuery<Tables, D, T, S, L, Scope, Schema, G, Root>
 	when(
 		value: IndexCondition['value'],
 		index: string,
-	): TableQuery<Tables, D, T, S, L, Scope, Schema, G>
+	): TableQuery<Tables, D, T, S, L, Scope, Schema, G, Root>
 	where(
 		spec: NonNullable<EngineArgs<Tables, D, T>['filters']>,
-	): TableQuery<Tables, D, T, S, L, Scope, Schema, G>
+	): TableQuery<Tables, D, T, S, L, Scope, Schema, G, Root>
 	with<
 		const Selection extends RelationSelection<Tables, D, T, L>,
 		const Groups extends RelationGroupSelection<Tables, D, T, L> = {},
@@ -138,7 +161,7 @@ export interface TableQuery<
 				: never
 		},
 		groups?: ExactGroupSelection<Tables, D, T, Groups>,
-	): TableQuery<Tables, D, T, Selection, L, Scope, Schema, Omit<G, keyof Groups> & Groups>
+	): TableQuery<Tables, D, T, Selection, L, Scope, Schema, Omit<G, keyof Groups> & Groups, Root>
 	relation<const P extends Paths<D, Extract<T, string>>>(
 		parent: GenericId<Tables[T]['tableName']>,
 		path: P,
@@ -150,13 +173,64 @@ export interface TableQuery<
 			{},
 			RemainingDepth<P, L>,
 			PathScope<D, Extract<T, string>, P>,
-			Schema
+			Schema,
+			{},
+			false
 		>,
 		'relation'
 	>
 	paginate(
 		args: EngineArgs<Tables, D, T>,
 	): Promise<EnginePaginationResult<RelationQueryRow<Tables, D, T, S, Scope, G>>>
+}
+
+export interface SearchQuery<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+	S = {},
+	L extends readonly 1[] = [1, 1, 1, 1],
+	Scope extends string = never,
+	Schema extends SchemaDefinition<GenericSchema, boolean> = SchemaDefinition<
+		GenericSchema,
+		boolean
+	>,
+	G = {},
+> {
+	include<const Groups extends FieldGroupRequest<Tables[T]>>(
+		groups: Groups & Record<Exclude<keyof Groups, keyof FieldGroupRequest<Tables[T]>>, never>,
+	): SearchQuery<
+		Tables,
+		D,
+		T,
+		S,
+		L,
+		Scope,
+		Schema,
+		Omit<G, 'fieldGroups'> & { fieldGroups: Groups }
+	>
+	where(
+		spec: NonNullable<EngineArgs<Tables, D, T>['filters']>,
+	): SearchQuery<Tables, D, T, S, L, Scope, Schema, G>
+	with<
+		const Selection extends RelationSelection<Tables, D, T, L>,
+		const Groups extends RelationGroupSelection<Tables, D, T, L> = {},
+	>(
+		selection: Selection & {
+			[K in keyof Selection]: K extends keyof RelationSelection<Tables, D, T, L>
+				? Selection[K]
+				: never
+		},
+		groups?: ExactGroupSelection<Tables, D, T, Groups>,
+	): SearchQuery<Tables, D, T, Selection, L, Scope, Schema, Omit<G, keyof Groups> & Groups>
+	paginate(
+		args: Omit<
+			EngineArgs<Tables, D, T>,
+			'order' | 'endCursor' | 'maximumRowsRead' | 'maximumBytesRead' | 'onEmptyBudget'
+		> & { scanLimit?: number },
+	): Promise<
+		import('./querying/search').SearchPaginationResult<RelationQueryRow<Tables, D, T, S, Scope, G>>
+	>
 }
 export interface QueryEngineDeclaration<
 	Schema extends SchemaDefinition<GenericSchema, boolean>,
@@ -333,6 +407,7 @@ export function createQueryEngine<
 			route?: { table: string; parent: string; path: string[] },
 			ordering?: string,
 			groups: GroupSelection = {},
+			search?: { index: string; text: string },
 		) {
 			return Object.freeze({
 				include: (fieldGroups: GroupSelection['fieldGroups']) =>
@@ -344,13 +419,16 @@ export function createQueryEngine<
 						route,
 						ordering,
 						planner.groups(table, { ...groups, fieldGroups }),
+						search,
 					),
 				orderBy: (index: string) => {
+					if (search) throw new SearchError('SEARCH_ORDER_UNSUPPORTED')
 					if (!z.string().safeParse(index).success) throw new Error('Unknown ordering index')
-					return tableQuery(table, conditions, constraints, selection, route, index, groups)
+					return tableQuery(table, conditions, constraints, selection, route, index, groups, search)
 				},
-				when: (value: IndexCondition['value'], index: string) =>
-					tableQuery(
+				when: (value: IndexCondition['value'], index: string) => {
+					if (search && value != null) throw new SearchError('SEARCH_ORDER_UNSUPPORTED')
+					return tableQuery(
 						table,
 						[...conditions, { value, index }],
 						constraints,
@@ -358,9 +436,20 @@ export function createQueryEngine<
 						route,
 						ordering,
 						groups,
-					),
+						search,
+					)
+				},
 				where: (spec: StoredConstraint) =>
-					tableQuery(table, conditions, [...constraints, spec], selection, route, ordering, groups),
+					tableQuery(
+						table,
+						conditions,
+						[...constraints, spec],
+						selection,
+						route,
+						ordering,
+						groups,
+						search,
+					),
 				with: (selected: OutputSelection, requested: GroupSelection = {}) =>
 					tableQuery(
 						table,
@@ -370,8 +459,20 @@ export function createQueryEngine<
 						route,
 						ordering,
 						planner.groups(table, { ...groups, ...requested }),
+						search,
 					),
+				search: (index: string, text: string) => {
+					if (route) throw new SearchError('SEARCH_RELATION_UNSUPPORTED')
+					if (ordering !== undefined || conditions.some(({ value }) => value != null))
+						throw new SearchError('SEARCH_ORDER_UNSUPPORTED')
+					if (search) throw new SearchError('SEARCH_OPTIONS_UNSUPPORTED')
+					return tableQuery(table, conditions, constraints, selection, route, ordering, groups, {
+						index,
+						text,
+					})
+				},
 				relation: (parent: string, declaredPath: string) => {
+					if (search) throw new SearchError('SEARCH_RELATION_UNSUPPORTED')
 					const path = declaredPath.split('.')
 					if (!path.length || path.length > 4) throw new Error('INVALID_RELATION')
 					let target = table
@@ -387,15 +488,28 @@ export function createQueryEngine<
 					const codec = (cursorCodec ??= createEnvironmentCursorCodec())
 					planner.select(table, selection)
 					assertRelationshipDepth(selection, route?.path.length ?? 0)
-					const plan = planner.plan(
-						table,
-						input,
-						route ? [] : conditions,
-						constraints,
-						ordering,
-						route ? 'relation' : 'root',
-					)
-					if (plan.args.numItems > maxPageSize) throw new Error('Page size exceeds central ceiling')
+					const searchPlan = search
+						? planSearch(
+								planner,
+								table,
+								search.index,
+								search.text,
+								input,
+								constraints,
+							)
+						: undefined
+					const plan =
+						searchPlan?.plan ??
+						planner.plan(
+							table,
+							input,
+							route ? [] : conditions,
+							constraints,
+							ordering,
+							route ? 'relation' : 'root',
+						)
+					if (!searchPlan && plan.args.numItems > maxPageSize)
+						throw new Error('Page size exceeds central ceiling')
 					const resolved = await resolveGroups(table, planner.groups(table, groups))
 					const groupAccess: GroupAccess = {
 						at(path) {
@@ -439,14 +553,15 @@ export function createQueryEngine<
 					// Inspect the whole client tree independently of execution/contradiction short circuits.
 					if (plan.residual.kind !== 'and') throw new Error('Invalid compiled filter root')
 					checkClient(table, plan.residual.children[0], resolved)
+					if (searchPlan) checkField(table, searchPlan.metadata.searchField, resolved)
 					const sortIndex =
 						ordering ?? conditions.find((condition) => condition.value != null)?.index
-					if (sortIndex !== undefined)
+					if (!searchPlan && sortIndex !== undefined)
 						for (const field of planner.metadata.tables[table].indexes.find(
 							(index) => index.name === sortIndex,
 						)?.fields ?? [])
 							checkField(table, field, resolved)
-					else if (!route && plan.index)
+					else if (!searchPlan && !route && plan.index)
 						for (const field of plan.index.fields.slice(plan.prefix.length))
 							checkField(table, field, resolved)
 					// Native root limits stay native; lowering those limits cannot raise
@@ -468,18 +583,24 @@ export function createQueryEngine<
 					const groupBinding: Record<string, Value> = {}
 					if (hasGroups(resolved)) groupBinding.fieldGroups = resolved
 					// SAFETY: selection has passed registry admission before cursor binding.
+					const serverFilters: CursorBinding['serverFilters'] = {
+						predicates: plan.serverIdentity,
+						selection: selection as import('convex/values').Value,
+						...groupBinding,
+						scope: { ...request.scope },
+					}
+					if (searchPlan) serverFilters.search = {
+						mode: 'search', text: searchPlan.text,
+						index: {...searchPlan.metadata, filterFields: [...searchPlan.metadata.filterFields]},
+						equalities: searchPlan.equalities, scanLimit: searchPlan.scanLimit ?? null,
+					}
 					const binding: CursorBinding = {
 						table: route?.table ?? table,
-						index: plan.index?.name ?? 'by_creation_time',
+						index: searchPlan?.metadata.name ?? plan.index?.name ?? 'by_creation_time',
 						order: plan.args.order ?? 'asc',
 						clientFilters: plan.clientIdentity,
 						// Include output selection and the complete immutable scope in trusted identity.
-						serverFilters: {
-							predicates: plan.serverIdentity,
-							selection: selection as import('convex/values').Value,
-							...groupBinding,
-							scope: { ...request.scope },
-						},
+						serverFilters,
 						relationPath: [],
 						principal: JSON.stringify(request.scope),
 						tenant: request.scope.tenant,
@@ -490,45 +611,65 @@ export function createQueryEngine<
 					// The executor accepts registry-selected native tables, rather than a static DM key.
 					const executorRequest: unknown = request
 					// SAFETY: only native DM types are erased at this private executor boundary.
+					const executionRequest = executorRequest as ExecutionRequest
 					const executor = relationshipExecutor(
 						schema,
-						executorRequest as ExecutionRequest,
+						executionRequest,
 						planner,
 						codec,
 						binding,
 						groupAccess,
 					)
 					executor.preflight(table, selection, plan.args, route?.path ?? [])
-					const result = route
-						? await executor.continuation(
-								route.table,
-								route.parent,
-								route.path,
-								selection,
-								plan.args,
-								conditions,
-								constraints,
-								ordering,
-							)
-						: await executeQuery(
-								schema,
-								request,
+					const result = searchPlan
+						? await executeSearch(
+								executionRequest,
 								table,
-								plan,
-								planner,
+								searchPlan,
 								codec,
 								binding,
-								async (row, permitted) => {
-									// SAFETY: metered native stream rows contain the validated system fields.
+								maxPageSize,
+								async (row) => {
+									// SAFETY: native search returns system fields from the admitted registry table.
+									const document = row as RelationDocument
 									if (
-										!permitted ||
-										!(await executor.matches(table, row as RelationDocument, plan.residual))
+										!(await request.authorize(table, row)) ||
+										!(await executor.matches(table, document, plan.residual))
 									)
 										return null
-									// SAFETY: the same native row is authorized and matches the declared predicates.
-									return executor.output(table, row as RelationDocument, selection, plan.args)
+									return executor.output(table, document, selection, plan.args)
 								},
 							)
+						: route
+							? await executor.continuation(
+									route.table,
+									route.parent,
+									route.path,
+									selection,
+									plan.args,
+									conditions,
+									constraints,
+									ordering,
+								)
+							: await executeQuery(
+									schema,
+									request,
+									table,
+									plan,
+									planner,
+									codec,
+									binding,
+									async (row, permitted) => {
+										// SAFETY: metered native stream rows contain the validated system fields.
+										if (
+											!permitted ||
+											!(await executor.matches(table, row as RelationDocument, plan.residual))
+										)
+											return null
+										// SAFETY: the same native row is authorized and matches the declared predicates.
+										return executor.output(table, row as RelationDocument, selection, plan.args)
+									},
+								)
 					// SAFETY: the private executor validated and projected every row against
 					// this registry's DTO and selected edges before assembling the page.
 					return result as EnginePaginationResult<

@@ -27,6 +27,7 @@ import {
 	type NativeRange,
 	type FilterScalar,
 } from './filters'
+import { SearchError } from './search'
 import { RelationshipError } from './relationships'
 import type { EnginePaginationResult, PageCompleteness } from '../zod-table'
 
@@ -44,6 +45,7 @@ type ExecutionSchema = SchemaDefinition<
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Thrown values enter this error boundary untrusted; the class checks below admit only the fixed public error contracts.
 export function rethrowQueryError(error: unknown): never {
 	if (
+		error instanceof SearchError ||
 		error instanceof ManagedReadError ||
 		error instanceof CursorError ||
 		error instanceof RelationshipError
@@ -396,11 +398,21 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 		const result = await super.paginate(args)
 		const completed = this.progress.completed
 		const encode = async (entry: Entry) =>
-			(await new CapturedKey(entry, this.source).paginate({ numItems: 1, cursor: null }))
-				.continueCursor
+			(
+				await new CapturedKey(entry, this.source).paginate({
+					numItems: 1,
+					cursor: null,
+				})
+			).continueCursor
 		const fulfilled = args.endCursor
 			? !!completed.length && (await encode(completed.at(-1)!)) === args.endCursor
 			: result.page.length >= args.numItems
+		if (
+			this.request.atomicCompletion &&
+			((this.progress.stopReason && !fulfilled) ||
+				(result.pageStatus === 'SplitRequired' && !fulfilled))
+		)
+			throw new ManagedReadError('MANAGED_READ_BUDGET')
 		if (!this.progress.stopReason)
 			return {
 				...result,

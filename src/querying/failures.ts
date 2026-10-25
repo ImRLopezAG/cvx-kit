@@ -1,4 +1,5 @@
 import { queryErrors } from '../modules/contracts/errors'
+import { SearchError } from './search'
 import { CursorError } from './cursors'
 import { FieldGroupError } from '../querying'
 import { isQueryFanoutError } from './filters'
@@ -15,6 +16,8 @@ export const queryFailureContract: typeof queryErrors = {
 	...queryErrors,
 	project(error) {
 		try {
+			if (error instanceof SearchError)
+				return queryErrors.project(queryErrors.create(error.code, {}))
 			if (error instanceof CursorError)
 				return queryErrors.project(queryErrors.create('invalid-cursor', {}))
 			if (error instanceof FieldGroupError)

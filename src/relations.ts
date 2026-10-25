@@ -158,7 +158,10 @@ type FieldAt<F, K extends PropertyKey> = F extends unknown
 		? F[K]
 		: never
 	: never
-type NativeDomain<V> = V extends { kind: 'union'; members: infer M extends GenericValidator[] }
+type NativeDomain<V> = V extends {
+	kind: 'union'
+	members: infer M extends GenericValidator[]
+}
 	? NativeDomain<M[number]>
 	: V extends { kind: 'null' }
 		? never
@@ -704,13 +707,27 @@ export interface RelationFieldMetadata {
 	readonly idTables: readonly string[]
 	readonly native: Readonly<ValidatorJSON>
 }
+export interface SearchIndexMetadata {
+	readonly name: string
+	readonly searchField: string
+	readonly filterFields: readonly string[]
+	readonly staged: boolean
+}
 export interface RelationTableMetadata {
+	readonly searchIndexes: readonly SearchIndexMetadata[]
 	readonly fieldGroups: Readonly<Record<string, readonly string[]>>
 	readonly fields: Readonly<Record<string, RelationFieldMetadata>>
-	readonly variant?: { readonly discriminator: string; readonly tags: readonly string[] }
-	readonly indexes: readonly { readonly name: string; readonly fields: readonly string[] }[]
+	readonly variant?: {
+		readonly discriminator: string
+		readonly tags: readonly string[]
+	}
+	readonly indexes: readonly {
+		readonly name: string
+		readonly fields: readonly string[]
+	}[]
 }
 interface TableMetadata {
+	searchIndexes: readonly SearchIndexMetadata[]
 	fieldGroups: Readonly<Record<string, readonly string[]>>
 	groupRecipes: Readonly<Record<string, DtoRecipe>>
 	fields: Record<string, GenericValidator>
@@ -746,7 +763,14 @@ const refs = new WeakMap<AnyField, GenericValidator>()
 const memberRefs = new WeakMap<AnyField, RelationMember>()
 const throughRefs = new WeakSet<AnyThrough>()
 const edgeRefs = new WeakSet<AnyEdge>()
+const searchIndexExport = z.object({
+	indexDescriptor: z.string(),
+	searchField: z.string(),
+	filterFields: z.array(z.string()),
+})
 const indexExport = z.object({
+	searchIndexes: z.array(searchIndexExport),
+	stagedSearchIndexes: z.array(searchIndexExport),
 	indexes: z.array(z.object({ indexDescriptor: z.string(), fields: z.array(z.string()) })),
 })
 
@@ -794,9 +818,30 @@ export function defineRelations<
 		const exported = nativeTableExport(nativeTable)
 		assertNativeValidation(exported.documentType)
 		const normalized = normalizeTable(name, table.schema, dto, exported.documentType)
-		const indexes = indexExport
-			.parse(exported)
-			.indexes.map((index) => ({ name: index.indexDescriptor, fields: [...index.fields] }))
+		const captured = indexExport.parse(exported)
+		const searchIndexes = Object.freeze(
+			[
+				...captured.searchIndexes.map((index) => ({ ...index, staged: false })),
+				...captured.stagedSearchIndexes.map((index) => ({
+					...index,
+					staged: true,
+				})),
+			]
+				.map((index) =>
+					Object.freeze({
+						name: index.indexDescriptor,
+						searchField: index.searchField,
+						filterFields: Object.freeze([...index.filterFields].sort()),
+						staged: index.staged,
+					}),
+				)
+				.sort((a, b) => a.name.localeCompare(b.name)),
+		)
+		const indexes = captured.indexes
+			.map((index) => ({
+				name: index.indexDescriptor,
+				fields: [...index.fields],
+			}))
 			.sort((a, b) => a.name.localeCompare(b.name))
 		assertNativeValidation(nativeJson(zodToConvex(dto)))
 		nativeTables[name] = nativeTable
@@ -859,6 +904,7 @@ export function defineRelations<
 		metadata[name] = {
 			...normalized,
 			indexes,
+			searchIndexes,
 			dto,
 			dtoRecipe,
 			fieldGroups: Object.freeze(fieldGroups),
@@ -923,7 +969,10 @@ export function defineRelations<
 					JSON.stringify([name, tag]),
 					makeReferences(
 						branch.fields,
-						Object.freeze({ discriminator: normalized.branches.discriminator, tag }),
+						Object.freeze({
+							discriminator: normalized.branches.discriminator,
+							tag,
+						}),
 					),
 				)
 		one[name] = (spec) => makeEdge(name, 'one', spec, ownRefs)
@@ -1039,6 +1088,7 @@ export function defineRelations<
 				data.indexes,
 				canonicalNative(nativeJson(zodToConvex(data.dto))),
 				...(Object.keys(data.fieldGroups).length ? [data.fieldGroups] : []),
+				...(data.searchIndexes.length ? [{ searchIndexes: data.searchIndexes }] : []),
 			]),
 		Object.entries(declarations)
 			.sort(([a], [b]) => a.localeCompare(b))
@@ -1355,9 +1405,11 @@ function scalarValidator(validator: GenericValidator): boolean {
 }
 
 function assertSelection(selection: SelectionMask): void {
-	const pending: { value: SelectionMask; depth: number; ancestors: readonly SelectionMask[] }[] = [
-		{ value: selection, depth: 0, ancestors: [] },
-	]
+	const pending: {
+		value: SelectionMask
+		depth: number
+		ancestors: readonly SelectionMask[]
+	}[] = [{ value: selection, depth: 0, ancestors: [] }]
 	let nodes = 0
 	while (pending.length) {
 		const { value, depth, ancestors } = pending.pop()!
@@ -1373,7 +1425,11 @@ function assertSelection(selection: SelectionMask): void {
 			if (!property.enumerable || !('value' in property) || String(key) !== key)
 				throw new Error('Invalid selection property')
 			if (property.value !== true)
-				pending.push({ value: property.value, depth: depth + 1, ancestors: [...ancestors, value] })
+				pending.push({
+					value: property.value,
+					depth: depth + 1,
+					ancestors: [...ancestors, value],
+				})
 			else if (++nodes > 256) throw new Error('Selection node budget exceeded')
 		}
 	}
@@ -1647,7 +1703,11 @@ function normalizeTable(
 			? v.optional(union)
 			: union
 	}
-	return { fields, branches, allFields: new Set(members.flatMap((member) => Object.keys(member))) }
+	return {
+		fields,
+		branches,
+		allFields: new Set(members.flatMap((member) => Object.keys(member))),
+	}
 }
 function commonCompatible(left: GenericValidator, right: GenericValidator): boolean {
 	try {
@@ -1961,6 +2021,7 @@ function snapshotMetadata(registry: RegistryMetadata): RelationMetadata {
 			})
 		tables[name] = Object.freeze({
 			fieldGroups: data.fieldGroups,
+			searchIndexes: data.searchIndexes,
 			fields: Object.freeze(fields),
 			variant: data.branches
 				? Object.freeze({
@@ -1970,12 +2031,18 @@ function snapshotMetadata(registry: RegistryMetadata): RelationMetadata {
 				: undefined,
 			indexes: Object.freeze(
 				data.indexes.map((index) =>
-					Object.freeze({ name: index.name, fields: Object.freeze([...index.fields]) }),
+					Object.freeze({
+						name: index.name,
+						fields: Object.freeze([...index.fields]),
+					}),
 				),
 			),
 		})
 	}
-	return Object.freeze({ tables: Object.freeze(tables), declarations: registry.declarations })
+	return Object.freeze({
+		tables: Object.freeze(tables),
+		declarations: registry.declarations,
+	})
 }
 function hasNull(validator: GenericValidator): boolean {
 	return (

@@ -507,6 +507,7 @@ export type PageCompleteness =
 	| 'native-limit'
 	| 'result-cap'
 export type EnginePaginationResult<Row> = PaginationResult<Row> & {
+	paginationMode?: 'native-search'
 	completeness?: PageCompleteness
 }
 
@@ -515,6 +516,7 @@ export function paginated<Dto extends z.ZodType>(dto: Dto) {
 		args: { paginationOpts: convexToZod(paginationOptsValidator) },
 		result: z.object({
 			page: z.array(dto),
+			paginationMode: z.literal('native-search').optional(),
 			isDone: z.boolean(),
 			continueCursor: z.string(),
 			splitCursor: z.string().nullable().optional(),

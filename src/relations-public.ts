@@ -16,4 +16,7 @@ export {
 	type RelationTable,
 	type RelationTables,
 	type RelationDeclarations,
+	type FieldGroupMode,
+	type FieldGroupRequest,
+	type RelationGroupSelection,
 } from './relations'

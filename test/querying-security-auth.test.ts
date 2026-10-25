@@ -17,6 +17,120 @@ import { z } from 'zod'
 import { describe, expect, it } from 'vite-plus/test'
 import { createAuthFunctions } from '../src/auth'
 import { createManagedSecurity } from '../src/querying/security'
+import { fieldGroupFixture, seedFieldGroups } from './fixture-querying/field-groups'
+
+it('projects a requested stored group through a registered auth endpoint', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f)
+	const page = await f.t
+		.withIdentity({ subject: 'user', org_id: 'one', role: 'reader' })
+		.query(anyApi.functions.page, { cursor: null, numItems: 1 })
+	expect(page.page[0].balance).toBe(42n)
+	expect(page.page[0]).not.toHaveProperty('secret')
+	expect(page.page[0].profile).toEqual({ cents: 42, date: null })
+	expect(f.calls.clients).toBe(1)
+})
+
+const groupIdentity = { subject: 'user', org_id: 'one', role: 'reader' }
+const groupArgs = { cursor: null, numItems: 1 }
+
+it('omits denied optional own keys and exposes only a fixed required-denial error', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f, false)
+	const asUser = f.t.withIdentity(groupIdentity)
+	const result = await asUser.query(anyApi.functions.optional, groupArgs)
+	expect(Object.keys(result.page[0]).sort()).toEqual(['_id', 'name'])
+	expect(JSON.stringify(result)).not.toMatch(/balance|profile|never-public|cents/)
+	try {
+		await asUser.query(anyApi.functions.page, groupArgs)
+		throw new Error('unexpected acceptance')
+	} catch (error) {
+		expect(error).toMatchObject({ message: 'FIELD_GROUP_DENIED' })
+		expect(JSON.stringify(error)).not.toMatch(/never-public|balance|profile|42|99/)
+	}
+	expect(f.calls.clients).toBe(2)
+})
+
+it('checks every client predicate recursively before candidate reads, including contradictions and variants', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f, false)
+	const asUser = f.t.withIdentity(groupIdentity)
+	for (const filters of [
+		{ balance: 42n },
+		{ not: { balance: 42n } },
+		{ or: [{ name: 'impossible' }, { balance: 42n }] },
+		{ and: [{ name: 'a' }, { name: 'b' }, { not: { balance: 42n } }] },
+		{ accounts: { none: { or: [{ balance: 11n }] } } },
+	]) {
+		await expect(
+			asUser.query(anyApi.functions.optional, { ...groupArgs, filters }),
+		).rejects.toThrow('FIELD_GROUP_DENIED')
+		expect(f.calls.candidates).toBe(0)
+	}
+	await expect(
+		asUser.query(anyApi.functions.variant, {
+			...groupArgs,
+			filters: { not: { variant: { tag: 'finance', filters: { balance: 76n } } } },
+		}),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+	expect(f.calls.candidates).toBe(0)
+	await expect(asUser.query(anyApi.functions.sorted, groupArgs)).rejects.toThrow(
+		'FIELD_GROUP_DENIED',
+	)
+	expect(f.calls.candidates).toBe(0)
+})
+
+it('requires opt-in even for allowed readers and keeps server constraints trusted', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f)
+	const asUser = f.t.withIdentity(groupIdentity)
+	await expect(
+		asUser.query(anyApi.functions.plain, { ...groupArgs, filters: { balance: 42n } }),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+	expect(f.calls.clients).toBe(0)
+	expect(f.calls.candidates).toBe(0)
+	const trusted = await asUser.query(anyApi.functions.trusted, groupArgs)
+	expect(trusted.page).toHaveLength(1)
+	expect(trusted.page[0]).not.toHaveProperty('balance')
+	await expect(
+		asUser.query(anyApi.functions.trusted, { ...groupArgs, filters: { balance: 42n } }),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+})
+
+it('binds modes and current decisions in both root cursor slots before traversal', async () => {
+	const f = fieldGroupFixture()
+	const { permission } = await seedFieldGroups(f)
+	const asUser = f.t.withIdentity(groupIdentity)
+	const first = await asUser.query(anyApi.functions.optional, groupArgs)
+	const resumed = await asUser.query(anyApi.functions.optional, {
+		...groupArgs,
+		cursor: first.continueCursor,
+	})
+	expect(resumed.page[0].balance).toBe(99n)
+	expect(f.calls.clients).toBe(2)
+	await expect(
+		asUser.query(anyApi.functions.page, { ...groupArgs, cursor: first.continueCursor }),
+	).rejects.toThrow('Invalid cursor')
+	await f.t.run(({ db }) => db.patch('permissions', permission, { clients: false }))
+	const before = f.calls.candidates
+	for (const slots of [{ cursor: first.continueCursor }, { endCursor: first.continueCursor }]) {
+		await expect(
+			asUser.query(anyApi.functions.optional, { ...groupArgs, ...slots }),
+		).rejects.toThrow('Invalid cursor')
+		expect(f.calls.candidates).toBe(before)
+	}
+	expect(f.calls.clients).toBe(5)
+})
+
+it('uses the managed dependency budget for group policies and redacts policy failures', async () => {
+	const f = fieldGroupFixture({ readOperations: 1 })
+	await seedFieldGroups(f)
+	await expect(
+		f.t.withIdentity(groupIdentity).query(anyApi.functions.optional, groupArgs),
+	).rejects.toThrow('MANAGED_READ_BUDGET')
+	expect(f.calls.clients).toBe(1)
+	expect(f.calls.candidates).toBe(0)
+})
 
 const schema = defineSchema({
 	tasks: defineTable({ tenant: v.string(), name: v.string(), permission: v.id('permissions') }),

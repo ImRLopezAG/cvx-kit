@@ -6,8 +6,99 @@ For a field containing IDs from several tables, see
 Declare relationships with `cvx-kit/relations`, configure one query engine, then
 paginate with a small declarative chain. The engine runs streams and relationship
 lookups in the caller's Convex query transaction. Filtering determines eligible
-parents before they fill a page. `include` and native `paginated(dto)` remain
-independent APIs.
+parents before they fill a page. Native `paginated(dto)` remains independent.
+
+## Stored field groups
+
+Register whole stored fields alongside the table boundary. The registry captures
+their native schemas and membership; overlapping groups, public fields, unknown
+fields and incompatible variant containers are rejected. A group can contain a
+field present in only some variant branches. It never runs a private stored
+transform or widens the public DTO with unrelated fields.
+
+```ts
+const relations = defineRelations(
+	{
+		clients: { ...clients, fieldGroups: { finance: ['balanceCents'] } },
+		grants,
+	},
+	() => ({}),
+)
+const querying = createQueryEngine(
+	{ schema, relations },
+	{
+		fieldGroups: {
+			clients: {
+				finance: async ({ db, scope }) => {
+					// scope comes from the registered managed authority, never request args.
+					const grant = await db
+						.query('grants')
+						.withIndex('by_user', (q) => q.eq('user', scope.principal ?? ''))
+						.first()
+					return grant?.finance === true
+				},
+			},
+		},
+	},
+)
+const page = await querying(ctx).clients.include({ finance: 'if-permitted' }).paginate(args)
+const returns = relations.tables.clients.pageDto(
+	{},
+	{
+		fieldGroups: { finance: 'if-permitted' },
+	},
+)
+```
+
+Register policy dependency tables too. Policy readers share managed budgets and
+row authorization; use bounded operations such as `get`, `first` or `take`.
+Policies receive only trusted `scope` and the metered `db`, and must return
+`true` to grant access. Missing policies deny. Decisions are cached once per
+engine request/table/group, and re-evaluated on every new request. Engine
+creation captures policy callback references; callback closure state remains
+application-owned live state.
+
+`required` preserves stored field types and throws `FieldGroupError` with fixed
+code/message `FIELD_GROUP_DENIED` on denial. `if-permitted` makes the fields
+optional: denial omits own keys, never substitutes null. Stored nullable and
+optional fields retain their native semantics. No opt-in exposes no group keys.
+Use the same modes in `pageDto(selection, groupOptions)` and the query chain.
+Existing `pageDto(selection)` remains valid.
+
+Keep existing relation selection in the first argument and target group options
+in the second. Names in `relations` below are declared relation names; group
+names stay in `fieldGroups`, even when a relation and group share a name.
+
+```ts
+const groups = {
+	fieldGroups: { finance: 'required' },
+	relations: { accounts: { fieldGroups: { finance: 'if-permitted' } } },
+} as const
+relations.tables.clients.pageDto({ accounts: true }, groups)
+querying(ctx).clients.with({ accounts: true }, groups).paginate(args)
+// Each target evaluates its own policy, including standalone continuations.
+querying(ctx)
+	.clients.relation(parent, 'accounts')
+	.include({ finance: 'if-permitted' })
+	.paginate(args)
+```
+
+`include` replaces the root group request and preserves relation group options.
+`with` replaces relation output selection and merges the provided top-level group
+options. A relation chain starts with its target's own group request.
+For direct many ancestors, nested continuation verifies each named ancestor by
+authorized ID lookup and its current parent link. It does not repeat the ancestor's
+sorting or projection, so it needs no ancestor field-group grant. Current row
+permission and the final target's requested group policies still apply.
+
+Continue to select filter fields explicitly with `paginationOpts(selection)`.
+The engine checks the complete client predicate tree (including not/or, variants
+and relation targets) before traversal. Protected predicates and ordering require
+an allowed, requested group, even for an empty or contradictory query. Fixed
+server constraints stay trusted and do not authorize client predicates. Both
+cursor navigation slots bind requested modes and decisions; revocation rejects
+old cursors. Public error-envelope transport helpers belong to the separate
+error-contract API; the direct error class alone is not a transport guarantee.
 
 ## Declare tables and indexes
 

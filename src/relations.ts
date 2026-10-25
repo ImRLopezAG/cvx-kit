@@ -30,8 +30,112 @@ export interface RelationTable {
 	publicDto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
 	table: TableDefinition
 	dto(includeId: true): z.ZodType
+	/** Whole stored fields; schemas are captured from the native table, never a DTO transform. */
+	fieldGroups?: Readonly<Record<string, readonly string[]>>
 }
 export type RelationTables = Record<string, RelationTable>
+export type FieldGroupMode = 'if-permitted' | 'required'
+export type FieldGroupRequest<T extends RelationTable> = {
+	[K in keyof NonNullable<T['fieldGroups']>]?: FieldGroupMode
+}
+/** Separate from relation keys so existing selection syntax remains unambiguous. */
+export type RelationGroupSelection<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+	L extends readonly 1[] = readonly [1, 1, 1, 1],
+> = {
+	fieldGroups?: FieldGroupRequest<Tables[T]>
+	relations?: L extends readonly []
+		? never
+		: {
+				[K in keyof Edges<D, T>]?: RelationGroupSelection<
+					Tables,
+					D,
+					Extract<Target<Edges<D, T>[K]>, keyof Tables>,
+					Tail<L>
+				>
+			}
+}
+/** Internal admitted runtime tree, independent of user relation names. */
+export interface GroupSelection {
+	fieldGroups?: Readonly<Record<string, FieldGroupMode>>
+	relations?: Readonly<Record<string, GroupSelection>>
+}
+export type ExactGroupSelection<
+	Tables extends RelationTables,
+	D extends RelationDeclarations,
+	T extends keyof Tables,
+	G,
+> = G & {
+	[K in keyof G]: K extends 'fieldGroups'
+		? G[K] & {
+				[N in keyof G[K]]: N extends keyof FieldGroupRequest<Tables[T]> ? FieldGroupMode : never
+			}
+		: K extends 'relations'
+			? G[K] & {
+					[N in keyof G[K]]: N extends keyof Edges<D, T>
+						? ExactGroupSelection<Tables, D, Extract<Target<Edges<D, T>[N]>, keyof Tables>, G[K][N]>
+						: never
+				}
+			: never
+}
+type StoredValue<V extends GenericValidator> = GenericValidator extends V
+	? V['type']
+	: V extends {
+				kind: 'object'
+				fields: infer F extends Record<string, GenericValidator>
+		  }
+		? { [K in keyof F as F[K]['isOptional'] extends 'optional' ? never : K]: StoredValue<F[K]> } & {
+				[K in keyof F as F[K]['isOptional'] extends 'optional' ? K : never]?: StoredValue<F[K]>
+			}
+		: V extends { kind: 'array'; element: infer E extends GenericValidator }
+			? StoredValue<E>[]
+			: V extends { kind: 'union'; members: infer M extends GenericValidator[] }
+				? StoredValue<M[number]>
+				: V extends {
+							kind: 'record'
+							key: infer K extends GenericValidator
+							value: infer E extends GenericValidator
+					  }
+					? Record<Extract<K['type'], string>, StoredValue<E>>
+					: V['type']
+type GroupStoredRow<
+	T extends RelationTable,
+	Row,
+	Stored = StoredValue<ConvexValidatorFromZod<T['schema'], 'required'>>,
+> = [Tags<T>] extends [never]
+	? Stored
+	: Extract<Stored, Pick<Row, Extract<Discriminator<T>, keyof Row>>>
+type GroupFields<T extends RelationTable, G, Row> = T extends {
+	fieldGroups: infer Definitions extends Readonly<Record<string, readonly string[]>>
+}
+	? {
+			[K in keyof G & keyof Definitions]: Pick<
+				GroupStoredRow<T, Row>,
+				Extract<Definitions[K][number], keyof GroupStoredRow<T, Row>>
+			>
+		}
+	: {}
+type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (
+	x: infer I,
+) => void
+	? I
+	: never
+type IncludedFields<T extends RelationTable, G, Row> = G extends { fieldGroups: infer Requests }
+	? UnionToIntersection<
+			{
+				[K in keyof Requests & keyof GroupFields<T, Requests, Row>]: Requests[K] extends 'required'
+					? GroupFields<T, Requests, Row>[K]
+					: Partial<GroupFields<T, Requests, Row>[K]>
+			}[keyof Requests & keyof GroupFields<T, Requests, Row>]
+		>
+	: {}
+type NestedGroups<G, K extends PropertyKey> = G extends { relations: infer R }
+	? K extends keyof R
+		? R[K]
+		: {}
+	: {}
 /** Internal named declaration dependency; excluded from the supported relations facade. */
 export interface SelectionMask {
 	[key: string]: true | SelectionMask
@@ -489,8 +593,10 @@ type ComposeRelationRow<
 	S,
 	Level extends readonly 1[],
 	Row,
+	G = {},
 > = Row extends unknown
 	? Row &
+			IncludedFields<Tables[T], G, Row> &
 			(Level extends readonly []
 				? {}
 				: {
@@ -516,7 +622,8 @@ type ComposeRelationRow<
 													D,
 													Extract<Target, keyof Tables>,
 													S[K] extends true ? {} : S[K],
-													Tail<Level>
+													Tail<Level>,
+													NestedGroups<G, K>
 												>,
 												TargetScope,
 												Discriminator<Tables[Extract<Target, keyof Tables>]>
@@ -529,7 +636,8 @@ type ComposeRelationRow<
 													D,
 													Extract<Target, keyof Tables>,
 													S[K] extends true ? {} : S[K],
-													Tail<Level>
+													Tail<Level>,
+													NestedGroups<G, K>
 												>,
 												TargetScope,
 												Discriminator<Tables[Extract<Target, keyof Tables>]>
@@ -545,14 +653,16 @@ export type RelationRow<
 	T extends keyof Tables,
 	S,
 	Level extends readonly 1[] = Depth,
-> = ComposeRelationRow<Tables, D, T, S, Level, PublicRow<Tables[T]>>
+	G = {},
+> = ComposeRelationRow<Tables, D, T, S, Level, PublicRow<Tables[T]>, G>
 export type RelationQueryRow<
 	Tables extends RelationTables,
 	D extends RelationDeclarations,
 	T extends keyof Tables,
 	S,
 	Scope extends string = never,
-> = ScopedRelationRow<RelationRow<Tables, D, T, S>, Scope, Discriminator<Tables[T]>>
+	G = {},
+> = ScopedRelationRow<RelationRow<Tables, D, T, S, Depth, G>, Scope, Discriminator<Tables[T]>>
 export interface RelationTableHelpers<
 	Tables extends RelationTables,
 	D extends RelationDeclarations,
@@ -564,9 +674,13 @@ export interface RelationTableHelpers<
 		RelationFilters<Tables, D, T, S>,
 		RelationFilters<Tables, D, T, S, 'input'>
 	>
-	pageDto<const S extends RelationSelection<Tables, D, T>>(
+	pageDto<
+		const S extends RelationSelection<Tables, D, T>,
+		const G extends RelationGroupSelection<Tables, D, T> = {},
+	>(
 		selection: ExactOutputMask<Tables, D, T, S>,
-	): z.ZodType<EnginePaginationResult<RelationRow<Tables, D, T, S>>>
+		groups?: ExactGroupSelection<Tables, D, T, G>,
+	): z.ZodType<EnginePaginationResult<RelationRow<Tables, D, T, S, Depth, G>>>
 }
 export interface RelationRegistryIdentity {
 	readonly identity: string
@@ -586,11 +700,14 @@ export interface RelationFieldMetadata {
 	readonly native: Readonly<ValidatorJSON>
 }
 export interface RelationTableMetadata {
+	readonly fieldGroups: Readonly<Record<string, readonly string[]>>
 	readonly fields: Readonly<Record<string, RelationFieldMetadata>>
 	readonly variant?: { readonly discriminator: string; readonly tags: readonly string[] }
 	readonly indexes: readonly { readonly name: string; readonly fields: readonly string[] }[]
 }
 interface TableMetadata {
+	fieldGroups: Readonly<Record<string, readonly string[]>>
+	groupRecipes: Readonly<Record<string, DtoRecipe>>
 	fields: Record<string, GenericValidator>
 	indexes: { name: string; fields: string[] }[]
 	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
@@ -678,7 +795,70 @@ export function defineRelations<
 			.sort((a, b) => a.name.localeCompare(b.name))
 		assertNativeValidation(nativeJson(zodToConvex(dto)))
 		nativeTables[name] = nativeTable
-		metadata[name] = { ...normalized, indexes, dto, dtoRecipe }
+		const fieldGroups: Record<string, readonly string[]> = Object.create(null)
+		const groupRecipes: Record<string, DtoRecipe> = Object.create(null)
+		const descriptor = Object.getOwnPropertyDescriptor(table, 'fieldGroups')
+		if ((!descriptor && 'fieldGroups' in table) || (descriptor && !('value' in descriptor)))
+			throw new Error('Invalid field groups')
+		assertGroupData(descriptor?.value ?? {})
+		const definitions = z
+			.record(z.string(), z.array(z.string()).nonempty())
+			.parse(descriptor?.value ?? {})
+		const used = new Set<string>()
+		const publicBranches = dto instanceof z.ZodObject ? [dto] : dto.options
+		for (const [group, members] of Object.entries(definitions)) {
+			if (!group || ['__proto__', 'constructor', 'prototype'].includes(group))
+				throw new Error('Invalid field groups')
+			for (const field of members) {
+				if (
+					!normalized.allFields.has(field) ||
+					field.startsWith('_') ||
+					used.has(field) ||
+					publicBranches.some(
+						(branch) => !(branch instanceof z.ZodObject) || Object.hasOwn(branch.shape, field),
+					)
+				)
+					throw new Error('Conflicting or incompatible field groups')
+				const validators = normalized.branches
+					? Object.values(normalized.branches.options)
+							.map((branch) => branch.fields[field])
+							.filter((validator) => validator !== undefined)
+					: [normalized.fields[field]]
+				if (
+					!validators.every(
+						(validator) =>
+							canonicalNative(nativeJson(validator)) ===
+								canonicalNative(nativeJson(validators[0])) &&
+							validator.isOptional === validators[0].isOptional,
+					)
+				)
+					throw new Error('Conflicting or incompatible field groups')
+				used.add(field)
+			}
+			fieldGroups[group] = Object.freeze([...members].sort())
+			for (const [tag, fields] of normalized.branches
+				? Object.entries(normalized.branches.options).map(
+						([tag, branch]) => [tag, branch.fields] as const,
+					)
+				: [[null, normalized.fields] as const]) {
+				const storedFields = Object.fromEntries(
+					members
+						.filter((field) => Object.hasOwn(fields, field))
+						.map((field) => [field, fields[field]]),
+				)
+				groupRecipes[JSON.stringify([group, tag])] = captureDto(
+					convexToZod(v.object(storedFields)).strict(),
+				)
+			}
+		}
+		metadata[name] = {
+			...normalized,
+			indexes,
+			dto,
+			dtoRecipe,
+			fieldGroups: Object.freeze(fieldGroups),
+			groupRecipes: Object.freeze(groupRecipes),
+		}
 		const makeReferences = (
 			validators: Record<string, GenericValidator>,
 			guard?: RelationGuard,
@@ -787,7 +967,7 @@ export function defineRelations<
 		string,
 		{
 			paginationOpts(selection: SelectionMask): z.ZodType
-			pageDto(selection: SelectionMask): z.ZodType
+			pageDto(selection: SelectionMask, groups?: GroupSelection): z.ZodType
 		}
 	> = {}
 	for (const table of Object.keys(metadata))
@@ -799,9 +979,10 @@ export function defineRelations<
 					order: z.enum(['asc', 'desc']).optional(),
 				})
 			},
-			pageDto(selection: SelectionMask): z.ZodType {
+			pageDto(selection: SelectionMask, groups: GroupSelection = {}): z.ZodType {
 				assertSelection(selection)
-				return paginated(rowSchema(internal, table, selection)).result
+				assertGroups(internal, table, groups)
+				return paginated(rowSchema(internal, table, selection, 0, groups)).result
 			},
 		}
 
@@ -834,6 +1015,7 @@ export function defineRelations<
 					: null,
 				data.indexes,
 				canonicalNative(nativeJson(zodToConvex(data.dto))),
+				...(Object.keys(data.fieldGroups).length ? [data.fieldGroups] : []),
 			]),
 		Object.entries(declarations)
 			.sort(([a], [b]) => a.localeCompare(b))
@@ -906,6 +1088,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		{ validator: z.ZodType; fieldKeys: readonly string[] }
 	>()
 	const projectionKeys = new WeakMap<z.ZodObject, readonly string[]>()
+	const groupDtos = new WeakMap<z.ZodObject, Map<string, z.ZodObject>>()
 	const scalarFields = new Map<string, FieldSchemas>()
 	const grammars = new Map<string, FilterGrammar>()
 	const filterNodes = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>()
@@ -938,6 +1121,9 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 	}
 	return Object.freeze({
 		streamSchema: owned.streamSchema,
+		groups(table: string, groups: GroupSelection) {
+			return assertGroups(owned.internal, table, groups)
+		},
 		validateDocument,
 		assertSchema,
 		pagination(table: string) {
@@ -1014,6 +1200,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 			table: string,
 			row: Record<string, import('convex/values').Value>,
 			eligible: () => boolean,
+			groups: readonly string[] = [],
 		) {
 			if (!eligible()) return null
 			const data = owned.internal.metadata[table]
@@ -1022,8 +1209,31 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 				? data.branches.options[String(row[data.branches.discriminator])]
 				: undefined
 			if (data.branches && !branch) throw new Error('Invalid variant document')
-			const dto = branch?.dto ?? data.dto
+			let dto = branch?.dto ?? data.dto
 			if (!(dto instanceof z.ZodObject)) throw new Error('Invalid variant DTO')
+			if (groups.length) {
+				let variants = groupDtos.get(dto)
+				if (!variants) {
+					variants = new Map()
+					groupDtos.set(dto, variants)
+				}
+				const key = JSON.stringify([...groups].sort())
+				let composed = variants.get(key)
+				if (!composed) {
+					composed = dto
+						.extend(
+							groupValidators(
+								data,
+								groups,
+								undefined,
+								data.branches ? String(row[data.branches.discriminator]) : undefined,
+							),
+						)
+						.strict()
+					variants.set(key, composed)
+				}
+				dto = composed
+			}
 			validateDocument(table, row)
 			let keys = projectionKeys.get(dto)
 			if (!keys) {
@@ -1045,6 +1255,73 @@ export function getRelationMetadata(registry: RelationRegistryIdentity): Relatio
 	const metadata = registries.get(registry)
 	if (!metadata) throw new Error('Unknown relation registry')
 	return metadata
+}
+
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Registration preflight inspects descriptors before Zod can invoke caller getters; typed parsing follows immediately.
+function assertGroupData(value: unknown, depth = 0): void {
+	if (depth > 16) throw new Error('Invalid field groups')
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Descriptor preflight must distinguish primitive leaves without invoking caller-owned accessors.
+	if (value === null || typeof value !== 'object') return
+	const prototype = Object.getPrototypeOf(value)
+	if (prototype !== Object.prototype && prototype !== null && prototype !== Array.prototype)
+		throw new Error('Invalid field groups')
+	for (const key of Reflect.ownKeys(value)) {
+		const descriptor = Object.getOwnPropertyDescriptor(value, key)!
+		if (!z.string().safeParse(key).success || !('value' in descriptor))
+			throw new Error('Invalid field groups')
+		assertGroupData(descriptor.value, depth + 1)
+	}
+}
+
+function assertGroups(
+	registry: RegistryMetadata,
+	table: string,
+	input: GroupSelection,
+): GroupSelection {
+	assertGroupData(input)
+	function visit(table: string, input: GroupSelection, depth: number): GroupSelection {
+		const parsed = z
+			.object({
+				fieldGroups: z.record(z.string(), z.enum(['required', 'if-permitted'])).optional(),
+				relations: z.record(z.string(), z.unknown()).optional(),
+			})
+			.strict()
+			.parse(input)
+		const data = registry.metadata[table]
+		if (!data) throw new Error('Unknown query table')
+		for (const name of Object.keys(parsed.fieldGroups ?? {}))
+			if (!Object.hasOwn(data.fieldGroups, name)) throw new Error('Unknown field group')
+		const relations: Record<string, GroupSelection> = {}
+		for (const [name, nested] of Object.entries(parsed.relations ?? {})) {
+			const edge = registry.declarations[table]?.[name]
+			if (!edge || depth >= 4) throw new Error('Invalid field group relation')
+			// SAFETY: the recursive visitor validates each unknown node before using it.
+			relations[name] = visit(edge.target, nested as GroupSelection, depth + 1)
+		}
+		return Object.freeze({
+			fieldGroups: Object.freeze(parsed.fieldGroups ?? {}),
+			relations: Object.freeze(relations),
+		})
+	}
+	return visit(table, input, 0)
+}
+
+function groupValidators(
+	data: TableMetadata,
+	groups: readonly string[],
+	modes?: GroupSelection['fieldGroups'],
+	tag?: string,
+): FieldSchemas {
+	const fields: FieldSchemas = {}
+	for (const name of groups) {
+		const key = JSON.stringify([name, tag ?? null])
+		if (!Object.hasOwn(data.groupRecipes, key)) throw new Error('Unknown field group')
+		const schema = materializeDto(data.groupRecipes[key])
+		if (!(schema instanceof z.ZodObject)) throw new Error('Invalid field group schema')
+		for (const [field, validator] of Object.entries(schema.shape))
+			fields[field] = modes?.[name] === 'if-permitted' ? validator.optional() : validator
+	}
+	return fields
 }
 
 function scalarValidator(validator: GenericValidator): boolean {
@@ -1229,15 +1506,19 @@ function rowSchema(
 	table: string,
 	selection: SelectionMask,
 	depth: number = 0,
+	groups: GroupSelection = {},
 ): z.ZodType {
 	const relationFields: FieldSchemas = {}
 	for (const [name, mask] of Object.entries(selection)) {
 		const edge = registry.declarations[table]?.[name]
 		if (!edge || depth >= 4) throw new Error(`Unknown or too deep relation "${table}.${name}"`)
-		let target =
-			mask === true
-				? materializeDto(registry.metadata[edge.target].dtoRecipe)
-				: rowSchema(registry, edge.target, mask, depth + 1)
+		let target = rowSchema(
+			registry,
+			edge.target,
+			mask === true ? {} : mask,
+			depth + 1,
+			groups.relations?.[name],
+		)
 		if (edge.targetGuard) {
 			if (!(target instanceof z.ZodDiscriminatedUnion)) throw new Error('Invalid target scope')
 			target = target.options
@@ -1259,7 +1540,12 @@ function rowSchema(
 			if (edge.sourceGuard && tag !== edge.sourceGuard.tag && edge.cardinality === 'one')
 				selected[name] = z.null()
 		}
-		return dto.extend(selected).strict()
+		return dto
+			.extend({
+				...groupValidators(data, Object.keys(groups.fieldGroups ?? {}), groups.fieldGroups, tag),
+				...selected,
+			})
+			.strict()
 	}
 	if (data.branches) {
 		if (!(dto instanceof z.ZodDiscriminatedUnion)) throw new Error('Invalid variant DTO')
@@ -1651,6 +1937,7 @@ function snapshotMetadata(registry: RegistryMetadata): RelationMetadata {
 				native: frozenNative(nativeJson(validator)),
 			})
 		tables[name] = Object.freeze({
+			fieldGroups: data.fieldGroups,
 			fields: Object.freeze(fields),
 			variant: data.branches
 				? Object.freeze({

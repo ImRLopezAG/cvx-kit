@@ -6,6 +6,69 @@ import { ManagedReadError, MAX_DOCUMENT_BYTES } from '../src/querying/security'
 import { ConvexError, getDocumentSize, type Value } from 'convex/values'
 import { anyApi } from 'convex/server'
 import { relationshipAuthFixture } from './fixture-querying/relationships-auth'
+import { fieldGroupFixture, seedFieldGroups } from './fixture-querying/field-groups'
+
+test('field group target policies are independent and cached per request/table/group', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f, true, false)
+	const asUser = f.t.withIdentity({ subject: 'user', org_id: 'one', role: 'reader' })
+	await expect(
+		asUser.query(anyApi.functions.nestedRequired, { cursor: null, numItems: 1 }),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+	expect(f.calls.candidates).toBe(0)
+	f.calls.accounts = 0
+	const result = await asUser.query(anyApi.functions.nested, { cursor: null, numItems: 2 })
+	expect(result.page[0].balance).toBe(42n)
+	expect(result.page[0].accounts.page).toHaveLength(2)
+	for (const account of result.page[0].accounts.page) {
+		expect(Object.keys(account).sort()).toEqual(['_id', 'name', 'owner'])
+		expect(account.owner.balance).toBe(42n)
+	}
+	expect(f.calls.clients).toBe(1)
+	expect(f.calls.accounts).toBe(1)
+	const raw = JSON.stringify(result, (_, value) =>
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- JSON has no bigint encoding; the replacer preserves the raw wire-visible values for privacy assertions.
+		typeof value === 'bigint' ? String(value) : value,
+	)
+	expect(raw).not.toMatch(/never-public|"11"|"22"|"33"/)
+})
+
+test('nested group cursors resume standalone and reject revoked access in either slot before parent reads', async () => {
+	const f = fieldGroupFixture()
+	const { permission, parent } = await seedFieldGroups(f)
+	const asUser = f.t.withIdentity({ subject: 'user', org_id: 'one', role: 'reader' })
+	const first = await asUser.query(anyApi.functions.nested, { cursor: null, numItems: 1 })
+	const token = first.page[0].accounts.continueCursor
+	const next = await asUser.query(anyApi.functions.next, { parent, cursor: token, numItems: 1 })
+	expect(next.page[0].balance).toBe(22n)
+	expect(next.page[0].owner.balance).toBe(42n)
+	expect(f.calls.clients).toBe(2)
+	expect(f.calls.accounts).toBe(2)
+	await f.t.run(({ db }) => db.patch('permissions', permission, { accounts: false }))
+	const before = f.calls.candidates
+	for (const slots of [{ cursor: token }, { endCursor: token }]) {
+		await expect(
+			asUser.query(anyApi.functions.next, { parent, cursor: null, numItems: 1, ...slots }),
+		).rejects.toThrow('Invalid cursor')
+		expect(f.calls.candidates).toBe(before)
+	}
+	expect(f.calls.clients).toBe(4)
+	expect(f.calls.accounts).toBe(4)
+})
+
+test('denied related predicates reject even when parent and target sets are empty', async () => {
+	const f = fieldGroupFixture()
+	const asUser = f.t.withIdentity({ subject: 'user', org_id: 'one', role: 'reader' })
+	await expect(
+		asUser.query(anyApi.functions.nested, {
+			cursor: null,
+			numItems: 1,
+			filters: { not: { accounts: { some: { balance: { gt: 0n } } } } },
+		}),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+	expect(f.calls.candidates).toBe(0)
+	expect(f.calls.accounts).toBe(1)
+})
 
 test('owned root, direct and flattened streams ignore later source index and table replacements', async () => {
 	const f = relationshipFixture()

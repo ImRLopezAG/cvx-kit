@@ -24,6 +24,7 @@ export function createPlanner(
 	return {
 		metadata,
 		select: owned.select,
+		groups: owned.groups,
 		validateDocument: owned.validateDocument,
 		streamSchema: owned.streamSchema,
 		beforeLeaf(table: string) {
@@ -34,8 +35,14 @@ export function createPlanner(
 			document: Record<string, Value>,
 			permitted: boolean,
 			residual: FilterAst,
+			groups: readonly string[] = [],
 		) {
-			return owned.project(table, document, () => permitted && scalarMatches(residual, document))
+			return owned.project(
+				table,
+				document,
+				() => permitted && scalarMatches(residual, document),
+				groups,
+			)
 		},
 		plan(
 			table: string,

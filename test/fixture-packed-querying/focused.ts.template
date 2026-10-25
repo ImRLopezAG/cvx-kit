@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { runFieldGroups } from './field-groups'
+await runFieldGroups()
 import { writeFileSync } from 'node:fs'
 import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'

@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict'
+import { convexTest } from 'convex-test'
+import { z } from 'zod'
+import { defineSchema, queryGeneric, mutationGeneric, actionGeneric, internalQueryGeneric, internalMutationGeneric, internalActionGeneric, anyApi, type DataModelFromSchemaDefinition, type GenericQueryCtx } from 'convex/server'
+import { zodTable } from 'cvx-kit/zod-table'
+import { defineRelations } from 'cvx-kit/relations'
+import { createQueryEngine } from 'cvx-kit/querying'
+import { createAuthFunctions } from 'cvx-kit/auth'
+
+const records = zodTable('records', () => ({ title: z.string(), amount: z.bigint(), transformed: z.number().transform(String), secret: z.string() }), { publicFields: ['title'] })
+const relations = defineRelations({ records: { ...records, fieldGroups: { finance: ['amount', 'transformed'] as const } } }, () => ({}))
+const schema = defineSchema({ records: records.table })
+type DM = DataModelFromSchemaDefinition<typeof schema>
+const builders = { query: queryGeneric, mutation: mutationGeneric, action: actionGeneric, internalQuery: internalQueryGeneric, internalMutation: internalMutationGeneric, internalAction: internalActionGeneric }
+const auth = createAuthFunctions<DM, 'reader'>({ ...builders, getAuthUser: async (ctx: GenericQueryCtx<DM> | { auth: GenericQueryCtx<DM>['auth'] }) => {
+  const identity = await ctx.auth.getUserIdentity(); return identity ? { id: identity.subject } : null
+}, mapRole: () => 'reader', adminRoles: [] })
+const querying = createQueryEngine({ schema, relations }, { cursor: { version: 'groups', currentKeyId: 'one', keys: { one: new Uint8Array(64).fill(9) } }, fieldGroups: { records: { finance: ({ scope }) => scope.principal === 'allowed' } } })
+const options = { fieldGroups: { finance: 'if-permitted' } } as const
+const page = auth.authQuery({ args: relations.tables.records.paginationOpts({ amount: true }), returns: relations.tables.records.pageDto({}, options), handler: (ctx, args) => querying(ctx).records.include(options.fieldGroups).paginate(args) })
+
+export async function groupTypes(ctx: Parameters<typeof querying>[0]) {
+  const required = await querying(ctx).records.include({ finance: 'required' }).paginate({ cursor: null, numItems: 1 })
+  const amount: bigint = required.page[0].amount
+  const native: number = required.page[0].transformed
+  // @ts-expect-error native storage retains number, never a private parser's string output
+  const transformed: string = required.page[0].transformed
+  const optional = await querying(ctx).records.include(options.fieldGroups).paginate({ cursor: null, numItems: 1 })
+  const maybe: bigint | undefined = optional.page[0].amount
+  // @ts-expect-error optional group may be omitted
+  const wrong: bigint = optional.page[0].amount
+  // @ts-expect-error private ungrouped fields never appear
+  optional.page[0].secret
+  // @ts-expect-error unknown group names are rejected
+  querying(ctx).records.include({ other: 'required' })
+  void [amount, native, transformed, maybe, wrong]
+}
+export async function runFieldGroups() {
+  const t = convexTest(schema, { './_generated/server.ts': async () => builders, './functions.ts': async () => ({ page }) })
+  // @ts-expect-error existing table types infer parser output; the native validator stores number
+  await t.run(({ db }) => db.insert('records', { title: 'public', amount: 73n, transformed: 5, secret: 'never-public' }))
+  const allowed = await t.withIdentity({ subject: 'allowed', org_id: 'one', role: 'reader' }).query(anyApi.functions.page, { cursor: null, numItems: 1 })
+  assert.equal(allowed.page[0].amount, 73n)
+  assert.equal(allowed.page[0].transformed, 5)
+  assert.equal(Object.hasOwn(allowed.page[0], 'secret'), false)
+  const denied = await t.withIdentity({ subject: 'denied', org_id: 'one', role: 'reader' }).query(anyApi.functions.page, { cursor: null, numItems: 1 })
+  assert.deepEqual(Object.keys(denied.page[0]).sort(), ['_id', 'title'])
+  assert.doesNotMatch(JSON.stringify(denied), /"amount"|"transformed"|never-public/)
+  await assert.rejects(t.withIdentity({ subject: 'denied', org_id: 'one', role: 'reader' }).query(anyApi.functions.page, { cursor: null, numItems: 1, filters: { amount: 73n } }), /FIELD_GROUP_DENIED/)
+  console.log('U5 packed registered field groups passed')
+}

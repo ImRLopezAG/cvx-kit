@@ -46,6 +46,7 @@ import type { FilterAst, IndexCondition, NativePagination } from './querying/fil
 import type { GenericDatabaseReader } from 'convex/server'
 import type { Value } from 'convex/values'
 
+export { queryFailureContract } from './querying/failures'
 export { CursorError } from './querying/cursors'
 export type { ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
 

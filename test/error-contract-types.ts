@@ -1,3 +1,4 @@
+import { decodeFailure, matchFailure } from '../src/react/failures'
 import { z } from 'zod'
 import { Cause } from 'effect'
 import {
@@ -46,3 +47,34 @@ if (projected._tag === 'DeclaredFailure') {
 	void projected.details
 }
 void [code, id, server, forged, decoded]
+
+// The client always receives an explicit declaration; generated references carry no error metadata.
+const clientContract = defineErrorContract({
+	First: { message: 'First', details: {} },
+	NewlyDeclared: { message: 'New', details: { revision: z.number() } },
+})
+matchFailure(new Error(), clientContract, {
+	First: () => 'first',
+	NewlyDeclared: ({ details }) => details.revision,
+})
+// @ts-expect-error A newly declared code requires a handler when there is no fallback.
+matchFailure(new Error(), clientContract, { First: () => 'first' })
+matchFailure(new Error(), clientContract, { First: () => 1, _: () => 0 })
+const tagHandlers = { DeclaredFailure: () => 1, _: () => 0 }
+// @ts-expect-error The tag is not a declared code.
+matchFailure(new Error(), clientContract, tagHandlers)
+const clientDecoded = decodeFailure(new Error(), clientContract)
+if (clientDecoded._tag === 'DeclaredFailure' && clientDecoded.code === 'NewlyDeclared') {
+	const revision: number = clientDecoded.details.revision
+	void revision
+}
+
+const underscore = defineErrorContract({
+	_: { message: 'Underscore', details: { id: z.string() } },
+})
+type UnderscoreFailure = Extract<ReturnType<typeof underscore.decode>, { _tag: 'DeclaredFailure' }>
+// @ts-expect-error The '_' slot is also the fallback and must accept UnknownFailure.
+matchFailure(new Error(), underscore, { _: (failure: UnderscoreFailure) => failure.details.id })
+matchFailure(new Error(), underscore, {
+	_: (failure) => (failure._tag === 'DeclaredFailure' ? failure.details.id : 'unknown'),
+})

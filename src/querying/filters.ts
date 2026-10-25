@@ -359,9 +359,18 @@ export function expansionForIndex(
 	if (!values?.length) return null
 	if (values.length > MAX_INDEX_EXPANSION) {
 		if (explicit) return null
-		throw new Error('QUERY_FANOUT')
+		const error = new Error('QUERY_FANOUT')
+		queryFanoutErrors.add(error)
+		throw error
 	}
 	return { field, values, comparator: explicit ? 'full-index' : 'tail' }
+}
+
+// Preserve the existing Error/message for direct callers; only engine-created identities are transportable.
+const queryFanoutErrors = new WeakSet<Error>()
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Endpoint projection must accept arbitrary thrown values.
+export function isQueryFanoutError(error: unknown): boolean {
+	return error instanceof Error && queryFanoutErrors.has(error)
 }
 
 /** Normalize only membership sets; unrelated boolean expressions retain their identity. */

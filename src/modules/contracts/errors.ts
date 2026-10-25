@@ -142,6 +142,13 @@ export function defineErrorContract<const Definitions extends ErrorDefinitions>(
 	}
 }
 
+/** Fixed, diagnostic-free transport shared by query endpoints and client recovery. */
+export const queryErrors = defineErrorContract({
+	'invalid-cursor': { message: 'Invalid cursor', details: {} },
+	FIELD_GROUP_DENIED: { message: 'Field group access denied', details: {} },
+	QUERY_FANOUT: { message: 'Query fan-out limit exceeded', details: {} },
+})
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
 	const prototype = Object.getPrototypeOf(value)

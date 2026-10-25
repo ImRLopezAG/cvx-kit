@@ -617,3 +617,11 @@ domain, caller binding, managed scope or central policy version invalidates the 
 Retain old keys during rotation to accept their tokens; removing a key rejects them.
 There is no `wrap` helper: seal continuation and split payloads separately, with each
 boundary's own counters and traversal state.
+
+## Public failure transport
+
+Direct callers keep native errors. For client-facing endpoints, use the explicit
+`queryFailureContract` adapter and the fixed client `queryErrors` declaration.
+See [client failures](client-failures.md#transporting-engine-failures) for the
+ordinary auth endpoint catch and Effect expected-error channel. Do not identify
+invalid cursors by message substrings or forge Convex system errors.

@@ -138,6 +138,10 @@
 		"./filters": {
 			"types": "./dist/filters.d.mts",
 			"import": "./dist/filters.mjs"
+		},
+		"./react": {
+			"types": "./dist/react.d.mts",
+			"import": "./dist/react.mjs"
 		}
 	},
 	"scripts": {
@@ -177,12 +181,17 @@
 	"devDependencies": {
 		"@edge-runtime/vm": "^5.0.0",
 		"@types/node": "^26.6.5",
+		"@types/react": "19.2.2",
+		"@types/react-dom": "19.2.2",
 		"convex": "1.46.0",
 		"convex-helpers": "0.1.128",
 		"convex-test": "^0.0.61",
 		"effect": "4.0.2",
+		"jsdom": "26.1.0",
 		"oxlint": "1.87.0",
 		"publint": "^0.3.25",
+		"react": "19.2.8",
+		"react-dom": "19.2.8",
 		"typescript": "7.0.2",
 		"vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
 		"vite-plus": "1.1.0",
@@ -192,10 +201,14 @@
 		"convex": "^1.46.0",
 		"convex-helpers": ">=0.1.127 <0.2.0",
 		"effect": ">=4.0.1 <5",
+		"react": "^18.0.0 || ^19.0.0",
 		"zod": "^4.5.4"
 	},
 	"peerDependenciesMeta": {
 		"effect": {
+			"optional": true
+		},
+		"react": {
 			"optional": true
 		}
 	},

@@ -26,6 +26,7 @@ Read only the guides needed for the task, resolving paths relative to this skill
 | Authentication, roles, shared Effect context          | [auth](references/auth.md)                                                                               |
 | Tenant isolation and row security                     | [tenancy](references/tenancy.md)                                                                         |
 | Commands, queries, registry wiring, audit             | [commands](references/commands.md), [effect](references/effect.md)                                       |
+| Client failures and React mutation hooks              | [client-failures](references/client-failures.md)                                                         |
 | Contracts and domain API integration                  | [domain-contracts](references/domain-contracts.md), [domain-operations](references/domain-operations.md) |
 | Request-local registry context                        | [command-context](references/command-context.md)                                                         |
 | Timestamps and database lifecycle rules               | [triggers](references/triggers.md)                                                                       |

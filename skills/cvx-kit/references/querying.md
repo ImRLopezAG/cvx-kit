@@ -241,10 +241,46 @@ index but does not bind its fields: validated filters and `.where(...)` supply
 the bindings. An incompatible explicit index fails instead of silently scanning.
 Relationship traversal retains its mandatory foreign-key prefix.
 
+`.orderBy('index_name')` selects a schema-declared index without requiring an
+equality prefix. It returns a new chain; repeated calls replace the selection.
+Matching leading equalities narrow the scan, while non-prefix predicates remain
+residual. Index names come from the native schema's index builder return types:
+retain the indexed table returned by `.index(...)` when declaring the schema.
+Unknown runtime names fail before reads. An active `.when(...)` and `orderBy`
+cannot be combined; nullish conditions remain inactive.
+
+```ts
+await querying(ctx)
+	.tasks.orderBy('by_department_dueAt')
+	.where({
+		department: 'sales',
+		dueAt: { gte: start, lt: end },
+	})
+	.paginate({ numItems: 25, cursor: null, order: 'desc' })
+```
+
 Without an explicit choice, the planner selects the longest usable equality
-prefix, with stable index-name ordering for ties and creation-time fallback.
-OR branches contribute only guaranteed common bindings. `order: 'desc'` reverses
-the selected native index order; it does not sort by an arbitrary field.
+prefix, then a usable range, then stable index-name ordering; otherwise it falls
+back to creation time. Common OR equalities retain their existing behavior.
+AND-guaranteed bounds on the next index field after that prefix (or the first
+field with no equality) become native lower/upper bounds. The tightest endpoints
+win, with strict bounds winning ties. Contradictory bounds or equality conflicts
+return no candidates. Bounds under OR/NOT and beyond an unbound index gap remain
+residual. Every predicate also remains checked after authorization.
+
+`order: 'desc'` reverses the complete selected index order, including native ties.
+Both continue and end cursors bind the chosen index, direction and filters.
+Optional fields retain native scalar comparison semantics: upper bounds can match
+missing values; no null/existence guard is added. Use `exists: true` when needed.
+Nullable fields keep their existing grammar, which rejects range operators; null
+and missing values still retain their native index order and equality behavior.
+
+For relation continuations, `orderBy` supports only direct paths whose target
+index is compatible with the mandatory lookup equality prefix. Incompatible
+indexes and every junction/through path reject before parent or candidate reads.
+Junction pages retain their existing traversal order and repeated edge occurrences;
+they do not provide global target ordering. Range bounds are recomputed against
+each actual lookup prefix and never copied from target fields to junction rows.
 
 ## Continue relationship pages
 

@@ -20,7 +20,7 @@ import type { Value } from 'convex/values'
 import type { createPlanner } from './planner'
 import { MAX_DOCUMENT_BYTES, ManagedReadError, type ManagedReadRequest } from './security'
 import { CursorError, type CursorBinding, type createCursorCodec } from './cursors'
-import type { NativePagination } from './filters'
+import type { NativePagination, NativeRange, FilterScalar } from './filters'
 import { RelationshipError } from './relationships'
 
 type Entry = [Record<string, Value> | null, IndexKey, number]
@@ -95,16 +95,7 @@ export async function executeStream(
 		// adapter. Public generics retain the original application's schema.
 		const base = stream(leaves.db, schema as ExecutionSchema).query(table)
 		const selected = plan.index
-			? base.withIndex(plan.index.name, (q) => {
-					// SAFETY: every equality is a validated consecutive native prefix.
-					let range = q as IndexRangeBuilder<any, string[], number>
-					for (const { field, value } of plan.prefix) {
-						// SAFETY: native eq returns the next builder; runtime prefix length
-						// is validated even though this dynamic adapter erases tuple lengths.
-						range = range.eq(field, value) as IndexRangeBuilder<any, string[], number>
-					}
-					return range
-				})
+			? base.withIndex(plan.index.name, (q) => nativeIndexRange(q, plan.prefix, plan.range))
 			: base
 		const ordered = selected.order(plan.args.order ?? 'asc')
 		const source = transform ? transform(ordered, leaves.db) : ordered
@@ -137,6 +128,30 @@ export async function executeStream(
 	} finally {
 		await leaves.close()
 	}
+}
+
+/** Private adapter shared by root and relationship streams; the planner owns admission. */
+export function nativeIndexRange(
+	q: IndexRangeBuilder<any, string[], number>,
+	prefix: readonly { field: string; value: FilterScalar }[],
+	bounds: NativeRange | null,
+): import('convex/server').IndexRange {
+	let range = q
+	for (const { field, value } of prefix) {
+		// SAFETY: every equality advances the validated consecutive native prefix.
+		range = range.eq(field, value) as IndexRangeBuilder<any, string[], number>
+	}
+	// SAFETY: an equality builder also admits upper bounds; lower methods retain that interface.
+	let bounded = range as ReturnType<typeof range.gte>
+	if (bounds?.lower) {
+		const { field, lower } = bounds
+		bounded = lower.inclusive ? range.gte(field, lower.value) : range.gt(field, lower.value)
+	}
+	if (bounds?.upper) {
+		const { field, upper } = bounds
+		return upper.inclusive ? bounded.lte(field, upper.value) : bounded.lt(field, upper.value)
+	}
+	return bounded
 }
 
 /** Retain the actual metered leaf, since the helper's public key iterator does

@@ -5,6 +5,7 @@ import type {
 	PaginationResult,
 } from 'convex/server'
 import type { GenericId } from 'convex/values'
+import { z } from 'zod'
 import type {
 	RelationTables,
 	RelationDeclarations,
@@ -90,18 +91,28 @@ export interface TableQuery<
 	S = {},
 	L extends readonly 1[] = [1, 1, 1, 1],
 	Scope extends string = never,
+	Schema extends SchemaDefinition<GenericSchema, boolean> = SchemaDefinition<
+		GenericSchema,
+		boolean
+	>,
 > {
-	when(value: IndexCondition['value'], index: string): TableQuery<Tables, D, T, S, L, Scope>
+	orderBy(
+		index: Exclude<
+			Extract<keyof DataModelFromSchemaDefinition<Schema>[Extract<T, string>]['indexes'], string>,
+			'by_id' | 'by_creation_time'
+		>,
+	): TableQuery<Tables, D, T, S, L, Scope, Schema>
+	when(value: IndexCondition['value'], index: string): TableQuery<Tables, D, T, S, L, Scope, Schema>
 	where(
 		spec: NonNullable<EngineArgs<Tables, D, T>['filters']>,
-	): TableQuery<Tables, D, T, S, L, Scope>
+	): TableQuery<Tables, D, T, S, L, Scope, Schema>
 	with<const Selection extends RelationSelection<Tables, D, T, L>>(
 		selection: Selection & {
 			[K in keyof Selection]: K extends keyof RelationSelection<Tables, D, T, L>
 				? Selection[K]
 				: never
 		},
-	): TableQuery<Tables, D, T, Selection, L, Scope>
+	): TableQuery<Tables, D, T, Selection, L, Scope, Schema>
 	relation<const P extends Paths<D, Extract<T, string>>>(
 		parent: GenericId<Tables[T]['tableName']>,
 		path: P,
@@ -112,7 +123,8 @@ export interface TableQuery<
 			Extract<PathTarget<D, Extract<T, string>, P>, keyof Tables>,
 			{},
 			RemainingDepth<P, L>,
-			PathScope<D, Extract<T, string>, P>
+			PathScope<D, Extract<T, string>, P>,
+			Schema
 		>,
 		'relation'
 	>
@@ -155,7 +167,7 @@ type QueryEngine<
 	D extends RelationDeclarations,
 > = {
 	(ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>): {
-		[T in keyof Tables]: TableQuery<Tables, D, T>
+		[T in keyof Tables]: TableQuery<Tables, D, T, {}, [1, 1, 1, 1], never, Schema>
 	}
 	tables: RelationRegistry<Tables, D>['tables']
 }
@@ -214,14 +226,26 @@ export function createQueryEngine<
 			constraints: readonly StoredConstraint[] = [],
 			selection: OutputSelection = {},
 			route?: { table: string; parent: string; path: string[] },
+			ordering?: string,
 		) {
 			return Object.freeze({
+				orderBy: (index: string) => {
+					if (!z.string().safeParse(index).success) throw new Error('Unknown ordering index')
+					return tableQuery(table, conditions, constraints, selection, route, index)
+				},
 				when: (value: IndexCondition['value'], index: string) =>
-					tableQuery(table, [...conditions, { value, index }], constraints, selection, route),
+					tableQuery(
+						table,
+						[...conditions, { value, index }],
+						constraints,
+						selection,
+						route,
+						ordering,
+					),
 				where: (spec: StoredConstraint) =>
-					tableQuery(table, conditions, [...constraints, spec], selection, route),
+					tableQuery(table, conditions, [...constraints, spec], selection, route, ordering),
 				with: (selected: OutputSelection) =>
-					tableQuery(table, conditions, constraints, selected, route),
+					tableQuery(table, conditions, constraints, selected, route, ordering),
 				relation: (parent: string, declaredPath: string) => {
 					const path = declaredPath.split('.')
 					if (!path.length || path.length > 4) throw new Error('INVALID_RELATION')
@@ -231,14 +255,14 @@ export function createQueryEngine<
 						if (!edge) throw new Error('INVALID_RELATION')
 						target = edge.target
 					}
-					return tableQuery(target, conditions, constraints, {}, { table, parent, path })
+					return tableQuery(target, conditions, constraints, {}, { table, parent, path }, ordering)
 				},
 				async paginate(input: QueryInput) {
 					// Resolve once per global engine, before any native query or policy reads.
 					const codec = (cursorCodec ??= createEnvironmentCursorCodec())
 					planner.select(table, selection)
 					assertRelationshipDepth(selection, route?.path.length ?? 0)
-					const plan = planner.plan(table, input, route ? [] : conditions, constraints)
+					const plan = planner.plan(table, input, route ? [] : conditions, constraints, ordering)
 					if (plan.args.numItems > maxPageSize) throw new Error('Page size exceeds central ceiling')
 					// Native root limits stay native; lowering those limits cannot raise
 					// the independent shared request meter.
@@ -294,6 +318,7 @@ export function createQueryEngine<
 								plan.args,
 								conditions,
 								constraints,
+								ordering,
 							)
 						: await executeQuery(
 								schema,
@@ -326,7 +351,7 @@ export function createQueryEngine<
 		// validates all input and projection while mapped types retain table brands.
 		return Object.freeze(
 			Object.fromEntries(Object.keys(relations.tables).map((table) => [table, tableQuery(table)])),
-		) as { [T in keyof Tables]: TableQuery<Tables, D, T> }
+		) as { [T in keyof Tables]: TableQuery<Tables, D, T, {}, [1, 1, 1, 1], never, Schema> }
 	}
 	return Object.assign(querying, { tables: relations.tables })
 }

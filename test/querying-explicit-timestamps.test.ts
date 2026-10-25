@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { createQueryEngine } from '../src/querying'
 import { defineRelations } from '../src/relations-public'
 import { zodVariantTable } from '../src/zod-table'
-import { cursor, managed } from './fixture-querying/scalar'
+import { cursor, managed, observed } from './fixture-querying/scalar'
 
 test('explicit server timestamps retain native required fields and paginate through the shared engine', async () => {
 	const ledger = zodVariantTable(
@@ -31,8 +31,12 @@ test('explicit server timestamps retain native required fields and paginate thro
 			},
 		},
 	)
+	const schema = defineSchema({
+		ledger: ledger.table
+			.index('by_createdAt', ['createdAt'])
+			.index('by_type_createdAt', ['type', 'createdAt']),
+	})
 	const relations = defineRelations({ ledger }, () => ({}))
-	const schema = defineSchema({ ledger: ledger.table })
 	const t = defineTestApp({ schema }).defineModules({}).createTest()
 	const querying = createQueryEngine({ schema, relations }, { cursor })
 	const ids = await t.run(async (ctx) => [
@@ -61,6 +65,27 @@ test('explicit server timestamps retain native required fields and paginate thro
 			ctx.db.insert('ledger', { type: 'adjustment', createdAt: '0', recordedAt: 10 }),
 		),
 	).rejects.toThrow()
+	for (const order of ['asc', 'desc'] as const)
+		await t.run(async (ctx) => {
+			const o = observed<DataModelFromSchemaDefinition<typeof schema>>(ctx.db)
+			const q = querying(managed(o.raw)).ledger
+			const page = await q
+				.orderBy('by_createdAt')
+				.where({ recordedAt: { gte: 10 } })
+				.paginate({ numItems: 100, cursor: null, order, filters: { createdAt: { gte: 0, lt: 2 } } })
+			expect(page.page.map((r) => r._id)).toEqual(
+				order === 'asc' ? ids.slice(0, 2) : ids.slice(0, 2).reverse(),
+			)
+			expect(o.counts.returned).toBe(2)
+			const before = o.counts.returned
+			const scoped = await q
+				.orderBy('by_type_createdAt')
+				.where({ variant: { tag: 'adjustment', filters: { createdAt: { gte: 1, lte: 2 } } } })
+				.paginate({ numItems: 100, cursor: null, order })
+			expect(scoped.page.map((r) => r._id)).toEqual([ids[2]])
+			expect(o.counts.returned - before).toBe(1)
+			expect(scoped.page[0]).not.toHaveProperty('recordedAt')
+		})
 	const first = await t.run((ctx) =>
 		querying(managed<DataModelFromSchemaDefinition<typeof schema>>(ctx.db)).ledger.paginate({
 			numItems: 1,

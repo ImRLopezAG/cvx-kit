@@ -42,6 +42,7 @@ export function createPlanner(
 			input: QueryInput,
 			conditions: readonly IndexCondition[],
 			constraints: readonly StoredConstraint[],
+			ordering?: string,
 		) {
 			if (!Object.hasOwn(metadata.tables, table)) throw new Error('Unknown query table')
 			let validator = inputs.get(table)
@@ -63,6 +64,7 @@ export function createPlanner(
 				metadata.tables[table].indexes,
 				conditions,
 				where,
+				ordering,
 			)
 			if (compiled.residual.kind !== 'and') throw new Error('Invalid compiled filter root')
 			const [client, server] = compiled.residual.children

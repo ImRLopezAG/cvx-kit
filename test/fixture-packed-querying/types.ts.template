@@ -22,6 +22,14 @@ void inferredChain
 const identity: RelationRegistryIdentity = relations
 void identity
 function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
+ querying(ctx).tasks.orderBy('by_priority').where({ priority: { gte: 0, lt: 10 } }).with({}).paginate({ numItems: 1, cursor: null, order: 'desc' })
+ querying(ctx).tasks.relation(row._id, 'direct').orderBy('by_task')
+ // @ts-expect-error schema names must not widen to arbitrary strings
+ querying(ctx).tasks.orderBy('unknown')
+ // @ts-expect-error foreign target table index is not an ordering index for tasks
+ querying(ctx).tasks.orderBy('by_task')
+ // @ts-expect-error relation order names belong to the target table
+ querying(ctx).tasks.relation(row._id, 'direct').orderBy('by_priority')
  const dto = tasks.toPublicDto(row, true)
  const id: GenericId<'tasks'> = dto._id
  const same = tasks.toPublicDto(row, { _id: true })

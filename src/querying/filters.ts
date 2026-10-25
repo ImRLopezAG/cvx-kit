@@ -266,9 +266,22 @@ export interface IndexCondition {
 	value: FilterScalar | undefined
 	index: string
 }
+export interface RangeBound {
+	value: FilterScalar
+	inclusive: boolean
+}
+export interface FieldRange {
+	lower?: RangeBound
+	upper?: RangeBound
+}
+export interface NativeRange extends FieldRange {
+	field: string
+}
 export interface CompiledFilters {
 	residual: FilterAst
 	bindings: ReadonlyMap<string, FilterScalar>
+	ranges: ReadonlyMap<string, FieldRange>
+	range: NativeRange | null
 	unsatisfiable: boolean
 	index: QueryIndex | null
 	prefix: readonly { field: string; value: FilterScalar }[]
@@ -305,6 +318,7 @@ export function parseFilterPlan<Schema extends z.ZodType>(
 	indexes: readonly QueryIndex[],
 	conditions: readonly IndexCondition[] = [],
 	where?: FilterSpec<Schema>,
+	ordering?: string,
 ) {
 	const args = schema.parse(input)
 	// SAFETY: pagination schemas validate filters before this internal AST adapter reads them.
@@ -323,34 +337,72 @@ export function parseFilterPlan<Schema extends z.ZodType>(
 		],
 	}
 	const guaranteed = guaranteedBindings(residual)
+	const ranges = guaranteedRanges(residual)
+	for (const [field, range] of ranges) {
+		if (range.lower && range.upper) {
+			const compared = compareValues(range.lower.value, range.upper.value)
+			if (compared > 0 || (compared === 0 && (!range.lower.inclusive || !range.upper.inclusive)))
+				guaranteed.impossible = true
+		}
+		if (guaranteed.values.has(field) && !withinRange(guaranteed.values.get(field)!, range))
+			guaranteed.impossible = true
+	}
 	const sorted = [...indexes].sort(
 		(a, b) =>
 			a.name.localeCompare(b.name) || a.fields.join('\0').localeCompare(b.fields.join('\0')),
 	)
 	const condition = conditions.find((entry) => entry.value !== null && entry.value !== undefined)
 	let index: QueryIndex | null = null
-	if (condition) {
+	if (ordering !== undefined) {
+		if (condition) throw new Error('orderBy cannot be combined with an active when selector')
+		index = sorted.find((entry) => entry.name === ordering) ?? null
+		if (!index) throw new Error(`Unknown ordering index "${ordering}"`)
+	} else if (condition) {
 		index = sorted.find((entry) => entry.name === condition.index) ?? null
 		if (!index || prefixBindings(index, guaranteed.values).length === 0)
 			throw new Error(`Explicit index "${condition.index}" is incompatible with guaranteed filters`)
 	} else {
 		let length = 0
+		let ranged = false
 		for (const candidate of sorted) {
-			const usable = prefixBindings(candidate, guaranteed.values).length
-			if (usable > length) {
+			const prefix = prefixBindings(candidate, guaranteed.values)
+			const usable = prefix.length
+			const hasRange = rangeForIndex(candidate, prefix, ranges) !== null
+			if (usable > length || (usable === length && hasRange && !ranged)) {
 				index = candidate
 				length = usable
+				ranged = hasRange
 			}
 		}
 	}
 	const compiled: CompiledFilters = {
 		residual,
 		bindings: guaranteed.values,
+		ranges,
+		range: index ? rangeForIndex(index, prefixBindings(index, guaranteed.values), ranges) : null,
 		unsatisfiable: guaranteed.impossible,
 		index,
 		prefix: index ? prefixBindings(index, guaranteed.values) : [],
 	}
 	return { args, compiled }
+}
+export function withinRange(value: FilterScalar, range: FieldRange): boolean {
+	const lower = range.lower && compareValues(value, range.lower.value)
+	const upper = range.upper && compareValues(value, range.upper.value)
+	return (
+		(lower === undefined || lower > 0 || (lower === 0 && range.lower!.inclusive)) &&
+		(upper === undefined || upper < 0 || (upper === 0 && range.upper!.inclusive))
+	)
+}
+/** Recompute against the actual stream prefix, including relationship lookup bindings. */
+export function rangeForIndex(
+	index: QueryIndex,
+	prefix: readonly { field: string; value: FilterScalar }[],
+	ranges: ReadonlyMap<string, FieldRange>,
+): NativeRange | null {
+	const field = index.fields[prefix.length]
+	const range = ranges.get(field)
+	return range ? { field, ...range } : null
 }
 function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined {
 	if (!(schema instanceof z.ZodObject)) return undefined
@@ -479,6 +531,26 @@ function guaranteedBindings(ast: FilterAst): BindingResult {
 			values.set(field, value)
 		}
 	return { values, impossible }
+}
+/** Bounds under OR/NOT are deliberately residual, even when branches coincide. */
+function guaranteedRanges(ast: FilterAst, ranges = new Map<string, FieldRange>()) {
+	if (ast.kind === 'and') for (const child of ast.children) guaranteedRanges(child, ranges)
+	else if (ast.kind === 'variant') guaranteedRanges(ast.child, ranges)
+	else if (ast.kind === 'scalar' && !Array.isArray(ast.value)) {
+		const lower = ast.operator === 'gt' || ast.operator === 'gte'
+		const upper = ast.operator === 'lt' || ast.operator === 'lte'
+		if (lower || upper) {
+			const range = ranges.get(ast.field) ?? {}
+			const side = lower ? 'lower' : 'upper'
+			const next = { value: ast.value, inclusive: ast.operator === 'gte' || ast.operator === 'lte' }
+			const previous = range[side]
+			const compared = previous ? compareValues(next.value, previous.value) : 0
+			if (!previous || (lower ? compared > 0 : compared < 0) || (compared === 0 && !next.inclusive))
+				range[side] = next
+			ranges.set(ast.field, range)
+		}
+	}
+	return ranges
 }
 function prefixBindings(
 	index: QueryIndex,

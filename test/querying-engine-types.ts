@@ -36,3 +36,14 @@ void querying(ctx).missing
 declare const mutation: GenericMutationCtx<DM>
 // @ts-expect-error known mutation contexts cannot obtain a query capability
 querying(mutation)
+
+const ordered = tasks
+	.orderBy('by_department_count')
+	.where({ status: 'open' })
+	.with({})
+	.orderBy('by_count')
+void ordered
+// @ts-expect-error unknown index names must not widen to string
+tasks.orderBy('unknown')
+// @ts-expect-error foreign table indexes cannot sort permissions
+querying(ctx).permissions.orderBy('by_count')

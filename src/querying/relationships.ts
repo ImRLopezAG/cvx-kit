@@ -1,5 +1,5 @@
 import type { GenericSchema, SchemaDefinition, IndexRangeBuilder } from 'convex/server'
-import type { GenericId, Value } from 'convex/values'
+import { compareValues, type GenericId, type Value } from 'convex/values'
 import type { RelationEdge, RelationGuard } from '../relations'
 import type { createPlanner, QueryInput, StoredConstraint } from './planner'
 import { scalarMatches } from './planner'
@@ -10,7 +10,13 @@ import type {
 	NativePagination,
 	QueryIndex,
 } from './filters'
-import { executeStream, rethrowQueryError, type ExecutionRequest } from './execution'
+import { rangeForIndex, withinRange } from './filters'
+import {
+	executeStream,
+	nativeIndexRange,
+	rethrowQueryError,
+	type ExecutionRequest,
+} from './execution'
 import type { createCursorCodec, CursorBinding } from './cursors'
 import { CursorError } from './cursors'
 import { z } from 'zod'
@@ -124,6 +130,8 @@ export function relationshipExecutor(
 			.sort(
 				(a, b) =>
 					length(b) - length(a) ||
+					Number(plan.ranges.has(b.fields[length(b)])) -
+						Number(plan.ranges.has(a.fields[length(a)])) ||
 					a.name.localeCompare(b.name) ||
 					a.fields.join('\0').localeCompare(b.fields.join('\0')),
 			)
@@ -339,7 +347,10 @@ export function relationshipExecutor(
 		constraints: readonly StoredConstraint[],
 		path: readonly string[],
 		rootId: string,
+		ordering?: string,
 	) {
+		if (ordering !== undefined && conditions.some((c) => c.value !== null && c.value !== undefined))
+			throw new Error('orderBy cannot be combined with an active when selector')
 		planner.select(edge(table, name).target, selection)
 		assertRelationshipDepth(selection, path.length)
 		const declared = edge(table, name)
@@ -352,6 +363,7 @@ export function relationshipExecutor(
 			input,
 			[],
 			guardConstraint ? [...constraints, guardConstraint] : constraints,
+			ordering,
 		)
 		const from = declared.from,
 			to = declared.to
@@ -364,13 +376,15 @@ export function relationshipExecutor(
 						targetReference: to.junction.field,
 					}
 				: null
+		if (ordering !== undefined && through)
+			throw new Error('orderBy is unsupported for junction relationships')
 		const sourceTable = through ? through.table : declared.target
 		const field = through ? through.field : base(to).field
 		const targetIndex = relationIndex(
 			declared.target,
 			through ? through.targetField : field,
 			plan,
-			conditions,
+			ordering === undefined ? conditions : [{ value: true, index: ordering }],
 			declared.targetGuard,
 		)
 		const index = through ? lookup(sourceTable, field, declared.junctionGuard) : targetIndex
@@ -450,6 +464,17 @@ export function relationshipExecutor(
 						: relationPrefix(index, field, value as FilterScalar, plan, declared.targetGuard),
 			unsatisfiable: value == null || plan.unsatisfiable,
 		}
+		lookupPlan.range = through ? null : rangeForIndex(index, lookupPlan.prefix, plan.ranges)
+		if (!through)
+			for (const binding of lookupPlan.prefix) {
+				const range = plan.ranges.get(binding.field)
+				if (
+					plan.bindings.has(binding.field) &&
+					compareValues(binding.value, plan.bindings.get(binding.field)!) !== 0
+				)
+					lookupPlan.unsatisfiable = true
+				if (range && !withinRange(binding.value, range)) lookupPlan.unsatisfiable = true
+			}
 		const indexedTarget = through && through.targetField !== '_id'
 		const result = await executeStream(
 			schema,
@@ -504,9 +529,7 @@ export function relationshipExecutor(
 							return stream(db, nativeSchema)
 								.query(declared.target)
 								.withIndex(targetIndex.name, (q) => {
-									// SAFETY: registry validates the native leading lookup; validated filters supply each consecutive trailing binding.
-									let range = q as IndexRangeBuilder<any, string[], number>
-									// SAFETY: junction references are native scalar Values validated by the declared lookup.
+									// SAFETY: registry-owned lookup bindings are native scalar index values.
 									const prefix = relationPrefix(
 										targetIndex,
 										through.targetField,
@@ -514,15 +537,11 @@ export function relationshipExecutor(
 										plan,
 										declared.targetGuard,
 									)
-									for (const binding of prefix) {
-										// SAFETY: native eq advances the validated consecutive index prefix.
-										range = range.eq(binding.field, binding.value) as IndexRangeBuilder<
-											any,
-											string[],
-											number
-										>
-									}
-									return range
+									return nativeIndexRange(
+										q,
+										prefix,
+										rangeForIndex(targetIndex, prefix, plan.ranges),
+									)
 								})
 								.order(plan.args.order ?? 'asc')
 						}, fields)
@@ -540,6 +559,7 @@ export function relationshipExecutor(
 		input: QueryInput,
 		conditions: readonly IndexCondition[],
 		constraints: readonly StoredConstraint[],
+		ordering?: string,
 	) {
 		if (!path.length || path.length > 4 || !request.db.normalizeId(rootTable, rootId))
 			throw new RelationshipError('INVALID_RELATION')
@@ -549,6 +569,8 @@ export function relationshipExecutor(
 			table = declaration.target
 			return declaration
 		})
+		if (ordering !== undefined && declarations.some((d) => 'base' in d.from || 'base' in d.to))
+			throw new Error('orderBy is unsupported for junction relationships')
 		const final = declarations.at(-1)!
 		const prepared = prepare(
 			final.source,
@@ -559,6 +581,7 @@ export function relationshipExecutor(
 			constraints,
 			path,
 			rootId,
+			ordering,
 		)
 		// Authenticate both slots and native ancestor IDs before ANY parent/traversal read.
 		const start = input.cursor === null ? null : prepared.open(input.cursor)

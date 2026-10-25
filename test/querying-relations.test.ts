@@ -679,6 +679,24 @@ test('U6 compatible relation index choices determine direct order and inner junc
 				.paginate({ numItems: 1, cursor: null, filters: { code: 'shared' } }),
 		).rejects.toThrow('incompatible')
 		expect(o.counts).toEqual(before)
+		const ranged = await q
+			.when(0, 'by_code_ordinal')
+			.paginate({ numItems: 100, cursor: null, filters: { ordinal: { gte: 4, lte: 4 } } })
+		expect(ranged.page).toEqual(p.page)
+		expect(o.counts.returned - before.returned).toBe(10) // every edge, plus the three native ranged targets
+		const occurrences: string[] = []
+		let token: string | null = null
+		for (let n = 0; n < 8; n++) {
+			const page = await q
+				.when(0, 'by_code_ordinal')
+				.paginate({ numItems: 1, cursor: token, filters: { ordinal: { gte: 4, lte: 4 } } })
+			occurrences.push(...page.page.map((r) => r._id))
+			if (page.isDone) break
+			expect(page.continueCursor).not.toBe(token)
+			token = page.continueCursor
+			expect(n).toBeLessThan(7)
+		}
+		expect(occurrences).toEqual([rows.labels[4]._id, rows.labels[4]._id, rows.labels[4]._id])
 	})
 })
 
@@ -958,3 +976,81 @@ test.each([0, 60])(
 	},
 	20000,
 )
+
+test('phase A direct ordering and ranges retain cursors; unsupported paths reject before reads', async () => {
+	// SAFETY: this runtime fixture discards index builder types; registry validation admits the declared names.
+	const f = relationshipFixture(),
+		rows = await seedRelationships(f)
+	for (const order of ['asc', 'desc'] as const)
+		await f.t.run(async (ctx) => {
+			const o = f.context(ctx.db),
+				base = f.querying(o.ctx).tasks
+			const q = base.relation(rows.tasks[1]._id, 'direct').orderBy('by_task_code' as never)
+			const args = {
+				numItems: 100,
+				cursor: null,
+				order,
+				filters: { code: { gte: 'c3', lt: 'shared' } },
+			} as const
+			const full = await q.paginate(args)
+			const expected = rows.labels
+				.filter((r) => r.allowed && r.tenant === 'one' && r.code >= 'c3' && r.code < 'shared')
+				.sort((a, b) => a.code.localeCompare(b.code))
+			if (order === 'desc') expected.reverse()
+			expect(full.page.map((r) => r._id)).toEqual(expected.map((r) => r._id))
+			expect(o.counts.returned).toBe(expected.length)
+			const first = await q.paginate({ ...args, numItems: 2 })
+			const rest = await q.paginate({ ...args, cursor: first.continueCursor })
+			expect([...first.page, ...rest.page]).toEqual(full.page)
+			const split = await q.paginate({ ...args, maximumRowsRead: 3 })
+			expect(split.splitCursor).toMatch(/^pc\./)
+			const left = await q.paginate({ ...args, endCursor: split.splitCursor })
+			const right = await q.paginate({
+				...args,
+				cursor: split.splitCursor!,
+				endCursor: split.continueCursor,
+			})
+			expect([...left.page, ...right.page]).toEqual(split.page)
+			const tail = await q.paginate({ ...args, cursor: split.continueCursor })
+			expect([...split.page, ...tail.page]).toEqual(full.page)
+
+			const candidates = o.counts.returned
+			expect((await q.where({ task: rows.tasks[2]._id }).paginate(args)).page).toEqual([])
+			expect(o.counts.returned).toBe(candidates)
+
+			const before = { ...o.counts }
+			for (const slot of ['cursor', 'endCursor'] as const) {
+				await expect(
+					base
+						.relation(rows.tasks[1]._id, 'direct')
+						.orderBy('by_task' as never)
+						.paginate({ ...args, [slot]: first.continueCursor }),
+				).rejects.toThrow('Invalid cursor')
+				await expect(
+					q.paginate({
+						...args,
+						[slot]: first.continueCursor,
+						order: order === 'asc' ? 'desc' : 'asc',
+					}),
+				).rejects.toThrow('Invalid cursor')
+				await expect(
+					q.paginate({ ...args, [slot]: first.continueCursor, filters: { code: { lt: 'c7' } } }),
+				).rejects.toThrow('Invalid cursor')
+			}
+			await expect(
+				base
+					.relation(rows.tasks[1]._id, 'direct')
+					.orderBy('by_code' as never)
+					.paginate(args),
+			).rejects.toThrow('incompatible')
+			for (const path of ['labels', 'codeLabels', 'labels.owner.direct'] as const)
+				await expect(
+					base
+						.relation(rows.tasks[1]._id, path)
+						.orderBy('by_task_code' as never)
+						.paginate(args),
+				).rejects.toThrow('orderBy')
+			await expect(q.when(true, 'by_task').paginate(args)).rejects.toThrow('orderBy')
+			expect(o.counts).toEqual(before)
+		})
+})

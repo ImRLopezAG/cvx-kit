@@ -32,6 +32,8 @@ const eqEngine = createQueryEngine({ schema, relations: equivalent, cursor })
 const changedEngine = createQueryEngine({ schema, relations: changed, cursor })
 const deepEngine = createQueryEngine({ schema, relations, cursor, budgets: { depth: 1 } })
 const probes = {
+ ordered: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => eqEngine(ctx).tasks.orderBy('by_priority').paginate(args) }),
  unmanaged: query({ args: {}, handler: (ctx) => eqEngine(ctx).tasks.paginate({ numItems: 1, cursor: null }) }),
  equivalent: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
   handler: (ctx, args) => eqEngine(ctx).tasks.paginate(args) }),
@@ -105,6 +107,17 @@ for (const order of ['asc', 'desc'] as const) for (const size of [1, 7, 25, 100]
  }
  record({ name: 'constant-clock-ties', order, size, count: expected.length, expected })
 }
+for (const order of ['asc', 'desc'] as const) {
+ const args = { numItems: 100, cursor: null, order, filters: { priority: { gte: 0, lte: 0 } } }
+ const page = contract.queries.list.result.parse(await client.query(anyApi.api.probes.ordered, args))
+ const expected = ids.rows.filter(id => id !== ids.rows[1]).sort()
+ if (order === 'desc') expected.reverse()
+ assert.deepEqual(page.page.map(row => row._id), expected)
+ await assert.rejects(client.query(anyApi.api.probes.ordered, { ...args, cursor: page.continueCursor, order: order === 'asc' ? 'desc' : 'asc' }), /Invalid cursor/)
+ await assert.rejects(client.query(anyApi.api.probes.ordered, { ...args, endCursor: page.continueCursor, filters: { priority: { gt: 0 } } }), /Invalid cursor/)
+ assert.deepEqual(contract.queries.list.result.parse(await client.query(anyApi.api.probes.ordered, { ...args, filters: { priority: { gt: 0, lte: 0 } } })).page, [])
+}
+record({ name: 'phase-A-orderBy-ranges-cursor-boundaries', passed: true })
 const expanded = contract.queries.expanded.result.parse(await client.query(anyApi.api.tasks.expanded, { numItems: 100, cursor: null, filters: { ordinal: 0 } }))
 assert.equal(expanded.page[0].referenceTask, null)
 assert.equal(expanded.page[0].requiredLabel?._id, ids.targets[0])

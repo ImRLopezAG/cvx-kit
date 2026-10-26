@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict'
+import { convexTest } from 'convex-test'
+import { z } from 'zod'
+import { defineSchema, queryGeneric, mutationGeneric, actionGeneric, internalQueryGeneric, internalMutationGeneric, internalActionGeneric, anyApi, type DataModelFromSchemaDefinition, type GenericQueryCtx } from 'convex/server'
+import { zodTable } from 'cvx-kit/zod-table'
+import { defineRelations } from 'cvx-kit/relations'
+import { createQueryEngine, CursorError } from 'cvx-kit/querying'
+import * as publicQuerying from 'cvx-kit/querying'
+import { createAuthFunctions } from 'cvx-kit/auth'
+
+const records = zodTable('records', () => ({ title: z.string() }))
+const schema = defineSchema({ records: records.table })
+const relations = defineRelations({ records }, () => ({}))
+type DM = DataModelFromSchemaDefinition<typeof schema>
+const builders = { query: queryGeneric, mutation: mutationGeneric, action: actionGeneric, internalQuery: internalQueryGeneric, internalMutation: internalMutationGeneric, internalAction: internalActionGeneric }
+const auth = createAuthFunctions<DM, 'reader'>({ ...builders, getAuthUser: async (ctx: GenericQueryCtx<DM> | { auth: GenericQueryCtx<DM>['auth'] }) => {
+ const identity = await ctx.auth.getUserIdentity(); return identity ? { id: identity.subject } : null
+}, mapRole: () => 'reader', adminRoles: [] })
+const querying = createQueryEngine({ schema, relations }, { cursor: { version: 'native', currentKeyId: 'one', keys: { one: new Uint8Array(64).fill(9) } } })
+const options = { domain: 'custom-native', bind: { sort: 'asc' }, schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }) }
+const endpoint = auth.authQuery({ args: { token: z.string().optional(), domain: z.string().optional() }, handler: (ctx, args) => {
+ type Tree = { native: string; children: Tree[] }
+ const tree: Tree = { native: 'root', children: [{ native: 'leaf', children: [] }] }
+ const invalidTree = { native: 'root', children: [{ native: 42, children: [] }] }
+ for (const warmed of [false, true]) {
+  const schema: z.ZodType<Tree> = z.lazy(() => z.object({ native: z.string(), children: z.array(schema) }))
+  if (warmed) assert.deepEqual(schema.parse(tree), tree)
+  const binding = { domain: 'recursive-schema', bind: warmed }
+  const codec = querying.cursorCodec(ctx, { ...binding, schema })
+  assert.deepEqual(codec.open(codec.seal(tree)), tree)
+  assert.throws(() => codec.seal(invalidTree), /Invalid cursor/)
+  const invalidToken = querying.cursorCodec(ctx, { ...binding, schema: z.any() }).seal(invalidTree)
+  assert.throws(() => codec.open(invalidToken), /Invalid cursor/)
+ }
+ const asyncOptions = { domain: 'reject-async', bind: null }
+ const asyncPayload = { native: 'position' }
+ const asyncToken = querying.cursorCodec(ctx, { ...asyncOptions, schema: z.any() }).seal(asyncPayload)
+ for (const schema of [
+  z.any().transform(async () => { throw new Error('private-async-transform') }),
+  z.any().refine(async () => { throw new Error('private-async-refinement') }),
+  z.any().transform(() => Promise.reject(new Error('private-promise-transform'))),
+  z.any().refine(() => Promise.reject(new Error('private-promise-refinement'))),
+  z.object({ native: z.string().transform(() => Promise.reject(new Error('private-nested-transform'))) }),
+  z.object({ native: z.string().refine(() => Promise.reject(new Error('private-nested-refinement'))) }),
+  z.any().superRefine(() => Promise.reject(new Error('private-super-refinement'))),
+  z.any().check(() => Promise.reject(new Error('private-check'))),
+  z.preprocess(() => Promise.reject(new Error('private-preprocess')), z.any()),
+  z.object({ missing: z.any().default(() => Promise.reject(new Error('private-default'))) }),
+  z.object({ missing: z.any().prefault(() => Promise.reject(new Error('private-prefault'))) }),
+  z.promise(z.any().transform(() => Promise.reject(new Error('private-promise-schema')))).transform(() => 'unused'),
+  z.lazy(() => z.any().transform(() => Promise.reject(new Error('private-lazy-transform')))),
+  z.any().transform(() => Promise.reject<string>(new Error('private-caught-transform'))).catch('fallback'),
+  z.any().refine(() => Promise.reject(new Error('private-caught-refinement'))).catch('fallback'),
+ ]) {
+  const rejecting = querying.cursorCodec(ctx, { ...asyncOptions, schema })
+  for (const run of [() => rejecting.seal(asyncPayload), () => rejecting.open(asyncToken)]) {
+   assert.throws(run, (error: unknown) => error instanceof CursorError && error.message === 'Invalid cursor')
+  }
+ }
+ const codec = querying.cursorCodec(ctx, { ...options, domain: args.domain ?? options.domain })
+ let defaultCalls = 0
+ const defaulted = querying.cursorCodec(ctx, { domain: 'defaulted', bind: null, schema: z.object({ native: z.string().default(() => { defaultCalls++; return 'default' }) }) })
+ assert.equal(defaultCalls, 0)
+ assert.deepEqual(defaulted.open(defaulted.seal({})), { native: 'default' })
+ assert.equal(defaultCalls, 2)
+ const transformed = querying.cursorCodec(ctx, { domain: 'transformed', bind: null, schema: z.string().transform((value) => value.length) })
+ assert.equal(transformed.open(transformed.seal('native')), 6)
+ return args.token ? codec.open(args.token) : codec.seal({ native: 'opaque-position', seen: 23n })
+} })
+const t = convexTest(schema, { './_generated/server.ts': async () => builders, './codec.ts': async () => ({ endpoint }) })
+const user = t.withIdentity({ subject: 'allowed', org_id: 'one', role: 'reader' })
+const token = await user.query(anyApi.codec.endpoint, {})
+assert.deepEqual(await user.query(anyApi.codec.endpoint, { token }), { native: 'opaque-position', seen: 23n })
+await assert.rejects(user.query(anyApi.codec.endpoint, { token, domain: 'other' }), /Invalid cursor/)
+await assert.rejects(t.withIdentity({ subject: 'other', org_id: 'one', role: 'reader' }).query(anyApi.codec.endpoint, { token }), /Invalid cursor/)
+assert.equal(new CursorError().code, 'invalid-cursor')
+for (const name of ['createCursorCodec', 'createScopedCursorCodec', 'createEnvironmentCursorCodec', 'registerQueryReader', 'capabilities']) assert.equal(Object.hasOwn(publicQuerying, name), false)
+// Drain a turn after every registered invocation; unhandled rejections also fail Node.
+await new Promise<void>((resolve) => setImmediate(resolve))
+console.log('U6 packed registered cursor facade and rejecting async schema containment passed')

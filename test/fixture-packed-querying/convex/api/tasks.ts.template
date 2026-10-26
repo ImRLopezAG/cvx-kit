@@ -1,4 +1,4 @@
-import { authQuery } from '../functions'
+import { authQuery, listAuth } from '../functions'
 import { contract } from '../domain/tasks/contracts'
 import { queries } from '../domain/tasks/queries'
 export const list = authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
@@ -9,3 +9,18 @@ export const expanded = authQuery({ args: contract.queries.expanded.input, retur
  handler: (ctx, args) => queries.exec('expanded', args, ctx) })
 export const next = authQuery({ args: contract.queries.next.input, returns: contract.queries.next.result,
  handler: (ctx, args) => queries.exec('next', args, ctx) })
+
+// Public native pagination shape; the engine continues to receive its flat options.
+import { Effect } from 'effect'
+import { z } from 'zod'
+import { convexToZod } from 'convex-helpers/server/zod4'
+import { paginationOptsValidator } from 'convex/server'
+import { listOptions } from '../domain/tasks/contracts'
+import { querying } from '../querying'
+export const paginatedList = listAuth.authQuery({
+ args: z.object({ paginationOpts: convexToZod(paginationOptsValidator), filters: listOptions.shape.filters, order: listOptions.shape.order }),
+ returns: contract.queries.list.result,
+ handler: (ctx, { paginationOpts, ...args }) => Effect.tryPromise({
+  try: () => querying(ctx).tasks.paginate({ ...args, ...paginationOpts }), catch: error => error,
+ }),
+})

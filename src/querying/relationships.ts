@@ -1,5 +1,5 @@
 import type { GenericSchema, SchemaDefinition, IndexRangeBuilder } from 'convex/server'
-import type { GenericId, Value } from 'convex/values'
+import { compareValues, type GenericId, type Value } from 'convex/values'
 import type { RelationEdge, RelationGuard } from '../relations'
 import type { createPlanner, QueryInput, StoredConstraint } from './planner'
 import { scalarMatches } from './planner'
@@ -10,7 +10,13 @@ import type {
 	NativePagination,
 	QueryIndex,
 } from './filters'
-import { executeStream, rethrowQueryError, type ExecutionRequest } from './execution'
+import { expansionForIndex, rangeForIndex, withinRange } from './filters'
+import {
+	executeStream,
+	nativeIndexRange,
+	rethrowQueryError,
+	type ExecutionRequest,
+} from './execution'
 import type { createCursorCodec, CursorBinding } from './cursors'
 import { CursorError } from './cursors'
 import { z } from 'zod'
@@ -18,6 +24,15 @@ import { stream, EmptyStream, getIndexFields } from 'convex-helpers/server/strea
 
 export interface OutputSelection {
 	[name: string]: true | OutputSelection
+}
+export type ResolvedGroups = {
+	fieldGroups: Record<string, { mode: 'required' | 'if-permitted'; allowed: boolean }>
+	relations: Record<string, ResolvedGroups>
+}
+export interface GroupAccess {
+	at(path: readonly string[]): ResolvedGroups
+	allowed(path: readonly string[]): readonly string[]
+	checkOrder(table: string, fields: readonly string[], path?: readonly string[]): void
 }
 type Edge = RelationEdge<string, string, 'one' | 'many', any, any>
 export type RelationDocument = Record<string, Value> & {
@@ -50,6 +65,7 @@ export function relationshipExecutor(
 	planner: Planner,
 	codec: ReturnType<typeof createCursorCodec>,
 	rootBinding: CursorBinding,
+	groups?: GroupAccess,
 ) {
 	const metadata = planner.metadata
 	const base = (leg: Edge['from']) => ('base' in leg ? leg.base : leg)
@@ -88,6 +104,26 @@ export function relationshipExecutor(
 		if (!index) throw new RelationshipError('INVALID_RELATION')
 		return index
 	}
+	function checkTraversal(declared: Edge, path?: readonly string[]) {
+		function check(
+			table: string,
+			field: string,
+			guard?: RelationGuard,
+			targetPath?: readonly string[],
+		) {
+			groups?.checkOrder(
+				table,
+				lookup(table, field, guard).fields.filter(
+					(key) => key !== field && key !== guard?.discriminator,
+				),
+				targetPath,
+			)
+		}
+		if ('base' in declared.from && 'base' in declared.to) {
+			check(declared.from.junction.table, declared.from.junction.field, declared.junctionGuard)
+			check(declared.target, declared.to.base.field, declared.targetGuard, path)
+		} else check(declared.target, base(declared.to).field, declared.targetGuard, path)
+	}
 	function relationIndex(
 		table: string,
 		field: string,
@@ -124,6 +160,9 @@ export function relationshipExecutor(
 			.sort(
 				(a, b) =>
 					length(b) - length(a) ||
+					Number(plan.sets.has(b.fields[length(b)])) - Number(plan.sets.has(a.fields[length(a)])) ||
+					Number(plan.ranges.has(b.fields[length(b)])) -
+						Number(plan.ranges.has(a.fields[length(a)])) ||
 					a.name.localeCompare(b.name) ||
 					a.fields.join('\0').localeCompare(b.fields.join('\0')),
 			)
@@ -296,10 +335,13 @@ export function relationshipExecutor(
 	): Promise<Record<string, Value>> {
 		request.expand(depth, 0)
 		// SAFETY: the registry strictly validates this public native DTO projection.
-		const dto = planner.complete(table, parent, true, { kind: 'and', children: [] }) as Record<
-			string,
-			Value
-		>
+		const dto = planner.complete(
+			table,
+			parent,
+			true,
+			{ kind: 'and', children: [] },
+			groups?.allowed(path),
+		) as Record<string, Value>
 		for (const [name, selected] of Object.entries(selection)) {
 			const declared = edge(table, name),
 				nested = selected === true ? {} : selected
@@ -339,7 +381,10 @@ export function relationshipExecutor(
 		constraints: readonly StoredConstraint[],
 		path: readonly string[],
 		rootId: string,
+		ordering?: string,
 	) {
+		if (ordering !== undefined && conditions.some((c) => c.value !== null && c.value !== undefined))
+			throw new Error('orderBy cannot be combined with an active when selector')
 		planner.select(edge(table, name).target, selection)
 		assertRelationshipDepth(selection, path.length)
 		const declared = edge(table, name)
@@ -352,6 +397,8 @@ export function relationshipExecutor(
 			input,
 			[],
 			guardConstraint ? [...constraints, guardConstraint] : constraints,
+			ordering,
+			'relation',
 		)
 		const from = declared.from,
 			to = declared.to
@@ -364,16 +411,53 @@ export function relationshipExecutor(
 						targetReference: to.junction.field,
 					}
 				: null
+		if (ordering !== undefined && through)
+			throw new Error('orderBy is unsupported for junction relationships')
 		const sourceTable = through ? through.table : declared.target
 		const field = through ? through.field : base(to).field
 		const targetIndex = relationIndex(
 			declared.target,
 			through ? through.targetField : field,
 			plan,
-			conditions,
+			ordering === undefined ? conditions : [{ value: true, index: ordering }],
 			declared.targetGuard,
 		)
+		groups?.checkOrder(
+			declared.target,
+			targetIndex.fields.filter(
+				(key) =>
+					key !== (through ? through.targetField : field) &&
+					key !== declared.targetGuard?.discriminator &&
+					!plan.bindings.has(key),
+			),
+			path,
+		)
 		const index = through ? lookup(sourceTable, field, declared.junctionGuard) : targetIndex
+		if (through)
+			groups?.checkOrder(
+				sourceTable,
+				index.fields.filter(
+					(key) => key !== field && key !== declared.junctionGuard?.discriminator,
+				),
+			)
+		// The lookup value changes only values, not prefix positions or comparator.
+		const expansion =
+			through || plan.unsatisfiable
+				? null
+				: expansionForIndex(
+						index,
+						relationPrefix(index, field, null, plan, declared.targetGuard),
+						plan.sets,
+						ordering !== undefined ||
+							conditions.some((c) => c.value !== null && c.value !== undefined),
+					)
+		const groupBinding: Record<string, Value> = {}
+		const resolved = groups?.at(path)
+		if (
+			resolved &&
+			(Object.keys(resolved.fieldGroups).length || Object.keys(resolved.relations).length)
+		)
+			groupBinding.fieldGroups = resolved
 		// SAFETY: planner.page validated the complete output mask before cursor binding.
 		const binding: CursorBinding = {
 			...rootBinding,
@@ -382,8 +466,14 @@ export function relationshipExecutor(
 			order: plan.args.order ?? 'asc',
 			clientFilters: plan.clientIdentity,
 			serverFilters: {
-				predicates: plan.serverIdentity,
+				predicates: plan.sets.size
+					? {
+							predicates: plan.serverIdentity,
+							traversal: { version: 2, expansion: expansion ? { ...expansion } : null },
+						}
+					: plan.serverIdentity,
 				selection: selection as Value,
+				...groupBinding,
 				scope: { ...request.scope },
 				rootTable: rootBinding.table,
 				lookupIndex: targetIndex.name,
@@ -409,7 +499,18 @@ export function relationshipExecutor(
 				throw new CursorError()
 			}
 		}
-		return { declared, plan, through, sourceTable, field, index, targetIndex, binding, open }
+		return {
+			declared,
+			plan,
+			through,
+			sourceTable,
+			field,
+			index,
+			targetIndex,
+			binding,
+			open,
+			expansion,
+		}
 	}
 	async function pageRelation(
 		table: string,
@@ -435,12 +536,14 @@ export function relationshipExecutor(
 		opened?: { cursor: string | null; endCursor?: string | null },
 	) {
 		request.expand(depth, 0)
-		const { declared, plan, through, sourceTable, field, index, targetIndex, binding } = prepared
+		const { declared, plan, through, sourceTable, field, index, targetIndex, binding, expansion } =
+			prepared
 		const value = sourceValue(declared, parent)
 		const args = { ...plan.args, ...(opened ?? { cursor: null }) }
 		// SAFETY: declarations accept only native scalar lookup values; nullish references are absence.
 		const lookupPlan = {
 			...plan,
+			expansion,
 			index,
 			prefix:
 				value == null
@@ -450,6 +553,17 @@ export function relationshipExecutor(
 						: relationPrefix(index, field, value as FilterScalar, plan, declared.targetGuard),
 			unsatisfiable: value == null || plan.unsatisfiable,
 		}
+		lookupPlan.range = through ? null : rangeForIndex(index, lookupPlan.prefix, plan.ranges)
+		if (!through)
+			for (const binding of lookupPlan.prefix) {
+				const range = plan.ranges.get(binding.field)
+				if (
+					plan.bindings.has(binding.field) &&
+					compareValues(binding.value, plan.bindings.get(binding.field)!) !== 0
+				)
+					lookupPlan.unsatisfiable = true
+				if (range && !withinRange(binding.value, range)) lookupPlan.unsatisfiable = true
+			}
 		const indexedTarget = through && through.targetField !== '_id'
 		const result = await executeStream(
 			schema,
@@ -504,9 +618,7 @@ export function relationshipExecutor(
 							return stream(db, nativeSchema)
 								.query(declared.target)
 								.withIndex(targetIndex.name, (q) => {
-									// SAFETY: registry validates the native leading lookup; validated filters supply each consecutive trailing binding.
-									let range = q as IndexRangeBuilder<any, string[], number>
-									// SAFETY: junction references are native scalar Values validated by the declared lookup.
+									// SAFETY: registry-owned lookup bindings are native scalar index values.
 									const prefix = relationPrefix(
 										targetIndex,
 										through.targetField,
@@ -514,15 +626,11 @@ export function relationshipExecutor(
 										plan,
 										declared.targetGuard,
 									)
-									for (const binding of prefix) {
-										// SAFETY: native eq advances the validated consecutive index prefix.
-										range = range.eq(binding.field, binding.value) as IndexRangeBuilder<
-											any,
-											string[],
-											number
-										>
-									}
-									return range
+									return nativeIndexRange(
+										q,
+										prefix,
+										rangeForIndex(targetIndex, prefix, plan.ranges),
+									)
 								})
 								.order(plan.args.order ?? 'asc')
 						}, fields)
@@ -540,6 +648,7 @@ export function relationshipExecutor(
 		input: QueryInput,
 		conditions: readonly IndexCondition[],
 		constraints: readonly StoredConstraint[],
+		ordering?: string,
 	) {
 		if (!path.length || path.length > 4 || !request.db.normalizeId(rootTable, rootId))
 			throw new RelationshipError('INVALID_RELATION')
@@ -549,7 +658,16 @@ export function relationshipExecutor(
 			table = declaration.target
 			return declaration
 		})
+		if (ordering !== undefined && declarations.some((d) => 'base' in d.from || 'base' in d.to))
+			throw new Error('orderBy is unsupported for junction relationships')
 		const final = declarations.at(-1)!
+		for (const declaration of declarations.slice(0, -1))
+			if (
+				declaration.cardinality === 'one' ||
+				'base' in declaration.from ||
+				'base' in declaration.to
+			)
+				checkTraversal(declaration)
 		const prepared = prepare(
 			final.source,
 			path.at(-1)!,
@@ -559,6 +677,7 @@ export function relationshipExecutor(
 			constraints,
 			path,
 			rootId,
+			ordering,
 		)
 		// Authenticate both slots and native ancestor IDs before ANY parent/traversal read.
 		const start = input.cursor === null ? null : prepared.open(input.cursor)
@@ -577,7 +696,29 @@ export function relationshipExecutor(
 			for (let i = 0; parent && i < ancestors.length; i++) {
 				const declared = declarations[i]
 				let found: Document | null = null
-				if (declared.cardinality === 'one') {
+				if (
+					declared.cardinality === 'many' &&
+					!('base' in declared.from) &&
+					!('base' in declared.to)
+				) {
+					// A cursor names this ancestor. Prove its current authorized membership
+					// by ID instead of replaying an ordering that is not part of this page.
+					request.expand(i + 1, 0)
+					const value = sourceValue(declared, parent)
+					const target = value == null ? null : await get(declared.target, ancestors[i])
+					const key = declared.to.field
+					if (
+						value != null &&
+						target &&
+						guarded(target, declared.targetGuard) &&
+						memberMatches(target[key], declared.targetMember) &&
+						target[key] !== undefined &&
+						compareValues(value, target[key]) === 0
+					) {
+						request.expand(i + 1)
+						found = target
+					}
+				} else if (declared.cardinality === 'one') {
 					const target = await one(declared, parent, i + 1)
 					if (target?._id === ancestors[i]) found = target
 				} else
@@ -607,7 +748,33 @@ export function relationshipExecutor(
 			rethrowQueryError(error)
 		}
 	}
-	return { matches, output, continuation, edge }
+	/** Admit the complete output tree even when a parent query produces no rows. */
+	function preflight(
+		table: string,
+		selection: OutputSelection,
+		input: QueryInput,
+		path: readonly string[] = [],
+	) {
+		for (const [name, selected] of Object.entries(selection)) {
+			const declared = edge(table, name)
+			const nested = selected === true ? {} : selected
+			const nestedPath = [...path, name]
+			if (declared.cardinality === 'many')
+				prepare(
+					table,
+					name,
+					nested,
+					{ numItems: input.numItems, cursor: null, order: input.order },
+					[],
+					[],
+					nestedPath,
+					'',
+				)
+			else checkTraversal(declared, nestedPath)
+			preflight(declared.target, nested, input, nestedPath)
+		}
+	}
+	return { matches, output, continuation, edge, preflight }
 }
 
 function scalarOnly(ast: FilterAst): boolean {

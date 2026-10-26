@@ -1,5 +1,10 @@
 import { convexToZod, zid, type ConvexValidatorFromZod, type Zid } from 'convex-helpers/server/zod4'
-import { defineTable, paginationOptsValidator, type TableDefinition } from 'convex/server'
+import {
+	defineTable,
+	paginationOptsValidator,
+	type TableDefinition,
+	type PaginationResult,
+} from 'convex/server'
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 
@@ -494,15 +499,31 @@ type UnionToIntersection<Union> = (
  * Note: under row-level security, pages may be SHORTER than numItems when
  * rules reject rows mid-page; cursors remain correct.
  */
+/** Completeness of the requested page, independently of global isDone exhaustion. */
+export type PageCompleteness =
+	| 'complete'
+	| 'row-budget'
+	| 'byte-budget'
+	| 'native-limit'
+	| 'result-cap'
+export type EnginePaginationResult<Row> = PaginationResult<Row> & {
+	paginationMode?: 'native-search'
+	completeness?: PageCompleteness
+}
+
 export function paginated<Dto extends z.ZodType>(dto: Dto) {
 	return {
 		args: { paginationOpts: convexToZod(paginationOptsValidator) },
 		result: z.object({
 			page: z.array(dto),
+			paginationMode: z.literal('native-search').optional(),
 			isDone: z.boolean(),
 			continueCursor: z.string(),
 			splitCursor: z.string().nullable().optional(),
 			pageStatus: z.enum(['SplitRecommended', 'SplitRequired']).nullable().optional(),
+			completeness: z
+				.enum(['complete', 'row-budget', 'byte-budget', 'native-limit', 'result-cap'])
+				.optional(),
 		}),
 	}
 }

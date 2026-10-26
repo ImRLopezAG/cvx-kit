@@ -1,6 +1,7 @@
 import { tenantTable, createQueryEngine, type QueryEngineConfig, type RelationRegistryIdentity } from 'cvx-kit'
 import { defineRelations } from 'cvx-kit/relations'
 import type { TableQuery } from 'cvx-kit/querying'
+import type { PageCompleteness } from 'cvx-kit/zod-table'
 import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 import { tasks, labels } from './convex/domain/tasks/schema'
@@ -22,6 +23,16 @@ void inferredChain
 const identity: RelationRegistryIdentity = relations
 void identity
 function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
+ querying(ctx).tasks.orderBy('by_priority').where({ priority: { gte: 0, lt: 10 } }).with({}).paginate({ numItems: 1, cursor: null, order: 'desc' })
+ querying(ctx).tasks.where({ priority: { in: [0, 2, 0] } }).paginate({ numItems: 2, cursor: null })
+ querying(ctx).tasks.orderBy('by_priority').paginate({numItems: 1, cursor: null, filters: { priority: {in: []} }})
+ querying(ctx).tasks.relation(row._id, 'direct').orderBy('by_task')
+ // @ts-expect-error schema names must not widen to arbitrary strings
+ querying(ctx).tasks.orderBy('unknown')
+ // @ts-expect-error foreign target table index is not an ordering index for tasks
+ querying(ctx).tasks.orderBy('by_task')
+ // @ts-expect-error relation order names belong to the target table
+ querying(ctx).tasks.relation(row._id, 'direct').orderBy('by_priority')
  const dto = tasks.toPublicDto(row, true)
  const id: GenericId<'tasks'> = dto._id
  const same = tasks.toPublicDto(row, { _id: true })
@@ -39,7 +50,10 @@ function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
  // @ts-expect-error command inputs do not contain server-owned fields
  const input: z.input<typeof tasks.commandInput> = { authorized: true }
  void input
- querying(ctx).tasks.with({ labels: { owner: true }, referenceTask: true }).paginate({ numItems: 1, cursor: null }).then((p) => {
+ querying(ctx).tasks.with({ labels: { owner: true }, referenceTask: true }).paginate({ numItems: 1, cursor: null, onEmptyBudget: 'split' }).then((p) => {
+  const completeness: PageCompleteness | undefined = p.completeness
+  const relatedCompleteness: PageCompleteness | undefined = p.page[0].labels.completeness
+  void [completeness, relatedCompleteness]
   const parent: GenericId<'tasks'> = p.page[0]._id
   const label: GenericId<'labels'> = p.page[0].labels.page[0]._id
   const nested: GenericId<'tasks'> | undefined = p.page[0].labels.page[0].owner?._id
@@ -72,3 +86,54 @@ import type { SelectionMask } from 'cvx-kit/relations'
 import type { SelectionMask as RootMask } from 'cvx-kit'
 const privateMasks: SelectionMask | RootMask | undefined = undefined
 void privateMasks
+
+// U6 public consumer contract: opening proves integrity, never row authorization.
+function cursorTypes(ctx: QueryCtx) {
+ const codec = querying.cursorCodec(ctx, { domain: 'custom-native', bind: { sort: 'asc' }, schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }) })
+ const opened: { native: string | null; seen: bigint } = codec.open(codec.seal({ native: null, seen: 2n }))
+ // @ts-expect-error input bigint cannot be a string
+ codec.seal({ native: null, seen: '2' })
+ // @ts-expect-error no reader escapes through the codec
+ void codec.db
+ // @ts-expect-error no caller-provided key ring on the configured facade
+ querying.cursorCodec(ctx, { domain: 'native', bind: null, schema: z.string(), keys: {} })
+ // @ts-expect-error actions without a reader cannot use the facade
+ querying.cursorCodec({}, { domain: 'native', bind: null, schema: z.string() })
+ void opened
+}
+void cursorTypes
+
+// U11: strict public search consumer, including mode-preserving registered return types.
+import { engine as searchEngine, relations as searchRelations, page as searchPage, effectPage as searchEffectPage } from './search-fixture'
+import type { SearchPaginationResult } from 'cvx-kit/querying'
+import type { FunctionReturnType, ApiFromModules } from 'convex/server'
+declare const searchCtx: Parameters<typeof searchEngine>[0]
+const searched = searchEngine(searchCtx).docs.search('search_text', 'orchid')
+searched.where({ status: 'active' }).with({ children: true }).paginate({ cursor: null, numItems: 2, scanLimit: 9 }).then(page => {
+ const mode: 'native-search' = page.paginationMode
+ const result: SearchPaginationResult<{ _id: GenericId<'docs'> }> = page
+ const child: GenericId<'children'> = page.page[0].children.page[0]._id
+ // @ts-expect-error private storage remains excluded
+ void page.page[0].secret
+ void [mode, result, child]
+})
+// @ts-expect-error search index names remain closed
+searchEngine(searchCtx).docs.search('missing', 'orchid')
+// @ts-expect-error staged indexes cannot be selected
+searchEngine(searchCtx).docs.search('staged', 'orchid')
+// @ts-expect-error search cannot choose browse ordering
+searched.orderBy('by_creation_time')
+// @ts-expect-error search has no caller-pinned end boundary
+searched.paginate({ cursor: null, numItems: 2, endCursor: 'opaque' })
+// @ts-expect-error search cannot open a direct relation
+searched.relation('synthetic', 'children')
+// @ts-expect-error direct relations cannot search
+searchEngine(searchCtx).docs.relation('synthetic' as GenericId<'docs'>, 'children').search('search_text', 'orchid')
+const parsedSearch = searchRelations.tables.docs.pageDto({}).parse({})
+const declaredMode: 'native-search' | undefined = parsedSearch.paginationMode
+// The shared DTO admits both modes; search-specific registered validators require the marker.
+type SearchApi = ApiFromModules<{ search: { page: typeof searchPage; effectPage: typeof searchEffectPage } }>
+type AuthSearch = FunctionReturnType<SearchApi['search']['page']>
+type EffectSearch = FunctionReturnType<SearchApi['search']['effectPage']>
+const registeredMode = (page: AuthSearch | EffectSearch): 'native-search' => page.paginationMode
+void [declaredMode, registeredMode]

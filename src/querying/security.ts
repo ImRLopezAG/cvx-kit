@@ -7,6 +7,9 @@ import type {
 	QueryInitializer,
 } from 'convex/server'
 import { getDocumentSize, type GenericId } from 'convex/values'
+import type { SearchIndexMetadata } from '../relations'
+import type { PaginationOptions, PaginationResult } from 'convex/server'
+import type { FilterScalar } from './filters'
 import type { Rules } from '../tenancy'
 
 export const MAX_DOCUMENT_BYTES = 1024 * 1024
@@ -30,6 +33,7 @@ export interface ManagedScope {
 }
 
 export interface ManagedBudgets {
+	searchCandidates: number
 	readOperations: number
 	indexRanges: number
 	rawCandidates: number
@@ -43,6 +47,7 @@ export interface ManagedBudgets {
  * Document payload accounting is NOT Convex storage/index/prefetch I/O accounting.
  */
 const defaultBudgets: Readonly<ManagedBudgets> = Object.freeze({
+	searchCandidates: 100,
 	readOperations: 4096,
 	indexRanges: 1024,
 	rawCandidates: 8192,
@@ -121,8 +126,19 @@ export interface ManagedReadRequest<DM extends GenericDataModel> {
 	readonly scope: ManagedScope & { readonly policyVersion: string }
 	readonly budgets: Readonly<ManagedBudgets>
 	readonly counters: ManagedCounters
+	/** Only the private search operation enables atomic descendant completion. */
+	readonly atomicCompletion: boolean
+	search(
+		table: string,
+		index: SearchIndexMetadata,
+		text: string,
+		equalities: readonly { field: string; value: FilterScalar }[],
+		options: PaginationOptions,
+	): Promise<PaginationResult<GenericDocument>>
 	/** Future native leaf adapter reserves BEFORE every actual next/get, not an outer stream. */
 	reserveLeaf(): LeafReservation
+	/** Only raw leaf reservation failures from this request can be resumed by the executor. */
+	leafBudgetFailure(error: ManagedReadError): 'row-budget' | 'byte-budget' | undefined
 	openRange(): void
 	expand(depth: number, count?: number): void
 	/** Raw candidate visibility for the private executor; every leaf is metered.
@@ -149,7 +165,12 @@ export interface ManagedSecurityConfig<DM extends GenericDataModel> {
 
 /** Native writer/action contexts are not accepted by the engine contract. */
 export type ManagedQueryContext<DM extends GenericDataModel> = {
-	db: GenericDatabaseReader<DM> & { insert?: never; patch?: never; replace?: never; delete?: never }
+	db: GenericDatabaseReader<DM> & {
+		insert?: never
+		patch?: never
+		replace?: never
+		delete?: never
+	}
 }
 
 /** Central construction, then one shared request per engine invocation.
@@ -171,17 +192,27 @@ export function createManagedSecurity<DM extends GenericDataModel = GenericDataM
 	const central = Object.freeze({ ...defaultBudgets, ...config.budgets })
 	const policyVersion = config.policyVersion
 	const trustedAdapter = config.trustedAdapter
-	return <Ctx extends ManagedQueryContext<DM>>(
-		ctx: Ctx,
-		lower?: Partial<ManagedBudgets>,
-	): ManagedReadRequest<DM> => {
+	function admit(ctx: ManagedQueryContext<DM>): Capability<DM> {
 		// SAFETY: identity is registered privately by the query constructor for this DM.
 		const registered = capabilities.get(ctx.db) as Capability<DM> | undefined
 		const adapted = registered ? undefined : trustedAdapter?.(ctx)
 		if (!registered && !adapted) throw new ManagedReadError('UNMANAGED_QUERY_CONTEXT')
-		const cap = registered ?? { ...adapted!, ...snapshot(adapted!) }
-		return request(cap, tables, limits(lower, central), policyVersion)
+		return registered ?? { ...adapted!, ...snapshot(adapted!) }
 	}
+	function managed<Ctx extends ManagedQueryContext<DM>>(
+		ctx: Ctx,
+		lower?: Partial<ManagedBudgets>,
+	): ManagedReadRequest<DM> {
+		return request(admit(ctx), tables, limits(lower, central), policyVersion)
+	}
+	return Object.assign(managed, {
+		/** Scope-only admission for public cursors. Never returns the registered reader. */
+		cursorScope(ctx: ManagedQueryContext<DM>): ManagedScope & { readonly policyVersion: string } {
+			if (!ctx?.db || ['insert', 'patch', 'replace', 'delete'].some((key) => key in ctx.db))
+				throw new ManagedReadError('UNMANAGED_QUERY_CONTEXT')
+			return Object.freeze({ ...admit(ctx).scope, policyVersion })
+		},
+	})
 }
 
 /** Ordinary rule invocations share a policy-only meter. Ordinary db reads stay
@@ -198,7 +229,13 @@ export function suppliedPolicyRules<DM extends GenericDataModel>(
 		...snapshot({
 			rules,
 			defaultPolicy,
-			scope: { mode: 'trusted', principal: null, organization: null, tenant: null, role: null },
+			scope: {
+				mode: 'trusted',
+				principal: null,
+				organization: null,
+				tenant: null,
+				role: null,
+			},
 		}),
 	}
 	// Mutations can change dependencies between callbacks; never memoize ordinary
@@ -263,6 +300,10 @@ function limits(
 			throw new Error('Invalid managed read budgets')
 	}
 	return Object.freeze({
+		searchCandidates: Math.min(
+			central.searchCandidates,
+			overrides.searchCandidates ?? central.searchCandidates,
+		),
 		readOperations: Math.min(
 			central.readOperations,
 			overrides.readOperations ?? central.readOperations,
@@ -333,9 +374,25 @@ function request<DM extends GenericDataModel>(
 			return counts.memoEntries
 		},
 	})
+	let searchUsed = false
+	const searchCounts = { rawCandidates: 0, documentBytes: 0 }
 	const memo = new Map<string, GenericDocument | null>()
 	let pendingMemo = 0
 	let pendingCandidates = 0
+	const leafFailures = new WeakMap<ManagedReadError, 'row-budget' | 'byte-budget'>()
+	const leafLimit = () => {
+		if (
+			counts.readOperations >= budgets.readOperations ||
+			counts.rawCandidates + pendingCandidates >= budgets.rawCandidates
+		)
+			return 'row-budget'
+		if (
+			counts.documentBytesObserved + counts.documentBytesReserved + MAX_DOCUMENT_BYTES >
+			budgets.documentBytes
+		)
+			return 'byte-budget'
+		return undefined
+	}
 	const fail = (): never => {
 		throw new ManagedReadError('MANAGED_READ_BUDGET')
 	}
@@ -348,13 +405,7 @@ function request<DM extends GenericDataModel>(
 		counts.indexRanges++
 	}
 	const reserveLeaf = (): LeafReservation => {
-		if (
-			counts.readOperations >= budgets.readOperations ||
-			counts.rawCandidates + pendingCandidates >= budgets.rawCandidates ||
-			counts.documentBytesObserved + counts.documentBytesReserved + MAX_DOCUMENT_BYTES >
-				budgets.documentBytes
-		)
-			fail()
+		if (leafLimit()) fail()
 		counts.readOperations++
 		pendingCandidates++
 		counts.documentBytesReserved += MAX_DOCUMENT_BYTES
@@ -448,6 +499,13 @@ function request<DM extends GenericDataModel>(
 			let iterator: AsyncIterator<GenericDocument> | undefined
 			try {
 				while (true) {
+					// Mark only this raw leaf's pre-fetch reservation, never native or policy errors.
+					const reason = !authorized && leafLimit()
+					if (reason) {
+						const error = new ManagedReadError('MANAGED_READ_BUDGET')
+						leafFailures.set(error, reason)
+						throw error
+					}
 					const reservation = reserveLeaf()
 					let next: IteratorResult<GenericDocument>
 					try {
@@ -525,7 +583,11 @@ function request<DM extends GenericDataModel>(
 				assertTable(table)
 				return cap.reader.normalizeId(table, id)
 			},
-			system: Object.freeze({ get: blocked, query: blocked, normalizeId: blocked }),
+			system: Object.freeze({
+				get: blocked,
+				query: blocked,
+				normalizeId: blocked,
+			}),
 		}) as GenericDatabaseReader<any>
 	}
 	return Object.freeze({
@@ -533,7 +595,37 @@ function request<DM extends GenericDataModel>(
 		scope: Object.freeze({ ...cap.scope, policyVersion }),
 		budgets,
 		counters: view,
+		get atomicCompletion() {
+			return searchUsed
+		},
+		async search(
+			table: string,
+			index: SearchIndexMetadata,
+			text: string,
+			equalities: readonly { field: string; value: FilterScalar }[],
+			options: PaginationOptions,
+		) {
+			assertTable(table)
+			if (searchUsed) throw new ManagedReadError('UNSUPPORTED_MANAGED_READ')
+			searchUsed = true
+			if (counts.readOperations >= budgets.readOperations) fail()
+			openRange()
+			counts.readOperations++
+			// SAFETY: registered immutable metadata admits the native search field and equality fields.
+			const source: QueryInitializer<any> = cap.reader.query(table)
+			const result = await source
+				.withSearchIndex(index.name, (q) => {
+					let filter = q.search(index.searchField, text)
+					for (const { field, value } of equalities) filter = filter.eq(field, value)
+					return filter
+				})
+				.paginate(options)
+			searchCounts.rawCandidates += result.page.length
+			for (const document of result.page) searchCounts.documentBytes += getDocumentSize(document)
+			return result
+		},
 		reserveLeaf,
+		leafBudgetFailure: (error: ManagedReadError) => leafFailures.get(error),
 		openRange,
 		expand(depth: number, count = 1) {
 			if (

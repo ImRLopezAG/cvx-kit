@@ -1,0 +1,118 @@
+import assert from 'node:assert/strict'
+import { convexTest } from 'convex-test'
+import { anyApi } from 'convex/server'
+import { ConvexError } from 'convex/values'
+import { writeFileSync } from 'node:fs'
+import { queryFailureContract } from 'cvx-kit/querying'
+import * as queryingPublic from 'cvx-kit/querying'
+import { queryErrors } from 'cvx-kit/errors'
+import * as f from './search-fixture'
+assert.deepEqual(Object.keys(queryingPublic).sort(), [
+	'CursorError',
+	'FieldGroupError',
+	'SearchError',
+	'createQueryEngine',
+	'queryFailureContract',
+])
+for (const path of ['cvx-kit/querying/security', 'cvx-kit/querying/search'])
+	await assert.rejects(import(path), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' })
+const t = convexTest(f.schema, {
+	'./_generated/server.ts': () => import('./convex/_generated/server'),
+	'./search.ts': async () => f,
+})
+const client = t.withIdentity({ subject: 'synthetic-reader', org_id: 'one', role: 'reader' })
+await t.run(async (ctx) => {
+	for (let i = 0; i < 6; i++) {
+		const parent = await ctx.db.insert('docs', {
+			text: 'orchid',
+			status: i < 2 ? 'denied' : 'active',
+			secret: 'private-storage',
+		})
+		await ctx.db.insert('children', { parent, name: 'child' })
+	}
+})
+const options = { text: 'orchid', cursor: null, scanLimit: 5 }
+const first = await client.query(anyApi.search.page, options)
+assert.equal(first.paginationMode, 'native-search')
+assert.equal(first.page.length, 0)
+assert.equal(first.isDone, false)
+assert.equal(first.splitCursor, null)
+assert.equal(first.pageStatus, null)
+const second = await client.query(anyApi.search.effectPage, {
+	...options,
+	cursor: first.continueCursor,
+})
+assert.equal(second.paginationMode, 'native-search')
+assert.equal(second.page.length, 2)
+assert.deepEqual(
+	await client.query(anyApi.search.page, { ...options, cursor: first.continueCursor }),
+	second,
+	'replay repeats the same branch',
+)
+const cap = await client.query(anyApi.search.page, { ...options, cursor: second.continueCursor })
+assert.equal(cap.page.length, 1)
+assert.equal(cap.completeness, 'result-cap')
+assert.equal(cap.isDone, true)
+for (const changed of [
+	{ ...options, text: 'rose', cursor: first.continueCursor },
+	{ ...options, scanLimit: 6, cursor: first.continueCursor },
+])
+	await assert.rejects(
+		client.query(anyApi.search.page, changed),
+		(error) =>
+			error instanceof ConvexError && JSON.stringify(error.data).includes('invalid-cursor'),
+	)
+await assert.rejects(
+	t
+		.withIdentity({ subject: 'synthetic-reader', org_id: 'one', role: 'owner' })
+		.query(anyApi.search.page, { ...options, cursor: first.continueCursor }),
+	(error) => error instanceof ConvexError && JSON.stringify(error.data).includes('invalid-cursor'),
+)
+await assert.rejects(
+	client.query(anyApi.search.nested, { text: 'orchid', cursor: second.continueCursor }),
+	(error) => error instanceof ConvexError && JSON.stringify(error.data).includes('invalid-cursor'),
+	'output selection changes cursor binding',
+)
+const rootWithChildren = await client.query(anyApi.search.nested, options)
+const childPage = await client.query(anyApi.search.nested, {
+	...options,
+	cursor: rootWithChildren.continueCursor,
+})
+assert.equal(childPage.paginationMode, 'native-search')
+assert.equal(childPage.page[0].children.paginationMode, undefined)
+assert.equal(childPage.page[0].children.page.length, 1)
+for (const [text, status] of [
+	['policy', 'throw'],
+	['broken-dto', 'active'],
+]) {
+	await t.run((ctx) => ctx.db.insert('docs', { text, status, secret: 'private-storage' }))
+	for (const endpoint of [anyApi.search.page, anyApi.search.effectPage])
+		await assert.rejects(
+			client.query(endpoint, { text, cursor: null }),
+			(error) =>
+				error instanceof ConvexError &&
+				JSON.stringify(error.data) === JSON.stringify({ _tag: 'UnknownFailure', version: 1 }),
+		)
+}
+assert.deepEqual(
+	queryFailureContract.project(Error('private')),
+	queryErrors.project(Error('private')),
+)
+writeFileSync(
+	'search-evidence.json',
+	JSON.stringify(
+		{
+			first,
+			second,
+			cap,
+			nestedMode: childPage.page[0].children.paginationMode ?? null,
+			registered: ['authQuery', 'Effect.authQuery'],
+			result: 'PASS',
+		},
+		null,
+		2,
+	),
+)
+console.log(
+	'Packed registered search: PASS (mode, empty continuation, replay, bindings, nested browse, policy/DTO sanitization)',
+)

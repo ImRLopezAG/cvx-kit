@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict'
+import { convexTest } from 'convex-test'
+import { defineSchema, queryGeneric, mutationGeneric, actionGeneric, internalQueryGeneric, internalMutationGeneric, internalActionGeneric, anyApi, type DataModelFromSchemaDefinition } from 'convex/server'
+import { ConvexError } from 'convex/values'
+import { Effect } from 'effect'
+import { z } from 'zod'
+import { zodTable } from 'cvx-kit/zod-table'
+import { defineRelations } from 'cvx-kit/relations'
+import { createQueryEngine, queryFailureContract } from 'cvx-kit/querying'
+import { createEffectAuthFunctions } from 'cvx-kit/effect'
+import { queryErrors, decodeFailure } from 'cvx-kit/errors'
+const records = zodTable('records', () => ({ key: z.string(), secret: z.string() }), { publicFields: ['key'] })
+const recordsTable = records.table.index('by_key', ['key'])
+const relations = defineRelations({ records: { ...records, fieldGroups: { private: ['secret'] as const } } }, () => ({}))
+const schema = defineSchema({ records: recordsTable })
+type DM = DataModelFromSchemaDefinition<typeof schema>
+const builders = { query: queryGeneric, mutation: mutationGeneric, action: actionGeneric, internalQuery: internalQueryGeneric, internalMutation: internalMutationGeneric, internalAction: internalActionGeneric }
+const auth = createEffectAuthFunctions<DM, 'reader'>({ ...builders, getAuthUser: async ctx => { const identity = await ctx.auth.getUserIdentity(); return identity ? { id: identity.subject } : null }, mapRole: () => 'reader', adminRoles: [] }, { query: { errors: queryFailureContract }, mutation: {}, action: {}, systemQuery: {}, systemMutation: {}, systemAction: {} })
+const engine = createQueryEngine({ schema, relations }, { cursor: { version: 'u8', currentKeyId: 'one', keys: { one: new Uint8Array(64).fill(8) } }, fieldGroups: { records: { private: () => false } } })
+const invalid = auth.authQuery({ args: {}, handler: ctx => Effect.tryPromise({ try: () => engine(ctx).records.paginate({ numItems: 1, cursor: 'private-id' }), catch: error => error }) })
+const group = auth.authQuery({ args: {}, handler: ctx => Effect.tryPromise({ try: () => engine(ctx).records.include({ private: 'required' }).paginate({ numItems: 1, cursor: null }), catch: error => error }) })
+const fanout = auth.authQuery({ args: {}, handler: ctx => Effect.tryPromise({ try: () => engine(ctx).records.where({ key: { in: Array.from({ length: 9 }, (_, i) => String(i)) } }).paginate({ numItems: 1, cursor: null }), catch: error => error }) })
+const unrelated = auth.authQuery({ args: {}, handler: () => Effect.fail(Error('Invalid cursor QUERY_FANOUT private-id', { cause: 'private-cause' })) })
+const t = convexTest(schema, { './_generated/server.ts': async () => builders, './functions.ts': async () => ({ invalid, group, fanout, unrelated }) })
+const client = t.withIdentity({ subject: 'user', org_id: 'org', role: 'reader' })
+const envelopes: object[] = []
+for (const [name, code] of [['invalid', 'invalid-cursor'], ['group', 'FIELD_GROUP_DENIED'], ['fanout', 'QUERY_FANOUT'], ['unrelated', null]] as const) {
+ let caught: unknown
+ try { await client.query(anyApi.functions[name], {}) } catch (error) { caught = error }
+ assert.ok(caught instanceof ConvexError)
+ const expected = code ? { _tag: 'DeclaredFailure', version: 1, code, message: code === 'invalid-cursor' ? 'Invalid cursor' : code === 'FIELD_GROUP_DENIED' ? 'Field group access denied' : 'Query fan-out limit exceeded', details: {} } : { _tag: 'UnknownFailure', version: 1 }
+ assert.deepEqual(caught.data, expected)
+ assert.doesNotMatch(JSON.stringify(caught.data), /private|cause|stack|secret|token/)
+ envelopes.push({ endpoint: name, raw: caught.data })
+ assert.deepEqual(decodeFailure(caught, queryErrors), expected)
+}
+console.log(JSON.stringify({ registeredRawEnvelopes: envelopes }, null, 2))

@@ -1,5 +1,7 @@
 import {
 	EmptyStream,
+	mergedStream,
+	getIndexFields,
 	QueryStream,
 	stream,
 	type IndexBounds,
@@ -12,7 +14,6 @@ import type {
 	QueryInitializer,
 	SchemaDefinition,
 	GenericSchema,
-	PaginationResult,
 	TableDefinition,
 	IndexRangeBuilder,
 } from 'convex/server'
@@ -20,8 +21,15 @@ import type { Value } from 'convex/values'
 import type { createPlanner } from './planner'
 import { MAX_DOCUMENT_BYTES, ManagedReadError, type ManagedReadRequest } from './security'
 import { CursorError, type CursorBinding, type createCursorCodec } from './cursors'
-import type { NativePagination } from './filters'
+import {
+	rangeForIndex,
+	type NativePagination,
+	type NativeRange,
+	type FilterScalar,
+} from './filters'
+import { SearchError } from './search'
 import { RelationshipError } from './relationships'
+import type { EnginePaginationResult, PageCompleteness } from '../zod-table'
 
 type Entry = [Record<string, Value> | null, IndexKey, number]
 type Plan = ReturnType<ReturnType<typeof createPlanner>['plan']>
@@ -37,6 +45,7 @@ type ExecutionSchema = SchemaDefinition<
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Thrown values enter this error boundary untrusted; the class checks below admit only the fixed public error contracts.
 export function rethrowQueryError(error: unknown): never {
 	if (
+		error instanceof SearchError ||
 		error instanceof ManagedReadError ||
 		error instanceof CursorError ||
 		error instanceof RelationshipError
@@ -90,25 +99,36 @@ export async function executeStream(
 	authorizationTable = table,
 ) {
 	const leaves = leafReader(request, planner)
+	const progress: Progress = { completed: [] }
 	try {
 		// SAFETY: runtime ownership/index validation precedes this dynamic table
 		// adapter. Public generics retain the original application's schema.
-		const base = stream(leaves.db, schema as ExecutionSchema).query(table)
+		const nativeSchema = schema as ExecutionSchema
+		const base = stream(leaves.db, nativeSchema).query(table)
 		const selected = plan.index
-			? base.withIndex(plan.index.name, (q) => {
-					// SAFETY: every equality is a validated consecutive native prefix.
-					let range = q as IndexRangeBuilder<any, string[], number>
-					for (const { field, value } of plan.prefix) {
-						// SAFETY: native eq returns the next builder; runtime prefix length
-						// is validated even though this dynamic adapter erases tuple lengths.
-						range = range.eq(field, value) as IndexRangeBuilder<any, string[], number>
-					}
-					return range
-				})
+			? base.withIndex(plan.index.name, (q) => nativeIndexRange(q, plan.prefix, plan.range))
 			: base
-		const ordered = selected.order(plan.args.order ?? 'asc')
+		const order = plan.args.order ?? 'asc'
+		const expansion = plan.expansion
+		const ordered =
+			expansion && plan.index && !plan.unsatisfiable
+				? mergedStream(
+						expansion.values.map((value) => {
+							const prefix = [...plan.prefix, { field: expansion.field, value }]
+							// SAFETY: each stream binds the same admitted index at one consecutive position.
+							return base
+								.withIndex(plan.index!.name, (q) =>
+									nativeIndexRange(q, prefix, rangeForIndex(plan.index!, prefix, plan.ranges)),
+								)
+								.order(order)
+						}),
+						expansion.comparator === 'full-index'
+							? getIndexFields(table, plan.index.name, nativeSchema)
+							: getIndexFields(table, plan.index.name, nativeSchema).slice(plan.prefix.length + 1),
+					)
+				: selected.order(order)
 		const source = transform ? transform(ordered, leaves.db) : ordered
-		const result = plan.unsatisfiable
+		const result: EnginePaginationResult<Record<string, Value>> = plan.unsatisfiable
 			? await new EmptyStream<Record<string, Value>>(
 					source.getOrder(),
 					source.getIndexFields(),
@@ -120,14 +140,12 @@ export async function executeStream(
 					authorizationTable,
 					plan,
 					planner,
-					{
-						completed: [],
-						stopped: false,
-					},
+					progress,
 					complete,
 				).paginate(args)
 		const protectedResult = {
 			...result,
+			completeness: result.completeness ?? 'complete',
 			continueCursor: seal(result.continueCursor),
 		}
 		if (result.splitCursor != null) protectedResult.splitCursor = seal(result.splitCursor)
@@ -139,11 +157,36 @@ export async function executeStream(
 	}
 }
 
+/** Private adapter shared by root and relationship streams; the planner owns admission. */
+export function nativeIndexRange(
+	q: IndexRangeBuilder<any, string[], number>,
+	prefix: readonly { field: string; value: FilterScalar }[],
+	bounds: NativeRange | null,
+): import('convex/server').IndexRange {
+	let range = q
+	for (const { field, value } of prefix) {
+		// SAFETY: every equality advances the validated consecutive native prefix.
+		range = range.eq(field, value) as IndexRangeBuilder<any, string[], number>
+	}
+	// SAFETY: an equality builder also admits upper bounds; lower methods retain that interface.
+	let bounded = range as ReturnType<typeof range.gte>
+	if (bounds?.lower) {
+		const { field, lower } = bounds
+		bounded = lower.inclusive ? range.gte(field, lower.value) : range.gt(field, lower.value)
+	}
+	if (bounds?.upper) {
+		const { field, upper } = bounds
+		return upper.inclusive ? bounded.lte(field, upper.value) : bounded.lt(field, upper.value)
+	}
+	return bounded
+}
+
 /** Retain the actual metered leaf, since the helper's public key iterator does
  * not forward return(). This private reader only constructs raw metered queries.
  */
 function leafReader(request: Request, planner: ReturnType<typeof createPlanner>) {
 	const active = new Set<AsyncIterator<GenericDocument>>()
+	const pending = new Set<Promise<IteratorResult<GenericDocument>>>()
 	function wrap<Source extends AsyncIterable<GenericDocument>>(
 		table: string,
 		source: Source,
@@ -171,7 +214,13 @@ function leafReader(request: Request, planner: ReturnType<typeof createPlanner>)
 						return {
 							next: () => {
 								planner.beforeLeaf(table)
-								return iterator.next()
+								const next = iterator.next()
+								pending.add(next)
+								void next.then(
+									() => pending.delete(next),
+									() => pending.delete(next),
+								)
+								return next
 							},
 						}
 					}
@@ -191,6 +240,7 @@ function leafReader(request: Request, planner: ReturnType<typeof createPlanner>)
 	return {
 		db,
 		async close() {
+			await Promise.allSettled(pending)
 			let failed = false
 			for (const iterator of active) {
 				try {
@@ -205,14 +255,15 @@ function leafReader(request: Request, planner: ReturnType<typeof createPlanner>)
 	}
 }
 
-function canFetch(request: Request): boolean {
+function fetchStopReason(request: Request): 'row-budget' | 'byte-budget' | undefined {
 	const c = request.counters,
 		b = request.budgets
-	return (
-		c.readOperations < b.readOperations &&
-		c.rawCandidates < b.rawCandidates &&
-		c.documentBytesObserved + c.documentBytesReserved + MAX_DOCUMENT_BYTES <= b.documentBytes
-	)
+	// Row checks precede byte reservation, matching the managed leaf admission order.
+	if (c.readOperations >= b.readOperations || c.rawCandidates >= b.rawCandidates)
+		return 'row-budget'
+	if (c.documentBytesObserved + c.documentBytesReserved + MAX_DOCUMENT_BYTES > b.documentBytes)
+		return 'byte-budget'
+	return undefined
 }
 
 /** Encoder-only use of public native pagination; no private cursor wire format,
@@ -251,7 +302,7 @@ class CapturedKey extends QueryStream<object> {
 
 interface Progress {
 	completed: Entry[]
-	stopped: boolean
+	stopReason?: PageCompleteness
 }
 class EligibleStream extends QueryStream<Record<string, Value>> {
 	constructor(
@@ -293,9 +344,10 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 		const iterator = this.source.iterWithKeys(true)[Symbol.asyncIterator]()
 		try {
 			while (true) {
-				if (!canFetch(this.request)) {
+				const reason = fetchStopReason(this.request)
+				if (reason) {
 					if (!this.progress.completed.length) throw new ManagedReadError('MANAGED_READ_BUDGET')
-					this.progress.stopped = true
+					this.progress.stopReason = reason
 					return
 				}
 				let next: IteratorResult<Entry>
@@ -308,10 +360,11 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 					if (
 						error instanceof ManagedReadError &&
 						error.code === 'MANAGED_READ_BUDGET' &&
+						this.request.leafBudgetFailure(error) &&
 						this.progress.completed.length &&
 						this.request.counters.rawCandidates === candidatesBefore
 					) {
-						this.progress.stopped = true
+						this.progress.stopReason = this.request.leafBudgetFailure(error)
 						return
 					}
 					throw error
@@ -333,7 +386,6 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 				// Complete policy, residual, and required DTO before recording the key.
 				const entry: Entry = [output, key, bytes]
 				this.progress.completed.push(entry)
-				if (!canFetch(this.request)) this.progress.stopped = true
 				yield entry
 			}
 		} finally {
@@ -342,19 +394,41 @@ class EligibleStream extends QueryStream<Record<string, Value>> {
 	}
 	override async paginate(
 		args: NativePagination,
-	): Promise<PaginationResult<Record<string, Value>>> {
+	): Promise<EnginePaginationResult<Record<string, Value>>> {
 		const result = await super.paginate(args)
-		if (!this.progress.stopped) return result
 		const completed = this.progress.completed
-		if (!completed.length) throw new ManagedReadError('MANAGED_READ_BUDGET')
 		const encode = async (entry: Entry) =>
-			(await new CapturedKey(entry, this.source).paginate({ numItems: 1, cursor: null }))
-				.continueCursor
+			(
+				await new CapturedKey(entry, this.source).paginate({
+					numItems: 1,
+					cursor: null,
+				})
+			).continueCursor
+		const fulfilled = args.endCursor
+			? !!completed.length && (await encode(completed.at(-1)!)) === args.endCursor
+			: result.page.length >= args.numItems
+		if (
+			this.request.atomicCompletion &&
+			((this.progress.stopReason && !fulfilled) ||
+				(result.pageStatus === 'SplitRequired' && !fulfilled))
+		)
+			throw new ManagedReadError('MANAGED_READ_BUDGET')
+		if (!this.progress.stopReason)
+			return {
+				...result,
+				// A helper limit can coincide with the requested final row. That page
+				// is fulfilled; preserve the native split/isDone/cursor metadata separately.
+				completeness:
+					result.pageStatus === 'SplitRequired' && !fulfilled ? 'native-limit' : 'complete',
+			}
+		if (!completed.length) throw new ManagedReadError('MANAGED_READ_BUDGET')
+		const continuation = await encode(completed.at(-1)!)
 		return {
 			...result,
+			completeness: fulfilled ? 'complete' : this.progress.stopReason,
 			isDone: false,
 			pageStatus: 'SplitRequired',
-			continueCursor: await encode(completed.at(-1)!),
+			continueCursor: continuation,
 			splitCursor: await encode(completed[Math.floor((completed.length - 1) / 2)]),
 		}
 	}

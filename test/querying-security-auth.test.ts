@@ -16,7 +16,124 @@ import { v } from 'convex/values'
 import { z } from 'zod'
 import { describe, expect, it } from 'vite-plus/test'
 import { createAuthFunctions } from '../src/auth'
+import { createQueryEngine, CursorError } from '../src/querying'
+import { groupDeclarations } from './fixture-querying/field-groups'
+import { cursor as codecKeys } from './fixture-querying/scalar'
 import { createManagedSecurity } from '../src/querying/security'
+import { fieldGroupFixture, seedFieldGroups } from './fixture-querying/field-groups'
+
+it('projects a requested stored group through a registered auth endpoint', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f)
+	const page = await f.t
+		.withIdentity({ subject: 'user', org_id: 'one', role: 'reader' })
+		.query(anyApi.functions.page, { cursor: null, numItems: 1 })
+	expect(page.page[0].balance).toBe(42n)
+	expect(page.page[0]).not.toHaveProperty('secret')
+	expect(page.page[0].profile).toEqual({ cents: 42, date: null })
+	expect(f.calls.clients).toBe(1)
+})
+
+const groupIdentity = { subject: 'user', org_id: 'one', role: 'reader' }
+const groupArgs = { cursor: null, numItems: 1 }
+
+it('omits denied optional own keys and exposes only a fixed required-denial error', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f, false)
+	const asUser = f.t.withIdentity(groupIdentity)
+	const result = await asUser.query(anyApi.functions.optional, groupArgs)
+	expect(Object.keys(result.page[0]).sort()).toEqual(['_id', 'name'])
+	expect(JSON.stringify(result)).not.toMatch(/balance|profile|never-public|cents/)
+	try {
+		await asUser.query(anyApi.functions.page, groupArgs)
+		throw new Error('unexpected acceptance')
+	} catch (error) {
+		expect(error).toMatchObject({ message: 'FIELD_GROUP_DENIED' })
+		expect(JSON.stringify(error)).not.toMatch(/never-public|balance|profile|42|99/)
+	}
+	expect(f.calls.clients).toBe(2)
+})
+
+it('checks every client predicate recursively before candidate reads, including contradictions and variants', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f, false)
+	const asUser = f.t.withIdentity(groupIdentity)
+	for (const filters of [
+		{ balance: 42n },
+		{ not: { balance: 42n } },
+		{ or: [{ name: 'impossible' }, { balance: 42n }] },
+		{ and: [{ name: 'a' }, { name: 'b' }, { not: { balance: 42n } }] },
+		{ accounts: { none: { or: [{ balance: 11n }] } } },
+	]) {
+		await expect(
+			asUser.query(anyApi.functions.optional, { ...groupArgs, filters }),
+		).rejects.toThrow('FIELD_GROUP_DENIED')
+		expect(f.calls.candidates).toBe(0)
+	}
+	await expect(
+		asUser.query(anyApi.functions.variant, {
+			...groupArgs,
+			filters: { not: { variant: { tag: 'finance', filters: { balance: 76n } } } },
+		}),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+	expect(f.calls.candidates).toBe(0)
+	await expect(asUser.query(anyApi.functions.sorted, groupArgs)).rejects.toThrow(
+		'FIELD_GROUP_DENIED',
+	)
+	expect(f.calls.candidates).toBe(0)
+})
+
+it('requires opt-in even for allowed readers and keeps server constraints trusted', async () => {
+	const f = fieldGroupFixture()
+	await seedFieldGroups(f)
+	const asUser = f.t.withIdentity(groupIdentity)
+	await expect(
+		asUser.query(anyApi.functions.plain, { ...groupArgs, filters: { balance: 42n } }),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+	expect(f.calls.clients).toBe(0)
+	expect(f.calls.candidates).toBe(0)
+	const trusted = await asUser.query(anyApi.functions.trusted, groupArgs)
+	expect(trusted.page).toHaveLength(1)
+	expect(trusted.page[0]).not.toHaveProperty('balance')
+	await expect(
+		asUser.query(anyApi.functions.trusted, { ...groupArgs, filters: { balance: 42n } }),
+	).rejects.toThrow('FIELD_GROUP_DENIED')
+})
+
+it('binds modes and current decisions in both root cursor slots before traversal', async () => {
+	const f = fieldGroupFixture()
+	const { permission } = await seedFieldGroups(f)
+	const asUser = f.t.withIdentity(groupIdentity)
+	const first = await asUser.query(anyApi.functions.optional, groupArgs)
+	const resumed = await asUser.query(anyApi.functions.optional, {
+		...groupArgs,
+		cursor: first.continueCursor,
+	})
+	expect(resumed.page[0].balance).toBe(99n)
+	expect(f.calls.clients).toBe(2)
+	await expect(
+		asUser.query(anyApi.functions.page, { ...groupArgs, cursor: first.continueCursor }),
+	).rejects.toThrow('Invalid cursor')
+	await f.t.run(({ db }) => db.patch('permissions', permission, { clients: false }))
+	const before = f.calls.candidates
+	for (const slots of [{ cursor: first.continueCursor }, { endCursor: first.continueCursor }]) {
+		await expect(
+			asUser.query(anyApi.functions.optional, { ...groupArgs, ...slots }),
+		).rejects.toThrow('Invalid cursor')
+		expect(f.calls.candidates).toBe(before)
+	}
+	expect(f.calls.clients).toBe(5)
+})
+
+it('uses the managed dependency budget for group policies and redacts policy failures', async () => {
+	const f = fieldGroupFixture({ readOperations: 1 })
+	await seedFieldGroups(f)
+	await expect(
+		f.t.withIdentity(groupIdentity).query(anyApi.functions.optional, groupArgs),
+	).rejects.toThrow('MANAGED_READ_BUDGET')
+	expect(f.calls.clients).toBe(1)
+	expect(f.calls.candidates).toBe(0)
+})
 
 const schema = defineSchema({
 	tasks: defineTable({ tenant: v.string(), name: v.string(), permission: v.id('permissions') }),
@@ -302,4 +419,243 @@ describe('managed security through actual Convex auth constructors (in memory)',
 		expect(await asOne.mutation(api.changedDependency, { permission })).toBe(true)
 		expect((await asOne.query(api.read, {})).names).toEqual([])
 	})
+})
+
+// U6: use the actual auth constructors, not private reader registration.
+it('seals and opens a bigint payload through a registered authenticated query', async () => {
+	const f = groupDeclarations()
+	const engine = createQueryEngine(f, { cursor: codecKeys })
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	const endpoint = codecAuth.authQuery({
+		args: { token: z.string().optional() },
+		handler: (ctx, args) => {
+			const codec = engine.cursorCodec(ctx, {
+				domain: 'native-clients-v1',
+				bind: { sort: 'asc' },
+				schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+			})
+			return args.token ? codec.open(args.token) : codec.seal({ native: null, seen: 42n })
+		},
+	})
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ endpoint }),
+	})
+	const user = t.withIdentity(identity)
+	const token = await user.query(anyApi.codec.endpoint, {})
+	expect(await user.query(anyApi.codec.endpoint, { token })).toEqual({ native: null, seen: 42n })
+	await expect(
+		t.withIdentity({ ...identity, subject: 'other' }).query(anyApi.codec.endpoint, { token }),
+	).rejects.toThrow('Invalid cursor')
+	expect(new CursorError()).toMatchObject({ code: 'invalid-cursor', message: 'Invalid cursor' })
+})
+
+it('rejects native, mutation and action contexts before adapters, keys or schemas can be used', async () => {
+	const f = groupDeclarations()
+	let adapterCalls = 0
+	let schemaCalls = 0
+	// Lazy environment configuration must never be reached by rejected contexts.
+	const engine = createQueryEngine(f)
+	const adapting = createQueryEngine(f, {
+		cursor: codecKeys,
+		trustedAdapter: () => {
+			adapterCalls++
+			return null
+		},
+	})
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	function reject(ctx: { auth: GenericQueryCtx<DM>['auth'] }, adapter = false) {
+		// SAFETY: intentionally supply invalid JS contexts to the public boundary.
+		return (adapter ? adapting : engine)
+			.cursorCodec(ctx as never, {
+				domain: 'native',
+				bind: null,
+				schema: z.string().transform((value) => {
+					schemaCalls++
+					return value
+				}),
+			})
+			.seal('native')
+	}
+	const native = queryGeneric({ args: {}, handler: (ctx) => reject(ctx) })
+	const mutation = codecAuth.authMutation({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const action = codecAuth.authAction({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const systemMutation = codecAuth.systemMutation({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const systemAction = codecAuth.systemAction({ args: {}, handler: (ctx) => reject(ctx, true) })
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ native, mutation, action, systemMutation, systemAction }),
+	})
+	const user = t.withIdentity(identity)
+	await expect(user.query(anyApi.codec.native, {})).rejects.toThrow('UNMANAGED_QUERY_CONTEXT')
+	for (const name of ['mutation', 'systemMutation'])
+		await expect(user.mutation(anyApi.codec[name], {})).rejects.toThrow('UNMANAGED_QUERY_CONTEXT')
+	for (const name of ['action', 'systemAction'])
+		await expect(user.action(anyApi.codec[name], {})).rejects.toThrow('UNMANAGED_QUERY_CONTEXT')
+	expect(adapterCalls).toBe(0)
+	expect(schemaCalls).toBe(0)
+})
+
+it('keeps public cursor integrity separate from current native consumer authorization', async () => {
+	const f = groupDeclarations()
+	const engine = createQueryEngine(f, { cursor: codecKeys })
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	const options = { domain: 'native', bind: null, schema: z.strictObject({ seen: z.bigint() }) }
+	const issue = codecAuth.authQuery({
+		args: {},
+		handler: (ctx) => engine.cursorCodec(ctx, options).seal({ seen: 1n }),
+	})
+	const resume = codecAuth.authQuery({
+		args: { cursor: z.string() },
+		handler: async (ctx, args) => {
+			const value = engine.cursorCodec(ctx, options).open(args.cursor)
+			if (!(await ctx.db.query('permissions').first())?.clients) throw new Error('DENIED')
+			return value
+		},
+	})
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ issue, resume }),
+	})
+	const permission = await t.run(({ db }) =>
+		db.insert('permissions', { tenant: 'one', user: 'one-user', clients: true, accounts: true }),
+	)
+	const user = t.withIdentity(identity)
+	const token = await user.query(anyApi.codec.issue, {})
+	expect(await user.query(anyApi.codec.resume, { cursor: token })).toEqual({ seen: 1n })
+	await t.run(({ db }) => db.patch('permissions', permission, { clients: false }))
+	await expect(user.query(anyApi.codec.resume, { cursor: token })).rejects.toThrow('DENIED')
+})
+
+it('contains rejecting async schema transforms and refinements on both synchronous codec operations', async () => {
+	const f = groupDeclarations()
+	const engine = createQueryEngine(f, { cursor: codecKeys })
+	const codecAuth = createAuthFunctions<DataModelFromSchemaDefinition<typeof f.schema>, 'owner'>({
+		...builders,
+		getAuthUser: async (ctx) => {
+			const user = await ctx.auth.getUserIdentity()
+			return user ? { id: user.subject } : null
+		},
+		mapRole: () => 'owner',
+		adminRoles: [],
+	})
+	const endpoint = codecAuth.authQuery({
+		args: {},
+		handler: (ctx) => {
+			type Tree = { native: string; children: Tree[] }
+			const tree: Tree = { native: 'root', children: [{ native: 'leaf', children: [] }] }
+			const invalidTree = { native: 'root', children: [{ native: 42, children: [] }] }
+			for (const warmed of [false, true]) {
+				const schema: z.ZodType<Tree> = z.lazy(() =>
+					z.object({ native: z.string(), children: z.array(schema) }),
+				)
+				if (warmed) expect(schema.parse(tree)).toEqual(tree)
+				const binding = { domain: 'recursive-schema', bind: warmed }
+				const codec = engine.cursorCodec(ctx, { ...binding, schema })
+				expect(codec.open(codec.seal(tree))).toEqual(tree)
+				expect(() => codec.seal(invalidTree)).toThrow('Invalid cursor')
+				const invalidToken = engine
+					.cursorCodec(ctx, { ...binding, schema: z.any() })
+					.seal(invalidTree)
+				expect(() => codec.open(invalidToken)).toThrow('Invalid cursor')
+			}
+			const options = { domain: 'reject-async', bind: null }
+			const payload = { native: 'position' }
+			const token = engine.cursorCodec(ctx, { ...options, schema: z.any() }).seal(payload)
+			for (const schema of [
+				z.any().transform(async () => {
+					throw new Error('private-async-transform')
+				}),
+				z.any().refine(async () => {
+					throw new Error('private-async-refinement')
+				}),
+				z.any().transform(() => Promise.reject(new Error('private-promise-transform'))),
+				z.any().refine(() => Promise.reject(new Error('private-promise-refinement'))),
+				z.object({
+					native: z.string().transform(() => Promise.reject(new Error('private-nested-promise'))),
+				}),
+				z.any().superRefine(() => Promise.reject(new Error('private-super-refinement'))),
+				z.any().check(() => Promise.reject(new Error('private-check'))),
+				z
+					.any()
+					.transform(() => Promise.reject<string>(new Error('private-caught-transform')))
+					.catch('fallback'),
+				z
+					.any()
+					.refine(() => Promise.reject(new Error('private-caught-refinement')))
+					.catch('fallback'),
+				z.object({
+					native: z.string().refine(() => Promise.reject(new Error('private-nested-refinement'))),
+				}),
+				z.preprocess(() => Promise.reject(new Error('private-preprocess')), z.any()),
+				z.object({ missing: z.any().default(() => Promise.reject(new Error('private-default'))) }),
+				z.object({
+					missing: z.any().prefault(() => Promise.reject(new Error('private-prefault'))),
+				}),
+				z
+					.promise(z.any().transform(() => Promise.reject(new Error('private-promise-schema'))))
+					.transform(() => 'unused'),
+				z.lazy(() => z.any().transform(() => Promise.reject(new Error('private-lazy-transform')))),
+				z.any().transform(() =>
+					Promise.resolve().then(() => {
+						throw new Error('private-deferred-transform')
+					}),
+				),
+				z.object({
+					native: z.string().transform(async () => {
+						throw new Error('private-nested-transform')
+					}),
+				}),
+			]) {
+				const codec = engine.cursorCodec(ctx, { ...options, schema })
+				for (const run of [() => codec.seal(payload), () => codec.open(token)]) {
+					expect(run).toThrow(CursorError)
+					expect(run).toThrow('Invalid cursor')
+				}
+			}
+			return null
+		},
+	})
+	const t = convexTest(f.schema, {
+		'./_generated/server.ts': async () => builders,
+		'./codec.ts': async () => ({ endpoint }),
+	})
+	const unhandled: unknown[] = []
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Capture runtime rejection payloads verbatim for the no-leak proof.
+	const capture = (reason: unknown) => {
+		unhandled.push(reason)
+	}
+	process.on('unhandledRejection', capture)
+	try {
+		await t.withIdentity(identity).query(anyApi.codec.endpoint, {})
+		// Drain the event-loop turn so rejected callbacks cannot escape after the assertion.
+		await new Promise<void>((resolve) => setImmediate(resolve))
+		expect(unhandled).toEqual([])
+	} finally {
+		process.off('unhandledRejection', capture)
+	}
 })

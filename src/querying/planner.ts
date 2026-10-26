@@ -1,6 +1,7 @@
+import { evaluateFilter } from './shared/evaluate'
 import type { z } from 'zod'
 import type { SchemaDefinition, GenericSchema } from 'convex/server'
-import { compareValues, type Value } from 'convex/values'
+import { type Value } from 'convex/values'
 import {
 	getRelationExecutor,
 	getRelationMetadata,
@@ -24,6 +25,7 @@ export function createPlanner(
 	return {
 		metadata,
 		select: owned.select,
+		groups: owned.groups,
 		validateDocument: owned.validateDocument,
 		streamSchema: owned.streamSchema,
 		beforeLeaf(table: string) {
@@ -34,14 +36,22 @@ export function createPlanner(
 			document: Record<string, Value>,
 			permitted: boolean,
 			residual: FilterAst,
+			groups: readonly string[] = [],
 		) {
-			return owned.project(table, document, () => permitted && scalarMatches(residual, document))
+			return owned.project(
+				table,
+				document,
+				() => permitted && scalarMatches(residual, document),
+				groups,
+			)
 		},
 		plan(
 			table: string,
 			input: QueryInput,
 			conditions: readonly IndexCondition[],
 			constraints: readonly StoredConstraint[],
+			ordering?: string,
+			traversal: 'root' | 'relation' = 'root',
 		) {
 			if (!Object.hasOwn(metadata.tables, table)) throw new Error('Unknown query table')
 			let validator = inputs.get(table)
@@ -60,15 +70,22 @@ export function createPlanner(
 			const { args, compiled } = parseFilterPlan(
 				validator,
 				input,
-				metadata.tables[table].indexes,
+				traversal === 'relation' && ordering === undefined ? [] : metadata.tables[table].indexes,
 				conditions,
 				where,
+				ordering,
 			)
 			if (compiled.residual.kind !== 'and') throw new Error('Invalid compiled filter root')
 			const [client, server] = compiled.residual.children
 			const empty: FilterAst = { kind: 'and', children: [] }
 			const clientIdentity = { kind: 'and', children: [client, empty] }
-			const serverIdentity = { kind: 'and', children: [server, empty] }
+			const serverIdentity = compiled.sets.size
+				? {
+						kind: 'and',
+						children: [server, empty],
+						traversal: { version: 2, expansion: compiled.expansion },
+					}
+				: { kind: 'and', children: [server, empty] }
 			// SAFETY: normalized AST nodes contain only validated native scalar Values.
 			return {
 				...compiled,
@@ -80,43 +97,9 @@ export function createPlanner(
 	}
 }
 
-/** Native scalar ordering/equality, including missing vs null, without coercion. */
 export function scalarMatches(
 	ast: FilterAst,
 	document: Record<string, Value | undefined>,
 ): boolean {
-	switch (ast.kind) {
-		case 'and':
-			return ast.children.every((child) => scalarMatches(child, document))
-		case 'or':
-			return ast.children.some((child) => scalarMatches(child, document))
-		case 'variant':
-			return document[ast.discriminator] === ast.tag && scalarMatches(ast.child, document)
-		case 'not':
-			return !scalarMatches(ast.child, document)
-		case 'relation':
-			throw new Error('Relation execution requires U6')
-		case 'scalar': {
-			const actual = document[ast.field]
-			if (ast.operator === 'exists') return (actual !== undefined) === ast.value
-			if (ast.operator === 'in')
-				return (
-					Array.isArray(ast.value) && ast.value.some((value) => compareValues(actual, value) === 0)
-				)
-			if (Array.isArray(ast.value)) throw new Error('Invalid scalar predicate')
-			const compared = compareValues(actual, ast.value)
-			switch (ast.operator) {
-				case 'eq':
-					return compared === 0
-				case 'gt':
-					return compared > 0
-				case 'gte':
-					return compared >= 0
-				case 'lt':
-					return compared < 0
-				case 'lte':
-					return compared <= 0
-			}
-		}
-	}
+	return evaluateFilter(ast, document) === true
 }

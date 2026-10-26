@@ -29,6 +29,7 @@ export function declarations() {
 			count: z.number(),
 			code: z.string(),
 			optional: z.string().nullable().optional(),
+			optionalOrdered: z.string().optional(),
 			big: z.bigint(),
 			reference: id('tasks').nullable(),
 			permission: id('permissions').optional(),
@@ -44,6 +45,9 @@ export function declarations() {
 		.index('by_count', ['count'])
 		.index('by_code', ['code'])
 		.index('by_department', ['department'])
+		.index('by_big', ['big'])
+		.index('by_optional', ['optional'])
+		.index('by_optionalOrdered', ['optionalOrdered'])
 	const permissions = zodTable('permissions', () => ({ allowed: z.boolean(), tenant: z.string() }))
 	const relations = defineRelations({ tasks, permissions }, (r) => ({
 		tasks: { referenceTask: r.one.tasks({ from: r.tasks.reference, to: r.tasks._id }) },
@@ -145,6 +149,7 @@ export async function seed(f: Pick<ReturnType<typeof harness>, 't'>, size = 24, 
 				count: ordinal % 4,
 				code: ordinal % 2 ? 'x' : '',
 				...(ordinal % 3 === 1 ? { optional: null } : ordinal % 3 === 2 ? { optional: '' } : {}),
+				...(ordinal % 2 ? { optionalOrdered: 'x' } : {}),
 				big: BigInt(ordinal),
 				reference: null,
 				tenant: ordinal < denied ? 'two' : 'one',

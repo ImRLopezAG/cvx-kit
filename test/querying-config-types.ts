@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import type { GenericId } from 'convex/values'
 import {
 	createQueryEngine,
@@ -63,3 +64,41 @@ void clutter
 createQueryEngine(config, { maxPageSize: '10' })
 // @ts-expect-error request scope is not engine configuration
 createQueryEngine(config, { principal: 'user' })
+
+const nativeCodec = advanced.cursorCodec(ctx, {
+	domain: 'native-tasks',
+	bind: { order: 'asc' },
+	schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+})
+const opened: { native: string | null; seen: bigint } = nativeCodec.open(
+	nativeCodec.seal({ native: null, seen: 2n }),
+)
+void opened
+
+// @ts-expect-error payload inputs retain schema types
+nativeCodec.seal({ native: null, seen: '2' })
+// @ts-expect-error the facade accepts no second key configuration
+advanced.cursorCodec(ctx, { domain: 'native', bind: null, schema: z.string(), keys: {} })
+advanced.cursorCodec(
+	// @ts-expect-error contexts must be readers, never native writers
+	{ db: { ...ctx.db, insert: () => null } },
+	{ domain: 'native', bind: null, schema: z.string() },
+)
+// @ts-expect-error actions have no query reader
+advanced.cursorCodec({}, { domain: 'native', bind: null, schema: z.string() })
+advanced.cursorCodec(ctx, {
+	domain: 'native',
+	bind: null,
+	// @ts-expect-error schema outputs must be Convex values
+	schema: z.string().transform(() => new Date()),
+})
+// @ts-expect-error codec exposes no raw reader or authorization capability
+void nativeCodec.db
+
+const transformedCodec = advanced.cursorCodec(ctx, {
+	domain: 'transformed',
+	bind: null,
+	schema: z.string().transform((value) => value.length),
+})
+const transformedValue: number = transformedCodec.open(transformedCodec.seal('native'))
+void transformedValue

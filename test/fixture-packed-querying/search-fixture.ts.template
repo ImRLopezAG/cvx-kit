@@ -1,0 +1,138 @@
+import {
+	defineSchema,
+	queryGeneric,
+	mutationGeneric,
+	actionGeneric,
+	internalQueryGeneric,
+	internalMutationGeneric,
+	internalActionGeneric,
+	type DataModelFromSchemaDefinition,
+} from 'convex/server'
+import { ConvexError } from 'convex/values'
+import { z } from 'zod'
+import { Effect } from 'effect'
+import { createAuthFunctions } from 'cvx-kit/auth'
+import { createEffectAuthFunctions } from 'cvx-kit/effect'
+import { createQueryEngine, queryFailureContract } from 'cvx-kit/querying'
+import { defineRelations } from 'cvx-kit/relations'
+import { zodTable } from 'cvx-kit/zod-table'
+
+export const docs = zodTable(
+	'docs',
+	() => ({
+		text: z.string().refine((value) => !value.includes('broken-dto')),
+		status: z.string(),
+		secret: z.string(),
+	}),
+	{ publicFields: ['text', 'status'] },
+)
+export const children = zodTable('children', (id) => ({ parent: id('docs'), name: z.string() }), {
+	publicFields: ['name'],
+})
+const table = docs.table
+	.searchIndex('search_text', { searchField: 'text', filterFields: ['status'] })
+	.searchIndex('staged', { searchField: 'text', staged: true })
+const childTable = children.table.index('by_parent', ['parent'])
+export const relations = defineRelations(
+	{ docs: { ...docs, table }, children: { ...children, table: childTable } },
+	(r) => ({
+		docs: { children: r.many.children({ from: r.docs._id, to: r.children.parent }) },
+		children: {},
+	}),
+)
+export const schema = defineSchema({ docs: table, children: childTable })
+type DM = DataModelFromSchemaDefinition<typeof schema>
+const config = {
+	query: queryGeneric,
+	mutation: mutationGeneric,
+	action: actionGeneric,
+	internalQuery: internalQueryGeneric,
+	internalMutation: internalMutationGeneric,
+	internalAction: internalActionGeneric,
+	getAuthUser: async (ctx: {
+		auth: { getUserIdentity(): Promise<{ subject: string } | null> }
+	}) => {
+		const identity = await ctx.auth.getUserIdentity()
+		return identity ? { id: identity.subject } : null
+	},
+	mapRole: (role?: string) => (role === 'owner' ? ('owner' as const) : ('reader' as const)),
+	adminRoles: [],
+	security: {
+		rules: () => ({
+			docs: {
+				read: async (_ctx: unknown, doc: DM['docs']['document']) => {
+					if (doc.status === 'throw') throw Error('private-policy-value')
+					return doc.status !== 'denied'
+				},
+			},
+			children: { read: async () => true },
+		}),
+	},
+}
+const auth = createAuthFunctions<DM, 'reader' | 'owner'>(config)
+const effect = createEffectAuthFunctions(config, {
+	query: { errors: queryFailureContract },
+	mutation: {},
+	action: {},
+	systemQuery: {},
+	systemMutation: {},
+	systemAction: {},
+})
+// Synthetic inline fixture key; never use this key in an application.
+export const engine = createQueryEngine(
+	{ schema, relations },
+	{
+		cursor: {
+			version: 'fixture',
+			currentKeyId: 'synthetic',
+			keys: { synthetic: new Uint8Array(64).fill(11) },
+		},
+		budgets: { searchCandidates: 3 },
+	},
+)
+const args = z.object({
+	text: z.string(),
+	cursor: z.string().nullable(),
+	scanLimit: z.number().optional(),
+})
+function run(ctx: Parameters<typeof engine>[0], { text, ...options }: z.output<typeof args>) {
+	return engine(ctx)
+		.docs.search('search_text', text)
+		.paginate({ ...options, numItems: 2 })
+}
+export const page = auth.authQuery({
+	args,
+	returns: relations.tables.docs
+		.pageDto({})
+		.and(z.object({ paginationMode: z.literal('native-search') })),
+	handler: async (ctx, a) => {
+		try {
+			return await run(ctx, a)
+		} catch (error) {
+			throw new ConvexError(queryFailureContract.project(error))
+		}
+	},
+})
+export const effectPage = effect.authQuery({
+	args,
+	returns: relations.tables.docs
+		.pageDto({})
+		.and(z.object({ paginationMode: z.literal('native-search') })),
+	handler: (ctx, a) => Effect.tryPromise({ try: () => run(ctx, a), catch: (error) => error }),
+})
+export const nested = auth.authQuery({
+	args,
+	returns: relations.tables.docs
+		.pageDto({ children: true })
+		.and(z.object({ paginationMode: z.literal('native-search') })),
+	handler: async (ctx, { text, ...options }) => {
+		try {
+			return await engine(ctx)
+				.docs.search('search_text', text)
+				.with({ children: true })
+				.paginate({ ...options, numItems: 2 })
+		} catch (error) {
+			throw new ConvexError(queryFailureContract.project(error))
+		}
+	},
+})

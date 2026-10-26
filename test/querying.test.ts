@@ -37,7 +37,11 @@ function sorted<Row extends { _id: string; _creationTime: number }>(
 			const x = a[field],
 				y = b[field]
 			if (x === y) continue
-			return (x! < y! ? -1 : 1) * (order === 'asc' ? 1 : -1)
+			// SAFETY: test rows contain native scalar index values.
+			return (
+				compareValues(x as FilterScalar | undefined, y as FilterScalar | undefined) *
+				(order === 'asc' ? 1 : -1)
+			)
 		}
 		return 0
 	})
@@ -759,7 +763,7 @@ describe('U5 actual helper scalar engine', () => {
 			{
 				filters: { count: { gte: 1, lt: 3 }, not: { status: 'done' } },
 				eligible: (r: (typeof rows)[number]) => r.count >= 1 && r.count < 3 && r.status !== 'done',
-				fields: [],
+				fields: ['count'],
 			},
 		]
 		for (const c of cases)
@@ -1161,4 +1165,202 @@ test('unqueried native mutation has no effect after awaited policy with or witho
 			expect(o.counts).toEqual(before)
 		})
 	}
+})
+
+describe('phase A indexed ordering and ranges', () => {
+	test('orderBy is immutable, replaces selection, and binds both cursor slots before reads', async () => {
+		const f = harness(),
+			rows = await seed(f)
+		for (const order of ['asc', 'desc'] as const)
+			await f.t.run(async (ctx) => {
+				const o = observed<DM>(ctx.db),
+					base = f.querying(managed(o.raw)).tasks
+				const q = base.orderBy('by_status').orderBy('by_count')
+				const args = { numItems: 100, cursor: null, order } as const
+				expect((await q.paginate(args)).page.map((r) => r._id)).toEqual(
+					sorted(rows, ['count'], order).map((r) => r._id),
+				)
+				expect((await base.paginate(args)).page.map((r) => r._id)).toEqual(
+					sorted(rows, [], order).map((r) => r._id),
+				)
+				const residual = await q.where({ status: 'open' }).paginate(args)
+				expect(residual.page.map((r) => r._id)).toEqual(
+					sorted(
+						rows.filter((r) => r.status === 'open'),
+						['count'],
+						order,
+					).map((r) => r._id),
+				)
+				const first = await q.paginate({ ...args, numItems: 1 })
+				const sequence = [...first.page]
+				let cursor = first.continueCursor
+				for (let n = 0; n < 24; n++) {
+					const page = await q.paginate({ ...args, numItems: n % 2 ? 3 : 1, cursor })
+					sequence.push(...page.page)
+					if (page.isDone) break
+					expect(page.continueCursor).not.toBe(cursor)
+					cursor = page.continueCursor
+					expect(n).toBeLessThan(23)
+				}
+				expect(sequence.map((r) => r._id)).toEqual(sorted(rows, ['count'], order).map((r) => r._id))
+				expect(new Set(sequence.map((r) => r._id)).size).toBe(rows.length)
+				const before = { ...o.counts }
+				for (const slot of ['cursor', 'endCursor'] as const) {
+					for (const changed of [base.orderBy('by_status'), q]) {
+						await expect(
+							changed.paginate({
+								...args,
+								[slot]: first.continueCursor,
+								...(changed === q ? { order: order === 'asc' ? 'desc' : 'asc' } : {}),
+							}),
+						).rejects.toThrow('Invalid cursor')
+					}
+					await expect(
+						q.paginate({ ...args, [slot]: first.continueCursor, filters: { count: 1 } }),
+					).rejects.toThrow('Invalid cursor')
+				}
+				await expect(base.orderBy('unknown' as 'by_count').paginate(args)).rejects.toThrow(
+					'Unknown ordering index',
+				)
+				await expect(q.when(false, 'by_count').paginate(args)).rejects.toThrow('orderBy')
+				expect(o.counts).toEqual(before)
+				await expect(
+					base.when(null, 'unknown').orderBy('by_count').paginate(args),
+				).resolves.toMatchObject({ isDone: true })
+				await expect(base.when(true, 'by_count').paginate(args)).rejects.toThrow('incompatible')
+			})
+	})
+	test('automatic selective window tightens AND bounds and reads only matching native candidates', async () => {
+		const f = harness(),
+			rows = await seed(f, 80)
+		for (const order of ['asc', 'desc'] as const)
+			await f.t.run(async (ctx) => {
+				const o = observed<DM>(ctx.db)
+				const result = await f
+					.querying(managed(o.raw, { tasks: { read: async (_, row) => row.ordinal !== 39 } }))
+					.tasks.paginate({
+						numItems: 100,
+						cursor: null,
+						order,
+						filters: { and: [{ big: { gte: 37n, lte: 43n } }, { big: { gt: 38n, lt: 42n } }] },
+					})
+				expect(result.page.map((r) => r._id)).toEqual(
+					sorted(
+						rows.filter((r) => r.big > 38n && r.big < 42n && r.ordinal !== 39),
+						['big'],
+						order,
+					).map((r) => r._id),
+				)
+				expect(o.counts.returned).toBe(3)
+				const before = o.counts.returned
+				const prefixed = await f
+					.querying(managed(o.raw))
+					.tasks.where({ department: 'a' })
+					.orderBy('by_department_count')
+					.paginate({ numItems: 100, cursor: null, order, filters: { count: { gt: 1, lt: 3 } } })
+				const expected = rows.filter((r) => r.department === 'a' && r.count === 2)
+				expect(prefixed.page.map((r) => r._id)).toEqual(
+					sorted(expected, ['department', 'count'], order).map((r) => r._id),
+				)
+				expect(o.counts.returned - before).toBe(expected.length)
+			})
+	})
+	test('contradictory ranges and equality conflicts consume zero candidates', async () => {
+		const f = harness()
+		await seed(f)
+		await f.t.run(async (ctx) => {
+			const o = observed<DM>(ctx.db),
+				q = f.querying(managed(o.raw)).tasks
+			for (const filters of [
+				{ count: { gt: 2, lte: 2 } },
+				{ and: [{ count: 1 }, { count: { gte: 2 } }] },
+			]) {
+				expect((await q.paginate({ numItems: 100, cursor: null, filters })).page).toEqual([])
+			}
+			expect(o.counts.returned).toBe(0)
+			expect(o.counts.next).toBe(0)
+		})
+	})
+	test('ranges retain OR/NOT, missing/null, strings, gaps, strict ties and split coverage', async () => {
+		const f = harness(),
+			rows = await seed(f, 40)
+		for (const order of ['asc', 'desc'] as const)
+			await f.t.run(async (ctx) => {
+				const o = observed<DM>(ctx.db),
+					q = f.querying(managed(o.raw)).tasks
+				const cases = [
+					{
+						index: 'by_optionalOrdered' as const,
+						filters: { optionalOrdered: { lt: 'z' } },
+						matches: (r: (typeof rows)[number]) => compareValues(r.optionalOrdered, 'z') < 0,
+						fields: ['optionalOrdered'] as const,
+					},
+					{
+						index: 'by_code' as const,
+						filters: { code: { gte: '', lte: '' } },
+						matches: (r: (typeof rows)[number]) => r.code === '',
+						fields: ['code'] as const,
+					},
+					{
+						index: 'by_count' as const,
+						filters: { or: [{ count: { lt: 1 } }, { count: { gt: 2 } }] },
+						matches: (r: (typeof rows)[number]) => r.count < 1 || r.count > 2,
+						fields: ['count'] as const,
+					},
+					{
+						index: 'by_count' as const,
+						filters: { not: { count: { lt: 2 } } },
+						matches: (r: (typeof rows)[number]) => r.count >= 2,
+						fields: ['count'] as const,
+					},
+					{
+						index: 'by_department_count' as const,
+						filters: { count: { gte: 2, lt: 3 } },
+						matches: (r: (typeof rows)[number]) => r.count === 2,
+						fields: ['department', 'count'] as const,
+					},
+				]
+				for (const c of cases) {
+					const before = o.counts.returned
+					const result = await q
+						.orderBy(c.index)
+						.paginate({ numItems: 100, cursor: null, order, filters: c.filters })
+					expect(result.page.map((r) => r._id)).toEqual(
+						sorted(rows.filter(c.matches), [...c.fields], order).map((r) => r._id),
+					)
+					expect(o.counts.returned - before).toBe(
+						c.index === 'by_code' ? rows.filter(c.matches).length : rows.length,
+					)
+				}
+				const nullable = await q
+					.orderBy('by_optional')
+					.paginate({ numItems: 100, cursor: null, order })
+				expect(nullable.page.map((r) => r._id)).toEqual(
+					sorted(rows, ['optional'], order).map((r) => r._id),
+				)
+				await expect(
+					q.paginate({ numItems: 1, cursor: null, filters: JSON.parse('{"optional":{"lt":"z"}}') }),
+				).rejects.toThrow()
+				const ranged = q.orderBy('by_big'),
+					args = {
+						numItems: 100,
+						cursor: null,
+						order,
+						filters: { big: { gte: 10n, lt: 30n } },
+					} as const
+				const full = await ranged.paginate(args)
+				const page = await ranged.paginate({ ...args, maximumRowsRead: 8 })
+				expect(page.splitCursor).toMatch(/^pc\./)
+				const left = await ranged.paginate({ ...args, endCursor: page.splitCursor })
+				const right = await ranged.paginate({
+					...args,
+					cursor: page.splitCursor!,
+					endCursor: page.continueCursor,
+				})
+				expect([...left.page, ...right.page]).toEqual(page.page)
+				const tail = await ranged.paginate({ ...args, cursor: page.continueCursor })
+				expect([...page.page, ...tail.page]).toEqual(full.page)
+				expect(new Set(full.page.map((r) => r._id)).size).toBe(20)
+			})
+	})
 })

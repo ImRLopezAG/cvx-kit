@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { runFieldGroups } from './field-groups'
+await runFieldGroups()
 import { writeFileSync } from 'node:fs'
 import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'
@@ -31,7 +33,19 @@ const changed = defineRelations({ tasks, labels, edges }, (r) => ({ tasks: {
 const eqEngine = createQueryEngine({ schema, relations: equivalent, cursor })
 const changedEngine = createQueryEngine({ schema, relations: changed, cursor })
 const deepEngine = createQueryEngine({ schema, relations, cursor, budgets: { depth: 1 } })
+const rowEngine = createQueryEngine({ schema, relations, cursor, budgets: { readOperations: 2 } })
+const byteEngine = createQueryEngine({ schema, relations, cursor, budgets: { documentBytes: 1024 * 1024 } })
 const probes = {
+ multiAutomatic: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => eqEngine(ctx).tasks.where({department: 'u4'}).paginate(args) }),
+ multiOrdered: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => eqEngine(ctx).tasks.where({department: 'u4'}).orderBy('by_priority').paginate(args) }),
+ progress: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => rowEngine(ctx).tasks.paginate(args) }),
+ bytes: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => byteEngine(ctx).tasks.paginate(args) }),
+ ordered: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
+  handler: (ctx, args) => eqEngine(ctx).tasks.orderBy('by_priority').paginate(args) }),
  unmanaged: query({ args: {}, handler: (ctx) => eqEngine(ctx).tasks.paginate({ numItems: 1, cursor: null }) }),
  equivalent: authQuery({ args: contract.queries.list.input, returns: contract.queries.list.result,
   handler: (ctx, args) => eqEngine(ctx).tasks.paginate(args) }),
@@ -86,6 +100,22 @@ const ids = await t.run(async (ctx) => {
 }).finally(() => { Date.now = original })
 const results: object[] = []
 const record = (value: object) => { results.push(value); writeFileSync('focused-results.json', JSON.stringify(results, null, 2)); console.log(JSON.stringify(value)) }
+const partial = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: null })
+assert.equal(partial.completeness, 'row-budget')
+assert.equal(partial.isDone, false)
+const fullPage = await client.query(anyApi.api.probes.progress, { numItems: 2, cursor: null })
+assert.equal(fullPage.completeness, 'complete')
+const nativePage = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: null, maximumRowsRead: 1 })
+assert.equal(nativePage.completeness, 'native-limit')
+const bytesPage = await client.query(anyApi.api.probes.bytes, { numItems: 10, cursor: null })
+assert.equal(bytesPage.completeness, 'byte-budget')
+const emptyProgress = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: null, filters: { ordinal: { lt: 0 } }, onEmptyBudget: 'split' })
+assert.deepEqual(emptyProgress.page, [])
+assert.equal(emptyProgress.completeness, 'row-budget')
+assert.equal(emptyProgress.isDone, false)
+const emptyTail = await client.query(anyApi.api.probes.progress, { numItems: 10, cursor: emptyProgress.continueCursor, filters: { ordinal: { lt: 0 } }, onEmptyBudget: 'split' })
+assert.notEqual(emptyTail.continueCursor, emptyProgress.continueCursor)
+record({ name: 'page-completeness', row: partial.completeness, byte: bytesPage.completeness, native: nativePage.completeness, full: fullPage.completeness, emptyProgress: true })
 await assert.rejects(client.query(anyApi.api.probes.unmanaged, {}), /UNMANAGED_QUERY_CONTEXT/)
 // Every timestamp is equal; the independent tie-break oracle is the ID's lexical order.
 for (const order of ['asc', 'desc'] as const) for (const size of [1, 7, 25, 100]) {
@@ -105,6 +135,17 @@ for (const order of ['asc', 'desc'] as const) for (const size of [1, 7, 25, 100]
  }
  record({ name: 'constant-clock-ties', order, size, count: expected.length, expected })
 }
+for (const order of ['asc', 'desc'] as const) {
+ const args = { numItems: 100, cursor: null, order, filters: { priority: { gte: 0, lte: 0 } } }
+ const page = contract.queries.list.result.parse(await client.query(anyApi.api.probes.ordered, args))
+ const expected = ids.rows.filter(id => id !== ids.rows[1]).sort()
+ if (order === 'desc') expected.reverse()
+ assert.deepEqual(page.page.map(row => row._id), expected)
+ await assert.rejects(client.query(anyApi.api.probes.ordered, { ...args, cursor: page.continueCursor, order: order === 'asc' ? 'desc' : 'asc' }), /Invalid cursor/)
+ await assert.rejects(client.query(anyApi.api.probes.ordered, { ...args, endCursor: page.continueCursor, filters: { priority: { gt: 0 } } }), /Invalid cursor/)
+ assert.deepEqual(contract.queries.list.result.parse(await client.query(anyApi.api.probes.ordered, { ...args, filters: { priority: { gt: 0, lte: 0 } } })).page, [])
+}
+record({ name: 'phase-A-orderBy-ranges-cursor-boundaries', passed: true })
 const expanded = contract.queries.expanded.result.parse(await client.query(anyApi.api.tasks.expanded, { numItems: 100, cursor: null, filters: { ordinal: 0 } }))
 assert.equal(expanded.page[0].referenceTask, null)
 assert.equal(expanded.page[0].requiredLabel?._id, ids.targets[0])
@@ -156,3 +197,32 @@ const revokedParent = contract.queries.next.result.parse(await client.query(anyA
 assert.deepEqual(revokedParent.page, [])
 record({ name: 'child-replay-and-parent-junction-revocation', passed: true })
 writeFileSync('FOCUSED_SUCCESS', 'Public registered focused tie/output/depth/metadata/registry/revocation probes passed.\n')
+
+// U4: installed public helper, registered managed endpoint, tied native keys.
+const multiRows = await t.run(async ctx => {
+ const rows = []
+ for (let ordinal=100;ordinal<124;ordinal++) {
+  const id = await ctx.db.insert('tasks', {ordinal, tenant:'a', authorized:ordinal%5!==0,
+   department:'u4', status:'open', active:false, priority:ordinal%3, code:'', secret:'U4_PRIVATE'})
+  rows.push((await ctx.db.get(id))!)
+ }
+ return rows
+})
+for (const order of ['asc','desc'] as const) for (const explicit of [false,true]) {
+ const ref=explicit ? anyApi.api.probes.multiOrdered : anyApi.api.probes.multiAutomatic
+ const expected=multiRows.filter(row=>row.authorized && [0,2].includes(row.priority)).sort((a,b)=> {
+  const priority=explicit ? a.priority-b.priority : 0
+  return (priority || a._creationTime-b._creationTime || a._id.localeCompare(b._id)) * (order==='asc'?1:-1)
+ }).map(row=>row._id)
+ const actual:string[]=[];let token:string|null=null
+ for(let i=0;i<30;i++) {
+  const page=contract.queries.list.result.parse(await client.query(ref,{numItems:i%2+1,cursor:token,order,
+   filters:{priority:{in:i%2 ? [0,2] : [2,0,2]}}}))
+  actual.push(...page.page.map(row=>row._id));if(page.isDone)break;token=page.continueCursor
+ }
+ assert.deepEqual(actual,expected)
+}
+const emptySet=await client.query(anyApi.api.probes.multiAutomatic,{numItems:1,cursor:null,filters:{priority:{in:[]}}})
+assert.deepEqual(emptySet.page,[])
+await assert.rejects(client.query(anyApi.api.probes.multiAutomatic,{numItems:1,cursor:null,filters:{priority:{in:[0,1,2,3,4,5,6,7,8]}}}), /QUERY_FANOUT/)
+record({name:'u4-installed-merged-stream-normalized-full-and-tail',passed:true})

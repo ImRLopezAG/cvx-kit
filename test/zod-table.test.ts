@@ -406,10 +406,14 @@ describe('U2 pagination and ownership', () => {
 			{ filters: { count: { exists: false } } },
 			{ filters: { count: { nope: 1 } } },
 			{ filters: { count: {} } },
-			{ filters: { count: { in: [] } } },
+
 			{ filters: { and: [] } },
 		])
 			expect(input.safeParse({ numItems: 1, cursor: null, ...extra }).success).toBe(false)
+		// U4 admits the empty membership set; execution returns no rows.
+		expect(
+			input.parse({ numItems: 1, cursor: null, filters: { count: { in: [] } } }).filters,
+		).toEqual({ count: { in: [] } })
 		expect(
 			input.parse({
 				numItems: 1,

@@ -1,27 +1,35 @@
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- Transport errors are untrusted; callback results are inferred independently. */
-import { ConvexError } from 'convex/values'
-import type { ErrorContract, ErrorDefinitions, UnknownFailure } from '../modules/contracts/errors'
+import type { UnknownFailure, FailureContract, FailureOf } from '../modules/contracts/errors'
+import { decodeFailure } from '../modules/contracts/errors'
+// oxlint-disable-next-line cvx/no-internal-reexports -- Preserve existing helper imports while sharing transport decoding with neutral contract composition.
+export { decodeFailure, type FailureContract, type FailureOf } from '../modules/contracts/errors'
 
-export type FailureContract = Pick<ErrorContract<ErrorDefinitions>, 'decode'>
-export type FailureOf<Contract extends FailureContract> = ReturnType<Contract['decode']>
 type DeclaredOf<Contract extends FailureContract> = Extract<
 	FailureOf<Contract>,
 	{ _tag: 'DeclaredFailure' }
 >
 
-/** Extract ConvexError.data only. Contract validation owns the public envelope. */
-export function decodeFailure<Contract extends FailureContract>(
+/** Return a selected validated failure; never mutate or narrow the caught error itself. */
+export function failureOf<
+	Contract extends FailureContract,
+	const Codes extends readonly DeclaredOf<Contract>['code'][],
+>(
 	error: unknown,
 	contract: Contract,
-): FailureOf<Contract> {
-	let failure: ReturnType<FailureContract['decode']> = { _tag: 'UnknownFailure', version: 1 }
-	try {
-		if (error instanceof ConvexError) failure = contract.decode(error.data)
-	} catch {
-		// Malformed proxies/getters and foreign errors never expose their diagnostics.
-	}
-	// SAFETY: the explicit contract owns its decode result; every error contract includes UnknownFailure.
-	return failure as FailureOf<Contract>
+	...codes: Codes
+): Extract<DeclaredOf<Contract>, { code: Codes[number] }> | undefined {
+	const failure = decodeFailure(error, contract)
+	if (failure._tag !== 'DeclaredFailure' || !codes.includes(failure.code)) return undefined
+	// SAFETY: only a decoded declared failure whose code occurs in the requested set is returned.
+	return failure as Extract<DeclaredOf<Contract>, { code: Codes[number] }>
+}
+
+/** Boolean convenience predicate; use failureOf to access narrowed details. */
+export function isFailure<
+	Contract extends FailureContract,
+	const Codes extends readonly DeclaredOf<Contract>['code'][],
+>(error: unknown, contract: Contract, ...codes: Codes): boolean {
+	return failureOf(error, contract, ...codes) !== undefined
 }
 
 type DeclaredHandlers<Contract extends FailureContract> = {

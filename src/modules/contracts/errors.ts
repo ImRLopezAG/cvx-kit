@@ -1,5 +1,7 @@
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unknown-type-aliases, anti-slop/no-runtime-typeof, anti-slop/no-unsafe-dictionary-type -- This neutral contract validates unknown transport data and an explicitly keyed code/detail declaration. */
 
+import { ConvexError } from 'convex/values'
+
 /** Explicit synchronous validators for the final public detail representation. */
 export type ErrorDetailParser<Output = unknown> = Readonly<{
 	parse: (value: unknown) => Output
@@ -45,13 +47,22 @@ export type DeclaredFailure<Definitions extends ErrorDefinitions> = {
 
 export type UnknownFailure = Readonly<{ _tag: 'UnknownFailure'; version: 1 }>
 export type DecodedFailure<Definitions extends ErrorDefinitions> =
-	DeclaredFailure<Definitions> | UnknownFailure
+	| DeclaredFailure<Definitions>
+	| UnknownFailure
 
 export type ErrorContract<Definitions extends ErrorDefinitions> = Readonly<{
 	create: <Key extends Code<Definitions>>(
 		code: Key,
 		details: Details<Definitions[NoInfer<Key>]>,
 	) => Extract<DeclaredError<Definitions>, { code: Key }>
+	envelope: <Key extends Code<Definitions>>(
+		code: Key,
+		details: Details<Definitions[NoInfer<Key>]>,
+	) => Extract<DeclaredFailure<Definitions>, { code: Key }>
+	toConvexError: <Key extends Code<Definitions>>(
+		code: Key,
+		details: Details<Definitions[NoInfer<Key>]>,
+	) => ConvexError<Extract<DeclaredFailure<Definitions>, { code: Key }>>
 	project: (error: unknown) => DecodedFailure<Definitions>
 	/** Receives envelope data, e.g. ConvexError.data; never parses error messages. */
 	decode: (payload: unknown) => DecodedFailure<Definitions>
@@ -77,7 +88,7 @@ export function defineErrorContract<const Definitions extends ErrorDefinitions>(
 		}),
 	) as Definitions
 	const trusted = new WeakMap<object, DeclaredFailure<Definitions>>()
-	return {
+	const contract: ErrorContract<Definitions> = {
 		create(code, details) {
 			let envelope: DeclaredFailure<Definitions>
 			try {
@@ -103,6 +114,16 @@ export function defineErrorContract<const Definitions extends ErrorDefinitions>(
 			}) as Extract<DeclaredError<Definitions>, { code: typeof code }>
 			trusted.set(error, envelope)
 			return error
+		},
+		envelope(code, details) {
+			// SAFETY: create validates the selected code; project retrieves its private validated envelope.
+			return contract.project(contract.create(code, details)) as Extract<
+				DeclaredFailure<Definitions>,
+				{ code: typeof code }
+			>
+		},
+		toConvexError(code, details) {
+			return new ConvexError(contract.envelope(code, details))
 		},
 		project(error) {
 			if (error === null || typeof error !== 'object') return unknownFailure
@@ -140,6 +161,75 @@ export function defineErrorContract<const Definitions extends ErrorDefinitions>(
 			} catch {
 				return unknownFailure
 			}
+		},
+	}
+	return contract
+}
+
+/** A structural decoder also accepts combined contracts without requiring constructors. */
+export type FailureContract = Pick<ErrorContract<ErrorDefinitions>, 'decode'>
+export type FailureOf<Contract extends FailureContract> = ReturnType<Contract['decode']>
+type ProjectingContract = FailureContract & Pick<ErrorContract<ErrorDefinitions>, 'project'>
+
+/** Extract only ConvexError.data, including one bounded serialized JSON envelope. */
+export function decodeFailure<Contract extends FailureContract>(
+	error: unknown,
+	contract: Contract,
+): FailureOf<Contract> {
+	try {
+		if (error instanceof ConvexError) {
+			let payload: unknown = error.data
+			if (typeof payload === 'string') {
+				if (payload.length > 65536 || new TextEncoder().encode(payload).byteLength > 65536)
+					// SAFETY: every failure decoder includes UnknownFailure.
+					return unknownFailure as FailureOf<Contract>
+				payload = JSON.parse(payload)
+			}
+			// SAFETY: the structural contract owns the decoded union.
+			return contract.decode(payload) as FailureOf<Contract>
+		}
+	} catch {
+		// Foreign errors, accessors and invalid JSON expose no diagnostics.
+	}
+	// SAFETY: every failure decoder includes UnknownFailure.
+	return unknownFailure as FailureOf<Contract>
+}
+
+type CombinedErrorContract<Contracts extends readonly ProjectingContract[]> = Readonly<{
+	project: (error: unknown) => FailureOf<Contracts[number]> | UnknownFailure
+	decode: (payload: unknown) => FailureOf<Contracts[number]> | UnknownFailure
+}>
+
+/** Ordered projection and decoding; duplicate codes retain the union of member details. */
+export function combineErrorContracts<const Contracts extends readonly ProjectingContract[]>(
+	...contracts: Contracts
+): CombinedErrorContract<Contracts> {
+	const unmatched = unknownFailure
+	return {
+		project(error) {
+			for (const contract of contracts) {
+				const projected = contract.project(error)
+				if (projected._tag === 'DeclaredFailure') {
+					// SAFETY: this result belongs to a member of the inferred tuple.
+					return projected as FailureOf<Contracts[number]>
+				}
+				const decoded = decodeFailure(error, contract)
+				if (decoded._tag === 'DeclaredFailure') {
+					// SAFETY: strict transported decoding preserves the same member union.
+					return decoded as FailureOf<Contracts[number]>
+				}
+			}
+			return unmatched
+		},
+		decode(payload) {
+			for (const contract of contracts) {
+				const decoded = contract.decode(payload)
+				if (decoded._tag === 'DeclaredFailure') {
+					// SAFETY: this result belongs to a member of the inferred tuple.
+					return decoded as FailureOf<Contracts[number]>
+				}
+			}
+			return unmatched
 		},
 	}
 }

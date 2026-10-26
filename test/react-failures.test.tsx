@@ -5,10 +5,14 @@ import { createRoot } from 'react-dom/client'
 import { ConvexProvider, ConvexReactClient } from 'convex/react'
 import { makeFunctionReference } from 'convex/server'
 import { describe, expect, it } from 'vite-plus/test'
-import { defineErrorContract } from '../src/errors'
+import { combineErrorContracts, defineErrorContract } from '../src/errors'
 import { useCommand, type Command } from '../src/react'
 
 const errors = defineErrorContract({ CONFLICT: { message: 'Changed', details: {} } })
+const commandErrors = combineErrorContracts(
+	errors,
+	defineErrorContract({ DENIED: { message: 'Denied', details: {} } }),
+)
 const mutation = makeFunctionReference<'mutation', { amount: number }, { saved: number }>(
 	'commands:save',
 )
@@ -69,7 +73,7 @@ function timestamp(n: number) {
 }
 
 async function fixture(
-	renderCommand?: (command: Command<typeof mutation, typeof errors>) => ReactNode,
+	renderCommand?: (command: Command<typeof mutation, typeof commandErrors>) => ReactNode,
 ) {
 	// SAFETY: the fixture implements the WebSocket event/send surface used by Convex; no network connection is opened.
 	const client = new ConvexReactClient('https://u8-proof.convex.cloud', {
@@ -107,9 +111,9 @@ async function fixture(
 		const value = store.getQuery(query, {})
 		if (value !== undefined) store.setQuery(query, {}, value + args.amount)
 	}
-	let command: Command<typeof mutation, typeof errors> | undefined
+	let command: Command<typeof mutation, typeof commandErrors> | undefined
 	function Probe() {
-		command = useCommand(mutation, { errors, optimisticUpdate })
+		command = useCommand(mutation, { errors: commandErrors, optimisticUpdate })
 		return renderCommand?.(command) ?? null
 	}
 	const container = document.createElement('div')
@@ -143,7 +147,7 @@ async function fixture(
 
 describe('useCommand with the real Convex optimistic lifecycle', () => {
 	it('updates memoized consumers and preserves previous command state snapshots', async () => {
-		const View = memo(({ command }: { command: Command<typeof mutation, typeof errors> }) =>
+		const View = memo(({ command }: { command: Command<typeof mutation, typeof commandErrors> }) =>
 			createElement(
 				'output',
 				{ id: 'command-state' },

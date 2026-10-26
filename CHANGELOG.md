@@ -12,6 +12,19 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-10-26
+
+### Added
+
+- Compose domain error contracts with `combineErrorContracts`, preserving the union of declared codes and details.
+- Construct validated transport payloads with contract `envelope` and `toConvexError`, and select declared failures with `failureOf` and `isFailure`.
+- Opt into original-error React boundaries with `usePaginatedList({ onFailure: 'throw' })`, or inspect the raw `error` alongside the decoded failure.
+
+### Fixed
+
+- Decode one bounded JSON envelope from serialized `ConvexError.data`, using the same strict validation as object payloads.
+- Preserve invalid-cursor recovery before list failure throwing, with subscription cleanup and fresh-epoch boundary retry.
+
 ## [0.1.21] - 2026-10-25
 
 ### Added

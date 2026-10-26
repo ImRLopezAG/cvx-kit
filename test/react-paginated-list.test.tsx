@@ -3,9 +3,9 @@ import { Component, createElement, type ReactNode } from 'react'
 import { act } from 'react-dom/test-utils'
 import { createRoot } from 'react-dom/client'
 import { ConvexProvider, ConvexReactClient } from 'convex/react'
-import type { Value } from 'convex/values'
+import { ConvexError, type Value } from 'convex/values'
 import { makeFunctionReference, type PaginationOptions } from 'convex/server'
-import { describe, expect, it } from 'vite-plus/test'
+import { describe, expect, it, vi } from 'vite-plus/test'
 import { queryErrors, usePaginatedList } from '../src/react'
 
 type Page = {
@@ -25,10 +25,16 @@ type Args = {
 const query = makeFunctionReference<'query', Args, Page>('list:one')
 const other = makeFunctionReference<'query', Args, Page>('list:two')
 type BoundaryState = { error?: Error }
-class Boundary extends Component<{ children?: ReactNode }, BoundaryState> {
+class Boundary extends Component<
+	{ children?: ReactNode; onError?: (error: Error) => void },
+	BoundaryState
+> {
 	state: BoundaryState = {}
 	static getDerivedStateFromError(error: Error) {
 		return { error }
+	}
+	componentDidCatch(error: Error) {
+		this.props.onError?.(error)
 	}
 	render() {
 		return this.state.error ? createElement('output', {}, 'caught') : this.props.children
@@ -75,6 +81,7 @@ async function fixture(
 	initial: Omit<Args, 'paginationOpts'> | 'skip' = {},
 	mode: 'restart' | 'throw' = 'restart',
 	pageSize = 2,
+	onFailure?: 'state' | 'throw',
 ) {
 	const client = new ConvexReactClient('https://u9-fixture.convex.cloud', {
 		// SAFETY: this fixture supplies only the WebSocket transport; Convex owns subscription execution.
@@ -82,6 +89,24 @@ async function fixture(
 		unsavedChangesWarning: false,
 		logger: false,
 	})
+	const observedErrors: Error[] = []
+	const watchQuery = client.watchQuery.bind(client)
+	vi.spyOn(client, 'watchQuery').mockImplementation((reference, args = {}, options = undefined) => {
+		const watch = watchQuery(reference, args, options)
+		return {
+			...watch,
+			localQueryResult() {
+				try {
+					return watch.localQueryResult()
+				} catch (error) {
+					if (error instanceof Error) observedErrors.push(error)
+					throw error
+				}
+			},
+		}
+	})
+	let caught: Error | undefined
+	let boundaryKey = 0
 	let args = initial,
 		reference = query,
 		identity: string | undefined
@@ -91,6 +116,7 @@ async function fixture(
 		list = usePaginatedList(reference, args, {
 			pageSize,
 			onInvalidCursor: mode,
+			onFailure,
 			resetIdentity: identity,
 		})
 		renders.push(list)
@@ -106,7 +132,16 @@ async function fixture(
 				createElement(
 					ConvexProvider,
 					{ client },
-					createElement(Boundary, {}, createElement(Probe)),
+					createElement(
+						Boundary,
+						{
+							key: boundaryKey,
+							onError: (error) => {
+								caught = error
+							},
+						},
+						createElement(Probe),
+					),
 				),
 			),
 		)
@@ -132,7 +167,7 @@ async function fixture(
 		}
 		return [...map.values()]
 	}
-	const deliver = async (id: number, value: Page | Error | Value, error = false) => {
+	const deliver = async (id: number, value: Page | Error | Value | undefined, error = false) => {
 		const next = {
 			querySet: socket.sent.filter((m) => m.type === 'ModifyQuerySet').at(-1)?.newVersion ?? 0,
 			identity: 0,
@@ -168,6 +203,13 @@ async function fixture(
 		list: () => list,
 		renders,
 		container,
+		observedErrors,
+		caught: () => caught,
+		async retry() {
+			boundaryKey++
+			caught = undefined
+			await render()
+		},
 		async change(next: typeof args, nextRef = reference, nextIdentity = identity) {
 			args = next
 			reference = nextRef
@@ -611,4 +653,115 @@ it('resets search capability on identity changes and ignores late frames and fet
 	} finally {
 		await f.close()
 	}
+})
+
+const forbidden = {
+	_tag: 'DeclaredFailure',
+	version: 1,
+	code: 'FORBIDDEN',
+	message: 'Forbidden',
+	details: {},
+}
+describe('original list failures and boundary recovery', () => {
+	for (const onFailure of [undefined, 'state'] as const)
+		it(`preserves the raw domain error and default UnknownFailure in ${onFailure ?? 'default'} mode`, async () => {
+			const f = await fixture({}, 'restart', 2, onFailure)
+			try {
+				await f.deliver(f.adds()[0].queryId, forbidden, true)
+				expect(f.list().failure).toEqual({ _tag: 'UnknownFailure', version: 1 })
+				expect(f.list().error).toBeInstanceOf(ConvexError)
+				expect(f.observedErrors).toContain(f.list().error)
+				expect(f.list().error).not.toHaveProperty('failure')
+				expect(f.caught()).toBeUndefined()
+				expect(f.active()).toHaveLength(0)
+				await f.change({}, query, 'reset-error')
+				expect(f.list().error).toBeUndefined()
+				expect(f.list().failure).toBeUndefined()
+			} finally {
+				await f.close()
+			}
+		})
+	for (const nativeSearch of [false, true])
+		it(`throws the original FORBIDDEN after loaded ${nativeSearch ? 'search' : 'browse'} pages, disposes every subscription and retries a fresh epoch`, async () => {
+			const f = await fixture({}, 'restart', 2, 'throw')
+			try {
+				const extra: Partial<Page> = nativeSearch ? { paginationMode: 'native-search' } : {}
+				await f.deliver(f.adds()[0].queryId, page(['private-1'], 'next', false, extra))
+				await f.fetch()
+				await f.deliver(f.adds().at(-1)!.queryId, page(['private-2'], 'tail', false, extra))
+				expect(f.list().rows).toHaveLength(2)
+				const old = f.active()
+				const staleFetch = f.list().fetchNextPage
+				await f.deliver(old[0].queryId, forbidden, true)
+				expect(f.container.textContent).toBe('caught')
+				expect(f.caught()).toBeInstanceOf(ConvexError)
+				expect(f.observedErrors).toContain(f.caught())
+				expect(f.caught()).toHaveProperty('data.code', 'FORBIDDEN')
+				expect(f.caught()).not.toHaveProperty('failure')
+				expect(f.active()).toHaveLength(0)
+				await f.retry()
+				expect(f.list().rows).toEqual([])
+				expect(f.list().error).toBeUndefined()
+				expect(f.active()).toHaveLength(1)
+				const fresh = f.active()[0]
+				expect(fresh.args[0].paginationOpts.cursor).toBeNull()
+				expect(fresh.args[0].paginationOpts.id).not.toBe(old[0].args[0].paginationOpts.id)
+				await act(async () => staleFetch())
+				await f.deliver(old[1].queryId, page(['late-private'], 'late', false, extra))
+				expect(f.list().rows).toEqual([])
+				expect(f.active()).toHaveLength(1)
+				await f.deliver(fresh.queryId, page(['fresh'], 'end', true, extra))
+				expect(f.list().rows).toEqual([{ id: 'fresh' }])
+			} finally {
+				await f.close()
+			}
+		})
+	for (const onFailure of ['state', 'throw'] as const)
+		it(`preserves a non-Convex subscription Error in ${onFailure} mode`, async () => {
+			const f = await fixture({}, 'restart', 2, onFailure)
+			try {
+				// Missing wire errorData makes the actual Convex client construct a plain Error.
+				await f.deliver(f.adds()[0].queryId, undefined, true)
+				const error = onFailure === 'throw' ? f.caught() : f.list().error
+				expect(error).toBeInstanceOf(Error)
+				expect(error).not.toBeInstanceOf(ConvexError)
+				expect(f.observedErrors).toContain(error)
+				expect(f.active()).toHaveLength(0)
+			} finally {
+				await f.close()
+			}
+		})
+	it('restarts invalid cursors before throw mode, then throws the repeated original failure', async () => {
+		const f = await fixture({}, 'restart', 2, 'throw')
+		try {
+			const old = f.adds()[0]
+			await f.deliver(old.queryId, invalid(), true)
+			expect(f.caught()).toBeUndefined()
+			expect(f.list().error).toBeUndefined()
+			expect(f.list().failure).toBeUndefined()
+			expect(f.active()).toHaveLength(1)
+			const fresh = f.active()[0]
+			expect(fresh.args[0].paginationOpts.id).not.toBe(old.args[0].paginationOpts.id)
+			await f.deliver(fresh.queryId, page(['recovered'], 'next'))
+			await f.deliver(fresh.queryId, invalid(), true)
+			expect(f.container.textContent).toBe('caught')
+			expect(f.observedErrors).toContain(f.caught())
+			expect(f.caught()).toHaveProperty('data.code', 'invalid-cursor')
+			expect(f.active()).toHaveLength(0)
+		} finally {
+			await f.close()
+		}
+	})
+	it('explicit cursor throw takes precedence over explicit failure state', async () => {
+		const f = await fixture({}, 'throw', 2, 'state')
+		try {
+			await f.deliver(f.adds()[0].queryId, invalid(), true)
+			expect(f.container.textContent).toBe('caught')
+			expect(f.observedErrors).toContain(f.caught())
+			expect(f.adds()).toHaveLength(1)
+			expect(f.active()).toHaveLength(0)
+		} finally {
+			await f.close()
+		}
+	})
 })

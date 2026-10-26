@@ -12,6 +12,7 @@ export class KitError extends Error {
 export {
 	defineErrorContract,
 	queryErrors,
+	combineErrorContracts,
 	type ErrorContract,
 	type ErrorDefinitions,
 	type ErrorDetailParser,
@@ -37,4 +38,10 @@ export const defaultErrors: ErrorFactory = {
 }
 
 // Pure helpers do not import React or server query-engine modules.
-export { decodeFailure, matchFailure, type FailureHandlers } from './react/failures'
+export {
+	decodeFailure,
+	matchFailure,
+	failureOf,
+	isFailure,
+	type FailureHandlers,
+} from './react/failures'

@@ -25,6 +25,11 @@ export function List({ query }: { query: Query }) {
 	const rows: Row[] = list.rows
 	const reason: 'complete' | 'row-budget' | undefined = list.completeness
 	const key: string = list.resetKey
+	const raw: Error | undefined = list.error
+	usePaginatedList(query, 'skip', { pageSize: 1, onFailure: 'throw' })
+	usePaginatedList(query, 'skip', { pageSize: 1, onFailure: 'state' })
+	// @ts-expect-error Only state and throw are supported failure modes.
+	usePaginatedList(query, 'skip', { pageSize: 1, onFailure: 'ignore' })
 	const loading: boolean = list.isLoading || list.isFetchingNextPage || list.hasNextPage
 	// @ts-expect-error Row DTO is precise.
 	const wrong: number = list.rows[0].title
@@ -44,7 +49,7 @@ export function List({ query }: { query: Query }) {
 		const code: 'FORBIDDEN' = custom.failure.code
 		void code
 	}
-	void [rows, reason, key, loading, wrong]
+	void [rows, reason, key, loading, wrong, raw]
 	list.fetchNextPage()
 	return null
 }

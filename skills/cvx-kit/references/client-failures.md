@@ -1,8 +1,8 @@
 # Client failures and mutation commands
 
 Use an explicit error contract. Generated Convex function references do not carry
-error declarations. `cvx-kit/errors` exports pure `decodeFailure`, `matchFailure`
-and `queryErrors`; it does not import React. Install a supported React 18 or 19
+error declarations. `cvx-kit/errors` exports pure `decodeFailure`, `matchFailure`,
+`failureOf`, `isFailure`, `combineErrorContracts` and `queryErrors`; it does not import React. Install a supported React 18 or 19
 peer only when importing `cvx-kit/react`.
 
 ```ts
@@ -17,7 +17,10 @@ matchFailure(caught, taskErrors, {
 ```
 
 `decodeFailure` extracts `ConvexError.data` and delegates to the declaration's
-`decode`. Other errors, malformed data and throwing accessors yield only
+`decode`. A string in `ConvexError.data` is parsed once as JSON, with a 64 KiB
+UTF-8 limit, then checked by the identical strict envelope/detail decoder.
+`contract.decode(payload)` itself still accepts envelope objects only. Other
+errors, malformed or oversized strings and throwing accessors yield only
 `{ _tag: 'UnknownFailure', version: 1 }`. It never parses messages or retains causes.
 A declared failure has `_tag: 'DeclaredFailure'` and its separate `code`; narrow
 both before accessing code-specific details. Handlers dispatch on `code`.
@@ -26,6 +29,59 @@ unknown error returns `UnknownFailure`. With `_`, unknown and unhandled declared
 failures go to that callback. Callback exceptions propagate to the caller.
 If `_` is itself a declared code, its handler also serves as the fallback and
 must narrow the full failure union before accessing declared details.
+
+Compose domain contracts in the desired matching order:
+
+```ts
+import { combineErrorContracts, failureOf, isFailure } from 'cvx-kit/errors'
+
+const failures = combineErrorContracts(taskErrors, financeErrors)
+const failure = failureOf(caught, failures, 'FORBIDDEN', 'CONFLICT')
+if (failure?.code === 'CONFLICT') showRevision(failure.details.revision)
+if (isFailure(caught, failures, 'FORBIDDEN')) showForbidden()
+```
+
+The first declared match wins. Duplicate codes are allowed, and their handler
+and `failureOf` details remain the union of each member's detail type.
+`isFailure` returns a boolean; it never attaches `.failure` or narrows the raw
+error. Unknown failures return `false` / `undefined`. With no selected codes,
+these helpers also return `false` / `undefined`.
+
+Combined contracts expose `project` and `decode`, with no constructors. Their
+`project` accepts errors owned by members, plus actual `ConvexError` instances
+whose data strictly decodes through a member. Forged server error objects remain
+unknown. Pass a combination as an Effect auth `errors` policy to project expected
+failures, including a rethrown transported `ConvexError`; defects and composite
+Causes still remain unknown. `useCommand` accepts the same combined decoder.
+Ordinary contracts keep their existing identity-only `project` behavior.
+
+Construct failures on the owning domain contract:
+
+```ts
+const payload = taskErrors.envelope('CONFLICT', { revision: 3 })
+const transported = taskErrors.toConvexError('CONFLICT', { revision: 3 })
+```
+
+Both constructors validate and project exactly as `create`, including stripping
+undeclared input fields and rejecting invalid declared details. Their code and
+detail types stay correlated. `toConvexError` uses the browser-safe `convex/values`
+peer and round-trips through `decodeFailure`; React is not required.
+
+### Serialized data evidence
+
+In installed Convex 1.48.0, `server/impl/registration_impl.ts` routes native
+mutation, query and action invocations through `invokeFunction`, whose
+`serializeConvexErrorData` assigns `JSON.stringify(convexToJson(error.data))`.
+The helper proofs invoke the installed mutation and action registration hooks
+and observe string data that decodes to the same envelope. This establishes the
+SDK serialization path. A local native proof using Convex SDK 1.48.0 across component-mutation → app-mutation
+→ app-action proof also preserves the full validated envelope: object inputs
+remain objects and explicit JSON-string inputs remain strings at app and HTTP
+client boundaries. This does not establish hosted behavior or automatic string
+serialization at every component boundary. Client reconstruction and each execution environment can
+change which representation a caller sees. Handle both object and one serialized
+JSON envelope through `decodeFailure`; never extract JSON from message text or
+recursively parse strings.
 
 A query consumer can call `decodeFailure(queryError, taskErrors)` directly; no
 stateful `useFailure` wrapper is necessary.
@@ -111,7 +167,8 @@ try {
 }
 ```
 
-Use this catch inside the endpoint handler, after authentication. An unrelated
+Use this catch inside the endpoint handler, after authentication. An identity-only
 Effect `errors` policy will intentionally normalize an already-transported
-`ConvexError`; use the adapter policy above instead of nesting error transports.
+`ConvexError`; use the adapter policy above or an explicit combination that can
+strictly decode the transported contract.
 This adapter does not manufacture Convex system pagination errors.

@@ -1,8 +1,15 @@
 /** Optional React facade. Pure helpers are also available from cvx-kit/errors. */
-export { decodeFailure, matchFailure, type FailureHandlers } from './react/failures'
+export {
+	decodeFailure,
+	matchFailure,
+	failureOf,
+	isFailure,
+	type FailureHandlers,
+} from './react/failures'
 export { useCommand, type Command, type CommandResult } from './react/use-command'
 export {
 	queryErrors,
+	combineErrorContracts,
 	type DecodedFailure,
 	type DeclaredFailure,
 	type UnknownFailure,

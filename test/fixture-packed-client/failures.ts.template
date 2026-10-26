@@ -8,7 +8,7 @@ import { zodTable } from 'cvx-kit/zod-table'
 import { defineRelations } from 'cvx-kit/relations'
 import { createQueryEngine, queryFailureContract } from 'cvx-kit/querying'
 import { createEffectAuthFunctions } from 'cvx-kit/effect'
-import { queryErrors, decodeFailure } from 'cvx-kit/errors'
+import { queryErrors, decodeFailure, combineErrorContracts, defineErrorContract, isFailure, failureOf, matchFailure } from 'cvx-kit/errors'
 const records = zodTable('records', () => ({ key: z.string(), secret: z.string() }), { publicFields: ['key'] })
 const recordsTable = records.table.index('by_key', ['key'])
 const relations = defineRelations({ records: { ...records, fieldGroups: { private: ['secret'] as const } } }, () => ({}))
@@ -35,3 +35,47 @@ for (const [name, code] of [['invalid', 'invalid-cursor'], ['group', 'FIELD_GROU
  assert.deepEqual(decodeFailure(caught, queryErrors), expected)
 }
 console.log(JSON.stringify({ registeredRawEnvelopes: envelopes }, null, 2))
+
+// These proofs run in both the current and minimum-peer packed consumers.
+const domainA = defineErrorContract({ SHARED: { message: 'Shared', details: { value: z.string() } }, A: { message: 'A', details: {} } })
+const domainB = defineErrorContract({ SHARED: { message: 'Shared', details: { value: z.number() } }, B: { message: 'B', details: {} } })
+const combined = combineErrorContracts(domainA, domainB)
+assert.equal('create' in combined, false)
+for (const error of [domainA.toConvexError('SHARED', { value: 'a' }), domainB.toConvexError('SHARED', { value: 2 })]) {
+ assert.deepEqual(decodeFailure(error, combined), error.data)
+ assert.deepEqual(combined.project(error), error.data)
+ assert.deepEqual(decodeFailure(new ConvexError(JSON.stringify(error.data)), combined), error.data)
+ assert.equal(isFailure(error, combined, 'A', 'SHARED'), true)
+ assert.deepEqual(failureOf(error, combined, 'SHARED')?.details, error.data.details)
+ assert.equal('failure' in error, false)
+ assert.equal(matchFailure(error, combined, { A: () => 0, B: () => 1, SHARED: ({ details }) => details.value }), error.data.details.value)
+}
+assert.deepEqual(combined.project({ ...domainA.create('A', {}) }), { _tag: 'UnknownFailure', version: 1 })
+assert.deepEqual(domainA.envelope('SHARED', { value: 'a' }), domainA.project(domainA.create('SHARED', { value: 'a' })))
+assert.throws(() => domainA.toConvexError('SHARED', { value: 2 } as never), /Invalid declared error details/)
+for (const error of [new Error(JSON.stringify(domainA.envelope('A', {}))), new ConvexError('{'), new ConvexError(JSON.stringify(domainA.envelope('SHARED', { value: 'é'.repeat(33000) }))), new ConvexError({ ...domainA.envelope('A', {}), stack: 'private' })]) {
+ assert.deepEqual(decodeFailure(error, combined), { _tag: 'UnknownFailure', version: 1 })
+ assert.equal(isFailure(error, combined, 'A', 'B', 'SHARED'), false)
+ assert.equal(failureOf(error, combined, 'A', 'B', 'SHARED'), undefined)
+}
+function helperTypeProof(error: unknown) {
+ const failure = failureOf(error, combined, 'SHARED', 'A')
+ if (failure?.code === 'SHARED') {
+  const value: string | number = failure.details.value
+  // @ts-expect-error Duplicate code detail types must remain a union.
+  const wrong: string = failure.details.value
+  void [value, wrong]
+ }
+ // @ts-expect-error Exhaustiveness includes B.
+ matchFailure(error, combined, { A: () => 0, SHARED: () => 0 })
+ // @ts-expect-error Foreign codes cannot be selected.
+ failureOf(error, combined, 'FOREIGN')
+ // @ts-expect-error Per-code constructors retain detail types.
+ domainA.envelope('SHARED', { value: 2 })
+ if (isFailure(error, combined, 'A')) {
+  // @ts-expect-error A boolean predicate cannot attach a failure to an unknown raw error.
+  error.failure
+ }
+}
+void helperTypeProof
+console.log('packed error helpers passed')

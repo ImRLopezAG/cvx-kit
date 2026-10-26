@@ -36,11 +36,15 @@ export type PaginatedList<
 	resetKey: string
 	completeness: FunctionReturnType<Query>['completeness'] | undefined
 	failure: FailureOf<Contract> | undefined
+	/** Original subscription error, without decoding or mutation. */
+	error: Error | undefined
 }
 export type PaginatedListOptions<Contract extends FailureContract = typeof queryErrors> = {
 	/** Integer 1..100. Initial target for native search; browse uses fixed adjacent pages. */
 	pageSize: number
 	onInvalidCursor?: 'restart' | 'throw'
+	/** Keep failures in state (default), or throw the original error to a React boundary. */
+	onFailure?: 'state' | 'throw'
 	/** Explicit server contract; generated references do not carry error metadata. Defaults to queryErrors. */
 	errors?: Contract
 	/** Convex value identifying the current auth/scope/reset generation. Never a credential. */
@@ -119,7 +123,13 @@ export function usePaginatedList<
 		failure = undefined
 	}
 	if (state !== stored) setState(state)
-	if (invalid && options.onInvalidCursor === 'throw') throw state.error
+	// Recovery runs first. A boundary unmount releases useQueries subscriptions even
+	// when the render-phase state update above cannot commit because this render throws.
+	if (
+		state.error &&
+		(options.onFailure === 'throw' || (invalid && options.onInvalidCursor === 'throw'))
+	)
+		throw state.error
 	const view = paginationView(state)
 	const currentEpoch = state.epoch
 	return {
@@ -129,6 +139,7 @@ export function usePaginatedList<
 		completeness: view.completeness,
 		// SAFETY: omitted errors selects the default Contract parameter; an explicit contract owns its decoder.
 		failure: failure as FailureOf<Contract> | undefined,
+		error: state.error,
 		resetKey: `${identity}:${state.restarted ? 1 : 0}`,
 		fetchNextPage: () =>
 			setState((previous) =>

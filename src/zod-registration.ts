@@ -18,6 +18,7 @@ import { ConvexError, type PropertyValidators, type Value } from 'convex/values'
 import * as z from 'zod/v4'
 import * as zCore from 'zod/v4/core'
 import { zodToConvex } from './zod-convex'
+import { compactArgumentBoundary } from './querying/filter-boundary'
 
 export function zCustomQuery<
 	CustomArgsValidator extends PropertyValidators,
@@ -138,11 +139,15 @@ function customFnBuilder(
 				}
 			}
 			// One conversion preserves graph sharing across all user argument fields.
-			const convexValidator = zodToConvex(z.object(argsValidator))
+			const boundary = skipConvexValidation
+				? undefined
+				: compactArgumentBoundary(z.object(argsValidator))
+			const convexValidator = boundary?.validator ?? zodToConvex(z.object(argsValidator))
 			return builder({
 				args: skipConvexValidation ? undefined : addFieldsToValidator(convexValidator, inputArgs),
 				...returnValidator,
 				handler: async (ctx: any, allArgs: any) => {
+					boundary?.preflight(allArgs)
 					const added = await customInput(ctx, pick(allArgs, Object.keys(inputArgs)), extra)
 					const rawArgs = pick(allArgs, Object.keys(argsValidator))
 					const parsed = await z.object(argsValidator).safeParseAsync(rawArgs)

@@ -12,6 +12,17 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-10-26
+
+### Added
+
+- Opt into compact pagination filter validators with `paginationOpts(selection, { validator: 'compact' })` on tables and relations, retaining precise common generated types and full semantic validation before customization or handlers.
+- Export `PaginationFiltersInput` from `cvx-kit/relations` for full-depth filter literals.
+
+### Changed
+
+- Reduce the three-field/13-literal fixture's registered validator by 29.22 times and generated argument declarations by 35.85 times. Native ID-heavy paths retain their validators and can limit compression; default conversion is unchanged.
+
 ## [0.1.22] - 2026-10-26
 
 ### Added

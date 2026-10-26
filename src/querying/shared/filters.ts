@@ -24,40 +24,27 @@ const relationPredicates = new WeakMap<
 const variantPredicates = new WeakMap<z.core.$ZodType, NonNullable<FilterGrammar['variants']>>()
 const filterGrammars = new WeakMap<z.core.$ZodType, FilterGrammar>()
 
-const BoundedFilterObject = z.core.$constructor<z.ZodObject>('BoundedFilterObject', (inst, def) => {
-	z.ZodObject.init(inst, def)
-	const parse = inst._zod.parse
-	const namespace = def.shape.fields
-	const namespaceObject = namespace instanceof z.ZodOptional ? namespace.unwrap() : undefined
-	const selectedKeys =
-		namespaceObject instanceof z.ZodObject
-			? Object.keys(namespaceObject.shape)
-			: Object.keys(def.shape)
-	const grammar: FilterGrammar = {
-		variants: variantPredicates.get(def.shape.variant),
-		fields: Object.fromEntries(selectedKeys.map((key) => [key, def.shape[key]])),
-		relations: Object.fromEntries(
-			Object.entries(def.shape).flatMap(([key, schema]) => {
-				const relation = relationPredicates.get(schema)
-				return relation ? [[key, relation]] : []
-			}),
-		),
+export interface PaginationValidatorOptions {
+	validator: 'compact'
+}
+
+export interface FilterBoundaryMetadata {
+	readonly grammar: FilterGrammar
+	readonly semantic: z.ZodType
+}
+const compactFilters = new WeakMap<
+	z.core.$ZodType,
+	{
+		metadata: FilterBoundaryMetadata
+		matches(): boolean
 	}
-	// Zod refinements run after parsing. Guard parse itself so both the deferred
-	// no-check run and the refinement run retain the same pre-child boundary.
-	inst._zod.parse = (payload, ctx) => {
-		// SAFETY: preflight examines layout and budgets only; Zod still validates values.
-		if (!withinFilterBudget(payload.value as FilterTree, grammar)) {
-			payload.issues.push({
-				code: 'custom',
-				input: payload.value,
-				message: 'Unsupported filter layout or depth/node budget exceeded',
-			})
-			return payload
-		}
-		return parse(payload, ctx)
-	}
-})
+>()
+
+/** Only constructors created here can carry permission to project a filter. */
+export function compactFilterMetadata(schema: z.core.$ZodType): FilterBoundaryMetadata | undefined {
+	const entry = compactFilters.get(schema)
+	return entry?.matches() ? entry.metadata : undefined
+}
 
 /** Each boolean child and relation target expression consumes one of four edges.
  * some/none wrappers and fields namespaces consume nodes, but no extra depth.
@@ -71,10 +58,24 @@ export interface FilterGrammar {
 export function relationFilterSchema(
 	grammar: FilterGrammar,
 	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
+	options?: PaginationValidatorOptions,
 ): z.ZodType {
-	const schema = new BoundedFilterObject(filterNodeSchema(grammar, 0, cache)._zod.def)
-	filterGrammars.set(schema, grammar)
-	return schema
+	if (options?.validator === 'compact') {
+		let captured: FilterGrammar
+		try {
+			captured = captureGrammar(grammar)
+		} catch (error) {
+			if (!(error instanceof UnsupportedFilterCapture)) throw error
+			return boundedObject(filterNodeSchema(grammar, 0, cache)._zod.def, grammar)
+		}
+		const semantic = boundedObject(filterNodeSchema(captured, 0)._zod.def, captured)
+		return boundedObject(
+			filterNodeSchema(grammar, 0, cache)._zod.def,
+			captured,
+			Object.freeze({ grammar: captured, semantic }),
+		)
+	}
+	return boundedObject(filterNodeSchema(grammar, 0, cache)._zod.def, grammar)
 }
 
 export function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined {
@@ -177,8 +178,11 @@ export function scalarPredicateFromSchema(
 	])
 }
 
-export function boundedFilterSchema(predicates: FieldSchemas): z.ZodType {
-	return relationFilterSchema({ fields: predicates, relations: {} })
+export function boundedFilterSchema(
+	predicates: FieldSchemas,
+	options?: PaginationValidatorOptions,
+): z.ZodType {
+	return relationFilterSchema({ fields: predicates, relations: {} }, undefined, options)
 }
 
 function filterNodeSchema(
@@ -360,4 +364,143 @@ function normalizeScalar(field: string, predicate: FilterTree): FilterAst[] {
 			operator: operator as FilterOperator,
 			value,
 		}))
+}
+
+function boundedObject(
+	definition: z.ZodObject['_zod']['def'],
+	grammar: FilterGrammar,
+	metadata?: FilterBoundaryMetadata,
+): z.ZodObject {
+	const expected = Object.entries(definition.shape)
+	const expectedCatchall = definition.catchall
+	const BoundedFilterObject = z.core.$constructor<z.ZodObject>(
+		'BoundedFilterObject',
+		(inst, def) => {
+			z.ZodObject.init(inst, def)
+			filterGrammars.set(inst, grammar)
+			// Clones/refinements retain the generated fields. Shape edits use full conversion.
+			if (
+				metadata &&
+				def.catchall === expectedCatchall &&
+				Object.keys(def.shape).length === expected.length &&
+				expected.every(([key, value]) => def.shape[key] === value)
+			)
+				compactFilters.set(inst, {
+					metadata,
+					matches: () =>
+						inst._zod.def.catchall === expectedCatchall &&
+						Object.keys(inst._zod.def.shape).length === expected.length &&
+						expected.every(([key, value]) => inst._zod.def.shape[key] === value),
+				})
+			const parse = inst._zod.parse
+			inst._zod.parse = (payload, ctx) => {
+				// SAFETY: layout preflight precedes Zod's value traversal.
+				if (!withinFilterBudget(payload.value as FilterTree, grammar)) {
+					payload.issues.push({
+						code: 'custom',
+						input: payload.value,
+						message: 'Unsupported filter layout or depth/node budget exceeded',
+					})
+					return payload
+				}
+				return parse(payload, ctx)
+			}
+		},
+	)
+	return new BoundedFilterObject(definition)
+}
+
+class UnsupportedFilterCapture extends Error {}
+
+// Copy the generated schema graph before exposing the public filter. These are
+// generated scalar predicates, not arbitrary storage schemas or consumer hooks.
+function captureGrammar(
+	source: FilterGrammar,
+	seen = new WeakMap<FilterGrammar, FilterGrammar>(),
+): FilterGrammar {
+	const cached = seen.get(source)
+	if (cached) return cached
+	const schemas = new WeakMap<z.ZodType, z.ZodType>()
+	function copy(schema: z.core.$ZodType): z.ZodType {
+		if (!(schema instanceof z.ZodType)) throw new Error('Expected generated classic filter schema')
+		const cached = schemas.get(schema)
+		if (cached) return cached
+		let result: z.ZodType
+		if (schema instanceof z.ZodObject)
+			result = schema.clone({
+				...schema._zod.def,
+				// oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- Installed Zod object definition property.
+				shape: Object.fromEntries(Object.entries(schema.shape).map(([k, v]) => [k, copy(v)])),
+				catchall: schema._zod.def.catchall ? copy(schema._zod.def.catchall) : undefined,
+			})
+		else if (schema instanceof z.ZodUnion)
+			result = schema.clone({ ...schema._zod.def, options: schema.options.map(copy) })
+		else if (schema instanceof z.ZodArray)
+			result = schema.clone({ ...schema._zod.def, element: copy(schema.element) })
+		else if (schema instanceof z.ZodOptional)
+			result = schema.clone({ ...schema._zod.def, innerType: copy(schema._zod.def.innerType) })
+		else if (schema instanceof z.ZodNonOptional)
+			result = schema.clone({ ...schema._zod.def, innerType: copy(schema._zod.def.innerType) })
+		else if (schema instanceof z.ZodNullable)
+			result = schema.clone({ ...schema._zod.def, innerType: copy(schema._zod.def.innerType) })
+		else if (schema instanceof z.ZodEnum)
+			result = schema.clone({ ...schema._zod.def, entries: { ...schema._zod.def.entries } })
+		else if (schema instanceof z.ZodLiteral)
+			result = schema.clone({ ...schema._zod.def, values: [...schema._zod.def.values] })
+		else if (
+			schema instanceof z.ZodString ||
+			schema instanceof z.ZodNumber ||
+			schema instanceof z.ZodBigInt ||
+			schema instanceof z.ZodBoolean ||
+			schema instanceof z.ZodNull ||
+			schema instanceof z.ZodNever ||
+			schema instanceof z.ZodCustom
+		)
+			result = z.core.clone(schema, { ...schema._zod.def }, { parent: true })
+		else throw new UnsupportedFilterCapture()
+		// Generated membership limits and nonempty-operator refinements must not
+		// share mutable check definitions with the public graph.
+		if (schema._zod.def.checks) {
+			const checks = schema._zod.def.checks.map((check) => {
+				if (check instanceof z.ZodCustom) {
+					const copied = copy(check)
+					if (!(copied instanceof z.ZodCustom)) throw new UnsupportedFilterCapture()
+					return copied
+				}
+				if (check instanceof z.core.$ZodCheckMaxLength)
+					return new z.core.$ZodCheckMaxLength({ ...check._zod.def })
+				if (check instanceof z.core.$ZodCheckMinLength)
+					return new z.core.$ZodCheckMinLength({ ...check._zod.def })
+				throw new UnsupportedFilterCapture()
+			})
+			result = result.clone({ ...result._zod.def, checks })
+		}
+		schemas.set(schema, result)
+		return result
+	}
+	const result: FilterGrammar = {
+		fields: Object.freeze(
+			Object.fromEntries(Object.entries(source.fields).map(([k, v]) => [k, copy(v)])),
+		),
+		relations: {},
+	}
+	seen.set(source, result)
+	result.relations = Object.freeze(
+		Object.fromEntries(
+			Object.entries(source.relations).map(([k, v]) => [
+				k,
+				Object.freeze({ cardinality: v.cardinality, target: captureGrammar(v.target, seen) }),
+			]),
+		),
+	)
+	if (source.variants)
+		result.variants = Object.freeze({
+			discriminator: source.variants.discriminator,
+			options: Object.freeze(
+				Object.fromEntries(
+					Object.entries(source.variants.options).map(([k, v]) => [k, captureGrammar(v, seen)]),
+				),
+			),
+		})
+	return Object.freeze(result)
 }

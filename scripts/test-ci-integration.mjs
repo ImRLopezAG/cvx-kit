@@ -28,6 +28,7 @@ const required = [
 	'test/relations.test.ts',
 	'test/webhooks.test.ts',
 	'test/zod-registration.test.ts',
+	'test/compact-registration.test.ts',
 	'test/zod-variant-table.test.ts',
 	'test/convex-smoke-env.test.mjs',
 	'scripts/owned-process.test.mjs',

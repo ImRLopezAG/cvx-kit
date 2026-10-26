@@ -23,6 +23,10 @@ import {
 	type ScalarPredicate,
 } from './querying/filters'
 
+export type PaginationFiltersInput<Schema extends z.ZodType> =
+	z.input<Schema> extends { filters?: infer Filters } ? Exclude<Filters, undefined> : never
+import type { PaginationValidatorOptions } from './querying/shared/filters'
+
 const paginationRecipe = captureDto(nativePagination)
 
 /** Generated object or discriminated-union boundaries. */
@@ -678,6 +682,7 @@ export interface RelationTableHelpers<
 	): PaginationOptionsSchema<SharedFilters<F>, SharedFilters<F, 'input'>>
 	paginationOpts<const S extends RelationFilterSelection<Tables, D, T>>(
 		selection: ExactFilterMask<Tables, D, T, S>,
+		options?: PaginationValidatorOptions,
 	): PaginationOptionsSchema<
 		RelationFilters<Tables, D, T, S>,
 		RelationFilters<Tables, D, T, S, 'input'>
@@ -1021,7 +1026,7 @@ export function defineRelations<
 		string,
 		{
 			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>): z.ZodType
-			paginationOpts(selection: SelectionMask): z.ZodType
+			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): z.ZodType
 			pageDto(selection: SelectionMask, groups?: GroupSelection): z.ZodType
 		}
 	> = {}
@@ -1044,10 +1049,14 @@ export function defineRelations<
 					order: z.enum(['asc', 'desc']).optional(),
 				})
 			},
-			paginationOpts(selection: SelectionMask): z.ZodType {
+			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): z.ZodType {
 				assertSelection(selection)
 				return materializeDto(paginationRecipe).extend({
-					filters: relationFilterSchema(filterGrammar(internal, table, selection)).optional(),
+					filters: relationFilterSchema(
+						filterGrammar(internal, table, selection),
+						undefined,
+						options,
+					).optional(),
 					order: z.enum(['asc', 'desc']).optional(),
 				})
 			},

@@ -222,6 +222,16 @@ support equality, ranges, `and`, `or`, and `not`; many predicates use `some` or
 page. Parent, junction, target, and continuation reads all recheck authorization.
 `include` and `paginated(dto)` retain their existing behavior independently.
 
+For large generated static APIs, opt into compact argument validators with
+`paginationOpts(selection, { validator: 'compact' })` on a table or relation.
+Use the resulting schema with cvx-kit's authenticated builders. Common filters
+remain precisely typed; deeper generated filter branches become opaque where
+native ID checks allow it. Full depth, node, membership, and value validation
+still runs before customization or handler work. Use `PaginationFiltersInput`
+from `cvx-kit/relations` to check deeper filter literals. See the
+[compact filter guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/querying.md#compact-generated-filter-validators)
+for registration requirements and ID-heavy size limits.
+
 Chain `.when(value, 'index_name')` to choose the first present condition: `false`,
 `0`, and `''` are present; `null` and `undefined` are absent. The gate does not
 bind an index field; validated filters and server `.where(...)` constraints do.

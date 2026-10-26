@@ -77,3 +77,37 @@ const input: z.input<typeof relational> = {
 	filters: { parent: 'tasks:1' },
 }
 void input
+
+import type { PaginationFiltersInput } from '../src/relations-public'
+const compactScalar = tasks.paginationOpts({ parent: true, title: true }, { validator: 'compact' })
+const compactRelation = registry.tables.tasks.paginationOpts(
+	{ parentTask: { title: true } },
+	{ validator: 'compact' },
+)
+const deepInput = {
+	not: { not: { not: { not: { parent: 'plain-input-string' } } } },
+} satisfies PaginationFiltersInput<typeof compactScalar>
+void [deepInput, compactRelation]
+const badField: PaginationFiltersInput<typeof compactScalar> = {
+	// @ts-expect-error only selected fields are allowed
+	unknown: 'value',
+}
+const badDepth: PaginationFiltersInput<typeof compactScalar> = {
+	not: {
+		not: {
+			not: {
+				not: {
+					// @ts-expect-error four expression edges is the semantic limit
+					not: {},
+				},
+			},
+		},
+	},
+}
+const badIdRange: PaginationFiltersInput<typeof compactScalar> = {
+	parent: {
+		// @ts-expect-error ID predicates do not support ranges
+		gt: 'value',
+	},
+}
+void [badField, badDepth, badIdRange]

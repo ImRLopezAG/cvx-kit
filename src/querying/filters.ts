@@ -5,6 +5,7 @@ import {
 	scalarPredicateFromSchema,
 	type FilterTree,
 	type FieldSchemas,
+	type PaginationValidatorOptions,
 } from './shared/filters'
 // oxlint-disable-next-line cvx/no-internal-reexports -- Preserve existing internal imports while the neutral grammar owns implementation.
 export {
@@ -146,6 +147,7 @@ export function scalarPaginationSchema<
 >(
 	validators: Record<string, GenericValidator>,
 	selection: ExactScalarSelection<Fields, Selection>,
+	options?: PaginationValidatorOptions,
 ): ScalarPaginationSchema<Fields, Selection> {
 	const predicates: FieldSchemas = {}
 	for (const [key, selected] of Object.entries(selection)) {
@@ -154,7 +156,7 @@ export function scalarPaginationSchema<
 		}
 		predicates[key] = scalarPredicateSchema(validators[key]).optional()
 	}
-	const filters = boundedFilterSchema(predicates)
+	const filters = boundedFilterSchema(predicates, options)
 	const result = nativePagination.extend({
 		filters: filters.optional(),
 		order: z.enum(['asc', 'desc']).optional(),

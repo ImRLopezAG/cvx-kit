@@ -11,6 +11,7 @@ export {
 	type RelationSelection,
 	type RelationFilterSelection,
 	type RelationFilters,
+	type PaginationFiltersInput,
 	type RelationRow,
 	type RelationTableHelpers,
 	type RelationTable,

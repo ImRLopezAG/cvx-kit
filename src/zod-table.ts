@@ -1,3 +1,4 @@
+import type { PaginationValidatorOptions } from './querying/shared/filters'
 import { convexToZod, zid, type ConvexValidatorFromZod, type Zid } from 'convex-helpers/server/zod4'
 import {
 	defineTable,
@@ -155,6 +156,7 @@ export type TableBoundary<
 		const Selection extends ScalarSelection<Fields & TimestampFields & SystemFields<Table>>,
 	>(
 		selection: ExactScalarSelection<Fields & TimestampFields & SystemFields<Table>, Selection>,
+		options?: PaginationValidatorOptions,
 	): ScalarPaginationSchema<Fields & TimestampFields & SystemFields<Table>, Selection>
 	tableName: Table
 	storage: StrictObject<Fields & TimestampFields>
@@ -340,8 +342,13 @@ export function zodTable<
 	type EntityFields = Fields & TimestampFields & SystemFields<Table>
 	function paginationOpts<const Selection extends ScalarSelection<EntityFields>>(
 		selection: ExactScalarSelection<EntityFields, Selection>,
+		options?: PaginationValidatorOptions,
 	): ScalarPaginationSchema<EntityFields, Selection> {
-		return scalarPaginationSchema<EntityFields, Selection>(zodToConvex(schema).fields, selection)
+		return scalarPaginationSchema<EntityFields, Selection>(
+			zodToConvex(schema).fields,
+			selection,
+			options,
+		)
 	}
 	return {
 		tableName,

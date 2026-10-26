@@ -22,6 +22,7 @@ Read only the guides needed for the task, resolving paths relative to this skill
 | Tables, masks, DTOs, variants, tool validators        | [zod-table](references/zod-table.md)                                                                     |
 | Relationships, ordering, ranges, cursors, field groups | [querying](references/querying.md)                                                                       |
 | Browser-safe filters and native full-text search      | [querying](references/querying.md)                                                                       |
+| Compact pagination validators and static API size    | [querying](references/querying.md#compact-generated-filter-validators)                                  |
 | Variant joins, branch predicates, mixed pages         | [variant-querying](references/variant-querying.md)                                                       |
 | Native-ID union links, inverse pages, link migration  | [native-id-relations](references/native-id-relations.md)                                                 |
 | Authentication, roles, shared Effect context          | [auth](references/auth.md)                                                                               |

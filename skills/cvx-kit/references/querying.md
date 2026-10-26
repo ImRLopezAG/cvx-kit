@@ -331,6 +331,56 @@ are Zod objects and support `.extend(...)` for endpoint-specific arguments.
 Use the contracts through your domain Query registry and keep public auth
 registration in `api/<entity>.ts`; see [domain-contracts.md](./domain-contracts.md).
 
+### Compact generated filter validators
+
+On cvx-kit 0.1.23 or later, pass the same optional second argument to either
+pagination helper when recursive filter declarations make a static API large:
+
+```ts
+import type { PaginationFiltersInput } from 'cvx-kit/relations'
+
+const input = relations.tables.tasks.paginationOpts(
+	{ status: true, labels: { name: true } },
+	{ validator: 'compact' },
+)
+// Scalar-only tables also accept tasks.paginationOpts(selection, options).
+const filters = {
+	not: { not: { status: 'open' } },
+} satisfies PaginationFiltersInput<typeof input>
+```
+
+Register the schema through cvx-kit's configured auth/role/admin/system builders
+or its Zod custom builders, including the existing Effect Query/Command wiring.
+These builders install the compact native validator and its full generated
+semantic preflight together. Invalid filters fail before customization,
+authorization hooks, or handlers run, including handlers that never call the
+query engine. Consumer-added refinements and transforms keep ordinary argument
+parsing timing and execute once after customization.
+
+The root and first expression edge retain precise generated field, operator,
+enum, relation, and variant types. Deeper ID-free branches use native `any` in
+the generated declaration; the server still enforces the full depth-four
+grammar, 256-node and 100-member limits, strict keys, and scalar validation.
+Use `satisfies PaginationFiltersInput<typeof input>` for full-depth literals.
+This input type accepts plain ID strings; generated native ID positions require
+branded `Id<'table'>` values, so a value widened to the whole input type is not
+universally assignable to generated function arguments.
+
+Native table-qualified ID validators remain at every admitted depth, including
+unions, membership, relations, and variants. ID-heavy grammars can therefore
+remain large. The measured three-field/13-literal fixture produced 29.22 times
+smaller registered JSON and 35.85 times smaller generated arguments; these are
+fixture measurements, not promises for an application's total API size or runtime.
+
+The default is unchanged. The ordinary `zodToConvex` converter stays full;
+external registration wrappers do not acquire compact behavior. Supported
+clones, descriptions, metadata, refinements, and object/optional nesting retain
+the association. Shape edits, unsupported wrappers, or uncertain native metadata
+fall back to full conversion. Keep `skipConvexValidation` disabled when relying
+on native ID checks. Opted-in malformed deep values can report a serialized Zod
+error instead of a native Convex argument error; accepted filter semantics are
+unchanged.
+
 ## Query and filter
 
 ```ts

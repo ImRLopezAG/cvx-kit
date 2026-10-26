@@ -12,6 +12,20 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-10-25
+
+### Added
+
+- Add typed index ordering, native range bounds, and ordered multi-value traversal for authorized queries.
+- Expose page completeness and safe budget continuation, policy-gated field groups, and managed public cursor codecs.
+- Export browser-safe filter contracts, typed client failures, React mutation commands, reactive paginated lists, and conservative optimistic list updates.
+- Support root native full-text search with authenticated continuation, authorized relation expansion, and React search journals. Search targets and scan limits are admission thresholds; reactive native windows can exceed them.
+- Document the new APIs and their authorization, budget, and continuation contracts in the repository-hosted AI skill.
+
+### Changed
+
+- Update development compatibility to Convex 1.48.0 and convex-helpers 0.1.129 while retaining packed consumer coverage for the advertised minimum peers.
+
 ## [0.1.20] - 2026-10-18
 
 ### Changed

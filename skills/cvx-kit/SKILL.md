@@ -20,13 +20,16 @@ Read only the guides needed for the task, resolving paths relative to this skill
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Application structure and ownership                   | [architecture](references/architecture.md), [conventions](references/conventions.md)                     |
 | Tables, masks, DTOs, variants, tool validators        | [zod-table](references/zod-table.md)                                                                     |
-| Relationships, filtering, cursors, bounded pagination | [querying](references/querying.md)                                                                       |
+| Relationships, ordering, ranges, cursors, field groups | [querying](references/querying.md)                                                                       |
+| Browser-safe filters and native full-text search      | [querying](references/querying.md)                                                                       |
 | Variant joins, branch predicates, mixed pages         | [variant-querying](references/variant-querying.md)                                                       |
 | Native-ID union links, inverse pages, link migration  | [native-id-relations](references/native-id-relations.md)                                                 |
 | Authentication, roles, shared Effect context          | [auth](references/auth.md)                                                                               |
 | Tenant isolation and row security                     | [tenancy](references/tenancy.md)                                                                         |
 | Commands, queries, registry wiring, audit             | [commands](references/commands.md), [effect](references/effect.md)                                       |
 | Client failures and React mutation hooks              | [client-failures](references/client-failures.md)                                                         |
+| Reactive paginated lists and search continuation      | [client-list](references/client-list.md)                                                                 |
+| Conservative optimistic list updates                  | [client-optimistic](references/client-optimistic.md)                                                     |
 | Contracts and domain API integration                  | [domain-contracts](references/domain-contracts.md), [domain-operations](references/domain-operations.md) |
 | Request-local registry context                        | [command-context](references/command-context.md)                                                         |
 | Timestamps and database lifecycle rules               | [triggers](references/triggers.md)                                                                       |
@@ -74,6 +77,3 @@ and provider checks in the result.
 
 Maintainers edit `skills/cvx-kit/references/*.md` directly. CI verifies portable
 relative links with `bun run skills:check`.
-
-- Reactive paginated lists: [client-list.md](references/client-list.md)
-- Conservative optimistic lists: [client-optimistic.md](references/client-optimistic.md)

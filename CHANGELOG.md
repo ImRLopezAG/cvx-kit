@@ -12,6 +12,18 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.24] - 2026-10-28
+
+### Changed
+
+- Defer eligible private relation DTO reconstruction until projection while keeping registration validation, schema capture and registry identity eager. Public helper schemas remain independent.
+- Reduce constructor-dispatch work for ordinary schemas on the audited Zod versions, retaining the original scan for other versions and custom readers. Side-effecting Proxies around Zod internals are unsupported.
+- Capture each registered function's top-level argument fields once and reuse its argument object schema; parsing, defaults, refinements and transforms still run on every invocation.
+
+### Added
+
+- Pass the already resolved identity as the second `getAuthUser` argument so consumers can avoid another identity lookup. Existing one-argument callbacks remain supported.
+
 ## [0.1.23] - 2026-10-26
 
 ### Added

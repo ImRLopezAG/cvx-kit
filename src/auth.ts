@@ -101,8 +101,15 @@ export type AuthFunctionsConfig<DataModel extends GenericDataModel, Role extends
 	internalQuery: QueryBuilder<DataModel, 'internal'>
 	internalMutation: MutationBuilder<DataModel, 'internal'>
 	internalAction: ActionBuilder<DataModel, 'internal'>
-	/** Resolves the synchronized principal, e.g. (ctx) => authKit.getAuthUser(ctx). */
-	getAuthUser: (ctx: AnyAuthContext<DataModel>) => Promise<{ id: string } | null>
+	/**
+	 * Resolves the synchronized principal, e.g. (ctx) => authKit.getAuthUser(ctx).
+	 * The already-resolved, non-null identity is supplied as a second argument.
+	 * Callbacks may ignore it; using it can avoid a redundant identity lookup.
+	 */
+	getAuthUser: (
+		ctx: AnyAuthContext<DataModel>,
+		identity: UserIdentity,
+	) => Promise<{ id: string } | null>
 	/**
 	 * Maps an identity role slug onto the app's role vocabulary. Returning
 	 * null rejects the caller with FORBIDDEN — unknown roles never pass.
@@ -353,7 +360,7 @@ export function createAuthFunctions<
 
 	async function authenticatedUser(ctx: AnyAuthContext<DataModel>): Promise<AuthBundle<Role>> {
 		const identity = await ctx.auth.getUserIdentity()
-		const user = identity ? await config.getAuthUser(ctx) : null
+		const user = identity ? await config.getAuthUser(ctx, identity) : null
 		if (!identity || !user) return errors.throw({ code: 'UNAUTHENTICATED' })
 		let organizationId: string
 		let organizationRole: string | undefined

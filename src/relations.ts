@@ -1,6 +1,12 @@
 import type { FilterContract, SharedFilters } from './filters'
 import { z } from 'zod'
-import { captureDto, materializeDto, type DtoRecipe } from './querying/schema-snapshot'
+import {
+	captureDto,
+	materializeDto,
+	classifyDto,
+	type DtoBoundary,
+	type DtoRecipe,
+} from './querying/schema-snapshot'
 import { convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
 import { zodToConvex } from './zod-convex'
 import { defineSchema, defineTable, type TableDefinition } from 'convex/server'
@@ -740,10 +746,11 @@ interface TableMetadata {
 	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
 	branches?: {
 		discriminator: string
-		options: Record<string, { fields: Record<string, GenericValidator>; dto: z.ZodObject }>
+		options: Record<string, { fields: Record<string, GenericValidator>; dto?: z.ZodObject }>
 	}
 	allFields: ReadonlySet<string>
 	dtoRecipe: DtoRecipe
+	dtoNativeCanonical?: string
 }
 interface RegistryMetadata {
 	metadata: Record<string, TableMetadata>
@@ -817,12 +824,19 @@ export function defineRelations<
 			throw new Error('Expected object or discriminated union DTO')
 		preflightSchema(sourceDto, 'dto')
 		const dtoRecipe = captureDto(sourceDto)
-		const dto = materializeDto(dtoRecipe)
-		if (!(dto instanceof z.ZodObject) && !(dto instanceof z.ZodDiscriminatedUnion))
+		const admission = classifyDto(dtoRecipe)
+		let dto = admission?.boundary ? undefined : materializeDto(dtoRecipe)
+		if (dto && !(dto instanceof z.ZodObject) && !(dto instanceof z.ZodDiscriminatedUnion))
 			throw new Error('Expected object or discriminated union DTO')
 		const exported = nativeTableExport(nativeTable)
 		assertNativeValidation(exported.documentType)
-		const normalized = normalizeTable(name, table.schema, dto, exported.documentType)
+		const normalized = normalizeTable(
+			name,
+			table.schema,
+			dto,
+			exported.documentType,
+			admission?.boundary,
+		)
 		const captured = indexExport.parse(exported)
 		const searchIndexes = Object.freeze(
 			[
@@ -848,7 +862,9 @@ export function defineRelations<
 				fields: [...index.fields],
 			}))
 			.sort((a, b) => a.name.localeCompare(b.name))
-		assertNativeValidation(nativeJson(zodToConvex(dto)))
+		const dtoNative = nativeJson(dto ? zodToConvex(dto) : admission!.emit())
+		assertNativeValidation(dtoNative)
+		const dtoNativeCanonical = dto ? undefined : canonicalNative(dtoNative)
 		nativeTables[name] = nativeTable
 		const fieldGroups: Record<string, readonly string[]> = Object.create(null)
 		const groupRecipes: Record<string, DtoRecipe> = Object.create(null)
@@ -860,7 +876,12 @@ export function defineRelations<
 			.record(z.string(), z.array(z.string()).nonempty())
 			.parse(descriptor?.value ?? {})
 		const used = new Set<string>()
-		const publicBranches = dto instanceof z.ZodObject ? [dto] : dto.options
+		const publicKeys = admission?.boundary
+			? admission.boundary.kind === 'object'
+				? [admission.boundary.keys]
+				: Object.values(admission.boundary.branches)
+			: undefined
+		const publicBranches = dto instanceof z.ZodObject ? [dto] : dto?.options
 		for (const [group, members] of Object.entries(definitions)) {
 			if (!group || ['__proto__', 'constructor', 'prototype'].includes(group))
 				throw new Error('Invalid field groups')
@@ -869,9 +890,12 @@ export function defineRelations<
 					!normalized.allFields.has(field) ||
 					field.startsWith('_') ||
 					used.has(field) ||
-					publicBranches.some(
-						(branch) => !(branch instanceof z.ZodObject) || Object.hasOwn(branch.shape, field),
-					)
+					(publicKeys
+						? publicKeys.some((keys) => keys.includes(field))
+						: publicBranches!.some(
+								(branch: z.core.$ZodType) =>
+									!(branch instanceof z.ZodObject) || Object.hasOwn(branch.shape, field),
+							))
 				)
 					throw new Error('Conflicting or incompatible field groups')
 				const validators = normalized.branches
@@ -910,7 +934,16 @@ export function defineRelations<
 			...normalized,
 			indexes,
 			searchIndexes,
-			dto,
+			get dto() {
+				if (!dto) {
+					const restored = materializeDto(dtoRecipe)
+					if (!(restored instanceof z.ZodObject) && !(restored instanceof z.ZodDiscriminatedUnion))
+						throw new Error('Expected object or discriminated union DTO')
+					dto = restored
+				}
+				return dto
+			},
+			dtoNativeCanonical,
 			dtoRecipe,
 			fieldGroups: Object.freeze(fieldGroups),
 			groupRecipes: Object.freeze(groupRecipes),
@@ -1095,7 +1128,7 @@ export function defineRelations<
 						]
 					: null,
 				data.indexes,
-				canonicalNative(nativeJson(zodToConvex(data.dto))),
+				data.dtoNativeCanonical ?? canonicalNative(nativeJson(zodToConvex(data.dto))),
 				...(Object.keys(data.fieldGroups).length ? [data.fieldGroups] : []),
 				...(data.searchIndexes.length ? [{ searchIndexes: data.searchIndexes }] : []),
 			]),
@@ -1291,7 +1324,18 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 				? data.branches.options[String(row[data.branches.discriminator])]
 				: undefined
 			if (data.branches && !branch) throw new Error('Invalid variant document')
-			let dto = branch?.dto ?? data.dto
+			const projection = data.dto
+			let dto =
+				branch?.dto ??
+				(projection instanceof z.ZodDiscriminatedUnion
+					? projection.options.find(
+							(option: z.ZodType) =>
+								option instanceof z.ZodObject &&
+								option.shape[data.branches!.discriminator] instanceof z.ZodLiteral &&
+								option.shape[data.branches!.discriminator].value ===
+									row[data.branches!.discriminator],
+						)
+					: projection)
 			if (!(dto instanceof z.ZodObject)) throw new Error('Invalid variant DTO')
 			if (groups.length) {
 				let variants = groupDtos.get(dto)
@@ -1652,18 +1696,29 @@ function rowSchema(
 function normalizeTable(
 	name: string,
 	schema: RelationTable['schema'],
-	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>,
+	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string> | undefined,
 	document: ValidatorJSON,
+	facts?: DtoBoundary,
 ): Pick<TableMetadata, 'fields' | 'branches' | 'allFields'> {
-	if (schema instanceof z.ZodObject && dto instanceof z.ZodObject) {
+	if (schema instanceof z.ZodObject && (facts?.kind === 'object' || dto instanceof z.ZodObject)) {
 		const fields = zodToConvex(schema).fields
 		assertStoredDocument(name, fields, document)
 		return { fields, allFields: new Set(Object.keys(fields)) }
 	}
-	if (!(schema instanceof z.ZodDiscriminatedUnion) || !(dto instanceof z.ZodDiscriminatedUnion))
+	if (
+		!(schema instanceof z.ZodDiscriminatedUnion) ||
+		!(facts?.kind === 'variant' || dto instanceof z.ZodDiscriminatedUnion)
+	)
 		throw new Error(`Expected matching discriminated union boundaries "${name}"`)
 	const discriminator = schema._zod.def.discriminator
-	if (dto._zod.def.discriminator !== discriminator) throw new Error('DTO discriminator mismatch')
+	if (
+		(facts?.kind === 'variant'
+			? facts.discriminator
+			: dto instanceof z.ZodDiscriminatedUnion
+				? dto._zod.def.discriminator
+				: undefined) !== discriminator
+	)
+		throw new Error('DTO discriminator mismatch')
 	function options(union: z.ZodDiscriminatedUnion<any, string>): Record<string, z.ZodObject> {
 		const result: Record<string, z.ZodObject> = Object.create(null)
 		for (const option of union.options) {
@@ -1680,7 +1735,10 @@ function normalizeTable(
 		return result
 	}
 	const documents = options(schema),
-		dtos = options(dto)
+		dtos =
+			facts?.kind === 'variant'
+				? facts.branches
+				: options(dto instanceof z.ZodDiscriminatedUnion ? dto : schema)
 	if (Object.keys(documents).sort().join('\0') !== Object.keys(dtos).sort().join('\0'))
 		throw new Error('DTO variant tags mismatch')
 	const branches: NonNullable<TableMetadata['branches']> = {
@@ -1693,7 +1751,10 @@ function normalizeTable(
 		const { _id, _creationTime, ...storage } = fields
 		assertStoredDocument(name, fields, nativeJson(v.object(storage)))
 		stored.push(v.object(storage))
-		branches.options[tag] = { fields, dto: dtos[tag] }
+		branches.options[tag] = {
+			fields,
+			dto: facts ? undefined : dtos[tag] instanceof z.ZodObject ? dtos[tag] : undefined,
+		}
 	}
 	if (canonicalNative(document) !== canonicalNative(nativeJson(v.union(...stored))))
 		throw new Error(`Native stored document disagrees with boundary "${name}"`)
@@ -1831,10 +1892,13 @@ function canonicalNative(value: JSONValue): string {
 	if (value !== null && Object(value) === value) {
 		// SAFETY: native JSON contains only JSON objects, arrays and primitives.
 		const object = value as { [key: string]: JSONValue }
-		return `{${Object.keys(object)
-			.sort()
-			.map((key) => `${JSON.stringify(key)}:${canonicalNative(object[key])}`)
-			.join(',')}}`
+		let encoded = '{'
+		let separator = ''
+		for (const key of Object.keys(object).sort()) {
+			encoded += `${separator}${JSON.stringify(key)}:${canonicalNative(object[key])}`
+			separator = ','
+		}
+		return `${encoded}}`
 	}
 	return JSON.stringify(value)
 }

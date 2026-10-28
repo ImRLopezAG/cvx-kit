@@ -64,6 +64,19 @@ export const {
 Every function in the app is then built from these — raw `query`/`mutation`
 imports from `_generated/server` appear **only** in this file.
 
+`getAuthUser(ctx, identity)` receives the exact non-null identity already
+resolved by the wrapper. Use that second argument when your principal lookup
+can query directly from the identity, avoiding another `getUserIdentity()`
+call. Existing one-argument callbacks remain supported; they retain any
+identity lookup they perform themselves. The supplied context is unchanged.
+
+Declare the complete top-level argument shape before registering a function.
+Auth constructors capture those fields and reuse one object schema per
+registration. Later additions, removals, or replacements of top-level fields
+do not change the registered parser. Nested schemas remain shared. Input
+parsing, defaults, refinements, transforms, and callbacks run on every call;
+parsed values are never cached between invocations.
+
 ## One shared Effect function foundation
 
 Use `createEffectAuthFunctions` from `cvx-kit/effect` in `convex/functions.ts`

@@ -9,6 +9,7 @@ import {
 	queryGeneric,
 	type DataModelFromSchemaDefinition,
 	type GenericActionCtx,
+	type UserIdentity,
 	type GenericMutationCtx,
 	type GenericQueryCtx,
 } from 'convex/server'
@@ -28,7 +29,12 @@ const auth = createAuthFunctions<Model, Role>({
 	internalQuery: internalQueryGeneric,
 	internalMutation: internalMutationGeneric,
 	internalAction: internalActionGeneric,
-	getAuthUser: async () => ({ id: 'user' }),
+	getAuthUser: async (ctx, identity) => {
+		const native: GenericQueryCtx<Model> | GenericMutationCtx<Model> | GenericActionCtx<Model> = ctx
+		const resolved: UserIdentity = identity
+		void native
+		return { id: resolved.subject }
+	},
 	mapRole: (slug) => (slug === 'owner' || slug === 'viewer' ? slug : null),
 	adminRoles: ['owner'],
 })
@@ -165,3 +171,9 @@ effectZodApiBuilder(auth.authMutation, { services: () => Context.empty() })({
 		return null
 	},
 })
+
+// Existing one-argument principal resolvers remain assignable.
+const legacyLookup: Parameters<typeof createAuthFunctions<Model, Role>>[0]['getAuthUser'] = async (
+	ctx,
+) => ({ id: (await ctx.auth.getUserIdentity())?.subject ?? 'missing' })
+void legacyLookup

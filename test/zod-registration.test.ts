@@ -180,6 +180,47 @@ for (const impl of implementations) {
 			expect(events).toEqual(['input', 'refine'])
 		})
 
+		it.each(['object', 'shape'] as const)(
+			'reparses %s arguments and runs defaults/refinements on every invocation',
+			async (kind) => {
+				let defaults = 0
+				const refined: string[] = []
+				const args = z.object({
+					text: z
+						.string()
+						.refine(async (text) => {
+							refined.push(text)
+							return text !== 'bad'
+						})
+						.transform((text) => text.length),
+					count: z.number().default(() => ++defaults),
+				})
+				const fn = impl.query(
+					queryGeneric,
+					NoOp,
+				)({
+					args: kind === 'object' ? args : args.shape,
+					handler: (_, parsed) => parsed,
+				})
+				for (const [text, count] of [
+					['one', 1],
+					['longer', 2],
+				] as const) {
+					expect(await harness().run((ctx) => runtime(fn)._handler(ctx, { text }))).toEqual({
+						text: text.length,
+						count,
+					})
+				}
+				await expect(
+					harness().run((ctx) => runtime(fn)._handler(ctx, { text: 'bad' })),
+				).rejects.toMatchObject({
+					data: { ZodError: [{ code: 'custom', path: ['text'], message: 'Invalid input' }] },
+				})
+				expect(refined).toEqual(['one', 'longer', 'bad'])
+				expect(defaults).toBe(3)
+			},
+		)
+
 		it.each([
 			mini.object({ text: mini.string(), optional: mini.optional(mini.number()) }),
 			{ text: mini.string(), optional: mini.optional(mini.number()) },
@@ -521,3 +562,45 @@ it('shares repeated public native argument containers through every auth query c
 			expect(native.fields[a]).toBe(native.fields[b])
 	}
 })
+
+interface MutableArgumentFields {
+	[field: string]: z.ZodType
+}
+
+// Capturing keys at registration intentionally tightens the helper's dynamic shape behavior.
+it.each(['object', 'shape'] as const)(
+	'captures %s argument fields without freezing nested validators',
+	async (kind) => {
+		const check = z.string().refine(() => true)
+		const argumentFields: MutableArgumentFields = { value: check }
+		const args = z.object(argumentFields)
+		const fn = kitQuery(
+			queryGeneric,
+			NoOp,
+		)({
+			args: kind === 'object' ? args : argumentFields,
+			handler: (_, parsed) => parsed,
+		})
+		const native = runtime(fn).exportArgs()
+		const liveArgumentFields = kind === 'object' ? args.shape : argumentFields
+		liveArgumentFields.later = z.string()
+		liveArgumentFields.value = z.number()
+		expect(
+			await harness().run((ctx) =>
+				runtime(fn)._handler(ctx, { value: 'original', later: 'extra' }),
+			),
+		).toEqual({ value: 'original' })
+		// Deliberately mutate the original nested check: the wrapper must retain its identity.
+		check._zod.def.checks![0]._zod.check = (payload) => {
+			payload.issues.push({ code: 'custom', input: payload.value, message: 'changed nested check' })
+		}
+		await expect(
+			harness().run((ctx) => runtime(fn)._handler(ctx, { value: 'original' })),
+		).rejects.toMatchObject({
+			data: { ZodError: [{ code: 'custom', path: ['value'], message: 'changed nested check' }] },
+		})
+		expect(runtime(fn).exportArgs()).toBe(native)
+		expect(Object.isFrozen(argumentFields)).toBe(false)
+		expect(Object.isFrozen(check)).toBe(false)
+	},
+)

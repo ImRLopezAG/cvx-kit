@@ -192,6 +192,11 @@ output, index, order, relation ancestry, principal/tenant/security scope, and
 registry/policy/engine versions. Page-size changes alone remain valid. Retain
 old keys during rotation when existing cursors should continue working.
 
+Relation registration captures and validates schemas eagerly; eligible private
+DTO schemas reconstruct on first projection. Public helper schemas stay fresh.
+See [registry capture and compatibility](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/querying.md#registry-capture-and-private-dtos)
+for eager fallback and the unsupported side-effecting internal Proxy boundary.
+
 Use the registry's validators in domain contracts and an authenticated Query
 registry handler:
 

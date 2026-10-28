@@ -8,6 +8,28 @@ paginate with a small declarative chain. The engine runs streams and relationshi
 lookups in the caller's Convex query transaction. Filtering determines eligible
 parents before they fill a page. Native `paginated(dto)` remains independent.
 
+## Registry capture and private DTOs
+
+`defineRelations` captures table definitions, validates registration and computes
+registry identity eagerly. Eligible DTOs defer private schema reconstruction
+until projection needs that table, then reuse it within the registry. Schemas
+outside the optimized recipe grammar use eager compatibility reconstruction.
+Public helper schemas remain fresh; parsing, authorization and read budgets
+still run normally. No call-site changes are needed.
+
+Use the ordinary, unmodified installed Zod runtime with stable constructor
+configuration for the lazy path. Configured hooks or detectably changed
+constructor configuration select the eager compatibility route at registration.
+In-place changes to installed constructor/memoizer machinery and later global
+constructor-hook changes are outside the optimized compatibility guarantee.
+
+Side-effecting Proxies around caller-owned Zod internals are unsupported:
+descriptor inspection can run traps before fallback, including traps that mutate
+traits, throw or record extra calls. This does not mean Proxies are detected or
+rejected. Ordinary schemas, mutable trait Sets, transplanted prototypes and
+public shape overrides retain their existing semantics. Custom readers and
+nonstandard trait collections use the original constructor-selection scan.
+
 ## Browser-safe scalar filters
 
 Declare selected fields in a pure module with `cvx-kit/filters` and

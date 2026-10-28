@@ -13,6 +13,7 @@ import {
 	type GenericQueryCtx,
 	type GenericMutationCtx,
 	type GenericActionCtx,
+	type UserIdentity,
 	type ApiFromModules,
 	type FunctionArgs,
 	type FunctionReturnType,
@@ -65,27 +66,42 @@ const queries = foundation.Query({
 	}),
 })
 const remote = makeFunctionReference<'mutation', {}, null>('notes:write')
-const functions = createEffectAuthFunctions(config, {
-	query: {
-		services: (ctx) => Context.make(Actor, ctx.actor.userId),
-		context: (ctx) =>
-			Effect.gen(function* () {
-				const actor = yield* Actor
-				return { queries: queries.withContext(ctx), actorLabel: actor }
+const functions = createEffectAuthFunctions(
+	{
+		...config,
+		getAuthUser: async (ctx, identity) => {
+			const native: GenericQueryCtx<Model> | GenericMutationCtx<Model> | GenericActionCtx<Model> =
+				ctx
+			const resolved: UserIdentity = identity
+			void native
+			return { id: resolved.subject }
+		},
+	},
+	{
+		query: {
+			services: (ctx) => Context.make(Actor, ctx.actor.userId),
+			context: (ctx) =>
+				Effect.gen(function* () {
+					const actor = yield* Actor
+					return { queries: queries.withContext(ctx), actorLabel: actor }
+				}),
+		},
+		mutation: {
+			context: (ctx) => ({
+				queries: queries.withContext(ctx),
+				commands: commands.withContext(ctx),
 			}),
+		},
+		action: {
+			context: (ctx) => ({
+				commands: { write: () => Effect.promise(() => ctx.runMutation(remote, {})) },
+			}),
+		},
+		systemQuery: { context: (ctx) => ({ native: ctx }) },
+		systemMutation: { context: (ctx) => ({ native: ctx }) },
+		systemAction: { context: (ctx) => ({ native: ctx }) },
 	},
-	mutation: {
-		context: (ctx) => ({ queries: queries.withContext(ctx), commands: commands.withContext(ctx) }),
-	},
-	action: {
-		context: (ctx) => ({
-			commands: { write: () => Effect.promise(() => ctx.runMutation(remote, {})) },
-		}),
-	},
-	systemQuery: { context: (ctx) => ({ native: ctx }) },
-	systemMutation: { context: (ctx) => ({ native: ctx }) },
-	systemAction: { context: (ctx) => ({ native: ctx }) },
-})
+)
 for (const builder of [functions.authQuery, functions.roleQuery('owner'), functions.adminQuery]) {
 	builder({
 		args: {},

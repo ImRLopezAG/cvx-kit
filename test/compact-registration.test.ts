@@ -101,6 +101,14 @@ describe('paired compact registration boundary', () => {
 				JSON.stringify({ invalid: invalidEvents, valid: events }),
 			)
 		}
+		events.length = 0
+		expect(
+			await runtime(fn)._handler(
+				{},
+				{ filters: nested(4, { value: 'different' }), other: 'second' },
+			),
+		).toBe(6)
+		expect(events).toEqual(['input', 'refine', 'transform', 'handler', 'returns', 'success'])
 	})
 	test.each([
 		'authQuery',

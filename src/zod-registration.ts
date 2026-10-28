@@ -138,19 +138,21 @@ function customFnBuilder(
 					)
 				}
 			}
+			// Capture top-level fields once, matching the native validator's registration lifetime.
+			// Nested schemas retain their identity; parsing and callbacks still run per invocation.
+			const argsSchema = z.object({ ...argsValidator })
+			const argsKeys = Object.keys(argsSchema.shape)
 			// One conversion preserves graph sharing across all user argument fields.
-			const boundary = skipConvexValidation
-				? undefined
-				: compactArgumentBoundary(z.object(argsValidator))
-			const convexValidator = boundary?.validator ?? zodToConvex(z.object(argsValidator))
+			const boundary = skipConvexValidation ? undefined : compactArgumentBoundary(argsSchema)
+			const convexValidator = boundary?.validator ?? zodToConvex(argsSchema)
 			return builder({
 				args: skipConvexValidation ? undefined : addFieldsToValidator(convexValidator, inputArgs),
 				...returnValidator,
 				handler: async (ctx: any, allArgs: any) => {
 					boundary?.preflight(allArgs)
 					const added = await customInput(ctx, pick(allArgs, Object.keys(inputArgs)), extra)
-					const rawArgs = pick(allArgs, Object.keys(argsValidator))
-					const parsed = await z.object(argsValidator).safeParseAsync(rawArgs)
+					const rawArgs = pick(allArgs, argsKeys)
+					const parsed = await argsSchema.safeParseAsync(rawArgs)
 					if (!parsed.success) {
 						throw new ConvexError({
 							// SAFETY: serialized Zod issues are the helper's existing Convex Value[] error payload.

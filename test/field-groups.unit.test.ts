@@ -1,5 +1,5 @@
 import { expect, test } from 'vite-plus/test'
-import { defineRelations } from '../src/relations'
+import { defineRelations, verifyRelations } from '../src/relations'
 import { createQueryEngine } from '../src/querying'
 import { zodTable, zodVariantTable, zodToConvex } from '../src/zod-table'
 import { z } from 'zod'
@@ -18,6 +18,13 @@ import { cursor, managed, observed } from './fixture-querying/scalar'
 import { convexTest } from 'convex-test'
 import { ConvexError } from 'convex/values'
 
+// Per-table and edge checks run on first use; verification runs all of them now.
+const verified: typeof defineRelations = (tables, declare) => {
+	const registry = defineRelations(tables, declare)
+	verifyRelations(registry)
+	return registry
+}
+
 test('group registration rejects unknown, duplicate, public and overlapping fields', () => {
 	const f = groupDeclarations()
 	const invalid: Record<string, string[]>[] = [
@@ -27,7 +34,7 @@ test('group registration rejects unknown, duplicate, public and overlapping fiel
 		{ finance: ['balance'], other: ['balance'] },
 	]
 	for (const fieldGroups of invalid)
-		expect(() => defineRelations({ clients: { ...f.clients, fieldGroups } }, () => ({}))).toThrow(
+		expect(() => verified({ clients: { ...f.clients, fieldGroups } }, () => ({}))).toThrow(
 			/field groups/,
 		)
 })
@@ -42,7 +49,7 @@ test('variant groups reject conflicting stored containers instead of guessing a 
 		{ discriminator: 'kind', variants: { one: { publicFields: [] }, two: { publicFields: [] } } },
 	)
 	expect(() =>
-		defineRelations({ records: { ...records, fieldGroups: { private: ['value'] } } }, () => ({})),
+		verified({ records: { ...records, fieldGroups: { private: ['value'] } } }, () => ({})),
 	).toThrow(/incompatible field groups/)
 })
 
@@ -143,7 +150,7 @@ test('registration rejects inherited group data and accessors without invoking g
 		}),
 	]) {
 		const inherited = Object.assign(Object.create(prototype), f.clients)
-		expect(() => defineRelations({ clients: inherited }, () => ({}))).toThrow(/field groups/)
+		expect(() => verified({ clients: inherited }, () => ({}))).toThrow(/field groups/)
 	}
 	expect(calls).toBe(0)
 })

@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vite-plus/test'
 import { relationshipFixture, seedRelationships } from './fixture-querying/relationships'
 import { createQueryEngine } from '../src/querying'
+import { verifyRelations } from '../src/relations'
 import { cursor, managed, scope } from './fixture-querying/scalar'
 import { ManagedReadError, MAX_DOCUMENT_BYTES } from '../src/querying/security'
 import { ConvexError, getDocumentSize, type Value } from 'convex/values'
@@ -985,6 +986,8 @@ test.each([0, 60])(
 			collect(f.tasks.schema)
 			collect(f.labels.schema)
 			collect(f.edges.schema)
+			// Tables are captured once, on first use; queries never reread the sources.
+			verifyRelations(f.relations)
 			const descriptor = Object.getOwnPropertyDescriptor
 			let originalReads = 0
 			const descriptors = vi

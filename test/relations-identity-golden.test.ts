@@ -41,7 +41,8 @@ test('registry identity and metadata snapshots are byte-identical to the eager r
 	const actual = Object.fromEntries(
 		Object.entries(registries).map(([name, create]) => [name, capture(create())]),
 	)
-	if (process.env.UPDATE_RELATION_GOLDEN) fs.writeFileSync(golden, `${JSON.stringify(actual, null, '\t')}\n`)
+	if (process.env.UPDATE_RELATION_GOLDEN)
+		fs.writeFileSync(golden, `${JSON.stringify(actual, null, '\t')}\n`)
 	const expected = JSON.parse(fs.readFileSync(golden, 'utf8'))
 	expect(Object.keys(actual)).toEqual(Object.keys(expected))
 	for (const name of Object.keys(expected)) {

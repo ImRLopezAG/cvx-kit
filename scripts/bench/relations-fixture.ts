@@ -57,8 +57,16 @@ export function defineTables() {
 			(id) => ({
 				title: z.string(),
 				status: z.enum(['todo', 'done']),
-				rel: z.union([id('entity0'), id('entity1'), id('entity2'), id('entity3'),
-					id('entity4'), id('entity5'), id('entity6'), id('entity7')]),
+				rel: z.union([
+					id('entity0'),
+					id('entity1'),
+					id('entity2'),
+					id('entity3'),
+					id('entity4'),
+					id('entity5'),
+					id('entity6'),
+					id('entity7'),
+				]),
 				ownerId: id('entity0'),
 				priority: z.number(),
 				body: z.string(),
@@ -91,8 +99,15 @@ export function defineTables() {
 	return { tables: { ...tables, tasks, payments, notes }, targets }
 }
 
+type RuntimeBuilder = Record<string, any>
+// SAFETY: runtime registration is identical for generated names; only the static types are erased.
+const runtimeRelations = defineRelations as unknown as (
+	tables: ReturnType<typeof defineTables>['tables'],
+	declare: (r: RuntimeBuilder, branch: (table: string, tag: string) => RuntimeBuilder) => object,
+) => ReturnType<typeof defineRelations<ReturnType<typeof defineTables>['tables'], {}>>
+
 export function register({ tables, targets }: ReturnType<typeof defineTables>) {
-	return defineRelations(tables, (r: any, branch: any) => {
+	return runtimeRelations(tables, (r, branch) => {
 		const declarations: Record<string, Record<string, unknown>> = {
 			tasks: {
 				owner: r.one.entity0({ from: r.tasks.ownerId, to: r.entity0._id }),

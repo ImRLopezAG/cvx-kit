@@ -28,6 +28,7 @@ import {
 	type ScalarSelection,
 	type ScalarPredicate,
 } from './querying/filters'
+import { lazyRelationFilterSchema } from './querying/shared/filters'
 
 export type PaginationFiltersInput<Schema extends z.ZodType> =
 	z.input<Schema> extends { filters?: infer Filters } ? Exclude<Filters, undefined> : never
@@ -1374,24 +1375,35 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 									),
 								}
 							: undefined,
-					relations:
-						depth >= 4
-							? {}
-							: Object.fromEntries(
-									Object.entries(internal.declarations[name] ?? {}).map(([edge, declaration]) => [
-										edge,
-										{
-											cardinality: declaration.cardinality,
-											target: grammar(declaration.target, depth + 1),
-										},
-									]),
-								),
+					relations: depth >= 4 ? {} : relationGrammars(name, depth),
 				}
 				grammars.set(grammarKey, result)
 				return result
 			}
+			// A filter that names a relation is a use of that edge and its target.
+			function relationGrammars(name: string, depth: number): FilterGrammar['relations'] {
+				const relations: FilterGrammar['relations'] = {}
+				for (const edge of Object.keys(internal.declarations[name] ?? {})) {
+					let relation: FilterGrammar['relations'][string] | undefined
+					Object.defineProperty(relations, edge, {
+						enumerable: true,
+						get: () => {
+							if (!relation) {
+								const declaration = internal.declarations[name][edge]
+								owned!.use(declaration.target)
+								relation = Object.freeze({
+									cardinality: declaration.cardinality,
+									target: grammar(declaration.target, depth + 1),
+								})
+							}
+							return relation
+						},
+					})
+				}
+				return Object.freeze(relations)
+			}
 			return materializeDto(paginationRecipe).extend({
-				filters: relationFilterSchema(grammar(table, 0), filterNodes).optional(),
+				filters: lazyRelationFilterSchema(grammar(table, 0), filterNodes).optional(),
 				order: z.enum(['asc', 'desc']).optional(),
 			})
 		},

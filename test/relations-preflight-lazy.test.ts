@@ -253,7 +253,12 @@ describe('deferred checks still throw no later than first use', () => {
 		}))
 		expect(registry.tables.owners.paginationOpts({ code: true })).toBeDefined()
 		expect(() => registry.tables.owners.pageDto({ children: true })).toThrow(/active index begins/)
-		expect(() => getRelationExecutor(registry).pagination('owners')).toThrow(/active index begins/)
+		// The engine walks an edge when a filter names it.
+		const engine = getRelationExecutor(registry).pagination('owners')
+		expect(engine.parse({ numItems: 1, cursor: null, filters: { code: 'x' } })).toBeDefined()
+		expect(() =>
+			engine.parse({ numItems: 1, cursor: null, filters: { children: { some: {} } } }),
+		).toThrow(/active index begins/)
 		expect(() => getRelationMetadata(registry).declarations.owners.children).toThrow(
 			/active index begins/,
 		)

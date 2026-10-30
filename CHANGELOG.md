@@ -20,6 +20,7 @@ are this file's matching section.
 - Check each relation edge's field types and supporting indexes on its first read; an edge's targets need only their stored side for that check.
 - Compute the registry identity, metadata snapshots and stream schema on demand. Their values are unchanged.
 - Bind engine cursors to the registry identity of what their query reads: its table, the relation path to it, and the relations its selection, field groups and relation filters walk, with the tables those relations touch. A page request now materializes only those tables, and a registry change outside that scope no longer invalidates the cursor. Cursors issued by 0.1.24 and earlier still resume: an engine computes the full identity once, on the first such cursor, and continuations are resealed under the scoped binding.
+- Build the engine's filter validator per input: relation predicates, and the relation tables they reach, are built only for the relations a filter names. Validation results are unchanged; a page request no longer pays for every relation four levels deep. An invalid edge that the engine filters on now throws when a filter first names it.
 - Invalid tables and edges now throw on first use instead of at registration, and later changes to a table's source definitions are ignored only after its first use.
 
 ### Added

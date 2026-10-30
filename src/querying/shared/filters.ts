@@ -78,6 +78,94 @@ export function relationFilterSchema(
 	return boundedObject(filterNodeSchema(grammar, 0, cache)._zod.def, grammar)
 }
 
+/**
+ * The engine's private filter boundary. It accepts exactly what
+ * relationFilterSchema(grammar) accepts, but builds relation predicates only for
+ * the relations an input names: absent optional relations validate nothing. So
+ * a query never reads relation grammars, or their tables, that it does not use.
+ */
+export function lazyRelationFilterSchema(
+	grammar: FilterGrammar,
+	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
+): z.ZodType {
+	const restricted = new Map<string, FilterGrammar>()
+	const ids = new WeakMap<FilterGrammar, number>()
+	let nextId = 0
+	const idOf = (source: FilterGrammar) => {
+		let id = ids.get(source)
+		if (id === undefined) ids.set(source, (id = nextId++))
+		return id
+	}
+	// filterNodeSchema builds no relations at MAX_FILTER_DEPTH, so neither does a
+	// restriction; this also bounds the walk over a cyclic grammar.
+	function restrict(
+		source: FilterGrammar,
+		used: Map<FilterGrammar, Set<string>>,
+		depth = 0,
+	): FilterGrammar {
+		const key = JSON.stringify(usageKey(source, used, depth))
+		let result = restricted.get(key)
+		if (!result) {
+			result = {
+				fields: source.fields,
+				relations: Object.fromEntries(
+					namesAt(source, used, depth).map((name) => {
+						const relation = source.relations[name]
+						return [
+							name,
+							{
+								cardinality: relation.cardinality,
+								target: restrict(relation.target, used, depth + 1),
+							},
+						]
+					}),
+				),
+			}
+			if (source.variants)
+				result.variants = {
+					discriminator: source.variants.discriminator,
+					options: Object.fromEntries(
+						Object.entries(source.variants.options).map(([tag, option]) => [
+							tag,
+							restrict(option, used, depth + 1),
+						]),
+					),
+				}
+			if (restricted.size >= 256) restricted.clear()
+			restricted.set(key, result)
+		}
+		return result
+	}
+	function namesAt(source: FilterGrammar, used: Map<FilterGrammar, Set<string>>, depth: number) {
+		return depth >= MAX_FILTER_DEPTH ? [] : [...(used.get(source) ?? [])].sort()
+	}
+	// Names a source grammar, its depth and the relations used beneath it.
+	function usageKey(
+		source: FilterGrammar,
+		used: Map<FilterGrammar, Set<string>>,
+		depth: number,
+	): unknown[] {
+		return [
+			idOf(source),
+			depth,
+			namesAt(source, used, depth).map((name) => [
+				name,
+				usageKey(source.relations[name].target, used, depth + 1),
+			]),
+			depth >= MAX_FILTER_DEPTH
+				? []
+				: Object.entries(source.variants?.options ?? {}).map(([tag, option]) => [
+						tag,
+						usageKey(option, used, depth + 1),
+					]),
+		]
+	}
+	const scalar = restrict(grammar, new Map())
+	return boundedObject(filterNodeSchema(scalar, 0, cache)._zod.def, grammar, undefined, (used) =>
+		filterNodeSchema(restrict(grammar, used), 0, cache),
+	)
+}
+
 export function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined {
 	if (!(schema instanceof z.ZodObject)) return undefined
 	const filters = schema.shape.filters
@@ -239,7 +327,11 @@ function filterNodeSchema(
 	return result
 }
 
-function withinFilterBudget(value: FilterTree, grammar: FilterGrammar): boolean {
+function withinFilterBudget(
+	value: FilterTree,
+	grammar: FilterGrammar,
+	used?: Map<FilterGrammar, Set<string>>,
+): boolean {
 	type Context =
 		| 'expression'
 		| 'fields'
@@ -325,11 +417,15 @@ function withinFilterBudget(value: FilterTree, grammar: FilterGrammar): boolean 
 				} else if (name === 'not') {
 					context = 'expression'
 					depth++
-				} else if (entry.grammar.relations[name]) {
+				} else if (Object.hasOwn(entry.grammar.relations, name)) {
 					const relation = entry.grammar.relations[name]
 					context = relation.cardinality === 'one' ? 'expression' : 'many'
 					target = relation.target
 					depth++
+					if (used) {
+						const names = used.get(entry.grammar) ?? new Set<string>()
+						used.set(entry.grammar, names.add(name))
+					}
 				}
 			} else if (entry.context === 'variant' && name === 'filters') {
 				const tag = Object.getOwnPropertyDescriptor(object, 'tag')
@@ -370,6 +466,7 @@ function boundedObject(
 	definition: z.ZodObject['_zod']['def'],
 	grammar: FilterGrammar,
 	metadata?: FilterBoundaryMetadata,
+	resolve?: (used: Map<FilterGrammar, Set<string>>) => z.ZodObject,
 ): z.ZodObject {
 	const expected = Object.entries(definition.shape)
 	const expectedCatchall = definition.catchall
@@ -394,8 +491,9 @@ function boundedObject(
 				})
 			const parse = inst._zod.parse
 			inst._zod.parse = (payload, ctx) => {
+				const used = resolve && new Map<FilterGrammar, Set<string>>()
 				// SAFETY: layout preflight precedes Zod's value traversal.
-				if (!withinFilterBudget(payload.value as FilterTree, grammar)) {
+				if (!withinFilterBudget(payload.value as FilterTree, grammar, used)) {
 					payload.issues.push({
 						code: 'custom',
 						input: payload.value,
@@ -403,7 +501,8 @@ function boundedObject(
 					})
 					return payload
 				}
-				return parse(payload, ctx)
+				// Validate against the relations this input names; the rest are absent.
+				return used ? resolve(used)._zod.run(payload, ctx) : parse(payload, ctx)
 			}
 		},
 	)

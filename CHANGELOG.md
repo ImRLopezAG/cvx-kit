@@ -12,6 +12,20 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.25] - 2026-10-30
+
+### Changed
+
+- Defer each relation table's registration work to its first use: schema helpers, an engine read, or a selected relation that reaches it, including a through relation's junction. `defineRelations` now checks only table names, native table ownership and relation declaration structure, so a registry module costs little to import when a function uses few of its tables. Variant tables still run native table preflight at registration.
+- Check each relation edge's field types and supporting indexes on its first read; an edge's targets need only their stored side for that check.
+- Compute the registry identity, metadata snapshots and stream schema on demand. Their values are unchanged, so existing cursors stay valid. Engine page requests still bind cursors to the full identity and so still materialize every table.
+- Invalid tables and edges now throw on first use instead of at registration, and later changes to a table's source definitions are ignored only after its first use.
+
+### Added
+
+- `verifyRelations(relations)` runs every deferred registration check now, so a test can fail CI on an invalid registry.
+- A registration benchmark: `node scripts/bench-relations.mjs`.
+
 ## [0.1.24] - 2026-10-28
 
 ### Changed

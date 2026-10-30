@@ -129,4 +129,41 @@ describe('lazy engine filter boundary', () => {
 		relationFilterSchema(eager.people)
 		expect(new Set(eager.reads)).toEqual(new Set(['team', 'members', 'payments', 'owner']))
 	})
+
+	test('shared-target fan-out costs work linear in the input, cold and warm', () => {
+		// 32 one-to-one self relations; at each of four levels the input names all
+		// of them and extends only r0. Keying restrictions by path was exponential.
+		function fanOut() {
+			let reads = 0
+			const people: FilterGrammar = {
+				fields: { name: scalarPredicateFromSchema(z.string(), false, false).optional() },
+				relations: {},
+			}
+			for (let i = 0; i < 32; i++)
+				Object.defineProperty(people.relations, `r${i}`, {
+					enumerable: true,
+					get: () => {
+						reads++
+						return { cardinality: 'one', target: people }
+					},
+				})
+			return { people, reads: () => reads }
+		}
+		interface FanOutFilter {
+			[relation: string]: FanOutFilter | string
+		}
+		const level = (child: FanOutFilter): FanOutFilter =>
+			Object.fromEntries(Array.from({ length: 32 }, (_, i) => [`r${i}`, i ? {} : child]))
+		const input = level(level(level(level({ name: 'deep' }))))
+		const lazy = fanOut()
+		const schema = lazyRelationFilterSchema(lazy.people)
+		const result = schema.safeParse(input)
+		const cold = lazy.reads()
+		expect(cold).toBeLessThan(2000)
+		schema.safeParse(input)
+		expect(lazy.reads() - cold).toBeLessThan(1000)
+		const eager = relationFilterSchema(fanOut().people).safeParse(input)
+		expect(result.success).toBe(eager.success)
+		if (eager.success) expect(result.data).toEqual(eager.data)
+	})
 })

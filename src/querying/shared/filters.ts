@@ -96,73 +96,59 @@ export function lazyRelationFilterSchema(
 		if (id === undefined) ids.set(source, (id = nextId++))
 		return id
 	}
-	// filterNodeSchema builds no relations at MAX_FILTER_DEPTH, so neither does a
-	// restriction; this also bounds the walk over a cyclic grammar.
-	function restrict(
-		source: FilterGrammar,
-		used: Map<FilterGrammar, Set<string>>,
-		depth = 0,
-	): FilterGrammar {
-		const key = JSON.stringify(usageKey(source, used, depth))
+	// A restriction is a function of the root grammar and the relation names used
+	// per grammar, so that flat set is its key: no larger than the input.
+	function restrict(used: Map<FilterGrammar, Set<string>>): FilterGrammar {
+		const key = JSON.stringify(
+			[...used]
+				.map(([source, names]) => [idOf(source), [...names].sort()] as const)
+				.sort(([a], [b]) => a - b),
+		)
 		let result = restricted.get(key)
 		if (!result) {
-			result = {
-				fields: source.fields,
-				relations: Object.fromEntries(
-					namesAt(source, used, depth).map((name) => {
-						const relation = source.relations[name]
-						return [
-							name,
-							{
-								cardinality: relation.cardinality,
-								target: restrict(relation.target, used, depth + 1),
-							},
-						]
-					}),
-				),
-			}
-			if (source.variants)
-				result.variants = {
-					discriminator: source.variants.discriminator,
-					options: Object.fromEntries(
-						Object.entries(source.variants.options).map(([tag, option]) => [
-							tag,
-							restrict(option, used, depth + 1),
-						]),
-					),
-				}
+			result = build(used, grammar, 0, new Map())
 			if (restricted.size >= 256) restricted.clear()
 			restricted.set(key, result)
 		}
 		return result
 	}
-	function namesAt(source: FilterGrammar, used: Map<FilterGrammar, Set<string>>, depth: number) {
-		return depth >= MAX_FILTER_DEPTH ? [] : [...(used.get(source) ?? [])].sort()
-	}
-	// Names a source grammar, its depth and the relations used beneath it.
-	function usageKey(
-		source: FilterGrammar,
+	// One restricted grammar per source grammar and depth. filterNodeSchema builds
+	// no relations at MAX_FILTER_DEPTH, so neither does a restriction; this also
+	// bounds the walk over a cyclic grammar.
+	function build(
 		used: Map<FilterGrammar, Set<string>>,
+		source: FilterGrammar,
 		depth: number,
-	): unknown[] {
-		return [
-			idOf(source),
-			depth,
-			namesAt(source, used, depth).map((name) => [
-				name,
-				usageKey(source.relations[name].target, used, depth + 1),
-			]),
-			depth >= MAX_FILTER_DEPTH
-				? []
-				: Object.entries(source.variants?.options ?? {}).map(([tag, option]) => [
+		states: Map<string, FilterGrammar>,
+	): FilterGrammar {
+		const state = `${idOf(source)}:${depth}`
+		const existing = states.get(state)
+		if (existing) return existing
+		const result: FilterGrammar = { fields: source.fields, relations: {} }
+		states.set(state, result)
+		if (depth < MAX_FILTER_DEPTH)
+			for (const name of [...(used.get(source) ?? [])].sort()) {
+				const relation = source.relations[name]
+				result.relations[name] = {
+					cardinality: relation.cardinality,
+					target: build(used, relation.target, depth + 1, states),
+				}
+			}
+		if (source.variants)
+			result.variants = {
+				discriminator: source.variants.discriminator,
+				options: Object.fromEntries(
+					Object.entries(source.variants.options).map(([tag, option]) => [
 						tag,
-						usageKey(option, used, depth + 1),
+						build(used, option, depth + 1, states),
 					]),
-		]
+				),
+			}
+		return result
 	}
-	const scalar = restrict(grammar, new Map())
+	const scalar = restrict(new Map())
 	return boundedObject(filterNodeSchema(scalar, 0, cache)._zod.def, grammar, undefined, (used) =>
-		filterNodeSchema(restrict(grammar, used), 0, cache),
+		filterNodeSchema(restrict(used), 0, cache),
 	)
 }
 

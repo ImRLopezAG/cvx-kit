@@ -51,7 +51,11 @@ function observed(tables: Record<string, { dto: (includeId: true) => unknown; sc
 	}
 	const touched = (counts: Record<string, number>) =>
 		Object.keys(counts).filter((name) => counts[name] > 0)
-	return { dto: () => touched(dto), stored: () => touched(stored) }
+	return {
+		dto: () => touched(dto),
+		stored: () => touched(stored),
+		counts: () => ({ dto: { ...dto }, stored: { ...stored } }),
+	}
 }
 
 function chain() {
@@ -105,10 +109,16 @@ describe('lazy per-table registration', () => {
 		registry.tables.t3.pageDto({ parent: true })
 		registry.tables.t2.pageDto({})
 		registry.tables.t3.paginationOpts({ parent: { code: true } })
+		const before = seen.counts()
+		expect(before.dto).toMatchObject({ t2: 1, t3: 1 })
 		const executor = getRelationExecutor(registry)
 		executor.project('t2', { _id: 't2:1', parentId: 't1:1', code: 'x' }, () => true)
+		executor.select('t3', { parent: true })
+		registry.tables.t2.paginationOpts({ code: true })
+		getRelationMetadata(registry).tables.t3
+		// Later uses read no caller-owned source again.
+		expect(seen.counts()).toEqual(before)
 		expect(seen.dto()).toEqual(['t2', 't3'])
-		expect(seen.stored()).toEqual(['t2', 't3'])
 	})
 
 	test('metadata snapshots, stream schema and executor reads are per table', () => {
@@ -160,35 +170,77 @@ describe('deferred checks still throw no later than first use', () => {
 		return { good, bad }
 	}
 
-	test('a per-table error surfaces on every first-use path, and is cached', () => {
-		const registry = unchecked(invalid(), () => ({}))
-		expect(registry.tables.good.pageDto({})).toBeDefined()
-		const uses: (() => unknown)[] = [
-			() => registry.tables.bad.pageDto({}),
-			() => registry.tables.bad.paginationOpts({}),
-			() => registry.tables.bad.filters({ native: {}, schema: z.object({}) }),
-			() => getRelationExecutor(registry).pagination('bad'),
-			() => getRelationExecutor(registry).select('bad', {}),
-			() => getRelationExecutor(registry).groups('bad', {}),
-			() => getRelationExecutor(registry).validateDocument('bad', {}),
-			() => getRelationExecutor(registry).project('bad', {}, () => true),
-			() => getRelationMetadata(registry).tables.bad,
-			() => getRelationExecutor(registry).streamSchema.tables.bad,
-			() => registry.identity,
-			() => verifyRelations(registry),
+	test('a per-table error surfaces independently on every first-use path', () => {
+		const uses: ((registry: RuntimeRegistry) => unknown)[] = [
+			(registry) => registry.tables.bad.pageDto({}),
+			(registry) => registry.tables.bad.paginationOpts({}),
+			(registry) => registry.tables.bad.filters({ native: {}, schema: z.object({}) }),
+			(registry) => getRelationExecutor(registry).pagination('bad'),
+			(registry) => getRelationExecutor(registry).select('bad', {}),
+			(registry) => getRelationExecutor(registry).groups('bad', {}),
+			(registry) => getRelationExecutor(registry).validateDocument('bad', {}),
+			(registry) => getRelationExecutor(registry).project('bad', {}, () => true),
+			(registry) => getRelationMetadata(registry).tables.bad,
+			(registry) => getRelationExecutor(registry).streamSchema.tables.bad,
+			(registry) => registry.identity,
+			(registry) => verifyRelations(registry),
 		]
-		let first: unknown
 		for (const use of uses) {
-			let thrown: unknown
+			const registry = unchecked(invalid(), () => ({}))
+			expect(registry.tables.good.pageDto({})).toBeDefined()
+			expect(() => use(registry)).toThrow(/opaque.*refine/i)
+		}
+	})
+
+	test('a failed table rethrows its cached error without capturing again', () => {
+		const tables = invalid()
+		const seen = observed(tables)
+		const registry = unchecked(tables, () => ({}))
+		const failures = [
+			() => registry.tables.bad.pageDto({}),
+			() => getRelationExecutor(registry).project('bad', {}, () => true),
+			() => verifyRelations(registry),
+		].map((use) => {
 			try {
 				use()
 			} catch (error) {
-				thrown = error
+				return error
 			}
-			expect(String(thrown)).toMatch(/opaque.*refine/i)
-			first ??= thrown
-			expect(thrown).toBe(first)
+			return undefined
+		})
+		expect(String(failures[0])).toMatch(/opaque.*refine/i)
+		expect(failures[1]).toBe(failures[0])
+		expect(failures[2]).toBe(failures[0])
+		expect(seen.counts().dto.bad).toBe(1)
+	})
+
+	test('through relations validate their junction only when selected, and fully', () => {
+		function junction(valid: boolean) {
+			const a = zodTable('a', () => ({ code: z.string() }), { publicFields: ['code'] })
+			const b = zodTable('b', () => ({ code: z.string() }), { publicFields: ['code'] })
+			const links = zodTable('links', () => ({ a: z.string(), b: z.string() }), {
+				publicFields: ['a'],
+			})
+			if (!valid) Reflect.set(links, 'dto', () => z.object({ a: z.string().superRefine(() => {}) }))
+			links.table.index('by_a', ['a'])
+			b.table.index('by_code', ['code'])
+			const seen = observed({ a, b, links })
+			const registry = unchecked({ a, b, links }, (r) => ({
+				a: {
+					bs: r.many.b({ from: r.a.code.through(r.links.a), to: r.b.code.through(r.links.b) }),
+				},
+			}))
+			return { registry, seen }
 		}
+		const unselected = junction(true)
+		unselected.registry.tables.a.paginationOpts({ code: true })
+		expect(unselected.seen.stored()).toEqual(['a'])
+		const selected = junction(true)
+		selected.registry.tables.a.pageDto({ bs: true })
+		expect(selected.seen.dto()).toEqual(['a', 'b', 'links'])
+		const invalid = junction(false)
+		expect(invalid.registry.tables.a.paginationOpts({ code: true })).toBeDefined()
+		expect(() => invalid.registry.tables.a.pageDto({ bs: true })).toThrow(/opaque.*refine/i)
 	})
 
 	test('an invalid edge throws when read, when the engine walks it, and on verification', () => {
@@ -222,7 +274,7 @@ describe('deferred checks still throw no later than first use', () => {
 		expect(registry.tables.good.pageDto({})).toBeDefined()
 	})
 
-	test('forTable and through checks on a field throw on first use of the owning table', () => {
+	test('forTable checks throw on first use of the owning table; through checks on verification', () => {
 		const a = zodTable('a', () => ({ code: z.string() }), { publicFields: ['code'] })
 		const b = zodTable('b', () => ({ code: z.string() }), { publicFields: ['code'] })
 		const links = zodTable('links', (id) => ({ a: id('a'), b: z.number() }), {
@@ -239,8 +291,9 @@ describe('deferred checks still throw no later than first use', () => {
 			r.a.code.through(r.links.a)
 			return {}
 		})
-		expect(through.tables.b.pageDto({})).toBeDefined()
-		expect(() => through.tables.a.pageDto({})).toThrow('Invalid junction field or registry')
+		// Unused by any edge, it would otherwise never be read; identity and verification run it.
+		expect(through.tables.a.pageDto({})).toBeDefined()
+		expect(() => through.identity).toThrow('Invalid junction field or registry')
 		expect(() => verifyRelations(through)).toThrow('Invalid junction field or registry')
 	})
 

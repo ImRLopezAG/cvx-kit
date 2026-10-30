@@ -897,6 +897,7 @@ export function defineRelations<
 		Object.defineProperty(metadata, name, { enumerable: true, get: () => ready(name) })
 
 	const ownRefs = new Set<AnyField>()
+	const throughPending: (() => void)[] = []
 	const tableRefs: Record<string, Readonly<Record<string, AnyField>>> = Object.create(null)
 	const branchRefs = new Map<string, Record<string, AnyField>>()
 	const branchTables = new Set<string>()
@@ -944,7 +945,8 @@ export function defineRelations<
 					})
 					throughRefs.add(result)
 					throughChecks.set(result, check)
-					defer(name, check)
+					// Needs the junction's stored tier: runs when an edge uses it, or on verification.
+					throughPending.push(check)
 					return result
 				},
 			}
@@ -1048,6 +1050,8 @@ export function defineRelations<
 				)
 					throw new Error(`Relation name collision "${name}"`)
 				validatePath(edge, storedTier)
+				// A selected through relation reads the junction's rows: it is a first use.
+				if ('base' in edge.from) ready(edge.from.junction.table)
 			})
 			Object.defineProperty(view, name, {
 				enumerable: true,
@@ -1121,6 +1125,7 @@ export function defineRelations<
 	// Computed on first read; it requires and validates every table and edge.
 	function registryIdentity(): string {
 		for (const name of names) use(name)
+		for (const check of throughPending) check()
 		return JSON.stringify([
 			2,
 			Object.entries(metadata)

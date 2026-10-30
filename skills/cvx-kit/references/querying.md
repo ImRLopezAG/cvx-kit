@@ -11,9 +11,10 @@ parents before they fill a page. Native `paginated(dto)` remains independent.
 ## Registry capture and private DTOs
 
 `defineRelations` checks table names, native table ownership and relation
-declaration structure. Each table's preflight, capture and normalization run
-once, on its first use: schema helpers, an engine read, or a selected relation
-that reaches it. Each edge's field types and indexes are checked on its first
+declaration structure; variant tables also run native table preflight then, to
+expose common-field references. Each table's preflight, capture and
+normalization run once, on its first use: schema helpers, an engine read, or a
+selected relation that reaches it, including a through relation's junction. Each edge's field types and indexes are checked on its first
 read; a relation target needs only its stored side for that check. Registry
 identity and metadata snapshots are computed on demand, with the same values as
 an eager registry. `verifyRelations(relations)` runs every deferred check now;

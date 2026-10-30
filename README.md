@@ -157,7 +157,8 @@ preserves duplicate edge occurrences, even when target reads are memoized.
 Missing and unreadable targets have the same public result.
 
 `defineRelations` checks table names, native table ownership and the structure
-of relation declarations. It captures each table's stored field semantics,
+of relation declarations. Variant tables also run their native table preflight
+then, to expose common-field references. It captures each table's stored field semantics,
 public DTO validation, variants and active indexes on that table's first use:
 its schema helpers, an engine read, or a selected relation that reaches it. Each
 edge's field types and indexes are checked when the edge is first read. Invalid

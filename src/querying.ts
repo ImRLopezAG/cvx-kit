@@ -15,7 +15,12 @@ import type {
 	GroupSelection,
 	ExactGroupSelection,
 } from './relations'
-import { createPlanner, type QueryInput, type StoredConstraint } from './querying/planner'
+import {
+	createPlanner,
+	digest,
+	type QueryInput,
+	type StoredConstraint,
+} from './querying/planner'
 import { executeQuery, type ExecutionRequest } from './querying/execution'
 import {
 	relationshipExecutor,
@@ -356,9 +361,10 @@ export function createQueryEngine<
 		throw new Error('Invalid central page size')
 	const engineVersion = settings.engineVersion ?? 'scalar-1'
 	const policyVersion = settings.policyVersion ?? '1'
-	// Bind the full immutable identity through a collision-resistant digest so
-	// real application registries fit the codec's bounded AAD.
-	let registryDigest: string | undefined
+	// Cursors from 0.1.24 and earlier bound the full registry identity, not the
+	// scope of their query. They still open: the first one in an engine pays for
+	// the full digest once, and every continuation reseals under its scope.
+	let legacyDigest: string | undefined
 	const security = createManagedSecurity<DataModelFromSchemaDefinition<Schema>>({
 		tables: Object.keys(relations.tables),
 		policyVersion,
@@ -574,12 +580,12 @@ export function createQueryEngine<
 						plan.args.maximumBytesRead ?? request.budgets.documentBytes,
 						request.budgets.documentBytes,
 					)
-					registryDigest ??= Array.from(
-						new Uint8Array(
-							await crypto.subtle.digest('SHA-256', new TextEncoder().encode(relations.identity)),
-						),
-						(byte) => byte.toString(16).padStart(2, '0'),
-					).join('')
+					// A relation route binds its cursors per child path, in the executor.
+					const registryVersion = await planner.registryVersion(
+						route
+							? { root: route.table, path: [], selection: {}, groups: emptyGroups, filters: [] }
+							: { root: table, path: [], selection, groups: resolved, filters: [plan.residual] },
+					)
 					const groupBinding: Record<string, Value> = {}
 					if (hasGroups(resolved)) groupBinding.fieldGroups = resolved
 					// SAFETY: selection has passed registry admission before cursor binding.
@@ -606,70 +612,96 @@ export function createQueryEngine<
 						tenant: request.scope.tenant,
 						policyVersion,
 						engineVersion,
-						registryVersion: registryDigest,
+						registryVersion,
 					}
 					// The executor accepts registry-selected native tables, rather than a static DM key.
 					const executorRequest: unknown = request
 					// SAFETY: only native DM types are erased at this private executor boundary.
 					const executionRequest = executorRequest as ExecutionRequest
-					const executor = relationshipExecutor(
-						schema,
-						executionRequest,
-						planner,
-						codec,
-						binding,
-						groupAccess,
-					)
-					executor.preflight(table, selection, plan.args, route?.path ?? [])
-					const result = searchPlan
-						? await executeSearch(
-								executionRequest,
-								table,
-								searchPlan,
-								codec,
-								binding,
-								maxPageSize,
-								async (row) => {
-									// SAFETY: native search returns system fields from the admitted registry table.
-									const document = row as RelationDocument
-									if (
-										!(await request.authorize(table, row)) ||
-										!(await executor.matches(table, document, plan.residual))
-									)
-										return null
-									return executor.output(table, document, selection, plan.args)
-								},
-							)
-						: route
-							? await executor.continuation(
-									route.table,
-									route.parent,
-									route.path,
-									selection,
-									plan.args,
-									conditions,
-									constraints,
-									ordering,
-								)
-							: await executeQuery(
-									schema,
-									request,
+					let legacy = false
+					const opener: typeof codec = Object.freeze({
+						...codec,
+						open(token: string, cursorBinding: CursorBinding) {
+							try {
+								return codec.open(token, cursorBinding)
+							} catch (error) {
+								if (legacyDigest === undefined) {
+									legacy = true
+									throw error
+								}
+								return codec.open(token, { ...cursorBinding, registryVersion: legacyDigest })
+							}
+						},
+					})
+					const execute = async () => {
+						const executor = relationshipExecutor(
+							schema,
+							executionRequest,
+							planner,
+							opener,
+							binding,
+							groupAccess,
+						)
+						executor.preflight(table, selection, plan.args, route?.path ?? [])
+						return searchPlan
+							? await executeSearch(
+									executionRequest,
 									table,
-									plan,
-									planner,
-									codec,
+									searchPlan,
+									opener,
 									binding,
-									async (row, permitted) => {
-										// SAFETY: metered native stream rows contain the validated system fields.
+									maxPageSize,
+									async (row) => {
+										// SAFETY: native search returns system fields from the admitted registry table.
+										const document = row as RelationDocument
 										if (
-											!permitted ||
-											!(await executor.matches(table, row as RelationDocument, plan.residual))
+											!(await request.authorize(table, row)) ||
+											!(await executor.matches(table, document, plan.residual))
 										)
 											return null
-										// SAFETY: the same native row is authorized and matches the declared predicates.
-										return executor.output(table, row as RelationDocument, selection, plan.args)
+										return executor.output(table, document, selection, plan.args)
 									},
 								)
+							: route
+								? await executor.continuation(
+										route.table,
+										route.parent,
+										route.path,
+										selection,
+										plan.args,
+										conditions,
+										constraints,
+										ordering,
+									)
+								: await executeQuery(
+										schema,
+										request,
+										table,
+										plan,
+										planner,
+										opener,
+										binding,
+										async (row, permitted) => {
+											// SAFETY: metered native stream rows contain the validated system fields.
+											if (
+												!permitted ||
+												!(await executor.matches(table, row as RelationDocument, plan.residual))
+											)
+												return null
+											// SAFETY: the same native row is authorized and matches the declared predicates.
+											return executor.output(table, row as RelationDocument, selection, plan.args)
+										},
+									)
+					}
+					let result: Awaited<ReturnType<typeof execute>>
+					try {
+						result = await execute()
+					} catch (error) {
+						if (!legacy) throw error
+						// Every cursor opens before the first read, so the retry repeats no reads.
+						legacyDigest ??= await digest(relations.identity)
+						result = await execute()
+					}
 					// SAFETY: the private executor validated and projected every row against
 					// this registry's DTO and selected edges before assembling the page.
 					return result as EnginePaginationResult<

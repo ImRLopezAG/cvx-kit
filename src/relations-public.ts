@@ -1,6 +1,7 @@
 /** Supported relationship declarations and schema helpers. Executor state stays internal. */
 export {
 	defineRelations,
+	verifyRelations,
 	type FieldReference,
 	type BranchBuilder,
 	type ThroughReference,

@@ -5,6 +5,7 @@ import { v } from 'convex/values'
 import { defineTestApp } from 'convex-test'
 import {
 	defineRelations,
+	verifyRelations,
 	getRelationExecutor,
 	getRelationMetadata,
 	type RelationTables,
@@ -147,7 +148,13 @@ describe('guaranteed equality compiler', () => {
 })
 
 // SAFETY: this adapter deliberately models JS callers bypassing the compile-time guards.
-const unchecked = defineRelations as (
+// Per-table and edge checks run on first use; verification runs all of them now.
+const verified: typeof defineRelations = (tables, declare) => {
+	const registry = defineRelations(tables, declare)
+	verifyRelations(registry)
+	return registry
+}
+const unchecked = verified as (
 	tables: RelationTables,
 	declare: (r: RelationBuilder<RelationTables>) => RelationDeclarations,
 ) => RelationRegistry<RelationTables, RelationDeclarations>
@@ -219,7 +226,7 @@ describe('invalid native relation paths', () => {
 			if (mode === 'staged') children.table.index('by_owner', { fields: ['owner'], staged: true })
 			if (mode === 'active') children.table.index('by_owner', ['owner'])
 			const construct = () =>
-				defineRelations({ owners, children }, (r) => ({
+				verified({ owners, children }, (r) => ({
 					owners: { children: r.many.children({ from: r.owners.code, to: r.children.owner }) },
 				}))
 			if (mode === 'active')
@@ -279,7 +286,7 @@ describe('invalid native relation paths', () => {
 		).toThrow(/junction field/)
 		const junction = zodTable('junction', (id) => ({ taskId: id('tasks'), labelCode: z.string() }))
 		expect(() =>
-			defineRelations({ ...tables, junction }, (r) => ({
+			verified({ ...tables, junction }, (r) => ({
 				tasks: {
 					bad: r.many.labels({
 						from: r.tasks._id.through(r.junction.taskId),
@@ -291,7 +298,7 @@ describe('invalid native relation paths', () => {
 		junction.table.index('by_task', ['taskId'])
 		const labels = zodTable('labels', () => ({ name: z.string(), code: z.string() }))
 		expect(() =>
-			defineRelations({ ...tables, labels, junction }, (r) => ({
+			verified({ ...tables, labels, junction }, (r) => ({
 				tasks: {
 					bad: r.many.labels({
 						from: r.tasks._id.through(r.junction.taskId),
@@ -480,7 +487,8 @@ describe('immutable registry identity', () => {
 	test('new registries adopt valid source refinement and index changes', () => {
 		const text = z.string().refine((value) => value === 'valid')
 		const items = zodTable('items', () => ({ text }), { publicFields: ['text'] })
-		const first = defineRelations({ items }, () => ({}))
+		// Each table is captured on first use; verification uses every table now.
+		const first = verified({ items }, () => ({}))
 		Reflect.set(text._zod.def.checks![0]._zod.def, 'fn', () => false)
 		items.table.index('late', ['text'])
 		const second = defineRelations({ items }, () => ({}))
@@ -492,7 +500,7 @@ describe('immutable registry identity', () => {
 			{ name: 'late', fields: ['text'] },
 		])
 	})
-	test('registration captures validation before declaration callbacks can mutate the source', () => {
+	test('first use captures validation before later source mutation', () => {
 		const expression = /^valid$/
 		const text = z
 			.string()
@@ -500,12 +508,11 @@ describe('immutable registry identity', () => {
 			.refine((value) => value === 'valid')
 		const profile = z.object({ text })
 		const items = zodTable('items', () => ({ profile }), { publicFields: ['profile'] })
-		const registry = defineRelations({ items }, () => {
-			Reflect.set(profile.shape, 'text', z.number())
-			Reflect.set(text._zod.def.checks![1]._zod.def, 'fn', () => false)
-			expression.compile('changed')
-			return {}
-		})
+		const registry = defineRelations({ items }, () => ({}))
+		registry.tables.items.paginationOpts({})
+		Reflect.set(profile.shape, 'text', z.number())
+		Reflect.set(text._zod.def.checks![1]._zod.def, 'fn', () => false)
+		expression.compile('changed')
 		const output = registry.tables.items.pageDto({})
 		const page = (text: string) => ({
 			page: [{ _id: 'items:1', profile: { text } }],
@@ -519,7 +526,7 @@ describe('immutable registry identity', () => {
 	test('relation DTO registration rejects opaque superRefine and check validators', () => {
 		for (const text of [z.string().superRefine(() => {}), z.string().check(() => {})]) {
 			const items = zodTable('items', () => ({ text }), { publicFields: ['text'] })
-			expect(() => defineRelations({ items }, () => ({}))).toThrow(/opaque.*refine/i)
+			expect(() => verified({ items }, () => ({}))).toThrow(/opaque.*refine/i)
 		}
 	})
 	test('registration owns array, union, record and specialized scalar definitions', () => {
@@ -538,7 +545,7 @@ describe('immutable registry identity', () => {
 				publicFields: ['list', 'choice', 'record', 'email', 'formatted', 'tuple', 'optional'],
 			},
 		)
-		const registry = defineRelations({ items }, () => ({}))
+		const registry = verified({ items }, () => ({}))
 		Reflect.set(list._zod.def, 'element', z.number())
 		Reflect.set(choice._zod.def.options, '0', z.number())
 		Reflect.set(record._zod.def, 'valueType', z.number())
@@ -591,7 +598,7 @@ describe('immutable registry identity', () => {
 				enumerable: true,
 				get: getter,
 			})
-			expect(() => defineRelations({ items: boundary }, () => ({}))).toThrow(/accessor/)
+			expect(() => verified({ items: boundary }, () => ({}))).toThrow(/accessor/)
 			expect(reads).toBe(0)
 		}
 	})
@@ -605,11 +612,11 @@ describe('immutable registry identity', () => {
 				return { type: 'string' }
 			},
 		})
-		expect(() => defineRelations({ items }, () => ({}))).toThrow(/accessor/)
+		expect(() => verified({ items }, () => ({}))).toThrow(/accessor/)
 		expect(calls).toBe(0)
 		const numeric = z.coerce.number().int()
 		const coerced = zodTable('coerced', () => ({ numeric }), { publicFields: ['numeric'] })
-		expect(() => defineRelations({ coerced }, () => ({}))).toThrow(/Unsupported DTO/)
+		expect(() => verified({ coerced }, () => ({}))).toThrow(/Unsupported DTO/)
 	})
 	test('refined object capture preserves checks and ignores drift before first cloned parse', async () => {
 		const profile = z.object({ code: z.string() }).refine((value) => value.code === 'valid')
@@ -636,11 +643,11 @@ describe('immutable registry identity', () => {
 		for (const field of [v.number(), v.optional(v.string()), v.id('other')]) {
 			const boundary = zodTable('items', () => ({ code: z.string() }))
 			Reflect.set(boundary, 'table', defineTable({ code: field }).index('by_code', ['code']))
-			expect(() => defineRelations({ items: boundary }, () => ({}))).toThrow(/document|boundary/)
+			expect(() => verified({ items: boundary }, () => ({}))).toThrow(/document|boundary/)
 		}
 		const boundary = zodTable('items', (id) => ({ owner: id('items') }))
 		Reflect.set(boundary, 'table', defineTable({ owner: v.id('other') }))
-		expect(() => defineRelations({ items: boundary }, () => ({}))).toThrow(/document|boundary/)
+		expect(() => verified({ items: boundary }, () => ({}))).toThrow(/document|boundary/)
 	})
 	test('nested DTO mutation leaves later helpers and already-created output schemas stable', () => {
 		for (const mutate of [
@@ -715,7 +722,7 @@ describe('immutable registry identity', () => {
 			z.any(),
 		]) {
 			const boundary = zodTable('items', () => ({ field }), { publicFields: ['field'] })
-			expect(() => defineRelations({ items: boundary }, () => ({}))).toThrow(/Unsupported/)
+			expect(() => verified({ items: boundary }, () => ({}))).toThrow(/Unsupported/)
 		}
 	})
 	test.each([
@@ -801,9 +808,7 @@ describe('immutable registry identity', () => {
 			}),
 			{ publicFields: ['title'] },
 		)
-		expect(() => defineRelations({ tasks }, () => ({}))).toThrow(
-			/Unsupported native validation form/,
-		)
+		expect(() => verified({ tasks }, () => ({}))).toThrow(/Unsupported native validation form/)
 		expect(calls).toBe(0)
 	})
 	test.each(['defaultValue', 'unexpected'] as const)(
@@ -832,7 +837,7 @@ describe('immutable registry identity', () => {
 				enumerable: true,
 				get: getter,
 			})
-			expect(() => defineRelations({ tasks }, () => ({}))).toThrow(/accessor/)
+			expect(() => verified({ tasks }, () => ({}))).toThrow(/accessor/)
 			expect(calls).toBe(0)
 		},
 	)
@@ -1218,9 +1223,7 @@ test('native getters and custom prototypes fail closed without executing caller 
 	for (const initial of [true, false])
 		for (const site of ['table', 'validator', 'field', 'index', 'prototype']) {
 			const items = nativeGuardFixture()
-			const executor = initial
-				? undefined
-				: getRelationExecutor(defineRelations({ items }, () => ({})))
+			const executor = initial ? undefined : getRelationExecutor(verified({ items }, () => ({})))
 			let calls = 0
 			const getter = {
 				configurable: true,
@@ -1247,7 +1250,7 @@ test('native getters and custom prototypes fail closed without executing caller 
 						throw new Error('caller prototype executed')
 					},
 				})
-			if (initial) expect(() => defineRelations({ items }, () => ({}))).toThrow(/native|Native/)
+			if (initial) expect(() => verified({ items }, () => ({}))).toThrow(/native|Native/)
 			else
 				expect(executor!.project('items', { _id: 'items:1', text: 'valid' }, () => true)).toEqual({
 					_id: 'items:1',
@@ -1257,12 +1260,10 @@ test('native getters and custom prototypes fail closed without executing caller 
 		}
 })
 
-test('native prototype getter replacement is rejected at registration and isolated after capture', () => {
+test('native prototype getter replacement is rejected on first use and isolated after capture', () => {
 	for (const initial of [true, false]) {
 		const items = nativeGuardFixture()
-		const executor = initial
-			? undefined
-			: getRelationExecutor(defineRelations({ items }, () => ({})))
+		const executor = initial ? undefined : getRelationExecutor(verified({ items }, () => ({})))
 		const prototype = Object.getPrototypeOf(items.table.validator.fields.text)
 		const before = Object.getOwnPropertyDescriptor(prototype, 'json')!
 		let calls = 0
@@ -1274,7 +1275,7 @@ test('native prototype getter replacement is rejected at registration and isolat
 					throw new Error('caller prototype executed')
 				},
 			})
-			if (initial) expect(() => defineRelations({ items }, () => ({}))).toThrow(/native|Native/)
+			if (initial) expect(() => verified({ items }, () => ({}))).toThrow(/native|Native/)
 			else
 				expect(executor!.project('items', { _id: 'items:1', text: 'valid' }, () => true)).toEqual({
 					_id: 'items:1',

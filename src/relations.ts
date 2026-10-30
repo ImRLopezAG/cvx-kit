@@ -28,6 +28,7 @@ import {
 	type ScalarSelection,
 	type ScalarPredicate,
 } from './querying/filters'
+import { lazyRelationFilterSchema } from './querying/shared/filters'
 
 export type PaginationFiltersInput<Schema extends z.ZodType> =
 	z.input<Schema> extends { filters?: infer Filters } ? Exclude<Filters, undefined> : never
@@ -742,7 +743,10 @@ interface TableMetadata {
 	fieldGroups: Readonly<Record<string, readonly string[]>>
 	groupRecipes: Readonly<Record<string, DtoRecipe>>
 	fields: Record<string, GenericValidator>
+	/** Sorted by name on first read; order-free checks use `capturedIndexes`. */
 	indexes: { name: string; fields: string[] }[]
+	capturedIndexes: readonly { name: string; fields: string[] }[]
+	searchIndexList: SearchIndexMetadata[]
 	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
 	branches?: {
 		discriminator: string
@@ -769,11 +773,18 @@ const executorRegistries = new WeakMap<
 		internal: RegistryMetadata
 		nativeTables: Readonly<Record<string, TableDefinition>>
 		streamSchema: ReturnType<typeof defineSchema>
+		use(table: string): void
+		scopedIdentity(
+			tables: readonly string[],
+			edges: readonly (readonly [source: string, name: string])[],
+		): string
 	}
 >()
-const refs = new WeakMap<AnyField, GenericValidator>()
+// Field validators resolve on first use of their table; resolvers memoize results and errors.
+const refs = new WeakMap<AnyField, () => GenericValidator>()
 const memberRefs = new WeakMap<AnyField, RelationMember>()
 const throughRefs = new WeakSet<AnyThrough>()
+const throughChecks = new WeakMap<AnyThrough, () => void>()
 const edgeRefs = new WeakSet<AnyEdge>()
 const searchIndexExport = z.object({
 	indexDescriptor: z.string(),
@@ -785,8 +796,22 @@ const indexExport = z.object({
 	stagedSearchIndexes: z.array(searchIndexExport),
 	indexes: z.array(z.object({ indexDescriptor: z.string(), fields: z.array(z.string()) })),
 })
+const reservedEdgeNames = [
+	'and',
+	'or',
+	'not',
+	'fields',
+	'then',
+	'__proto__',
+	'constructor',
+	'prototype',
+]
 
-/** No ID-field inference and no readers: this registry owns declarations/schema helpers only. */
+/** No ID-field inference and no readers: this registry owns declarations/schema helpers only.
+ * Registration checks table names, native table identity and edge structure. Every other
+ * per-table check (preflight, schema capture, indexes, field groups, edge field types and
+ * indexes) runs once, on the table's first use. `verifyRelations` runs all of them eagerly.
+ */
 export function defineRelations<
 	const Tables extends RelationTables,
 	const D extends RelationDeclarations,
@@ -797,251 +822,211 @@ export function defineRelations<
 		branch: BranchBuilder<Tables>,
 	) => D & ExactDeclarations<Tables, D>,
 ): RelationRegistry<Tables, D> {
-	const metadata: Record<string, TableMetadata> = {}
+	const sources: Record<
+		string,
+		{ table: RelationTable; native: TableDefinition; skeleton?: NativeSkeleton }
+	> = Object.create(null)
 	const nativeTables: Record<string, TableDefinition> = {}
-	const ownRefs = new Set<AnyField>()
-	const branchRefs = new Map<string, Record<string, AnyField>>()
-	const fields: Record<string, Record<string, AnyField>> = {}
-	const one: Record<string, (spec: { from: Leg; to: Leg }) => AnyEdge> = {}
-	const many: Record<string, (spec: { from: Leg; to: Leg }) => AnyEdge> = {}
 	for (const [name, table] of Object.entries(tables)) {
 		if (
 			table.tableName !== name ||
 			['one', 'many', '__proto__', 'constructor', 'prototype'].includes(name)
 		)
 			throw new Error(`Invalid relation table "${name}"`)
-		// Registration-only preflight rejects accessors before native export or DTO
-		// conversion. Stored parsers and their default/pipe callbacks are never run.
+		// The native table is captured by descriptor; its preflight runs before
+		// any export or conversion, on first use. Stored parsers never run.
 		const nativeDescriptor = Object.getOwnPropertyDescriptor(table, 'table')
 		if (!nativeDescriptor || !('value' in nativeDescriptor))
 			throw new Error('Unsupported native table accessor')
-		const nativeTable: TableDefinition = nativeDescriptor.value
-		preflightNative(nativeTable)
-		preflightSchema(table.schema, 'stored')
-		preflightSchema(table.publicDto, 'dto')
-		const sourceDto = table.dto(true)
-		if (!(sourceDto instanceof z.ZodObject) && !(sourceDto instanceof z.ZodDiscriminatedUnion))
-			throw new Error('Expected object or discriminated union DTO')
-		preflightSchema(sourceDto, 'dto')
-		const dtoRecipe = captureDto(sourceDto)
-		const admission = classifyDto(dtoRecipe)
-		let dto = admission?.boundary ? undefined : materializeDto(dtoRecipe)
-		if (dto && !(dto instanceof z.ZodObject) && !(dto instanceof z.ZodDiscriminatedUnion))
-			throw new Error('Expected object or discriminated union DTO')
-		const exported = nativeTableExport(nativeTable)
-		assertNativeValidation(exported.documentType)
-		const normalized = normalizeTable(
-			name,
-			table.schema,
-			dto,
-			exported.documentType,
-			admission?.boundary,
-		)
-		const captured = indexExport.parse(exported)
-		const searchIndexes = Object.freeze(
-			[
-				...captured.searchIndexes.map((index) => ({ ...index, staged: false })),
-				...captured.stagedSearchIndexes.map((index) => ({
-					...index,
-					staged: true,
-				})),
-			]
-				.map((index) =>
-					Object.freeze({
-						name: index.indexDescriptor,
-						searchField: index.searchField,
-						filterFields: Object.freeze([...index.filterFields].sort()),
-						staged: index.staged,
-					}),
-				)
-				.sort((a, b) => a.name.localeCompare(b.name)),
-		)
-		const indexes = captured.indexes
-			.map((index) => ({
-				name: index.indexDescriptor,
-				fields: [...index.fields],
-			}))
-			.sort((a, b) => a.name.localeCompare(b.name))
-		const dtoNative = nativeJson(dto ? zodToConvex(dto) : admission!.emit())
-		assertNativeValidation(dtoNative)
-		const dtoNativeCanonical = dto ? undefined : canonicalNative(dtoNative)
-		nativeTables[name] = nativeTable
-		const fieldGroups: Record<string, readonly string[]> = Object.create(null)
-		const groupRecipes: Record<string, DtoRecipe> = Object.create(null)
-		const descriptor = Object.getOwnPropertyDescriptor(table, 'fieldGroups')
-		if ((!descriptor && 'fieldGroups' in table) || (descriptor && !('value' in descriptor)))
-			throw new Error('Invalid field groups')
-		assertGroupData(descriptor?.value ?? {})
-		const definitions = z
-			.record(z.string(), z.array(z.string()).nonempty())
-			.parse(descriptor?.value ?? {})
-		const used = new Set<string>()
-		const publicKeys = admission?.boundary
-			? admission.boundary.kind === 'object'
-				? [admission.boundary.keys]
-				: Object.values(admission.boundary.branches)
-			: undefined
-		const publicBranches = dto instanceof z.ZodObject ? [dto] : dto?.options
-		for (const [group, members] of Object.entries(definitions)) {
-			if (!group || ['__proto__', 'constructor', 'prototype'].includes(group))
-				throw new Error('Invalid field groups')
-			for (const field of members) {
-				if (
-					!normalized.allFields.has(field) ||
-					field.startsWith('_') ||
-					used.has(field) ||
-					(publicKeys
-						? publicKeys.some((keys) => keys.includes(field))
-						: publicBranches!.some(
-								(branch: z.core.$ZodType) =>
-									!(branch instanceof z.ZodObject) || Object.hasOwn(branch.shape, field),
-							))
-				)
-					throw new Error('Conflicting or incompatible field groups')
-				const validators = normalized.branches
-					? Object.values(normalized.branches.options)
-							.map((branch) => branch.fields[field])
-							.filter((validator) => validator !== undefined)
-					: [normalized.fields[field]]
-				if (
-					!validators.every(
-						(validator) =>
-							canonicalNative(nativeJson(validator)) ===
-								canonicalNative(nativeJson(validators[0])) &&
-							validator.isOptional === validators[0].isOptional,
-					)
-				)
-					throw new Error('Conflicting or incompatible field groups')
-				used.add(field)
-			}
-			fieldGroups[group] = Object.freeze([...members].sort())
-			for (const [tag, fields] of normalized.branches
-				? Object.entries(normalized.branches.options).map(
-						([tag, branch]) => [tag, branch.fields] as const,
-					)
-				: [[null, normalized.fields] as const]) {
-				const storedFields = Object.fromEntries(
-					members
-						.filter((field) => Object.hasOwn(fields, field))
-						.map((field) => [field, fields[field]]),
-				)
-				groupRecipes[JSON.stringify([group, tag])] = captureDto(
-					convexToZod(v.object(storedFields)).strict(),
-				)
-			}
+		const native: TableDefinition = nativeDescriptor.value
+		sources[name] = { table, native, skeleton: nativeSkeleton(table, native) }
+		nativeTables[name] = native
+	}
+	const names = Object.keys(sources)
+
+	const metadata: Record<string, TableMetadata> = {}
+	// Each table materializes at most once, in two tiers: `storedTier` (stored side,
+	// enough to validate edges that target it) and `ready` (everything). A
+	// failure is cached and rethrown on every later use.
+	const states: Record<
+		string,
+		{ stored?: StoredCapture; data?: TableMetadata; failure?: { error: unknown }; busy?: boolean }
+	> = Object.create(null)
+	const pending: Record<string, (() => void)[]> = Object.create(null)
+	function storedTier(name: string): StoredTier {
+		const state = (states[name] ??= {})
+		if (state.failure) throw state.failure.error
+		const known = state.data ?? state.stored
+		if (known) return known
+		if (state.busy) throw new Error(`Cyclic relation table materialization "${name}"`)
+		state.busy = true
+		try {
+			return (state.stored = captureStoredTier(name, sources[name].table, sources[name].native))
+		} catch (error) {
+			state.failure = { error }
+			throw error
+		} finally {
+			state.busy = false
 		}
-		metadata[name] = {
-			...normalized,
-			indexes,
-			searchIndexes,
-			get dto() {
-				if (!dto) {
-					const restored = materializeDto(dtoRecipe)
-					if (!(restored instanceof z.ZodObject) && !(restored instanceof z.ZodDiscriminatedUnion))
-						throw new Error('Expected object or discriminated union DTO')
-					dto = restored
-				}
-				return dto
-			},
-			dtoNativeCanonical,
-			dtoRecipe,
-			fieldGroups: Object.freeze(fieldGroups),
-			groupRecipes: Object.freeze(groupRecipes),
+	}
+	function ready(name: string): TableMetadata {
+		const state = (states[name] ??= {})
+		if (state.failure) throw state.failure.error
+		// Field checks below may read their own table again.
+		if (state.data) return state.data
+		if (state.busy) throw new Error(`Cyclic relation table materialization "${name}"`)
+		state.busy = true
+		try {
+			const { table, native } = sources[name]
+			state.data = state.stored
+				? finishTable(name, table, state.stored)
+				: materializeTable(name, table, native)
+			const checks = pending[name] ?? []
+			delete pending[name]
+			for (const check of checks) check()
+			return state.data
+		} catch (error) {
+			state.data = undefined
+			state.failure = { error }
+			throw error
+		} finally {
+			state.busy = false
 		}
-		const makeReferences = (
-			validators: Record<string, GenericValidator>,
-			guard?: RelationGuard,
-		) => {
-			const tableRefs: Record<string, AnyField> = Object.create(null)
-			function makeReference(
-				field: string,
-				validator: GenericValidator,
-				member?: RelationMember,
-			): AnyField {
-				const ref: AnyField = {
-					[fieldBrand]: undefined,
-					table: name,
-					field,
-					guard,
-					forTable(table: string) {
-						if (guard) throw new Error('forTable on branch-scoped fields is unsupported')
+	}
+	// Checks owned by a table run when it materializes, or now if it already has.
+	function defer(name: string, check: () => void): void {
+		if (states[name]?.data && !states[name].busy) check()
+		else (pending[name] ??= []).push(check)
+	}
+	for (const name of names)
+		Object.defineProperty(metadata, name, { enumerable: true, get: () => ready(name) })
+
+	const ownRefs = new Set<AnyField>()
+	const throughPending: (() => void)[] = []
+	const tableRefs: Record<string, Readonly<Record<string, AnyField>>> = Object.create(null)
+	const branchRefs = new Map<string, Record<string, AnyField>>()
+	const branchTables = new Set<string>()
+	function fieldValidator(name: string, field: string, guard?: RelationGuard): GenericValidator {
+		const data = storedTier(name)
+		const fields = guard ? data.branches?.options[guard.tag]?.fields : data.fields
+		if (!fields || !Object.hasOwn(fields, field))
+			throw new Error(`Native stored document disagrees with boundary "${name}"`)
+		return fields[field]
+	}
+	const makeReferences = (name: string, fields: readonly string[], guard?: RelationGuard) => {
+		const result: Record<string, AnyField> = Object.create(null)
+		function makeReference(
+			field: string,
+			resolve: () => GenericValidator,
+			member?: RelationMember,
+		): AnyField {
+			const ref: AnyField = {
+				[fieldBrand]: undefined,
+				table: name,
+				field,
+				guard,
+				forTable(table: string) {
+					if (guard) throw new Error('forTable on branch-scoped fields is unsupported')
+					if (!Object.hasOwn(metadata, table))
+						throw new Error('Native ID member table is not registered')
+					const selected = once(() => {
+						const validator = resolve()
 						const members = nativeIdMembers(validator)
 						if (!members?.includes(table)) throw new Error('Invalid native ID member selection')
-						if (!Object.hasOwn(metadata, table))
-							throw new Error('Native ID member table is not registered')
-						const selected = hasNull(validator) ? v.union(v.id(table), v.null()) : v.id(table)
-						return makeReference(
-							field,
-							validator.isOptional === 'optional' ? v.optional(selected) : selected,
-							Object.freeze({ table }),
-						)
-					},
-					through<J extends AnyField>(junction: J): ThroughReference<string, string, any, J, any> {
-						if (member || memberRefs.has(junction))
-							throw new Error('forTable with through is unsupported')
-						const junctionValidator = refs.get(junction)
-						if (
-							!ownRefs.has(junction) ||
-							!junctionValidator ||
-							!compatible(validator, junctionValidator)
-						)
+						const id = hasNull(validator) ? v.union(v.id(table), v.null()) : v.id(table)
+						return validator.isOptional === 'optional' ? v.optional(id) : id
+					})
+					defer(name, selected)
+					return makeReference(field, selected, Object.freeze({ table }))
+				},
+				through<J extends AnyField>(junction: J): ThroughReference<string, string, any, J, any> {
+					if (member || memberRefs.has(junction))
+						throw new Error('forTable with through is unsupported')
+					if (!ownRefs.has(junction)) throw new Error('Invalid junction field or registry')
+					const result = Object.freeze({ base: ref, junction })
+					const check = once(() => {
+						if (!compatible(resolve(), refs.get(junction)!()))
 							throw new Error('Invalid junction field or registry')
-						const result = Object.freeze({ base: ref, junction })
-						throughRefs.add(result)
-						return result
-					},
-				}
-				refs.set(ref, validator)
-				if (member) memberRefs.set(ref, member)
-				ownRefs.add(ref)
-				return Object.freeze(ref)
+					})
+					throughRefs.add(result)
+					throughChecks.set(result, check)
+					// Needs the junction's stored tier: runs when an edge uses it, or on verification.
+					throughPending.push(check)
+					return result
+				},
 			}
-			for (const [field, validator] of Object.entries(validators))
-				tableRefs[field] = makeReference(field, validator)
-			return Object.freeze(tableRefs)
+			refs.set(ref, resolve)
+			if (member) memberRefs.set(ref, member)
+			ownRefs.add(ref)
+			return Object.freeze(ref)
 		}
-		fields[name] = makeReferences(normalized.fields)
-		if (normalized.branches)
-			for (const [tag, branch] of Object.entries(normalized.branches.options))
-				branchRefs.set(
-					JSON.stringify([name, tag]),
-					makeReferences(
-						branch.fields,
-						Object.freeze({
-							discriminator: normalized.branches.discriminator,
-							tag,
-						}),
-					),
-				)
+		for (const field of fields)
+			result[field] = makeReference(
+				field,
+				once(() => fieldValidator(name, field, guard)),
+			)
+		return Object.freeze(result)
+	}
+	// Field names come from the native skeleton; without one, the table materializes.
+	function referencesFor(name: string) {
+		return (tableRefs[name] ??= makeReferences(
+			name,
+			sources[name].skeleton?.common ?? Object.keys(ready(name).fields),
+		))
+	}
+	type EdgeFactory = (spec: { from: Leg; to: Leg }) => AnyEdge
+	const one: Record<string, EdgeFactory> = {}
+	const many: Record<string, EdgeFactory> = {}
+	const references: Record<
+		string,
+		Readonly<Record<string, AnyField>> | Readonly<Record<string, EdgeFactory>>
+	> = {}
+	for (const name of names) {
+		Object.defineProperty(references, name, { enumerable: true, get: () => referencesFor(name) })
 		one[name] = (spec) => makeEdge(name, 'one', spec, ownRefs)
 		many[name] = (spec) => makeEdge(name, 'many', spec, ownRefs)
 	}
+	references.one = Object.freeze(one)
+	references.many = Object.freeze(many)
 	// SAFETY: every native field has a branded reference; mapped builders retain the literal names.
-	const builder = Object.freeze({
-		...fields,
-		one: Object.freeze(one),
-		many: Object.freeze(many),
-	}) as RelationBuilder<Tables>
+	const builder = Object.freeze(references) as RelationBuilder<Tables>
 	// SAFETY: branch references are created only for validated table/tag pairs and retain literal native field types.
 	const branch = ((table: string, tag: string) => {
-		const result = branchRefs.get(JSON.stringify([table, tag]))
+		const key = JSON.stringify([table, tag])
+		if (!branchRefs.has(key) && names.includes(table) && !branchTables.has(table)) {
+			branchTables.add(table)
+			const skeleton = sources[table].skeleton
+			// Object tables have no branches; an unknown skeleton materializes the table.
+			const branches = skeleton
+				? (skeleton.branches ?? [])
+				: Object.entries(ready(table).branches?.options ?? {}).map(
+						([tag, branch]) => [tag, Object.keys(branch.fields)] as const,
+					)
+			const discriminator = skeleton ? skeleton.discriminator : ready(table).branches?.discriminator
+			for (const [tag, fields] of branches)
+				branchRefs.set(
+					JSON.stringify([table, tag]),
+					makeReferences(table, fields, Object.freeze({ discriminator: discriminator!, tag })),
+				)
+		}
+		const result = branchRefs.get(key)
 		if (!result) throw new Error(`Unknown variant scope "${table}.${tag}"`)
 		return result
 	}) as BranchBuilder<Tables>
 	const supplied = declare(builder, branch)
-	const declarations: RelationDeclarations = Object.fromEntries(
+	const edges: Record<string, Readonly<Record<string, AnyEdge>>> = Object.fromEntries(
 		Object.entries(supplied).map(([name, edges]) => [name, Object.freeze({ ...edges })]),
 	)
-	Object.freeze(declarations)
-	for (const [source, edges] of Object.entries(declarations)) {
+	for (const [source, declared] of Object.entries(edges)) {
 		if (!Object.hasOwn(metadata, source)) throw new Error(`Unknown source table "${source}"`)
-		for (const [name, edge] of Object.entries(edges)) {
+		const skeleton = sources[source].skeleton
+		for (const [name, edge] of Object.entries(declared)) {
+			// Field-name collisions are rechecked against normalized fields on first use.
 			if (
-				metadata[source].allFields.has(name) ||
-				(metadata[source].branches && ['variant', 'variants'].includes(name)) ||
-				['and', 'or', 'not', 'fields', 'then', '__proto__', 'constructor', 'prototype'].includes(
-					name,
-				)
+				reservedEdgeNames.includes(name) ||
+				(skeleton &&
+					(skeleton.fields.includes(name) ||
+						(skeleton.variant && ['variant', 'variants'].includes(name))))
 			)
 				throw new Error(`Relation name collision "${name}"`)
 			if (
@@ -1051,8 +1036,45 @@ export function defineRelations<
 				edge.source !== source
 			)
 				throw new Error('Relation source bucket mismatch')
-			validatePath(edge, metadata)
+			assertPathLegs(edge)
 		}
+	}
+	// Each edge validates on its first read: name collisions against the source's
+	// normalized fields, then field types and indexes, which need only the stored
+	// tier of the tables the edge reaches. Reading every edge validates them all.
+	const declarations: RelationDeclarations = {}
+	for (const [source, declared] of Object.entries(edges)) {
+		const view: Record<string, AnyEdge> = {}
+		for (const [name, edge] of Object.entries(declared)) {
+			const check = once(() => {
+				const data = ready(source)
+				if (
+					data.allFields.has(name) ||
+					(data.branches && ['variant', 'variants'].includes(name)) ||
+					reservedEdgeNames.includes(name)
+				)
+					throw new Error(`Relation name collision "${name}"`)
+				validatePath(edge, storedTier)
+				// A selected through relation reads the junction's rows: it is a first use.
+				if ('base' in edge.from) ready(edge.from.junction.table)
+			})
+			Object.defineProperty(view, name, {
+				enumerable: true,
+				get: () => {
+					check()
+					return edge
+				},
+			})
+		}
+		declarations[source] = Object.freeze(view)
+	}
+	Object.freeze(declarations)
+	const used = new Set<string>()
+	// First use of a table runs its own checks. Its edges validate as they are read.
+	function use(name: string): void {
+		if (used.has(name) || !names.includes(name)) return
+		ready(name)
+		used.add(name)
 	}
 	const internal: RegistryMetadata = { metadata, declarations }
 	const helpers: Record<
@@ -1063,9 +1085,10 @@ export function defineRelations<
 			pageDto(selection: SelectionMask, groups?: GroupSelection): z.ZodType
 		}
 	> = {}
-	for (const table of Object.keys(metadata))
+	for (const table of names)
 		helpers[table] = {
 			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>) {
+				use(table)
 				if (metadata[table].branches)
 					throw new Error('Shared scalar contracts do not support variant tables')
 				for (const [field, expected] of Object.entries(contract.native)) {
@@ -1083,6 +1106,7 @@ export function defineRelations<
 				})
 			},
 			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): z.ZodType {
+				use(table)
 				assertSelection(selection)
 				return materializeDto(paginationRecipe).extend({
 					filters: relationFilterSchema(
@@ -1094,18 +1118,84 @@ export function defineRelations<
 				})
 			},
 			pageDto(selection: SelectionMask, groups: GroupSelection = {}): z.ZodType {
+				use(table)
 				assertSelection(selection)
 				assertGroups(internal, table, groups)
 				return paginated(rowSchema(internal, table, selection, 0, groups)).result
 			},
 		}
 
+	let identity: string | undefined
+	const tableEntries = new Map<string, unknown[]>()
 	// Stable, collision-free canonical metadata encoding. It is an identity, not a secret/hash.
-	const identity = JSON.stringify([
-		2,
-		Object.entries(metadata)
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([name, data]) => [
+	// Computed on first read; it requires and validates every table and edge.
+	function registryIdentity(): string {
+		for (const name of names) use(name)
+		for (const check of throughPending) check()
+		return JSON.stringify([
+			2,
+			Object.keys(metadata)
+				.sort((a, b) => a.localeCompare(b))
+				.map(tableEntry),
+			Object.keys(declarations)
+				.sort((a, b) => a.localeCompare(b))
+				.map((source) => sourceEntry(source)),
+		])
+	}
+	// The same encoding restricted to the given tables and edges, plus every table
+	// those edges touch. Engine cursors bind it for exactly what one query uses,
+	// so a change elsewhere cannot affect them. Validates and materializes only that.
+	function scopedIdentity(
+		tables: readonly string[],
+		edges: readonly (readonly [source: string, name: string])[],
+	): string {
+		const reached = new Set<string>()
+		const chosen = new Map<string, Set<string>>()
+		for (const name of tables) {
+			if (!names.includes(name)) throw new Error('Unknown query table')
+			reached.add(name)
+		}
+		for (const [source, name] of edges) {
+			if (!Object.hasOwn(declarations, source) || !Object.hasOwn(declarations[source], name))
+				throw new Error('Unknown relation')
+			const edge = declarations[source][name]
+			for (const table of [source, edge.target, ...legTables(edge.from), ...legTables(edge.to)])
+				reached.add(table)
+			const selected = chosen.get(source) ?? new Set<string>()
+			chosen.set(source, selected.add(name))
+		}
+		for (const name of reached) use(name)
+		return JSON.stringify([
+			3,
+			[...reached].sort((a, b) => a.localeCompare(b)).map(tableEntry),
+			[...chosen.keys()]
+				.sort((a, b) => a.localeCompare(b))
+				.map((source) => sourceEntry(source, chosen.get(source))),
+		])
+	}
+	function sourceEntry(source: string, only?: ReadonlySet<string>): unknown[] {
+		return [
+			source,
+			Object.keys(declarations[source])
+				.filter((name) => !only || only.has(name))
+				.sort((a, b) => a.localeCompare(b))
+				.map((name) => {
+					const edge = declarations[source][name]
+					return [
+						name,
+						edge.cardinality,
+						edge.target,
+						serializeLeg(edge.from),
+						serializeLeg(edge.to),
+					]
+				}),
+		]
+	}
+	function tableEntry(name: string): unknown[] {
+		let entry = tableEntries.get(name)
+		if (!entry) {
+			const data = metadata[name]
+			entry = [
 				name,
 				Object.entries(data.fields)
 					.sort(([a], [b]) => a.localeCompare(b))
@@ -1131,54 +1221,58 @@ export function defineRelations<
 				data.dtoNativeCanonical ?? canonicalNative(nativeJson(zodToConvex(data.dto))),
 				...(Object.keys(data.fieldGroups).length ? [data.fieldGroups] : []),
 				...(data.searchIndexes.length ? [{ searchIndexes: data.searchIndexes }] : []),
-			]),
-		Object.entries(declarations)
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([source, edges]) => [
-				source,
-				Object.entries(edges)
-					.sort(([a], [b]) => a.localeCompare(b))
-					.map(([name, edge]) => [
-						name,
-						edge.cardinality,
-						edge.target,
-						serializeLeg(edge.from),
-						serializeLeg(edge.to),
-					]),
-			]),
-	])
+			]
+			tableEntries.set(name, entry)
+		}
+		return entry
+	}
 	// SAFETY: helpers are assembled for every validated literal table and mask; schemas derive matching native fields/public DTOs.
 	const registry = Object.freeze({
-		identity,
+		get identity() {
+			return (identity ??= registryIdentity())
+		},
 		version: 1,
 		tables: Object.freeze(helpers),
 	}) as RelationRegistry<Tables, D>
-	registries.set(registry, snapshotMetadata(internal))
+	const snapshots: Record<string, RelationTableMetadata> = {}
+	for (const name of names) {
+		let snapshot: RelationTableMetadata | undefined
+		Object.defineProperty(snapshots, name, {
+			enumerable: true,
+			get: () => {
+				use(name)
+				return (snapshot ??= snapshotTable(metadata[name]))
+			},
+		})
+	}
+	registries.set(registry, Object.freeze({ tables: Object.freeze(snapshots), declarations }))
 	// convex-helpers reads schema.tables[table].indexes live. Supply a genuine
 	// private Convex schema whose only purpose is stable stream index metadata.
 	const streamTables: Record<string, TableDefinition> = {}
-	for (const [name, data] of Object.entries(metadata)) {
-		const table: TableDefinition = defineTable({})
-		for (const index of data.indexes) {
-			const [first, ...rest] = index.fields
-			if (first === undefined) throw new Error('Invalid empty active index')
-			table.index(index.name, [first, ...rest])
-		}
-		const indexes = Object.getOwnPropertyDescriptor(table, 'indexes')!.value
-		for (const index of indexes) {
-			Object.freeze(index.fields)
-			Object.freeze(index)
-		}
-		Object.freeze(indexes)
-		Object.freeze(table)
-		streamTables[name] = table
+	for (const name of names) {
+		let table: TableDefinition | undefined
+		Object.defineProperty(streamTables, name, {
+			enumerable: true,
+			get: () => {
+				use(name)
+				return (table ??= streamTable(metadata[name]))
+			},
+		})
 	}
 	executorRegistries.set(registry, {
 		internal,
 		nativeTables: Object.freeze(nativeTables),
 		streamSchema: defineSchema(Object.freeze(streamTables)),
+		use,
+		scopedIdentity,
 	})
 	return registry
+}
+
+/** Runs every deferred registration check now, for example in a test that should fail CI. */
+export function verifyRelations(registry: RelationRegistryIdentity): void {
+	if (!executorRegistries.has(registry)) throw new Error('Unknown relation registry')
+	void registry.identity
 }
 
 /** Internal owned executor bridge. Source ownership is checked once by each engine. */
@@ -1211,6 +1305,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		table: string,
 		row: Record<string, import('convex/values').Value>,
 	): void {
+		owned!.use(table)
 		const data = owned!.internal.metadata[table]
 		if (!data) throw new Error('Unknown query table')
 		if (!data.branches) return
@@ -1236,12 +1331,15 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 	}
 	return Object.freeze({
 		streamSchema: owned.streamSchema,
+		scopedIdentity: owned.scopedIdentity,
 		groups(table: string, groups: GroupSelection) {
+			owned.use(table)
 			return assertGroups(owned.internal, table, groups)
 		},
 		validateDocument,
 		assertSchema,
 		pagination(table: string) {
+			owned.use(table)
 			const internal = owned.internal
 			function grammar(name: string, depth: number, tag?: string): FilterGrammar {
 				const grammarKey = JSON.stringify([name, depth, tag ?? null])
@@ -1277,28 +1375,40 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 									),
 								}
 							: undefined,
-					relations:
-						depth >= 4
-							? {}
-							: Object.fromEntries(
-									Object.entries(internal.declarations[name] ?? {}).map(([edge, declaration]) => [
-										edge,
-										{
-											cardinality: declaration.cardinality,
-											target: grammar(declaration.target, depth + 1),
-										},
-									]),
-								),
+					relations: depth >= 4 ? {} : relationGrammars(name, depth),
 				}
 				grammars.set(grammarKey, result)
 				return result
 			}
+			// A filter that names a relation is a use of that edge and its target.
+			function relationGrammars(name: string, depth: number): FilterGrammar['relations'] {
+				const relations: FilterGrammar['relations'] = {}
+				for (const edge of Object.keys(internal.declarations[name] ?? {})) {
+					let relation: FilterGrammar['relations'][string] | undefined
+					Object.defineProperty(relations, edge, {
+						enumerable: true,
+						get: () => {
+							if (!relation) {
+								const declaration = internal.declarations[name][edge]
+								owned!.use(declaration.target)
+								relation = Object.freeze({
+									cardinality: declaration.cardinality,
+									target: grammar(declaration.target, depth + 1),
+								})
+							}
+							return relation
+						},
+					})
+				}
+				return Object.freeze(relations)
+			}
 			return materializeDto(paginationRecipe).extend({
-				filters: relationFilterSchema(grammar(table, 0), filterNodes).optional(),
+				filters: lazyRelationFilterSchema(grammar(table, 0), filterNodes).optional(),
 				order: z.enum(['asc', 'desc']).optional(),
 			})
 		},
 		select(table: string, selection: SelectionMask) {
+			owned.use(table)
 			assertSelection(selection)
 			function visit(table: string, selected: SelectionMask, depth: number): void {
 				if (!Object.hasOwn(owned!.internal.metadata, table)) throw new Error('Unknown query table')
@@ -1318,6 +1428,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 			groups: readonly string[] = [],
 		) {
 			if (!eligible()) return null
+			owned.use(table)
 			const data = owned.internal.metadata[table]
 			if (!data) throw new Error('Unknown query table')
 			const branch = data.branches
@@ -1381,6 +1492,355 @@ export function getRelationMetadata(registry: RelationRegistryIdentity): Relatio
 	const metadata = registries.get(registry)
 	if (!metadata) throw new Error('Unknown relation registry')
 	return metadata
+}
+
+/** Stored-side registration data: what edge validation needs from a target table. */
+interface StoredTier extends Pick<TableMetadata, 'fields' | 'branches' | 'allFields'> {
+	capturedIndexes: readonly { name: string; fields: string[] }[]
+	searchIndexList: SearchIndexMetadata[]
+}
+/** A stored tier plus the stored schema object it inspected and normalized. */
+interface StoredCapture extends StoredTier {
+	schema: RelationTable['schema']
+}
+interface BoundaryCapture {
+	dtoRecipe: DtoRecipe
+	admission: ReturnType<typeof classifyDto>
+	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string> | undefined
+}
+
+/** Registration-only preflight of the native table and stored schema. Stored
+ * parsers and their default/pipe callbacks are never run. */
+function preflightStored(schema: RelationTable['schema'], nativeTable: TableDefinition): void {
+	// Rejects accessors before native export or conversion.
+	preflightNative(nativeTable)
+	preflightSchema(schema, 'stored')
+}
+
+function captureBoundary(table: RelationTable): BoundaryCapture {
+	preflightSchema(table.publicDto, 'dto')
+	const sourceDto = table.dto(true)
+	if (!(sourceDto instanceof z.ZodObject) && !(sourceDto instanceof z.ZodDiscriminatedUnion))
+		throw new Error('Expected object or discriminated union DTO')
+	preflightSchema(sourceDto, 'dto')
+	const dtoRecipe = captureDto(sourceDto)
+	const admission = classifyDto(dtoRecipe)
+	const dto = admission?.boundary ? undefined : materializeDto(dtoRecipe)
+	if (dto && !(dto instanceof z.ZodObject) && !(dto instanceof z.ZodDiscriminatedUnion))
+		throw new Error('Expected object or discriminated union DTO')
+	return { dtoRecipe, admission, dto }
+}
+
+function exportStored(nativeTable: TableDefinition): NativeTableExport {
+	const exported = nativeTableExport(nativeTable)
+	assertNativeValidation(exported.documentType)
+	return exported
+}
+
+function captureIndexes(
+	exported: NativeTableExport,
+): Pick<StoredTier, 'capturedIndexes' | 'searchIndexList'> {
+	const captured = indexExport.parse(exported)
+	return {
+		searchIndexList: [
+			...captured.searchIndexes.map((index) => ({ ...index, staged: false })),
+			...captured.stagedSearchIndexes.map((index) => ({
+				...index,
+				staged: true,
+			})),
+		].map((index) =>
+			Object.freeze({
+				name: index.indexDescriptor,
+				searchField: index.searchField,
+				filterFields: Object.freeze([...index.filterFields].sort()),
+				staged: index.staged,
+			}),
+		),
+		capturedIndexes: captured.indexes.map((index) => ({
+			name: index.indexDescriptor,
+			fields: [...index.fields],
+		})),
+	}
+}
+
+function assertActiveIndexes(tier: Pick<StoredTier, 'capturedIndexes'>): void {
+	if (tier.capturedIndexes.some((index) => index.fields.length === 0))
+		throw new Error('Invalid empty active index')
+}
+
+/** The stored tier alone: native and stored preflight, export, stored normalization, indexes. */
+function captureStoredTier(
+	name: string,
+	table: RelationTable,
+	nativeTable: TableDefinition,
+): StoredCapture {
+	const schema = table.schema
+	preflightStored(schema, nativeTable)
+	const exported = exportStored(nativeTable)
+	const tier = {
+		...normalizeStored(name, schema, exported.documentType),
+		...captureIndexes(exported),
+		schema,
+	}
+	assertActiveIndexes(tier)
+	return tier
+}
+
+/** One table's full registration preflight, capture and normalization, in the
+ * original check order; run on first use. */
+function materializeTable(
+	name: string,
+	table: RelationTable,
+	nativeTable: TableDefinition,
+): TableMetadata {
+	const schema = table.schema
+	preflightStored(schema, nativeTable)
+	const boundary = captureBoundary(table)
+	const exported = exportStored(nativeTable)
+	const normalized = normalizeTable(
+		name,
+		schema,
+		boundary.dto,
+		exported.documentType,
+		boundary.admission?.boundary,
+	)
+	return completeTable(table, { ...normalized, ...captureIndexes(exported) }, boundary)
+}
+
+/** Completes a table whose stored tier already passed; only DTO-side checks remain. */
+function finishTable(name: string, table: RelationTable, stored: StoredCapture): TableMetadata {
+	const boundary = captureBoundary(table)
+	// The stored schema is caller-owned and may have changed since its stored tier
+	// was captured, including during the DTO callback above: inspect it again before
+	// reading it, and use the same object the stored tier normalized.
+	const { schema, ...tier } = stored
+	preflightSchema(schema, 'stored')
+	const facts = boundary.admission?.boundary
+	const dtos = checkDtoBoundary(name, schema, boundary.dto, facts)
+	return completeTable(
+		table,
+		{ ...tier, branches: attachDtos(tier.branches, dtos, facts) },
+		boundary,
+	)
+}
+
+function completeTable(
+	table: RelationTable,
+	normalized: StoredTier,
+	{ dtoRecipe, admission, dto: captured }: BoundaryCapture,
+): TableMetadata {
+	let dto = captured
+	const dtoNative = nativeJson(dto ? zodToConvex(dto) : admission!.emit())
+	assertNativeValidation(dtoNative)
+	const dtoNativeCanonical = dto ? undefined : canonicalNative(dtoNative)
+	const fieldGroups: Record<string, readonly string[]> = Object.create(null)
+	const groupRecipes: Record<string, DtoRecipe> = Object.create(null)
+	const descriptor = Object.getOwnPropertyDescriptor(table, 'fieldGroups')
+	if ((!descriptor && 'fieldGroups' in table) || (descriptor && !('value' in descriptor)))
+		throw new Error('Invalid field groups')
+	assertGroupData(descriptor?.value ?? {})
+	const definitions = z
+		.record(z.string(), z.array(z.string()).nonempty())
+		.parse(descriptor?.value ?? {})
+	const used = new Set<string>()
+	const publicKeys = admission?.boundary
+		? admission.boundary.kind === 'object'
+			? [admission.boundary.keys]
+			: Object.values(admission.boundary.branches)
+		: undefined
+	const publicBranches = dto instanceof z.ZodObject ? [dto] : dto?.options
+	for (const [group, members] of Object.entries(definitions)) {
+		if (!group || ['__proto__', 'constructor', 'prototype'].includes(group))
+			throw new Error('Invalid field groups')
+		for (const field of members) {
+			if (
+				!normalized.allFields.has(field) ||
+				field.startsWith('_') ||
+				used.has(field) ||
+				(publicKeys
+					? publicKeys.some((keys) => keys.includes(field))
+					: publicBranches!.some(
+							(branch: z.core.$ZodType) =>
+								!(branch instanceof z.ZodObject) || Object.hasOwn(branch.shape, field),
+						))
+			)
+				throw new Error('Conflicting or incompatible field groups')
+			const validators = normalized.branches
+				? Object.values(normalized.branches.options)
+						.map((branch) => branch.fields[field])
+						.filter((validator) => validator !== undefined)
+				: [normalized.fields[field]]
+			if (
+				!validators.every(
+					(validator) =>
+						canonicalNative(nativeJson(validator)) === canonicalNative(nativeJson(validators[0])) &&
+						validator.isOptional === validators[0].isOptional,
+				)
+			)
+				throw new Error('Conflicting or incompatible field groups')
+			used.add(field)
+		}
+		fieldGroups[group] = Object.freeze([...members].sort())
+		for (const [tag, fields] of normalized.branches
+			? Object.entries(normalized.branches.options).map(
+					([tag, branch]) => [tag, branch.fields] as const,
+				)
+			: [[null, normalized.fields] as const]) {
+			const storedFields = Object.fromEntries(
+				members
+					.filter((field) => Object.hasOwn(fields, field))
+					.map((field) => [field, fields[field]]),
+			)
+			groupRecipes[JSON.stringify([group, tag])] = captureDto(
+				convexToZod(v.object(storedFields)).strict(),
+			)
+		}
+	}
+	assertActiveIndexes(normalized)
+	const { capturedIndexes, searchIndexList, fields, branches, allFields } = normalized
+	// The first locale-aware comparison loads collation data (~4 ms without JIT);
+	// only identity, snapshots and the engine need these orders.
+	let indexes: { name: string; fields: string[] }[] | undefined
+	let searchIndexes: readonly SearchIndexMetadata[] | undefined
+	const metadata: TableMetadata = {
+		fields,
+		allFields,
+		capturedIndexes,
+		searchIndexList,
+		get indexes() {
+			return (indexes ??= [...capturedIndexes].sort((a, b) => a.name.localeCompare(b.name)))
+		},
+		get searchIndexes() {
+			return (searchIndexes ??= Object.freeze(
+				[...searchIndexList].sort((a, b) => a.name.localeCompare(b.name)),
+			))
+		},
+		get dto() {
+			if (!dto) {
+				const restored = materializeDto(dtoRecipe)
+				if (!(restored instanceof z.ZodObject) && !(restored instanceof z.ZodDiscriminatedUnion))
+					throw new Error('Expected object or discriminated union DTO')
+				dto = restored
+			}
+			return dto
+		},
+		dtoNativeCanonical,
+		dtoRecipe,
+		fieldGroups: Object.freeze(fieldGroups),
+		groupRecipes: Object.freeze(groupRecipes),
+	}
+	if (branches) metadata.branches = branches
+	return metadata
+}
+
+function streamTable(data: TableMetadata): TableDefinition {
+	const table: TableDefinition = defineTable({})
+	for (const index of data.indexes) {
+		const [first, ...rest] = index.fields
+		if (first === undefined) throw new Error('Invalid empty active index')
+		table.index(index.name, [first, ...rest])
+	}
+	const indexes = Object.getOwnPropertyDescriptor(table, 'indexes')!.value
+	for (const index of indexes) {
+		Object.freeze(index.fields)
+		Object.freeze(index)
+	}
+	Object.freeze(indexes)
+	Object.freeze(table)
+	return table
+}
+
+interface NativeSkeleton {
+	/** Every stored and system field name, for name-collision checks. */
+	fields: readonly string[]
+	/** Names `r.<table>` exposes: all fields, or a variant's common fields. */
+	common: readonly string[]
+	variant: boolean
+	discriminator?: string
+	branches?: readonly (readonly [string, readonly string[]])[]
+}
+/** Field names of a native object or object-union table, without materializing it.
+ * Object tables are read by descriptor only, so no caller accessor runs. A variant
+ * table runs its native preflight first, which admits Convex's own validator JSON
+ * for the common-field rule. Anything unexpected returns undefined, and the table
+ * then materializes when its references are first requested.
+ */
+function nativeSkeleton(table: RelationTable, native: TableDefinition): NativeSkeleton | undefined {
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- Descriptor reads admit and return arbitrary caller values without invoking them; callers narrow each value.
+	const own = (object: unknown, key: string): unknown => {
+		if (object === null || Object(object) !== object) return undefined
+		// SAFETY: the boxing test above admits only objects.
+		const descriptor = Object.getOwnPropertyDescriptor(object as object, key)
+		return descriptor && 'value' in descriptor ? descriptor.value : undefined
+	}
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unsafe-dictionary-type -- Field values stay unread here: only names and preflighted validators are used.
+	const objectFields = (validator: unknown): Record<string, unknown> | undefined => {
+		const fields = own(validator, 'fields')
+		if (own(validator, 'kind') !== 'object' || fields === null || Object(fields) !== fields)
+			return undefined
+		// SAFETY: the boxing test above admits only objects.
+		// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Values are unread until native preflight admits them.
+		return fields as Record<string, unknown>
+	}
+	const system = ['_id', '_creationTime']
+	const validator = own(native, 'validator')
+	const fields = objectFields(validator)
+	if (fields) {
+		const names = [...new Set([...Object.keys(fields), ...system])]
+		return { fields: names, common: names, variant: false }
+	}
+	const definition = own(own(table.schema, '_zod'), 'def')
+	const discriminator = own(definition, 'discriminator')
+	if (own(validator, 'kind') !== 'union' || !z.string().safeParse(discriminator).success)
+		return undefined
+	try {
+		preflightNative(native)
+	} catch {
+		return undefined
+	}
+	// SAFETY: the native graph passed preflight: plain data and trusted Convex prototypes only.
+	const members = (validator as { members: GenericValidator[] }).members.map(objectFields)
+	if (!members.length || members.some((member) => !member)) return undefined
+	// SAFETY: every member is a preflighted native object validator's fields.
+	const stored = members as Record<string, GenericValidator>[]
+	const branches: (readonly [string, readonly string[]])[] = []
+	for (const member of stored) {
+		const tag = member[String(discriminator)]
+		if (tag?.kind !== 'literal' || !z.string().safeParse(tag.value).success) return undefined
+		branches.push([String(tag.value), [...new Set([...Object.keys(member), ...system])]])
+	}
+	// Mirrors normalizeTable: system fields are identical in every branch.
+	const common = [
+		...Object.keys(stored[0]).filter(
+			(key) =>
+				stored.every((member) => Object.hasOwn(member, key)) &&
+				(key === discriminator ||
+					stored.every((member) => commonCompatible(member[key], stored[0][key]))),
+		),
+		...system,
+	]
+	return {
+		fields: [...new Set(branches.flatMap(([, fields]) => fields))],
+		common: [...new Set(common)],
+		variant: true,
+		// SAFETY: the safeParse above admitted a string.
+		discriminator: String(discriminator),
+		branches,
+	}
+}
+
+function once<T>(compute: () => T): () => T {
+	let result: { value: T } | { error: unknown } | undefined
+	return () => {
+		if (!result)
+			try {
+				result = { value: compute() }
+			} catch (error) {
+				result = { error }
+			}
+		if ('error' in result) throw result.error
+		return result.value
+	}
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Registration preflight inspects descriptors before Zod can invoke caller getters; typed parsing follows immediately.
@@ -1544,29 +2004,45 @@ function domain(validator: GenericValidator): string[] {
 		throw new Error('Unsupported relation field kind')
 	return [JSON.stringify(nativeJson(validator))]
 }
-function validatePath(edge: AnyEdge, metadata: Record<string, TableMetadata>): void {
+/** Structural leg checks; registration runs these eagerly. */
+function assertPathLegs(edge: AnyEdge): void {
 	const from = edge.from
 	const to = edge.to
 	if ('base' in from !== 'base' in to) throw new Error('Both relation legs must use through')
+	if ('base' in from && 'base' in to && from.junction.table !== to.junction.table)
+		throw new Error('Different junction tables')
+}
+/** Field-type and index checks; these run on first use of the edge's source table
+ * and need only the stored tier of the tables they reach. */
+function validatePath(edge: AnyEdge, stored: (table: string) => StoredTier): void {
+	const from = edge.from
+	const to = edge.to
+	assertPathLegs(edge)
 	if ('base' in from && 'base' in to) {
-		if (from.junction.table !== to.junction.table) throw new Error('Different junction tables')
-		requireIndex(metadata, from.junction.table, from.junction.field, edge.junctionGuard)
-		requireIndex(metadata, edge.target, to.base.field, edge.targetGuard)
+		throughChecks.get(from)!()
+		throughChecks.get(to)!()
+		requireIndex(
+			stored(from.junction.table),
+			from.junction.table,
+			from.junction.field,
+			edge.junctionGuard,
+		)
+		requireIndex(stored(edge.target), edge.target, to.base.field, edge.targetGuard)
 		return
 	}
-	if (!compatible(refs.get(base(from))!, refs.get(base(to))!))
+	if (!compatible(refs.get(base(from))!(), refs.get(base(to))!()))
 		throw new Error('Incompatible relation field types')
-	requireIndex(metadata, edge.target, base(to).field, edge.targetGuard)
+	requireIndex(stored(edge.target), edge.target, base(to).field, edge.targetGuard)
 }
 function requireIndex(
-	metadata: Record<string, TableMetadata>,
+	data: Pick<StoredTier, 'capturedIndexes'>,
 	table: string,
 	field: string,
 	guard?: RelationGuard,
 ): void {
 	if (
 		field !== '_id' &&
-		!metadata[table].indexes.some((index) => {
+		!data.capturedIndexes.some((index) => {
 			const position = index.fields.indexOf(field)
 			return (
 				position >= 0 &&
@@ -1575,6 +2051,9 @@ function requireIndex(
 		})
 	)
 		throw new Error(`No active index begins with or has a guarded prefix for "${table}.${field}"`)
+}
+function legTables(leg: Leg): string[] {
+	return 'base' in leg ? [leg.base.table, leg.junction.table] : [leg.table]
 }
 function serializeLeg(leg: Leg): unknown[] {
 	return 'base' in leg
@@ -1700,11 +2179,20 @@ function normalizeTable(
 	document: ValidatorJSON,
 	facts?: DtoBoundary,
 ): Pick<TableMetadata, 'fields' | 'branches' | 'allFields'> {
-	if (schema instanceof z.ZodObject && (facts?.kind === 'object' || dto instanceof z.ZodObject)) {
-		const fields = zodToConvex(schema).fields
-		assertStoredDocument(name, fields, document)
-		return { fields, allFields: new Set(Object.keys(fields)) }
-	}
+	const dtos = checkDtoBoundary(name, schema, dto, facts)
+	const stored = normalizeStored(name, schema, document)
+	return { ...stored, branches: attachDtos(stored.branches, dtos, facts) }
+}
+/** Boundary-kind agreement between the stored schema and the DTO. Returns the
+ * DTO variant branches, which normalization attaches to the stored branches. */
+function checkDtoBoundary(
+	name: string,
+	schema: RelationTable['schema'],
+	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string> | undefined,
+	facts?: DtoBoundary,
+): VariantBranches | undefined {
+	if (schema instanceof z.ZodObject && (facts?.kind === 'object' || dto instanceof z.ZodObject))
+		return undefined
 	if (
 		!(schema instanceof z.ZodDiscriminatedUnion) ||
 		!(facts?.kind === 'variant' || dto instanceof z.ZodDiscriminatedUnion)
@@ -1719,28 +2207,66 @@ function normalizeTable(
 				: undefined) !== discriminator
 	)
 		throw new Error('DTO discriminator mismatch')
-	function options(union: z.ZodDiscriminatedUnion<any, string>): Record<string, z.ZodObject> {
-		const result: Record<string, z.ZodObject> = Object.create(null)
-		for (const option of union.options) {
-			if (!(option instanceof z.ZodObject)) throw new Error('Variant branches must be objects')
-			const tag = option.shape[discriminator]
-			if (!(tag instanceof z.ZodLiteral) || tag.values.size !== 1)
-				throw new Error('Variant tags must be unique required string literals')
-			const literal = z.string().safeParse(tag.value)
-			if (!literal.success || Object.hasOwn(result, literal.data))
-				throw new Error('Variant tags must be unique required string literals')
-			result[literal.data] = option
-		}
-		if (Object.keys(result).length === 0) throw new Error('Expected at least one variant branch')
-		return result
-	}
-	const documents = options(schema),
+	const documents = variantOptions(schema, discriminator),
 		dtos =
 			facts?.kind === 'variant'
 				? facts.branches
-				: options(dto instanceof z.ZodDiscriminatedUnion ? dto : schema)
+				: variantOptions(dto instanceof z.ZodDiscriminatedUnion ? dto : schema, discriminator)
 	if (Object.keys(documents).sort().join('\0') !== Object.keys(dtos).sort().join('\0'))
 		throw new Error('DTO variant tags mismatch')
+	return dtos
+}
+/** Captured DTO branch objects, or the admitted boundary's public keys per tag. */
+type VariantBranches = Readonly<Record<string, z.ZodObject | readonly string[]>>
+function attachDtos(
+	branches: TableMetadata['branches'],
+	dtos: VariantBranches | undefined,
+	facts?: DtoBoundary,
+): TableMetadata['branches'] {
+	if (!branches) return undefined
+	const options: NonNullable<TableMetadata['branches']>['options'] = Object.create(null)
+	for (const [tag, branch] of Object.entries(branches.options)) {
+		const dto = dtos?.[tag]
+		options[tag] = {
+			fields: branch.fields,
+			dto: facts ? undefined : dto instanceof z.ZodObject ? dto : undefined,
+		}
+	}
+	return { discriminator: branches.discriminator, options }
+}
+function variantOptions(
+	union: z.ZodDiscriminatedUnion<any, string>,
+	discriminator: string,
+): Record<string, z.ZodObject> {
+	const result: Record<string, z.ZodObject> = Object.create(null)
+	for (const option of union.options) {
+		if (!(option instanceof z.ZodObject)) throw new Error('Variant branches must be objects')
+		const tag = option.shape[discriminator]
+		if (!(tag instanceof z.ZodLiteral) || tag.values.size !== 1)
+			throw new Error('Variant tags must be unique required string literals')
+		const literal = z.string().safeParse(tag.value)
+		if (!literal.success || Object.hasOwn(result, literal.data))
+			throw new Error('Variant tags must be unique required string literals')
+		result[literal.data] = option
+	}
+	if (Object.keys(result).length === 0) throw new Error('Expected at least one variant branch')
+	return result
+}
+/** Stored fields from the stored schema, checked against the native document. */
+function normalizeStored(
+	name: string,
+	schema: RelationTable['schema'],
+	document: ValidatorJSON,
+): Pick<TableMetadata, 'fields' | 'branches' | 'allFields'> {
+	if (schema instanceof z.ZodObject) {
+		const fields = zodToConvex(schema).fields
+		assertStoredDocument(name, fields, document)
+		return { fields, allFields: new Set(Object.keys(fields)) }
+	}
+	if (!(schema instanceof z.ZodDiscriminatedUnion))
+		throw new Error(`Expected matching discriminated union boundaries "${name}"`)
+	const discriminator = schema._zod.def.discriminator
+	const documents = variantOptions(schema, discriminator)
 	const branches: NonNullable<TableMetadata['branches']> = {
 		discriminator,
 		options: Object.create(null),
@@ -1749,12 +2275,10 @@ function normalizeTable(
 	for (const [tag, object] of Object.entries(documents)) {
 		const fields = zodToConvex(object).fields
 		const { _id, _creationTime, ...storage } = fields
-		assertStoredDocument(name, fields, nativeJson(v.object(storage)))
+		// The union comparison below checks each branch's stored fields.
+		assertSystemFields(name, fields)
 		stored.push(v.object(storage))
-		branches.options[tag] = {
-			fields,
-			dto: facts ? undefined : dtos[tag] instanceof z.ZodObject ? dtos[tag] : undefined,
-		}
+		branches.options[tag] = { fields }
 	}
 	if (canonicalNative(document) !== canonicalNative(nativeJson(v.union(...stored))))
 		throw new Error(`Native stored document disagrees with boundary "${name}"`)
@@ -1917,14 +2441,19 @@ function assertStoredDocument(
 	document: ValidatorJSON,
 ): void {
 	const { _id, _creationTime, ...stored } = fields
+	assertSystemFields(table, fields)
+	if (canonicalNative(document) !== canonicalNative(nativeJson(v.object(stored))))
+		throw new Error(`Native stored document disagrees with boundary "${table}"`)
+}
+function assertSystemFields(table: string, fields: Record<string, GenericValidator>): void {
+	const { _id, _creationTime } = fields
 	if (
 		!_id ||
 		!_creationTime ||
 		canonicalNative(nativeJson(_id)) !== canonicalNative(nativeJson(v.id(table))) ||
 		canonicalNative(nativeJson(_creationTime)) !== canonicalNative(nativeJson(v.number())) ||
 		_id.isOptional !== 'required' ||
-		_creationTime.isOptional !== 'required' ||
-		canonicalNative(document) !== canonicalNative(nativeJson(v.object(stored)))
+		_creationTime.isOptional !== 'required'
 	)
 		throw new Error(`Native stored document disagrees with boundary "${table}"`)
 }
@@ -2080,41 +2609,34 @@ function preflightSchema(dto: z.ZodType, boundary: 'dto' | 'stored'): void {
 	visit(dto, 0)
 }
 
-function snapshotMetadata(registry: RegistryMetadata): RelationMetadata {
-	const tables: Record<string, RelationTableMetadata> = {}
-	for (const [name, data] of Object.entries(registry.metadata)) {
-		const fields: Record<string, RelationFieldMetadata> = {}
-		for (const [field, validator] of Object.entries(data.fields))
-			fields[field] = Object.freeze({
-				kind: validator.kind,
-				optional: validator.isOptional === 'optional',
-				nullable: hasNull(validator),
-				idTables: Object.freeze(idTables(validator)),
-				native: frozenNative(nativeJson(validator)),
-			})
-		tables[name] = Object.freeze({
-			fieldGroups: data.fieldGroups,
-			searchIndexes: data.searchIndexes,
-			fields: Object.freeze(fields),
-			variant: data.branches
-				? Object.freeze({
-						discriminator: data.branches.discriminator,
-						tags: Object.freeze(Object.keys(data.branches.options)),
-					})
-				: undefined,
-			indexes: Object.freeze(
-				data.indexes.map((index) =>
-					Object.freeze({
-						name: index.name,
-						fields: Object.freeze([...index.fields]),
-					}),
-				),
-			),
+function snapshotTable(data: TableMetadata): RelationTableMetadata {
+	const fields: Record<string, RelationFieldMetadata> = {}
+	for (const [field, validator] of Object.entries(data.fields))
+		fields[field] = Object.freeze({
+			kind: validator.kind,
+			optional: validator.isOptional === 'optional',
+			nullable: hasNull(validator),
+			idTables: Object.freeze(idTables(validator)),
+			native: frozenNative(nativeJson(validator)),
 		})
-	}
 	return Object.freeze({
-		tables: Object.freeze(tables),
-		declarations: registry.declarations,
+		fieldGroups: data.fieldGroups,
+		searchIndexes: data.searchIndexes,
+		fields: Object.freeze(fields),
+		variant: data.branches
+			? Object.freeze({
+					discriminator: data.branches.discriminator,
+					tags: Object.freeze(Object.keys(data.branches.options)),
+				})
+			: undefined,
+		indexes: Object.freeze(
+			data.indexes.map((index) =>
+				Object.freeze({
+					name: index.name,
+					fields: Object.freeze([...index.fields]),
+				}),
+			),
+		),
 	})
 }
 function hasNull(validator: GenericValidator): boolean {

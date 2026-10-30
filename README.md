@@ -156,11 +156,26 @@ public DTO or `null`. A many edge returns a bounded native page. Junction output
 preserves duplicate edge occurrences, even when target reads are memoized.
 Missing and unreadable targets have the same public result.
 
-`defineRelations` captures table names, stored field semantics, public DTO
-validation, variants, active indexes, and relation declarations. Complete schema
-and index configuration before calling it. Later changes to source declarations
-do not affect existing registries, helpers or engines. Create a new registry to
-adopt changes. Caller-owned declarations remain mutable.
+`defineRelations` checks table names, native table ownership and the structure
+of relation declarations. Variant tables also run their native table preflight
+then, to expose common-field references. It captures each table's stored field semantics,
+public DTO validation, variants and active indexes on that table's first use:
+its schema helpers, an engine read, or a selected relation that reaches it. Each
+edge's field types and indexes are checked when the edge is first read. Invalid
+tables and edges throw on first use instead of at registration. Complete schema
+and index configuration before calling `defineRelations`. Later changes to
+source declarations do not affect a table after its first use. Create a new
+registry to adopt changes. Caller-owned declarations remain mutable.
+
+Call `verifyRelations(relations)` from a test to run every deferred check, so CI
+fails on an invalid registry:
+
+```ts
+import { verifyRelations } from 'cvx-kit/relations'
+import { relations } from '../convex/relations'
+
+test('relation registry is valid', () => verifyRelations(relations))
+```
 
 Relation DTOs support `.refine()`. They reject opaque `.superRefine()` and
 `.check()` callbacks; express those validations with `.refine()` instead.

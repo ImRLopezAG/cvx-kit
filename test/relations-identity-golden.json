@@ -1,0 +1,34 @@
+{
+	"bench": {
+		"identity": "2e2931c821c8f9854e4cbb4067e619b8a68ba0a0108466978e4e9525408d60a7",
+		"metadata": "ca3d4fe2a1abedef3aa59002474d11586dbc2cd1149548d1113438b4c3ac48bc"
+	},
+	"fieldGroups": {
+		"identity": "bbe7fe6f7cf17527a2019a9fcdf3ee32cb56e7e417cd1c39e1440e75271693e0",
+		"metadata": "f28c89434aec0df34c292cfcdd73e0e09f3e33f4aaf0506332b439d29d1d51d1"
+	},
+	"idUnions": {
+		"identity": "61c36a3f48e7b44069eefaf0eea34c5966f6e262fe9d91893a6e600d6106dc5c",
+		"metadata": "8acc587c7a103a69f8ff70beddec5e6b617093bd650ff8354e53ccc06cbcdfc5"
+	},
+	"large": {
+		"identity": "f6503ac5d3cef8c487365cfd29d4587900eb398ee278d6a71da9242f9644d9c8",
+		"metadata": "68f9d861496cfc81ee0ea07a5cb79a04a941709ffe11dcba2a33f155e74dde43"
+	},
+	"relationships": {
+		"identity": "ea6de025877b88808c31bf672b09e4cf1883c6a60884778802cfb48112f3695f",
+		"metadata": "61da9e784290cb34e13d7028b0d451ced30eb0e0627a9241d03f5107e25260f7"
+	},
+	"search": {
+		"identity": "676f42fdbdc6d52d676f92085244c98097434bb287127b736fbbc98b3a747bb0",
+		"metadata": "1770f0e1f66ca76af2439b17a9ca04ac6f4fd9b64329243c0de36c06e908dbe1"
+	},
+	"variantEdges": {
+		"identity": "3008b3cd9f9a240767ad868b0baf052ac64dd73edfb611dcdacb7db855d4c13c",
+		"metadata": "0f4c6a2b4342f82b726642718741b64ed95b1dfec229b889ef7bb6c349a51a05"
+	},
+	"variants": {
+		"identity": "a05ead3445b89e2b24845e6ed4a2ca2faea29e360ae74819a851382f106d9ed1",
+		"metadata": "7c7ce59db7eaef98241ced6ee358284f0147c7e80483edaaadce5c51c2ba3bb4"
+	}
+}

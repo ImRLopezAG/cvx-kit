@@ -11,6 +11,7 @@ import { compareValues, getDocumentSize } from 'convex/values'
 import { createPlanner } from '../src/querying/planner'
 import { createCursorCodec, type CursorBinding } from '../src/querying/cursors'
 import { createQueryEngine } from '../src/querying'
+import { getRelationExecutor } from '../src/relations'
 import { MAX_DOCUMENT_BYTES } from '../src/querying/security'
 import {
 	declarations,
@@ -431,9 +432,13 @@ describe('U5 actual helper scalar engine', () => {
 		const f = harness()
 		const rows = await seed(f, 24, 5)
 		const filters = { department: 'a', count: 0, status: 'done' }
+		// Cursors bind the identity of what the query reads: here, tasks alone.
 		const registryVersion = Array.from(
 			new Uint8Array(
-				await crypto.subtle.digest('SHA-256', new TextEncoder().encode(f.relations.identity)),
+				await crypto.subtle.digest(
+					'SHA-256',
+					new TextEncoder().encode(getRelationExecutor(f.relations).scopedIdentity(['tasks'], [])),
+				),
 			),
 			(byte) => byte.toString(16).padStart(2, '0'),
 		).join('')
@@ -459,10 +464,22 @@ describe('U5 actual helper scalar engine', () => {
 				registryVersion,
 			}
 			const codec = createCursorCodec(cursor)
+			// 0.1.24 cursors bound the full registry identity; they must resume
+			// with exactly the native reads of a current cursor.
+			const legacy: CursorBinding = {
+				...binding,
+				registryVersion: Array.from(
+					new Uint8Array(
+						await crypto.subtle.digest('SHA-256', new TextEncoder().encode(f.relations.identity)),
+					),
+					(byte) => byte.toString(16).padStart(2, '0'),
+				).join(''),
+			}
 			let token: string | null = null,
 				raw: string | null = null
 			const ids: string[] = []
 			for (let page = 0; page < 10; page++) {
+				if (raw !== null && page === 1) token = codec.seal(raw, legacy)
 				const result = await f.t.run(async (ctx) => {
 					const native = observed(ctx.db),
 						actual = observed(ctx.db)

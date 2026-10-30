@@ -6,7 +6,7 @@ import {
 	corruptVariantRow,
 } from './fixture-querying/variants'
 import { cursor, managed, observed } from './fixture-querying/scalar'
-import { getRelationMetadata } from '../src/relations'
+import { getRelationMetadata, verifyRelations } from '../src/relations'
 import { z } from 'zod'
 import { zid } from 'convex-helpers/server/zod4'
 import { defineRelations } from '../src/relations-public'
@@ -19,7 +19,7 @@ test.each(['variant', 'variants'] as const)(
 	'variant tables reject reserved relation name %s at registration',
 	(name) => {
 		expect(() =>
-			defineRelations(variantDeclarations(), (r) => ({
+			verified(variantDeclarations(), (r) => ({
 				// SAFETY: untrusted relation names deliberately bypass the declaration contract.
 				payments: {
 					[name]: r.one.clients({ from: r.payments.clientId, to: r.clients._id }),
@@ -28,6 +28,13 @@ test.each(['variant', 'variants'] as const)(
 		).toThrow(`Relation name collision "${name}"`)
 	},
 )
+
+// Per-table and edge checks run on first use; verification runs all of them now.
+const verified: typeof defineRelations = (tables, declare) => {
+	const registry = defineRelations(tables, declare)
+	verifyRelations(registry)
+	return registry
+}
 
 test('ordinary tables preserve variant and variants relation names', () => {
 	const relations = defineRelations(variantDeclarations(), (r) => ({
@@ -588,7 +595,7 @@ test.each([
 
 test('malicious branch scopes, wrong joins and incompatible common fields reject registration', () => {
 	expect(() =>
-		defineRelations(variantDeclarations(), (_r, branch) => {
+		verified(variantDeclarations(), (_r, branch) => {
 			// SAFETY: attacker asks for a branch scope on an ordinary object table.
 			branch('clients' as never, 'client_draft' as never)
 			return {}
@@ -597,7 +604,7 @@ test('malicious branch scopes, wrong joins and incompatible common fields reject
 	for (const tag of ['unknown', 'client_draft']) {
 		const tables = variantDeclarations()
 		expect(() =>
-			defineRelations(tables, (r, branch) => ({
+			verified(tables, (r, branch) => ({
 				payments: {
 					// SAFETY: attacker metadata supplies an unknown scope or an absent branch key.
 					creditor: r.one.creditors({
@@ -610,7 +617,7 @@ test('malicious branch scopes, wrong joins and incompatible common fields reject
 	}
 	const tables = variantDeclarations()
 	expect(() =>
-		defineRelations(tables, (r, branch) => ({
+		verified(tables, (r, branch) => ({
 			payments: {
 				// SAFETY: wrong-table target deliberately bypasses the join type contract.
 				creditor: r.one.clients({
@@ -632,7 +639,7 @@ test('malicious branch scopes, wrong joins and incompatible common fields reject
 		},
 	)
 	expect(() =>
-		defineRelations({ ...tables, mixed }, (r) => ({
+		verified({ ...tables, mixed }, (r) => ({
 			mixed: {
 				// SAFETY: incompatible common key is runtime attacker input, not consumer API usage.
 				client: r.one.clients({

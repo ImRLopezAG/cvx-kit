@@ -10,9 +10,17 @@ parents before they fill a page. Native `paginated(dto)` remains independent.
 
 ## Registry capture and private DTOs
 
-`defineRelations` captures table definitions, validates registration and computes
-registry identity eagerly. Eligible DTOs defer private schema reconstruction
-until projection needs that table, then reuse it within the registry. Schemas
+`defineRelations` checks table names, native table ownership and relation
+declaration structure; variant tables also run native table preflight then, to
+expose common-field references. Each table's preflight, capture and
+normalization run once, on its first use: schema helpers, an engine read, or a
+selected relation that reaches it, including a through relation's junction. Each edge's field types and indexes are checked on its first
+read; a relation target needs only its stored side for that check. Registry
+identity and metadata snapshots are computed on demand, with the same values as
+an eager registry. `verifyRelations(relations)` runs every deferred check now;
+call it from a test so CI rejects an invalid registry. Eligible DTOs defer
+private schema reconstruction until projection needs that table, then reuse it
+within the registry. Schemas
 outside the optimized recipe grammar use eager compatibility reconstruction.
 Public helper schemas remain fresh; parsing, authorization and read budgets
 still run normally. No call-site changes are needed.
@@ -262,17 +270,17 @@ or the three-argument `zodVariantTable` boundaries. Declarations
 are validated against table ownership, field compatibility, and supporting
 indexes. Convex does not infer relationships; this registry supplies them.
 
-`defineRelations` captures table names, stored field semantics, public DTO
-validation, variants, active indexes, and relation declarations before invoking
-the declaration callback. Complete schema and index configuration before calling
-it. Later changes to source declarations do not affect existing registries,
-helpers or engines. Create a new registry to adopt changes. Caller-owned
+`defineRelations` captures table names, native table ownership and relation
+declarations. Stored field semantics, public DTO validation, variants and active
+indexes are captured on each table's first use. Complete schema and index
+configuration before calling it. Later changes to source declarations do not
+affect a table after its first use. Create a new registry to adopt changes. Caller-owned
 declarations remain mutable. Each returned schema helper owns its validation
 graph; editing one helper does not change other helpers or private engine parsers.
 
 Relation DTOs support `.refine()`, including captured callback references and
 copied check definitions. They reject opaque `.superRefine()` and `.check()`
-callbacks at registration; express those validations with `.refine()` instead.
+callbacks on the table's first use; express those validations with `.refine()` instead.
 Application state accessed by callback closures remains live.
 
 For branch-specific joins, filters, and a complete variant endpoint, see
@@ -552,6 +560,11 @@ replayed under another parent.
 
 Root, child, split, and end cursors bind filters, output selection, index, order,
 ancestry, principal/tenant/security scope, and registry/policy/engine versions.
+The registry version covers only what the query reads: its table, the relation
+path to it, and the relations its selection, field groups and relation filters
+walk, with the tables those touch. Changing anything else in the registry keeps
+the cursor valid. Cursors from 0.1.24 and earlier, bound to the full registry,
+still resume, and their continuations use the scoped binding.
 Changing page size alone remains valid. Treat tokens as opaque; preserve native
 `isDone`, `continueCursor`, and optional page-status/split metadata. Permission
 changes are rechecked on resume. Native `endCursor` supports bounded partitions.

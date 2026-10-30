@@ -2,7 +2,7 @@ import { expect, test } from 'vite-plus/test'
 import { z } from 'zod'
 import type { GenericValidator, ValidatorJSON } from 'convex/values'
 import { captureDto, materializeDto } from '../src/querying/schema-snapshot'
-import { defineRelations, getRelationExecutor } from '../src/relations'
+import { defineRelations, getRelationExecutor, verifyRelations } from '../src/relations'
 import { zid, zodTable, zodToConvex } from '../src/zod-table'
 
 function nativeJson(validator: GenericValidator): ValidatorJSON {
@@ -101,7 +101,7 @@ test('U1 variant tag and nested-container conversion agrees for ordinary capture
 	)
 })
 
-test('U1 constructor-rejected UUID definition fails before declaration despite source conversion success', () => {
+test('U1 constructor-rejected UUID definition fails on first use despite source conversion success', () => {
 	const uuid = z.uuid()
 	Reflect.set(uuid._zod.def, 'version', 'invalid')
 	const dto = z.object({ value: uuid })
@@ -113,40 +113,34 @@ test('U1 constructor-rejected UUID definition fails before declaration despite s
 	const items = zodTable('items', () => ({ value: z.string() }))
 	Reflect.set(items, 'dto', () => dto)
 	let declared = false
-	expect(() =>
-		defineRelations({ items }, () => {
-			declared = true
-			return {}
-		}),
-	).toThrow('Invalid UUID version: "invalid"')
-	expect(declared).toBe(false)
+	const registry = defineRelations({ items }, () => {
+		declared = true
+		return {}
+	})
+	// Per-table capture is deferred to first use; declaration no longer waits for it.
+	expect(declared).toBe(true)
+	expect(() => registry.tables.items.pageDto({})).toThrow('Invalid UUID version: "invalid"')
+	expect(() => verifyRelations(registry)).toThrow('Invalid UUID version: "invalid"')
 })
 
-test('U1 continuation constructor failure precedes bad indexes and declaration', () => {
+test('U1 continuation constructor failure precedes bad indexes on first use', () => {
 	const uuid = z.uuid()
 	Reflect.set(uuid._zod.def, 'version', 'invalid')
 	const items = zodTable('items', () => ({ value: z.string() }))
 	Reflect.set(items, 'dto', () => z.object({ value: uuid }))
 	Reflect.set(items.table, 'indexes', [{ indexDescriptor: 42, fields: [] }])
-	let declared = false
-	expect(() =>
-		defineRelations({ items }, () => {
-			declared = true
-			return {}
-		}),
-	).toThrow('Invalid UUID version')
-	expect(declared).toBe(false)
+	const registry = defineRelations({ items }, () => ({}))
+	expect(() => registry.tables.items.paginationOpts({})).toThrow('Invalid UUID version')
 })
 
-test('U1 continuation hidden constructor-sensitive catchall remains eager', () => {
+test('U1 continuation hidden constructor-sensitive catchall fails on first use', () => {
 	const uuid = z.uuid()
 	Reflect.set(uuid._zod.def, 'version', 'invalid')
-	expect(() => registryFor(z.object({ value: z.string() }).catchall(uuid))).toThrow(
-		'Invalid UUID version',
-	)
+	const registry = registryFor(z.object({ value: z.string() }).catchall(uuid))
+	expect(() => registry.tables.items.pageDto({})).toThrow('Invalid UUID version')
 })
 
-test('U1 continuation configured constructor hook is observed before declaration', () => {
+test('U1 continuation configured constructor hook is observed on first use', () => {
 	const dto = z.object({ value: z.string() })
 	const items = zodTable('items', () => ({ value: z.string() }))
 	const previous = z.config().postProcessor
@@ -159,7 +153,8 @@ test('U1 continuation configured constructor hook is observed before declaration
 		return dto
 	})
 	try {
-		expect(() => defineRelations({ items }, () => ({}))).toThrow('admission hook')
+		const registry = defineRelations({ items }, () => ({}))
+		expect(() => registry.tables.items.pageDto({})).toThrow('admission hook')
 	} finally {
 		z.config({ postProcessor: previous })
 	}
@@ -179,7 +174,7 @@ test('U1 continuation captured IDs and optional union order survive source mutat
 	expect(registryFor(source).identity).not.toBe(identity)
 })
 
-test('U1 continuation compatibility retains the later identity conversion after declaration', () => {
+test('U1 continuation compatibility retains the later identity conversion after first use', () => {
 	const source = z.object({ value: z.string() })
 	const items = zodTable('items', () => ({ value: z.string() }))
 	const previous = z.config().postProcessor
@@ -192,13 +187,12 @@ test('U1 continuation compatibility retains the later identity conversion after 
 		})
 		return source
 	})
-	let registry: ReturnType<typeof registryFor>
+	const registry = defineRelations({ items }, () => ({}))
 	try {
-		registry = defineRelations({ items }, () => {
-			expect(restored).toBeDefined()
-			Reflect.set(restored!.shape, 'value', z.number())
-			return {}
-		})
+		// First use captures the DTO; identity converts the restored schema later.
+		getRelationExecutor(registry).select('items', {})
+		expect(restored).toBeDefined()
+		Reflect.set(restored!.shape, 'value', z.number())
 	} finally {
 		z.config({ postProcessor: previous })
 	}

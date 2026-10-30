@@ -7,6 +7,7 @@ import {
 	type RelationTables,
 	type RelationDeclarations,
 	type FieldReference,
+	verifyRelations,
 } from '../src/relations'
 import { zodTable, zodToConvex } from '../src/zod-table'
 import { defineTestApp } from 'convex-test'
@@ -19,7 +20,13 @@ import {
 } from './fixture-querying/id-unions'
 
 // SAFETY: declaration negatives deliberately exercise untyped JavaScript callers.
-const unchecked = defineRelations as (
+// Per-table and edge checks run on first use; verification runs all of them now.
+const verified: typeof defineRelations = (tables, declare) => {
+	const registry = defineRelations(tables, declare)
+	verifyRelations(registry)
+	return registry
+}
+const unchecked = verified as (
 	tables: RelationTables,
 	declare: (
 		r: RelationBuilder<RelationTables>,

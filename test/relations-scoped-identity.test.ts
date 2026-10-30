@@ -7,7 +7,7 @@ import {
 	type RelationTables,
 } from '../src/relations'
 import { zodTable } from '../src/zod-table'
-import { createPlanner, digest, type RegistryScope } from '../src/querying/planner'
+import { createPlanner, digest, type QueryInput, type RegistryScope } from '../src/querying/planner'
 import { defineSchema } from 'convex/server'
 
 type RuntimeBuilder = Record<string, any>
@@ -94,6 +94,7 @@ function world(change: Change = 'none') {
 	const schema = defineSchema(
 		Object.fromEntries(Object.entries(tables).map(([name, table]) => [name, table.table])),
 	)
+	const planner = () => createPlanner(schema, registry)
 	const version = (scope: Partial<RegistryScope>) =>
 		createPlanner(schema, registry).registryVersion({
 			root: 'a',
@@ -103,7 +104,7 @@ function world(change: Change = 'none') {
 			filters: [],
 			...scope,
 		})
-	return { registry, captured, scoped, version }
+	return { registry, captured, scoped, version, planner }
 }
 
 /** Table names of the [name, ...] entries in an identity section. */
@@ -189,5 +190,27 @@ describe('scoped cursor identity', () => {
 		)
 		expect(await version({ path: ['bs'] })).toBe(await expected(['a', 'b'], throughB))
 		expect(() => version({ selection: { missing: true } })).toThrow('INVALID_RELATION')
+	})
+
+	test('planning and binding a page materializes only what the query reads', async () => {
+		const { captured, planner } = world('brokenUnrelated')
+		const engine = planner()
+		const page = async (input: Partial<QueryInput>, selection = {}) => {
+			engine.select('a', selection)
+			const plan = engine.plan('a', { numItems: 10, cursor: null, ...input }, [], [])
+			return engine.registryVersion({
+				root: 'a',
+				path: [],
+				selection,
+				groups: { relations: {} },
+				filters: [plan.residual],
+			})
+		}
+		await page({ filters: { code: 'x' } })
+		expect(captured).toEqual(['a'])
+		await page({ filters: { bs: { some: { code: 'y' } } } })
+		expect([...new Set(captured)].sort()).toEqual(['a', 'b', 'links'])
+		await page({}, { bs: { c: true } })
+		expect([...new Set(captured)].sort()).toEqual(['a', 'b', 'c', 'links'])
 	})
 })

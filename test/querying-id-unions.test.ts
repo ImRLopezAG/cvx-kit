@@ -8,6 +8,7 @@ import {
 	targetFields,
 } from './fixture-querying/id-unions'
 
+import { createPlanner } from '../src/querying/planner'
 import { createQueryEngine } from '../src/querying'
 import { defineRelations } from '../src/relations-public'
 import { ManagedReadError, type SecurityPolicyContext } from '../src/querying/security'
@@ -676,7 +677,6 @@ test('child cursors bind actor/scope/member/declaration/parent/path/filter/order
 			() => q.clients.relation(ids.targets.clients, 'tasks').when(true, 'by_rel').paginate(args),
 			() => q.clients.paginate({ ...args, filters: {} }),
 			() => q.tasks.paginate(args),
-			() => changed(o.ctx).clients.relation(ids.targets.clients, 'tasks').paginate(args),
 			() => changedPolicy(o.ctx).clients.relation(ids.targets.clients, 'tasks').paginate(args),
 			() => changedEngine(o.ctx).clients.relation(ids.targets.clients, 'tasks').paginate(args),
 			() => retiredKey(o.ctx).clients.relation(ids.targets.clients, 'tasks').paginate(args),
@@ -689,6 +689,23 @@ test('child cursors bind actor/scope/member/declaration/parent/path/filter/order
 		]
 		for (const call of attempts) await expect(call()).rejects.toThrow('Invalid cursor')
 		expect(o.counts.gets + o.counts.next + o.counts.ranges).toBe(0)
+		// Cursors bind only what their query reads. The changed registry differs in
+		// tasks.selected* member metadata, which clients.tasks never walks...
+		await expect(
+			changed(o.ctx).clients.relation(ids.targets.clients, 'tasks').paginate(args),
+		).resolves.toMatchObject({ isDone: false })
+		// ...while any query that walks the changed edge binds a different version.
+		const version = (relations: typeof f.relations, path: string[]) =>
+			createPlanner(f.schema, relations).registryVersion({
+				root: 'tasks',
+				path,
+				selection: {},
+				groups: { relations: {} },
+				filters: [],
+			})
+		for (const path of [['selected'], ['selectedTasks']])
+			expect(await version(changedRelations, path)).not.toBe(await version(f.relations, path))
+		expect(await version(changedRelations, ['client'])).toBe(await version(f.relations, ['client']))
 		for (const authority of [
 			{ ...scope, principal: 'other' },
 			{ ...scope, organization: 'other' },

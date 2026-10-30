@@ -7,6 +7,7 @@ import type {
 	TableDefinition,
 } from 'convex/server'
 import { createCursorCodec, type CursorBinding } from '../src/querying/cursors'
+import { getRelationExecutor } from '../src/relations'
 import { cursor, scope } from './fixture-querying/scalar'
 import { relationshipFixture, seedRelationships } from './fixture-querying/relationships'
 
@@ -60,6 +61,20 @@ for (const name of ['direct', 'labels'] as const)
 				registryVersion,
 			}
 			const codec = createCursorCodec(cursor)
+			const scoped: CursorBinding = {
+				...binding,
+				registryVersion: Array.from(
+					new Uint8Array(
+						await crypto.subtle.digest(
+							'SHA-256',
+							new TextEncoder().encode(
+								getRelationExecutor(f.relations).scopedIdentity(['tasks'], [['tasks', name]]),
+							),
+						),
+					),
+					(byte) => byte.toString(16).padStart(2, '0'),
+				).join(''),
+			}
 			// SAFETY: relationshipFixture registers both by_task indexes in place,
 			// which preserves their runtime descriptors but loses the fluent return types.
 			const nativeSchema = f.schema as SchemaDefinition<
@@ -135,7 +150,9 @@ for (const name of ['direct', 'labels'] as const)
 				})
 				actual.push(...next.page.map((row) => row._id))
 				// Subsequent current-engine tokens also retain the legacy authenticated binding.
-				expect(JSON.parse(codec.open(next.continueCursor, binding))).toHaveProperty('ancestors', [])
+				// Continuations reseal under the 0.1.25 digest of the child path's scope.
+				expect(JSON.parse(codec.open(next.continueCursor, scoped))).toHaveProperty('ancestors', [])
+				expect(() => codec.open(next.continueCursor, binding)).toThrow('Invalid cursor')
 				if (!next.isDone) expect(next.continueCursor).not.toBe(token)
 				token = next.continueCursor
 				done = next.isDone

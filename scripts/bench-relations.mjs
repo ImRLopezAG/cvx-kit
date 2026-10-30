@@ -1,5 +1,6 @@
 // Bundles the registration benchmark like Convex 1.48 does, then reports the
-// median of cold jitless loads. Usage: node scripts/bench-relations.mjs [repoRoot] [runs]
+// median of cold jitless loads.
+// Usage: node scripts/bench-relations.mjs [repoRoot] [runs] [entry: relations | relations-page]
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
@@ -8,13 +9,14 @@ import path from 'node:path'
 
 const root = path.resolve(process.argv[2] ?? '.')
 const runs = Number(process.argv[3] ?? 7)
+const entry = process.argv[4] ?? 'relations'
 const here = path.dirname(new URL(import.meta.url).pathname)
 const esbuild = createRequire(path.join(here, '..', 'package.json'))('esbuild')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvx-bench-'))
 const out = path.join(dir, 'relations.mjs')
 await esbuild.build({
 	absWorkingDir: root,
-	entryPoints: [path.join(root, 'scripts/bench/relations-entry.ts')],
+	entryPoints: [path.join(root, `scripts/bench/${entry}-entry.ts`)],
 	bundle: true,
 	platform: 'browser',
 	format: 'esm',

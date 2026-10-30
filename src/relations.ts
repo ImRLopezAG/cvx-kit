@@ -773,6 +773,10 @@ const executorRegistries = new WeakMap<
 		nativeTables: Readonly<Record<string, TableDefinition>>
 		streamSchema: ReturnType<typeof defineSchema>
 		use(table: string): void
+		scopedIdentity(
+			tables: readonly string[],
+			edges: readonly (readonly [source: string, name: string])[],
+		): string
 	}
 >()
 // Field validators resolve on first use of their table; resolvers memoize results and errors.
@@ -1121,6 +1125,7 @@ export function defineRelations<
 		}
 
 	let identity: string | undefined
+	const tableEntries = new Map<string, unknown[]>()
 	// Stable, collision-free canonical metadata encoding. It is an identity, not a secret/hash.
 	// Computed on first read; it requires and validates every table and edge.
 	function registryIdentity(): string {
@@ -1128,50 +1133,97 @@ export function defineRelations<
 		for (const check of throughPending) check()
 		return JSON.stringify([
 			2,
-			Object.entries(metadata)
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([name, data]) => [
-					name,
-					Object.entries(data.fields)
-						.sort(([a], [b]) => a.localeCompare(b))
-						.map(([field, validator]) => [field, validator.isOptional, nativeJson(validator)]),
-					data.branches
-						? [
-								data.branches.discriminator,
-								Object.entries(data.branches.options)
-									.sort(([a], [b]) => a.localeCompare(b))
-									.map(([tag, branch]) => [
-										tag,
-										Object.entries(branch.fields)
-											.sort(([a], [b]) => a.localeCompare(b))
-											.map(([field, validator]) => [
-												field,
-												validator.isOptional,
-												nativeJson(validator),
-											]),
-									]),
-							]
-						: null,
-					data.indexes,
-					data.dtoNativeCanonical ?? canonicalNative(nativeJson(zodToConvex(data.dto))),
-					...(Object.keys(data.fieldGroups).length ? [data.fieldGroups] : []),
-					...(data.searchIndexes.length ? [{ searchIndexes: data.searchIndexes }] : []),
-				]),
-			Object.entries(declarations)
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([source, edges]) => [
-					source,
-					Object.entries(edges)
-						.sort(([a], [b]) => a.localeCompare(b))
-						.map(([name, edge]) => [
-							name,
-							edge.cardinality,
-							edge.target,
-							serializeLeg(edge.from),
-							serializeLeg(edge.to),
-						]),
-				]),
+			Object.keys(metadata)
+				.sort((a, b) => a.localeCompare(b))
+				.map(tableEntry),
+			Object.keys(declarations)
+				.sort((a, b) => a.localeCompare(b))
+				.map((source) => sourceEntry(source)),
 		])
+	}
+	// The same encoding restricted to the given tables and edges, plus every table
+	// those edges touch. Engine cursors bind it for exactly what one query uses,
+	// so a change elsewhere cannot affect them. Validates and materializes only that.
+	function scopedIdentity(
+		tables: readonly string[],
+		edges: readonly (readonly [source: string, name: string])[],
+	): string {
+		const reached = new Set<string>()
+		const chosen = new Map<string, Set<string>>()
+		for (const name of tables) {
+			if (!names.includes(name)) throw new Error('Unknown query table')
+			reached.add(name)
+		}
+		for (const [source, name] of edges) {
+			if (!Object.hasOwn(declarations, source) || !Object.hasOwn(declarations[source], name))
+				throw new Error('Unknown relation')
+			const edge = declarations[source][name]
+			for (const table of [source, edge.target, ...legTables(edge.from), ...legTables(edge.to)])
+				reached.add(table)
+			const selected = chosen.get(source) ?? new Set<string>()
+			chosen.set(source, selected.add(name))
+		}
+		for (const name of reached) use(name)
+		return JSON.stringify([
+			3,
+			[...reached].sort((a, b) => a.localeCompare(b)).map(tableEntry),
+			[...chosen.keys()]
+				.sort((a, b) => a.localeCompare(b))
+				.map((source) => sourceEntry(source, chosen.get(source))),
+		])
+	}
+	function sourceEntry(source: string, only?: ReadonlySet<string>): unknown[] {
+		return [
+			source,
+			Object.keys(declarations[source])
+				.filter((name) => !only || only.has(name))
+				.sort((a, b) => a.localeCompare(b))
+				.map((name) => {
+					const edge = declarations[source][name]
+					return [
+						name,
+						edge.cardinality,
+						edge.target,
+						serializeLeg(edge.from),
+						serializeLeg(edge.to),
+					]
+				}),
+		]
+	}
+	function tableEntry(name: string): unknown[] {
+		let entry = tableEntries.get(name)
+		if (!entry) {
+			const data = metadata[name]
+			entry = [
+				name,
+				Object.entries(data.fields)
+					.sort(([a], [b]) => a.localeCompare(b))
+					.map(([field, validator]) => [field, validator.isOptional, nativeJson(validator)]),
+				data.branches
+					? [
+							data.branches.discriminator,
+							Object.entries(data.branches.options)
+								.sort(([a], [b]) => a.localeCompare(b))
+								.map(([tag, branch]) => [
+									tag,
+									Object.entries(branch.fields)
+										.sort(([a], [b]) => a.localeCompare(b))
+										.map(([field, validator]) => [
+											field,
+											validator.isOptional,
+											nativeJson(validator),
+										]),
+								]),
+						]
+					: null,
+				data.indexes,
+				data.dtoNativeCanonical ?? canonicalNative(nativeJson(zodToConvex(data.dto))),
+				...(Object.keys(data.fieldGroups).length ? [data.fieldGroups] : []),
+				...(data.searchIndexes.length ? [{ searchIndexes: data.searchIndexes }] : []),
+			]
+			tableEntries.set(name, entry)
+		}
+		return entry
 	}
 	// SAFETY: helpers are assembled for every validated literal table and mask; schemas derive matching native fields/public DTOs.
 	const registry = Object.freeze({
@@ -1211,6 +1263,7 @@ export function defineRelations<
 		nativeTables: Object.freeze(nativeTables),
 		streamSchema: defineSchema(Object.freeze(streamTables)),
 		use,
+		scopedIdentity,
 	})
 	return registry
 }
@@ -1277,6 +1330,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 	}
 	return Object.freeze({
 		streamSchema: owned.streamSchema,
+		scopedIdentity: owned.scopedIdentity,
 		groups(table: string, groups: GroupSelection) {
 			owned.use(table)
 			return assertGroups(owned.internal, table, groups)
@@ -1985,6 +2039,9 @@ function requireIndex(
 		})
 	)
 		throw new Error(`No active index begins with or has a guarded prefix for "${table}.${field}"`)
+}
+function legTables(leg: Leg): string[] {
+	return 'base' in leg ? [leg.base.table, leg.junction.table] : [leg.table]
 }
 function serializeLeg(leg: Leg): unknown[] {
 	return 'base' in leg

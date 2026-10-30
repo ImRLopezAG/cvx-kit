@@ -560,6 +560,11 @@ replayed under another parent.
 
 Root, child, split, and end cursors bind filters, output selection, index, order,
 ancestry, principal/tenant/security scope, and registry/policy/engine versions.
+The registry version covers only what the query reads: its table, the relation
+path to it, and the relations its selection, field groups and relation filters
+walk, with the tables those touch. Changing anything else in the registry keeps
+the cursor valid. Cursors from 0.1.24 and earlier, bound to the full registry,
+still resume, and their continuations use the scoped binding.
 Changing page size alone remains valid. Treat tokens as opaque; preserve native
 `isDone`, `continueCursor`, and optional page-status/split metadata. Permission
 changes are rechecked on resume. Native `endCursor` supports bounded partitions.

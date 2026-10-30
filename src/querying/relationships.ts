@@ -35,6 +35,7 @@ export interface GroupAccess {
 	checkOrder(table: string, fields: readonly string[], path?: readonly string[]): void
 }
 type Edge = RelationEdge<string, string, 'one' | 'many', any, any>
+const emptyGroups: ResolvedGroups = { fieldGroups: {}, relations: {} }
 export type RelationDocument = Record<string, Value> & {
 	_id: GenericId<string>
 	_creationTime: number
@@ -492,9 +493,24 @@ export function relationshipExecutor(
 			relationPath: path,
 			parent: rootId,
 		}
-		function open(token: string) {
+		// Each child path binds the registry scope it reads. A relation route from
+		// the same root computes the same scope, so it can open this path's cursors.
+		let bound: Promise<CursorBinding> | undefined
+		function bind() {
+			bound ??= planner
+				.registryVersion({
+					root: rootBinding.table,
+					path,
+					selection,
+					groups: resolved ?? emptyGroups,
+					filters: [plan.residual],
+				})
+				.then((registryVersion) => ({ ...binding, registryVersion }))
+			return bound
+		}
+		async function open(token: string) {
 			try {
-				return navigation.parse(JSON.parse(codec.open(token, binding)))
+				return navigation.parse(JSON.parse(codec.open(token, await bind())))
 			} catch {
 				throw new CursorError()
 			}
@@ -507,7 +523,7 @@ export function relationshipExecutor(
 			field,
 			index,
 			targetIndex,
-			binding,
+			bind,
 			open,
 			expansion,
 		}
@@ -536,8 +552,8 @@ export function relationshipExecutor(
 		opened?: { cursor: string | null; endCursor?: string | null },
 	) {
 		request.expand(depth, 0)
-		const { declared, plan, through, sourceTable, field, index, targetIndex, binding, expansion } =
-			prepared
+		const { declared, plan, through, sourceTable, field, index, targetIndex, expansion } = prepared
+		const binding = await prepared.bind()
 		const value = sourceValue(declared, parent)
 		const args = { ...plan.args, ...(opened ?? { cursor: null }) }
 		// SAFETY: declarations accept only native scalar lookup values; nullish references are absence.
@@ -680,8 +696,8 @@ export function relationshipExecutor(
 			ordering,
 		)
 		// Authenticate both slots and native ancestor IDs before ANY parent/traversal read.
-		const start = input.cursor === null ? null : prepared.open(input.cursor)
-		const end = input.endCursor == null ? null : prepared.open(input.endCursor)
+		const start = input.cursor === null ? null : await prepared.open(input.cursor)
+		const end = input.endCursor == null ? null : await prepared.open(input.endCursor)
 		const ancestors = start?.ancestors ?? end?.ancestors ?? []
 		if (
 			ancestors.length !== path.length - 1 ||

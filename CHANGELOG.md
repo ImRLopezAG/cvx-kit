@@ -18,7 +18,8 @@ are this file's matching section.
 
 - Defer each relation table's registration work to its first use: schema helpers, an engine read, or a selected relation that reaches it, including a through relation's junction. `defineRelations` now checks only table names, native table ownership and relation declaration structure, so a registry module costs little to import when a function uses few of its tables. Variant tables still run native table preflight at registration.
 - Check each relation edge's field types and supporting indexes on its first read; an edge's targets need only their stored side for that check.
-- Compute the registry identity, metadata snapshots and stream schema on demand. Their values are unchanged, so existing cursors stay valid. Engine page requests still bind cursors to the full identity and so still materialize every table.
+- Compute the registry identity, metadata snapshots and stream schema on demand. Their values are unchanged.
+- Bind engine cursors to the registry identity of what their query reads: its table, the relation path to it, and the relations its selection, field groups and relation filters walk, with the tables those relations touch. A page request now materializes only those tables, and a registry change outside that scope no longer invalidates the cursor. Cursors issued by 0.1.24 and earlier still resume: an engine computes the full identity once, on the first such cursor, and continuations are resealed under the scoped binding.
 - Invalid tables and edges now throw on first use instead of at registration, and later changes to a table's source definitions are ignored only after its first use.
 
 ### Added

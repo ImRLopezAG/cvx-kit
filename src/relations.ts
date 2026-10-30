@@ -845,7 +845,7 @@ export function defineRelations<
 	// failure is cached and rethrown on every later use.
 	const states: Record<
 		string,
-		{ stored?: StoredTier; data?: TableMetadata; failure?: { error: unknown }; busy?: boolean }
+		{ stored?: StoredCapture; data?: TableMetadata; failure?: { error: unknown }; busy?: boolean }
 	> = Object.create(null)
 	const pending: Record<string, (() => void)[]> = Object.create(null)
 	function storedTier(name: string): StoredTier {
@@ -1433,6 +1433,10 @@ interface StoredTier extends Pick<TableMetadata, 'fields' | 'branches' | 'allFie
 	capturedIndexes: readonly { name: string; fields: string[] }[]
 	searchIndexList: SearchIndexMetadata[]
 }
+/** A stored tier plus the stored schema object it inspected and normalized. */
+interface StoredCapture extends StoredTier {
+	schema: RelationTable['schema']
+}
 interface BoundaryCapture {
 	dtoRecipe: DtoRecipe
 	admission: ReturnType<typeof classifyDto>
@@ -1441,10 +1445,10 @@ interface BoundaryCapture {
 
 /** Registration-only preflight of the native table and stored schema. Stored
  * parsers and their default/pipe callbacks are never run. */
-function preflightStored(table: RelationTable, nativeTable: TableDefinition): void {
+function preflightStored(schema: RelationTable['schema'], nativeTable: TableDefinition): void {
 	// Rejects accessors before native export or conversion.
 	preflightNative(nativeTable)
-	preflightSchema(table.schema, 'stored')
+	preflightSchema(schema, 'stored')
 }
 
 function captureBoundary(table: RelationTable): BoundaryCapture {
@@ -1503,12 +1507,14 @@ function captureStoredTier(
 	name: string,
 	table: RelationTable,
 	nativeTable: TableDefinition,
-): StoredTier {
-	preflightStored(table, nativeTable)
+): StoredCapture {
+	const schema = table.schema
+	preflightStored(schema, nativeTable)
 	const exported = exportStored(nativeTable)
 	const tier = {
-		...normalizeStored(name, table.schema, exported.documentType),
+		...normalizeStored(name, schema, exported.documentType),
 		...captureIndexes(exported),
+		schema,
 	}
 	assertActiveIndexes(tier)
 	return tier
@@ -1521,12 +1527,13 @@ function materializeTable(
 	table: RelationTable,
 	nativeTable: TableDefinition,
 ): TableMetadata {
-	preflightStored(table, nativeTable)
+	const schema = table.schema
+	preflightStored(schema, nativeTable)
 	const boundary = captureBoundary(table)
 	const exported = exportStored(nativeTable)
 	const normalized = normalizeTable(
 		name,
-		table.schema,
+		schema,
 		boundary.dto,
 		exported.documentType,
 		boundary.admission?.boundary,
@@ -1535,13 +1542,18 @@ function materializeTable(
 }
 
 /** Completes a table whose stored tier already passed; only DTO-side checks remain. */
-function finishTable(name: string, table: RelationTable, stored: StoredTier): TableMetadata {
+function finishTable(name: string, table: RelationTable, stored: StoredCapture): TableMetadata {
 	const boundary = captureBoundary(table)
+	// The stored schema is caller-owned and may have changed since its stored tier
+	// was captured, including during the DTO callback above: inspect it again before
+	// reading it, and use the same object the stored tier normalized.
+	const { schema, ...tier } = stored
+	preflightSchema(schema, 'stored')
 	const facts = boundary.admission?.boundary
-	const dtos = checkDtoBoundary(name, table.schema, boundary.dto, facts)
+	const dtos = checkDtoBoundary(name, schema, boundary.dto, facts)
 	return completeTable(
 		table,
-		{ ...stored, branches: attachDtos(stored.branches, dtos, facts) },
+		{ ...tier, branches: attachDtos(tier.branches, dtos, facts) },
 		boundary,
 	)
 }

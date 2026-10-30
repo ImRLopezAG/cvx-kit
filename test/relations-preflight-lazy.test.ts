@@ -341,6 +341,42 @@ describe('deferred checks still throw no later than first use', () => {
 		)
 	})
 
+	test('completing a stored-tier table inspects its stored schema again first', () => {
+		const owners = zodTable('owners', () => ({ code: z.string() }), { publicFields: ['code'] })
+		const payments = zodVariantTable(
+			'payments',
+			z.discriminatedUnion('type', [
+				z.strictObject({ type: z.literal('card'), ownerId: z.string() }),
+				z.strictObject({ type: z.literal('wire'), ownerId: z.string() }),
+			]),
+			{
+				discriminator: 'type',
+				variants: { card: { publicFields: ['ownerId'] }, wire: { publicFields: ['ownerId'] } },
+			},
+		)
+		payments.table.index('by_type_ownerId', ['type', 'ownerId'])
+		const registry = unchecked({ owners, payments }, (r, branch) => ({
+			owners: {
+				card: r.many.payments({ from: r.owners.code, to: branch('payments', 'card').ownerId }),
+			},
+		}))
+		// Reading the edge captures only the target's stored tier.
+		expect(getRelationMetadata(registry).declarations.owners.card).toBeDefined()
+		const internals = payments.schema._zod
+		const def = internals.def
+		let calls = 0
+		Object.defineProperty(internals, 'def', {
+			configurable: true,
+			get: () => {
+				calls++
+				return def
+			},
+		})
+		expect(() => registry.tables.payments.pageDto({})).toThrow(/accessor/)
+		expect(() => registry.tables.payments.pageDto({})).toThrow(/accessor/)
+		expect(calls).toBe(0)
+	})
+
 	test('variant references come from the preflighted native union without materializing it', () => {
 		const owners = zodTable('owners', () => ({ code: z.string() }), { publicFields: ['code'] })
 		const payments = zodVariantTable(

@@ -11,7 +11,7 @@ The eager case matters: repeating one table's page helper benefits from its reci
 
 ## Local results
 
-Recorded 2026-11-02: macOS, Node v26.13.0, Zod 4.6.5, Convex 1.48.0, convex-helpers 0.1.129, identical installed dependencies and esbuild settings. Sources: 0.1.25 `6cbbb1532a7f29de7efa17cd6888b92184e735ca`; 0.1.26 `bbee6e2027ad8b1521bc15279db497d95d5ca058`; candidate 0.1.27 source on this branch. All sources receive byte-identical fixture files before bundling. Bundler conditions are `convex,module`; platform is browser, format ESM, with syntax/identifier minification and retained names, matching the existing Convex-oriented harness.
+Recorded 2026-11-02: macOS, Node v26.13.0, Zod 4.6.5, Convex 1.48.0, convex-helpers 0.1.129, identical installed dependencies and esbuild settings. Sources: 0.1.25 `6cbbb1532a7f29de7efa17cd6888b92184e735ca`; 0.1.26 `bbee6e2027ad8b1521bc15279db497d95d5ca058`; corrected 0.1.27 runtime source `fd759091aa2d967459010b9a800b39c805060385` (after the variant-isolation review fix). All sources receive byte-identical fixture files before bundling. Bundler conditions are `convex,module`; platform is browser, format ESM, with syntax/identifier minification and retained names, matching the existing Convex-oriented harness.
 
 Each cell is **median [p25, p75]** milliseconds from 21 fresh-process imports per case. The starting case rotates each round; every round measures every version/form/workload. No warmup samples or outliers are removed. Phase medians are independent and need not sum to load medians. Full min/max and all samples are retained in the JSON receipts.
 
@@ -19,23 +19,23 @@ Each cell is **median [p25, p75]** milliseconds from 21 fresh-process imports pe
 
 | Version/form | Deferred import | Eager import |
 | --- | ---: | ---: |
-| 0.1.25 object | 48.56 [48.38, 48.77] | 55.35 [55.13, 55.53] |
-| 0.1.26 object | 40.65 [40.56, 40.94] | 63.83 [63.22, 64.26] |
-| 0.1.26 thunk | 24.53 [24.37, 24.74] | 64.11 [63.70, 64.67] |
-| 0.1.27 object | 40.73 [40.24, 41.57] | 55.05 [54.82, 55.50] |
-| 0.1.27 thunk | 24.23 [24.05, 24.54] | 55.21 [54.98, 55.80] |
+| 0.1.25 object | 49.80 [49.69, 50.11] | 56.50 [56.25, 56.87] |
+| 0.1.26 object | 42.08 [41.82, 42.40] | 64.99 [64.46, 65.61] |
+| 0.1.26 thunk | 25.78 [25.74, 26.06] | 65.08 [64.62, 65.44] |
+| 0.1.27 object | 41.76 [41.56, 42.06] | 56.50 [56.08, 57.09] |
+| 0.1.27 thunk | 25.13 [25.00, 25.24] | 56.40 [56.28, 56.66] |
 
 ### Node --jitless
 
 | Version/form | Deferred import | Eager import |
 | --- | ---: | ---: |
-| 0.1.25 object | 62.20 [62.00, 62.57] | 76.96 [76.37, 77.14] |
-| 0.1.26 object | 49.65 [49.30, 50.18] | 86.74 [86.53, 87.85] |
-| 0.1.26 thunk | 27.20 [27.07, 27.34] | 86.73 [86.59, 87.47] |
-| 0.1.27 object | 49.14 [48.91, 49.32] | 75.94 [75.47, 76.49] |
-| 0.1.27 thunk | 26.28 [26.18, 26.53] | 76.05 [75.59, 76.50] |
+| 0.1.25 object | 64.99 [64.77, 65.22] | 80.17 [79.54, 80.37] |
+| 0.1.26 object | 52.36 [51.93, 52.58] | 90.15 [89.37, 90.42] |
+| 0.1.26 thunk | 28.96 [28.80, 29.04] | 90.00 [89.60, 90.28] |
+| 0.1.27 object | 51.66 [51.42, 51.91] | 78.86 [78.51, 79.42] |
+| 0.1.27 thunk | 27.99 [27.86, 28.15] | 78.95 [78.60, 79.63] |
 
-0.1.25 has no thunk API. Candidate eager object/thunk medians are at or below the 0.1.25 object reference in both modes, with a small margin and overlapping distributions. The deferred fixture retains the large improvement over 0.1.25; tiny differences from 0.1.26 are within the observed spread. These data do not establish a statistically separated speedup, unbundled package performance, minimum-peer performance, or deployed acceptance.
+0.1.25 has no thunk API. Candidate eager object/thunk medians are at or below the 0.1.25 object reference in both modes, with overlapping distributions. The eager JIT object medians differ by less than 0.001 ms, so this is effectively neutral, not evidence of a speedup. The deferred fixture retains the large improvement over 0.1.25; tiny differences from 0.1.26 are within the observed spread. These data do not establish a statistically separated speedup, unbundled package performance, minimum-peer performance, or deployed acceptance.
 
 The harness compares each eager bundle's complete snapshot with the 0.1.25 snapshot after its first timed import: native table/index serialization, all composed domain/tool schema descriptions, valid DTO/command/update/tool/reference outputs, thirty nonempty page/input outputs, and invalid input/output rejection. Zod custom IDs are opaque in JSON Schema (`unrepresentable: 'any'`), so reference parsing, native serialization and existing branded-ID/type tests provide complementary coverage. Later samples measure import only; output checks never enter the timer. Deferred snapshots are intentionally not forced, preserving that workload.
 
@@ -64,4 +64,4 @@ node scripts/bench-module-load.mjs "$proof/jit" 21 --jit "0.1.25=$proof/0.1.25" 
 
 Each run writes `results.json` (all samples, phase distributions, Node mode and source roots) and `output.json` (the checked eager snapshot). Run the two commands sequentially, without concurrent builds/tests/benchmarks. Existing single-source commands remain available: `node scripts/bench-relations.mjs . 11 module-load [lazy-contracts]`.
 
-This implementation's retained evidence is under `/tmp/cvx-eager-proof`: `RED-distinct-consumer.log`, `distinct-baseline/`, intermediate phase logs, `final-jit/`, `final-jitless/`, full verification logs and `receipt.json`. The baseline timing RED precedes the page optimization; runtime characterization precedes production changes. The parent owns packed consumer matrix checks, independent review and release.
+This implementation's retained evidence is under `/tmp/cvx-eager-proof`: `RED-distinct-consumer.log`, `distinct-baseline/`, intermediate phase logs, `corrected-jit/`, `corrected-jitless/`, full verification logs and `receipt.json`. Earlier `final-jit/` and `final-jitless/` receipts precede the review fix and are superseded by these corrected measurements. The baseline timing RED precedes the page optimization; runtime characterization precedes production changes. The corrected source passes 2,556 tests across 96 files, build/publint, project types, lint, package contents and 608 integration tests. Packed querying passes current/minimum peers (including full stress and focused runtime); packed variants and npm/Bun Effect consumers pass. Independent Astra Low source recheck closed the variant-isolation finding. Review, test and package receipts are retained alongside the benchmark results. Deployed Accord acceptance remains consumer-owned.

@@ -6,6 +6,8 @@ import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'
 import { createQueryEngine } from 'cvx-kit/querying'
 import { defineRelations } from 'cvx-kit/relations'
+import { zodTable } from 'cvx-kit/zod-table'
+import { z } from 'zod'
 import schema from './convex/schema'
 import { tasks, labels, edges } from './convex/domain/tasks/schema'
 import { relations } from './convex/relations'
@@ -27,7 +29,16 @@ function equivalentRegistry() {
 }
 const equivalent = equivalentRegistry()
 assert.equal(equivalent.identity, relations.identity)
-const changed = defineRelations({ tasks, labels, edges }, (r) => ({ tasks: {
+// Cursor identity covers the tables and edges actually queried. Change the
+// root table's public validator, rather than an unused relation definition.
+const changedTasks = zodTable('tasks', (id) => ({
+ ordinal: z.number().min(0), tenant: z.string(), department: z.string(), status: z.string(),
+ active: z.boolean(), priority: z.number(), authorized: z.boolean(), code: z.string(),
+ reference: id('tasks').nullable().optional(), required: id('labels').optional(), secret: z.string(),
+}), { serverFields: ['tenant', 'authorized', 'secret'], publicFields: ['ordinal'] })
+changedTasks.table.index('by_tenant_department_status', ['tenant', 'department', 'status'])
+ .index('by_active', ['active']).index('by_priority', ['priority']).index('by_code', ['code'])
+const changed = defineRelations({ tasks: changedTasks, labels, edges }, (r) => ({ tasks: {
  labels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
 }}))
 const eqEngine = createQueryEngine({ schema, relations: equivalent, cursor })

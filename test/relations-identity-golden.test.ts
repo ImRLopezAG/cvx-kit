@@ -15,6 +15,7 @@ import { variantFixture } from './fixture-querying/variants'
 // SHA-256 of the identity, so any byte difference would orphan live cursors.
 const golden = new URL('./relations-identity-golden.json', import.meta.url)
 
+// oxlint-disable-next-line anti-slop/no-known-value-widening -- This fixture intentionally accepts generated names or later property mutation.
 const registries: Record<string, () => RelationRegistryIdentity> = {
 	bench: () => register(defineTables()),
 	fieldGroups: () => groupDeclarations().relations,

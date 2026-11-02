@@ -1,3 +1,4 @@
+import { forceRegistry } from './modules/contracts/lazy'
 import { basename, dirname, relative, sep } from 'node:path'
 import type { CreateRule, ESTree, Plugin, Rule } from '@oxlint/plugins'
 import {
@@ -31,6 +32,7 @@ import {
 export type { ArchitectureOptions, ArchitectureDiagnostic } from './oxlint/architecture'
 
 export function checkArchitecture(options: ArchitectureOptions = {}): ArchitectureDiagnostic[] {
+	for (const registry of options.registries ?? []) forceRegistry(registry)
 	return inspectArchitecture(options)
 }
 

@@ -223,6 +223,7 @@ export function captureDto<Schema extends z.ZodType>(schema: Schema): DtoRecipe<
 
 // Factories share immutable instructions only. Every occurrence invokes its factory
 // again, so shared recipe nodes never share mutable materialized definitions.
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 type Factory = () => unknown
 const factories = new WeakMap<Recipe, Factory>()
 

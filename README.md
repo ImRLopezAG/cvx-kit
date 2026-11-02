@@ -515,6 +515,12 @@ for tools that need project diagnostics directly, named `rules`, and `RuleName`.
 Oxlint 1.87.0 and Vite+ 1.1.0. See [rule coverage and limitations](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/oxlint.md)
 and the [migration from the initial 0.1.4 plugin](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/upgrading.md).
 
+Table-derived schemas are built on first access. Effect Query and Command registries
+build on their first execution or `expose()` call; tests can force validation with
+`checkArchitecture({ registries: [queries, commands] })`. For expensive contract
+declarations, `defineDomainContract(() => ({ ... }))` builds once on first read,
+preserving the same inferred types as the object form.
+
 Repository checks and the enforced library rules are documented in
 [`tools/oxlint/README.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/tools/oxlint/README.md). Run `bun run lint` for
 anti-slop and architecture checks, `bun run test:lint` to test the custom

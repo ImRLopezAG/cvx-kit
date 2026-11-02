@@ -6,6 +6,8 @@ import { ResolverFactory } from 'oxc-resolver'
 export interface ArchitectureOptions {
 	cwd?: string
 	convexDir?: string
+	/** Build these registries to surface deferred configuration errors in tests. */
+	registries?: readonly object[]
 }
 export interface ArchitectureDiagnostic {
 	code:

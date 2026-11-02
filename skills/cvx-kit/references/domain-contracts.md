@@ -4,6 +4,13 @@ Declare schemas and command classification once in `contracts.ts`, then attach
 the declaration to a Command or Query registry. Errors belong at the root beside
 commands and queries. Either section and the error contract may be omitted.
 
+For contracts that derive many schemas, use `defineDomainContract(() => ({ ... }))`
+to defer construction of the object and its schemas.
+
+The first property read, enumeration or other object operation builds the declaration
+once. Schema identities and inferred literal operation keys are preserved. Object-form
+declarations continue to work. The callback must be synchronous.
+
 The regular registry uses `createFoundation` from `cvx-kit`; the Effect registry
 uses `createEffectFoundation` from `cvx-kit/effect`. Both accept the same contract
 and handler-first implementation helpers. Existing inline Effect definitions and the

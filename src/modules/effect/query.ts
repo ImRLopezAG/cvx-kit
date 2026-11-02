@@ -1,3 +1,4 @@
+import { memoize, registerLazyRegistry } from '../contracts/lazy'
 /* oxlint-disable anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- Overload implementation storage is erased; public signatures retain concrete values, errors and services. */
 import { Effect, Exit } from 'effect'
 import type { ContractSchema } from '../contracts/contract'
@@ -119,7 +120,7 @@ export function createEffectQuery<
 		CallbackError<GuardReturned>,
 		CallbackRequirements<GuardReturned>
 	>()
-	const operations: Operations = configuration.operations(definitions)
+	const getOperations = memoize<Operations>(() => configuration.operations(definitions))
 	const observability =
 		configuration.observability instanceof Observability
 			? configuration.observability
@@ -144,6 +145,7 @@ export function createEffectQuery<
 		| UnwrappedDefaultRequirements<Operations[Key], GuardReturned>
 	> {
 		const execution = Effect.suspend(() => {
+			const operations = getOperations()
 			if (!Object.prototype.hasOwnProperty.call(operations, operation)) {
 				return Effect.die(new QueryConfigurationError())
 			}
@@ -227,22 +229,26 @@ export function createEffectQuery<
 		Operations[Key]['input'],
 		OperationPublicResult<Operations[Key]>
 	> {
+		const operations = getOperations()
 		if (!Object.hasOwn(operations, operation)) throw new QueryConfigurationError()
 		return selectOperation(owner, 'query', operation, operations[operation])
 	}
-	return {
-		exec,
-		expose,
-		/** Bind invocation context without resolving it or running an operation. */
-		withContext(context: Host) {
-			return {
-				exec: <const Key extends OperationKey<Operations>>(
-					operation: Key,
-					input: EffectOperationArgument<Operations[Key]>,
-				) => exec(operation, input, context),
-			}
+	return registerLazyRegistry(
+		{
+			exec,
+			expose,
+			/** Bind invocation context without resolving it or running an operation. */
+			withContext(context: Host) {
+				return {
+					exec: <const Key extends OperationKey<Operations>>(
+						operation: Key,
+						input: EffectOperationArgument<Operations[Key]>,
+					) => exec(operation, input, context),
+				}
+			},
 		},
-	}
+		getOperations,
+	)
 }
 
 type Policy<Dependencies> = 'checkPermission' extends keyof Dependencies
@@ -351,22 +357,25 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 		operations: (define: never) => Readonly<Record<string, object>>
 		defaults?: { metadata?: object; guard?: (context: never) => Supported<void> }
 	}): unknown {
-		const definitions = configuration.contract
-			? domainEffectFactory(configuration.contract.queries ?? {}, false)
-			: effectOperationFactory()
-		const operations = snapshotOperations(
-			configuration.operations(
-				// SAFETY: the overload chooses this exact inline or contracted helper factory.
-				definitions as never,
-			),
-			configuration.contract,
-			'queries',
-		)
+		const buildOperations = () => {
+			const definitions = configuration.contract
+				? domainEffectFactory(configuration.contract.queries ?? {}, false)
+				: effectOperationFactory()
+			return snapshotOperations(
+				configuration.operations(
+					// SAFETY: the overload chooses this exact inline or contracted helper factory.
+					definitions as never,
+				),
+				configuration.contract,
+				'queries',
+			)
+		}
+
 		// SAFETY: the overload verifies callback types; exact binding ownership is verified before execution.
 		return createEffectQuery({
 			...configuration,
 			...dependencies,
-			operations: () => operations,
+			operations: buildOperations,
 		} as never)
 	}
 	return query

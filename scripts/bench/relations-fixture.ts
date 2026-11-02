@@ -99,8 +99,10 @@ export function defineTables() {
 	return { tables: { ...tables, tasks, payments, notes }, targets }
 }
 
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Generated table names require an erased runtime fixture adapter; public APIs remain precisely typed.
 type RuntimeBuilder = Record<string, any>
 // SAFETY: runtime registration is identical for generated names; only the static types are erased.
+// oxlint-disable-next-line anti-slop/no-chained-type-assertions -- This test adapter deliberately exercises runtime guards independently of static declaration constraints.
 const runtimeRelations = defineRelations as unknown as (
 	tables: ReturnType<typeof defineTables>['tables'],
 	declare: (r: RuntimeBuilder, branch: (table: string, tag: string) => RuntimeBuilder) => object,
@@ -108,6 +110,7 @@ const runtimeRelations = defineRelations as unknown as (
 
 export function register({ tables, targets }: ReturnType<typeof defineTables>) {
 	return runtimeRelations(tables, (r, branch) => {
+		// oxlint-disable-next-line anti-slop/no-known-value-widening, anti-slop/no-unsafe-dictionary-type -- This fixture intentionally accepts generated names or later property mutation. Generated table names require an erased runtime fixture adapter; public APIs remain precisely typed.
 		const declarations: Record<string, Record<string, unknown>> = {
 			tasks: {
 				owner: r.one.entity0({ from: r.tasks.ownerId, to: r.entity0._id }),

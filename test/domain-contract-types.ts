@@ -59,3 +59,31 @@ const wireEntry = operationContract({
 })
 const wire = defineDomainContract({ commands: { save: wireEntry } })
 void wire
+
+const lazyDomain = defineDomainContract(() => ({
+	commands: { create: { input: z.string(), result: z.number(), classification: 'business' } },
+	queries: { get: { input: z.number(), result: z.string() } },
+}))
+const lazyAssertions: [
+	Assert<Equal<keyof typeof lazyDomain.commands, 'create'>>,
+	Assert<Equal<typeof lazyDomain.commands.create.classification, 'business'>>,
+	Assert<Equal<ContractInput<typeof lazyDomain.queries.get.input>, number>>,
+] = [true, true, true]
+void lazyAssertions
+// @ts-expect-error thunks retain forbidden implementation-field checks
+defineDomainContract(() => ({
+	queries: { bad: { input: z.string(), result: z.string(), handler: () => '' } },
+}))
+// @ts-expect-error thunks retain replay-result compatibility checks
+defineDomainContract(() => ({
+	commands: {
+		bad: {
+			input: z.string(),
+			result: z.number(),
+			classification: 'business',
+			replayResult: z.string(),
+		},
+	},
+}))
+// @ts-expect-error thunk command classification is still required
+defineDomainContract(() => ({ commands: { bad: { input: z.string(), result: z.string() } } }))

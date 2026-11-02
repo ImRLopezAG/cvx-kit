@@ -1138,10 +1138,17 @@ export function defineRelations<
 					const result = pageResult(rowSchema(internal, table, selection, 0, groups))
 					recipe = captureDto(result)
 					pageRecipes.set(key, recipe)
-					// This graph was freshly built from private recipes, not caller schemas.
-					// Retain its isolated recipe before exposing it. Configured hooks and
-					// unknown peer versions keep the canonical reconstruction path.
-					if (ordinary && ordinaryDtoConstruction()) return result
+					// Unselected ordinary rows contain only independently restored DTOs.
+					// Composed relations and groups may share validators across variant
+					// branches, so retain reconstruction to isolate every occurrence.
+					if (
+						ordinary &&
+						!metadata[table].branches &&
+						Object.keys(selection).length === 0 &&
+						Object.keys(groups).length === 0 &&
+						ordinaryDtoConstruction()
+					)
+						return result
 				}
 				return materializeDto(recipe)
 			},

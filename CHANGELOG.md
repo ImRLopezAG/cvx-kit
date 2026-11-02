@@ -17,7 +17,7 @@ are this file's matching section.
 ### Fixed
 
 - Reduce eager table/contract import cost by constructing strict document and write boundaries directly, sharing private declaration-time field selections while retaining independent public field maps.
-- Avoid constructing unused native pagination arguments for relation page results. On audited Zod constructor environments, return the first freshly composed page after capturing its isolated private recipe; subsequent calls still materialize independent validators. Configured hooks, changed memoizers and unknown peer versions retain reconstruction.
+- Avoid constructing unused native pagination arguments for relation page results. On audited Zod constructor environments, return the first unselected ordinary page after capturing its isolated private recipe; subsequent calls still materialize independent validators. Variant rows, selected relations, field groups, configured hooks, changed memoizers and unknown peer versions retain reconstruction.
 
 ### Added
 

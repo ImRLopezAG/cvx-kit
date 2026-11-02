@@ -6,7 +6,7 @@ import { defineRelations } from '../../src/relations'
 
 export const ENTITY_COUNT = 84
 
-export function defineTables() {
+export function defineTables(eager = false) {
 	const entity = (name: string, parent: string) =>
 		zodTable(
 			name,
@@ -25,6 +25,7 @@ export function defineTables() {
 				secret: z.string(),
 			}),
 			{
+				commandFields: eager ? ['title', 'status', 'ref'] : [],
 				publicFields: [
 					'parentId',
 					'ref',
@@ -40,9 +41,9 @@ export function defineTables() {
 				],
 			},
 		)
-	const tables: Record<string, ReturnType<typeof entity>> = {}
+	const tables: Record<`entity${number}`, ReturnType<typeof entity>> = {}
 	for (let i = 0; i < ENTITY_COUNT; i++) {
-		const name = `entity${i}`
+		const name: `entity${number}` = `entity${i}`
 		const table = entity(name, `entity${Math.max(0, i - 1)}`)
 		table.table
 			.index('by_parentId', ['parentId'])
@@ -96,7 +97,12 @@ export function defineTables() {
 		publicFields: ['taskId', 'text'],
 	})
 	notes.table.index('by_taskId', ['taskId'])
-	return { tables: { ...tables, tasks, payments, notes }, targets }
+	const allTables: typeof tables & {
+		tasks: typeof tasks
+		payments: typeof payments
+		notes: typeof notes
+	} = { ...tables, tasks, payments, notes }
+	return { tables: allTables, entities: tables, targets }
 }
 
 // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Generated table names require an erased runtime fixture adapter; public APIs remain precisely typed.

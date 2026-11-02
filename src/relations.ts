@@ -4,6 +4,7 @@ import {
 	captureDto,
 	materializeDto,
 	classifyDto,
+	ordinaryDtoConstruction,
 	type DtoBoundary,
 	type DtoRecipe,
 } from './querying/schema-snapshot'
@@ -17,7 +18,8 @@ import {
 	type ValidatorJSON,
 	type JSONValue,
 } from 'convex/values'
-import { paginated, type EnginePaginationResult } from './zod-table'
+import type { EnginePaginationResult } from './zod-table'
+import { pageResult } from './querying/shared/page'
 import {
 	nativePagination,
 	relationFilterSchema,
@@ -1132,8 +1134,14 @@ export function defineRelations<
 				const key = JSON.stringify([selection, groups])
 				let recipe = pageRecipes.get(key)
 				if (!recipe) {
-					recipe = captureDto(paginated(rowSchema(internal, table, selection, 0, groups)).result)
+					const ordinary = ordinaryDtoConstruction()
+					const result = pageResult(rowSchema(internal, table, selection, 0, groups))
+					recipe = captureDto(result)
 					pageRecipes.set(key, recipe)
+					// This graph was freshly built from private recipes, not caller schemas.
+					// Retain its isolated recipe before exposing it. Configured hooks and
+					// unknown peer versions keep the canonical reconstruction path.
+					if (ordinary && ordinaryDtoConstruction()) return result
 				}
 				return materializeDto(recipe)
 			},
@@ -2213,7 +2221,7 @@ function rowSchema(
 						option.shape[edge.targetGuard!.discriminator].value === edge.targetGuard!.tag,
 				)!
 		}
-		relationFields[name] = edge.cardinality === 'one' ? target.nullable() : paginated(target).result
+		relationFields[name] = edge.cardinality === 'one' ? target.nullable() : pageResult(target)
 	}
 	const data = registry.metadata[table]
 	const dto = materializeDto(data.dtoRecipe)

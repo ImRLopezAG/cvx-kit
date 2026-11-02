@@ -64,3 +64,41 @@ it('pagination observes schema field replacement after a prior call', () => {
 	expect(first.safeParse(args).success).toBe(false)
 	expect(second.safeParse(args).success).toBe(true)
 })
+
+it('keeps eager boundary composition strict and independent after all first reads', () => {
+	const boundary = zodTable('items', () => ({ name: z.string(), secret: z.string() }), {
+		commandFields: ['name'],
+		publicFields: ['name'],
+	})
+	const { schema, insertSchema, updateSchema, commandInput, publicDto, tools } = boundary
+	const detail = publicDto.extend({ ownerId: schema.shape._id })
+	const command = commandInput.superRefine(() => {})
+	expect(detail.parse({ name: 'ok', ownerId: 'items:1' })).toEqual({
+		name: 'ok',
+		ownerId: 'items:1',
+	})
+	expect(command.parse({ name: 'ok' })).toEqual({ name: 'ok' })
+	expect(updateSchema.safeParse({}).success).toBe(true)
+	for (const validator of [schema, insertSchema, updateSchema, commandInput, publicDto]) {
+		expect(validator.safeParse({ name: 'ok', unexpected: true }).success).toBe(false)
+	}
+	insertSchema.shape.name = z.string().min(5)
+	commandInput.shape.name = z.string().min(5)
+	boundary.storage.shape.name = z.string().min(5)
+	expect(updateSchema.parse({ name: 'ok' })).toEqual({ name: 'ok' })
+	expect(schema.parse({ name: 'ok', secret: 'hidden', _id: 'items:1', _creationTime: 1 })).toEqual({
+		name: 'ok',
+		secret: 'hidden',
+		_id: 'items:1',
+		_creationTime: 1,
+	})
+	expect(tools.update.parse({ id: 'items:1', data: { name: 'ok' } })).toEqual({
+		id: 'items:1',
+		data: { name: 'ok' },
+	})
+	const replacement = z.strictObject({ name: z.string().min(5) })
+	boundary.publicDto = replacement
+	expect(boundary.publicDto).toBe(replacement)
+	expect(boundary.dto()).toBe(publicDto)
+	expect(boundary.toPublicDto({ name: 'ok', secret: 'hidden' })).toEqual({ name: 'ok' })
+})

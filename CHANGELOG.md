@@ -12,6 +12,17 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.27] - 2026-11-02
+
+### Fixed
+
+- Reduce eager table/contract import cost by constructing strict document and write boundaries directly, sharing private declaration-time field selections while retaining independent public field maps.
+- Avoid constructing unused native pagination arguments for relation page results. On audited Zod constructor environments, return the first unselected ordinary page after capturing its isolated private recipe; subsequent calls still materialize independent validators. Variant rows, selected relations, field groups, configured hooks, changed memoizers and unknown peer versions retain reconstruction.
+
+### Added
+
+- An eager consumer benchmark with 87 indexed tables, cross-table document IDs, DTO/command/update/tool composition, native schema maps and 30 distinct domain contracts consumed at import. Compare 0.1.25, 0.1.26 and the candidate in interleaved fresh Node processes, alongside the existing deferred fixture, with full sample distributions and output snapshots. See `docs/benchmarks/module-load.md` for the local results and reproduction steps.
+
 ## [0.1.26] - 2026-11-02
 
 ### Changed

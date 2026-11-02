@@ -458,6 +458,15 @@ export function classifyDto(recipe: DtoRecipe): NativeRecipe | undefined {
 	return classify(recipe.root)
 }
 
+/** Eligibility only; hostile configuration readers keep the reconstruction path. */
+export function ordinaryDtoConstruction(): boolean {
+	try {
+		return ordinaryConstructorEnvironment()
+	} catch {
+		return false
+	}
+}
+
 function ordinaryDispatch(value: Node): Readonly<(typeof dispatch)[number]> | undefined {
 	if (!ordinaryTraitDispatch) return
 	try {

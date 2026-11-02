@@ -3,7 +3,48 @@ import { z } from 'zod'
 import type { GenericValidator, ValidatorJSON } from 'convex/values'
 import { captureDto, materializeDto } from '../src/querying/schema-snapshot'
 import { defineRelations, getRelationExecutor, verifyRelations } from '../src/relations'
-import { zid, zodTable, zodToConvex } from '../src/zod-table'
+import { zid, zodTable, zodToConvex, zodVariantTable } from '../src/zod-table'
+
+test.each([1, 2])('pageDto call %i isolates relation validators between variant branches', (call) => {
+	const target = zodTable('target', () => ({ name: z.string() }), { publicFields: ['name'] })
+	const source = zodVariantTable(
+		'source',
+		z.discriminatedUnion('kind', [
+			z.strictObject({ kind: z.literal('a'), targetId: zid('target') }),
+			z.strictObject({ kind: z.literal('b'), targetId: zid('target') }),
+		]),
+		{
+			discriminator: 'kind',
+			variants: { a: { publicFields: ['targetId'] }, b: { publicFields: ['targetId'] } },
+		},
+	)
+	const registry = defineRelations({ source, target }, (r) => ({
+		source: { target: r.one.target({ from: r.source.targetId, to: r.target._id }) },
+	}))
+	if (call === 2) registry.tables.source.pageDto({ target: true })
+	const page = registry.tables.source.pageDto({ target: true })
+	if (!(page instanceof z.ZodObject)) throw new Error('Expected object page')
+	const rows = page.shape.page
+	if (!(rows instanceof z.ZodArray)) throw new Error('Expected page array')
+	const row = rows.element
+	if (!(row instanceof z.ZodDiscriminatedUnion)) throw new Error('Expected variant rows')
+	const [a, b] = row.options
+	if (!(a instanceof z.ZodObject) || !(b instanceof z.ZodObject))
+		throw new Error('Expected object branches')
+	const aTarget = a.shape.target
+	const bTarget = b.shape.target
+	if (!(aTarget instanceof z.ZodNullable) || !(bTarget instanceof z.ZodNullable))
+		throw new Error('Expected nullable relations')
+	const first = aTarget.unwrap()
+	const second = bTarget.unwrap()
+	if (!(first instanceof z.ZodObject) || !(second instanceof z.ZodObject))
+		throw new Error('Expected object relations')
+	expect(first).not.toBe(second)
+	first.shape.name = z.number()
+	const value = { _id: 'target:1', name: 'ok' }
+	expect(first.safeParse(value).success).toBe(false)
+	expect(second.parse(value)).toEqual(value)
+})
 
 function nativeJson(validator: GenericValidator): ValidatorJSON {
 	// SAFETY: Convex exposes converter JSON at runtime but omits it from public declarations.

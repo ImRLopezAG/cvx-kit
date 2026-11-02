@@ -4,6 +4,7 @@ import {
 	captureDto,
 	materializeDto,
 	classifyDto,
+	ordinaryDtoConstruction,
 	type DtoBoundary,
 	type DtoRecipe,
 } from './querying/schema-snapshot'
@@ -17,7 +18,8 @@ import {
 	type ValidatorJSON,
 	type JSONValue,
 } from 'convex/values'
-import { paginated, type EnginePaginationResult } from './zod-table'
+import type { EnginePaginationResult } from './zod-table'
+import { pageResult } from './querying/shared/page'
 import {
 	nativePagination,
 	relationFilterSchema,
@@ -1132,8 +1134,21 @@ export function defineRelations<
 				const key = JSON.stringify([selection, groups])
 				let recipe = pageRecipes.get(key)
 				if (!recipe) {
-					recipe = captureDto(paginated(rowSchema(internal, table, selection, 0, groups)).result)
+					const ordinary = ordinaryDtoConstruction()
+					const result = pageResult(rowSchema(internal, table, selection, 0, groups))
+					recipe = captureDto(result)
 					pageRecipes.set(key, recipe)
+					// Unselected ordinary rows contain only independently restored DTOs.
+					// Composed relations and groups may share validators across variant
+					// branches, so retain reconstruction to isolate every occurrence.
+					if (
+						ordinary &&
+						!metadata[table].branches &&
+						Object.keys(selection).length === 0 &&
+						Object.keys(groups).length === 0 &&
+						ordinaryDtoConstruction()
+					)
+						return result
 				}
 				return materializeDto(recipe)
 			},
@@ -2213,7 +2228,7 @@ function rowSchema(
 						option.shape[edge.targetGuard!.discriminator].value === edge.targetGuard!.tag,
 				)!
 		}
-		relationFields[name] = edge.cardinality === 'one' ? target.nullable() : paginated(target).result
+		relationFields[name] = edge.cardinality === 'one' ? target.nullable() : pageResult(target)
 	}
 	const data = registry.metadata[table]
 	const dto = materializeDto(data.dtoRecipe)

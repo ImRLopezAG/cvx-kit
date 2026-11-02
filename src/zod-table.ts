@@ -1,3 +1,4 @@
+import { pageResult } from './querying/shared/page'
 import { memoize } from './modules/contracts/lazy'
 import type { PaginationValidatorOptions } from './querying/shared/filters'
 import { convexToZod, zid, type ConvexValidatorFromZod, type Zid } from 'convex-helpers/server/zod4'
@@ -206,14 +207,11 @@ export function zodTable<
 		options.commandFields ?? [],
 		options.publicFields ?? [],
 	)
-	const storage: z.ZodObject<Fields & TimestampFields, z.core.$strict> = z
-		.object({ ...columns })
-		.strict()
+	const storage: z.ZodObject<Fields & TimestampFields, z.core.$strict> = z.strictObject({
+		...columns,
+	})
 	const getSchema = memoize(() =>
-		documentSchema<Fields & TimestampFields, Table>(
-			z.object<Fields & TimestampFields>({ ...columns }).strict(),
-			tableName,
-		),
+		documentSchema<Fields & TimestampFields, Table>(columns, tableName),
 	)
 	const omittedKeys: readonly (ServerFields[number] | (typeof TIMESTAMP_FIELDS)[number])[] = [
 		...TIMESTAMP_FIELDS,
@@ -221,20 +219,21 @@ export function zodTable<
 	]
 	const commandKeys: readonly CommandFields[number][] = [...(options.commandFields ?? [])]
 	const publicKeys: readonly PublicFields[number][] = [...(options.publicFields ?? [])]
+	// Reuse declaration-time selections, never a mutable public schema's shape.
+	const getWriteFields = memoize(() => omitFields(columns, omittedKeys))
+	const getCommandFields = memoize(() => pickFields(columns, commandKeys))
 	const getInsertSchema = memoize(
 		(): z.ZodObject<WriteFields<Fields, ServerFields>, z.core.$strict> =>
-			z.object(omitFields(columns, omittedKeys)).strict(),
+			z.strictObject({ ...getWriteFields() }),
 	)
-	const getUpdateSchema = memoize(() =>
-		z.object(omitFields(columns, omittedKeys)).strict().partial(),
-	)
+	const getUpdateSchema = memoize(() => z.strictObject({ ...getWriteFields() }).partial())
 	const getCommandInput = memoize(
 		(): z.ZodObject<Pick<Fields & TimestampFields, CommandFields[number]>, z.core.$strict> =>
-			z.object(pickFields(columns, commandKeys)).strict(),
+			z.strictObject({ ...getCommandFields() }),
 	)
 	const getPublicDto = memoize(
 		(): z.ZodObject<Pick<Fields & TimestampFields, PublicFields[number]>, z.core.$strict> =>
-			z.object(pickFields(columns, publicKeys)).strict(),
+			z.strictObject(pickFields(columns, publicKeys)),
 	)
 	const derived = {
 		get schema() {
@@ -284,7 +283,7 @@ export function zodTable<
 		const extension = normalized?.extend ?? {}
 		assertDtoExtension(extension)
 		if (!normalized?._id && Object.keys(extension).length === 0) return derived.publicDto
-		const resultSchema = z.object({ ...derived.publicDto.shape, ...extension }).strict()
+		const resultSchema = z.strictObject({ ...derived.publicDto.shape, ...extension })
 		return normalized?._id ? resultSchema.extend({ _id: derived.schema.shape._id }) : resultSchema
 	}
 
@@ -329,7 +328,7 @@ export function zodTable<
 		)
 		const extensionFields = normalized?.extend
 		const extensionSchema =
-			extensionFields == null ? getEmptyDtoExtension() : z.object(extensionFields).strict()
+			extensionFields == null ? getEmptyDtoExtension() : z.strictObject(extensionFields)
 		const extension = extensionSchema.parse(normalized?.values ?? {})
 		const result: RuntimeDto = { ...projected, ...extension }
 		if (normalized?._id) {
@@ -385,13 +384,11 @@ export function zodTable<
 		// jsonSafeZid (not zid): tool masks feed generated JSON schemas, so
 		// ids must present as plain strings while keeping the Id<...> type.
 		insert: derived.commandInput,
-		update: z
-			.object({
-				data: z.object(pickFields(columns, commandKeys)).strict().partial(),
-				id: jsonSafeZid(tableName),
-			})
-			.strict(),
-		id: z.object({ id: jsonSafeZid(tableName) }).strict(),
+		update: z.strictObject({
+			data: z.strictObject({ ...getCommandFields() }).partial(),
+			id: jsonSafeZid(tableName),
+		}),
+		id: z.strictObject({ id: jsonSafeZid(tableName) }),
 	}))
 
 	return {
@@ -589,17 +586,7 @@ export type EnginePaginationResult<Row> = PaginationResult<Row> & {
 export function paginated<Dto extends z.ZodType>(dto: Dto) {
 	return {
 		args: { paginationOpts: convexToZod(paginationOptsValidator) },
-		result: z.object({
-			page: z.array(dto),
-			paginationMode: z.literal('native-search').optional(),
-			isDone: z.boolean(),
-			continueCursor: z.string(),
-			splitCursor: z.string().nullable().optional(),
-			pageStatus: z.enum(['SplitRecommended', 'SplitRequired']).nullable().optional(),
-			completeness: z
-				.enum(['complete', 'row-budget', 'byte-budget', 'native-limit', 'result-cap'])
-				.optional(),
-		}),
+		result: pageResult(dto),
 	}
 }
 
@@ -952,7 +939,7 @@ function deriveVariantTable(
 		)
 		const partial = (schema: StrictObject<FieldSchemas>) =>
 			schema.partial().extend({ [discriminator]: tagSchema })
-		const getDocument = memoize(() => documentSchema(z.strictObject({ ...columns }), tableName))
+		const getDocument = memoize(() => documentSchema(columns, tableName))
 		const getUpdate = memoize(() =>
 			partial(
 				z.strictObject(
@@ -1214,10 +1201,10 @@ function replaceBoundaryValue<Boundary extends object, Key extends keyof Boundar
 }
 
 function documentSchema<Fields extends FieldSchemas, Table extends string>(
-	storage: StrictObject<Fields>,
+	fields: Fields,
 	tableName: Table,
 ) {
-	return storage.extend({ _id: zid(tableName), _creationTime: z.number() })
+	return z.strictObject({ ...fields, _id: zid(tableName), _creationTime: z.number() })
 }
 
 function pickFields<Fields extends FieldSchemas, const Keys extends readonly FieldKey<Fields>[]>(

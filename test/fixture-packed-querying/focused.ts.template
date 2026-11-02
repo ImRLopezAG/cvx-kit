@@ -30,14 +30,14 @@ function equivalentRegistry() {
 const equivalent = equivalentRegistry()
 assert.equal(equivalent.identity, relations.identity)
 // Cursor identity covers the tables and edges actually queried. Change the
-// root table's public validator, rather than an unused relation definition.
+// root table's public projection, rather than an unused relation definition.
 const changedTasks = zodTable('tasks', (id) => ({
- ordinal: z.number().min(0), tenant: z.string(), department: z.string(), status: z.string(),
+ ordinal: z.number(), tenant: z.string(), department: z.string(), status: z.string(),
  active: z.boolean(), priority: z.number(), authorized: z.boolean(), code: z.string(),
  reference: id('tasks').nullable().optional(), required: id('labels').optional(), secret: z.string(),
-}), { serverFields: ['tenant', 'authorized', 'secret'], publicFields: ['ordinal'] })
-changedTasks.table.index('by_tenant_department_status', ['tenant', 'department', 'status'])
- .index('by_active', ['active']).index('by_priority', ['priority']).index('by_code', ['code'])
+}), { serverFields: ['tenant', 'authorized', 'secret'], publicFields: ['ordinal', 'code'] })
+// Keep the schema's exact native table owner while changing the public DTO fields.
+changedTasks.table = tasks.table
 const changed = defineRelations({ tasks: changedTasks, labels, edges }, (r) => ({ tasks: {
  labels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
 }}))

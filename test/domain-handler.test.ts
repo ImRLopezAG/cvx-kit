@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation } from '../src/effect'
+import { checkArchitecture } from '../src/oxlint'
 
 it.each(['promise', 'effect'] as const)(
 	'binds handler-first %s registries and preserves audit and validation',
@@ -95,14 +96,20 @@ it.each(['promise', 'effect'] as const)(
 		expect(await run(queries.exec('handler', false, { actor: 'a' }))).toBe(true)
 		Object.assign(captured!, { handler: () => 'mutated' })
 		expect(await run(queries.exec('get', 3, { actor: 'a' }))).toBe('3')
+		function forceConfiguration<Registry extends object>(registry: Registry): Registry {
+			if (mode === 'effect') checkArchitecture({ registries: [registry] })
+			return registry
+		}
 		const foreign = defineDomainContract({ queries: { ...contract.queries } })
 		// SAFETY: malformed JavaScript reuses a draft from another declaration set.
 		expect(() =>
-			foundation.Query({
-				contract: foreign,
-				context,
-				operations: () => ({ get: captured, handler: captured }),
-			} as never),
+			forceConfiguration(
+				foundation.Query({
+					contract: foreign,
+					context,
+					operations: () => ({ get: captured, handler: captured }),
+				} as never),
+			),
 		).toThrow('own contract helper')
 		const before = [...events]
 		await expect(
@@ -110,27 +117,31 @@ it.each(['promise', 'effect'] as const)(
 		).rejects.toThrow()
 		expect(events).toEqual(before)
 		// SAFETY: intentionally malformed JavaScript map exercises runtime exact-key enforcement.
-		expect(() => foundation.Query({ contract, context, operations: () => ({}) } as never)).toThrow(
-			'keys must match exactly',
-		)
+		expect(() =>
+			forceConfiguration(foundation.Query({ contract, context, operations: () => ({}) } as never)),
+		).toThrow('keys must match exactly')
 		// SAFETY: a direct object has no helper provenance, even when its callbacks look valid.
 		expect(() =>
-			foundation.Query({
-				contract,
-				context,
-				operations: () => ({ get: { handler: () => '3' }, handler: { handler: () => true } }),
-			} as never),
+			forceConfiguration(
+				foundation.Query({
+					contract,
+					context,
+					operations: () => ({ get: { handler: () => '3' }, handler: { handler: () => true } }),
+				} as never),
+			),
 		).toThrow('own contract helper')
 		// SAFETY: intentionally malformed options exercise runtime protected-field enforcement.
 		expect(() =>
-			foundation.Query({
-				contract,
-				context,
-				operations: ({ query }) => ({
-					get: query.handler(() => '3', { input: z.string() } as never),
-					handler: query.handler((input) => input),
+			forceConfiguration(
+				foundation.Query({
+					contract,
+					context,
+					operations: ({ query }) => ({
+						get: query.handler(() => '3', { input: z.string() } as never),
+						handler: query.handler((input) => input),
+					}),
 				}),
-			}),
+			),
 		).toThrow('cannot override input')
 	},
 )

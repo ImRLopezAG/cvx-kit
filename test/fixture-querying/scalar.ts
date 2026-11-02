@@ -149,6 +149,7 @@ export async function seed(f: Pick<ReturnType<typeof harness>, 't'>, size = 24, 
 				count: ordinal % 4,
 				code: ordinal % 2 ? 'x' : '',
 				...(ordinal % 3 === 1 ? { optional: null } : ordinal % 3 === 2 ? { optional: '' } : {}),
+				// oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- The fixture deliberately distinguishes an absent own field from an explicitly present field.
 				...(ordinal % 2 ? { optionalOrdered: 'x' } : {}),
 				big: BigInt(ordinal),
 				reference: null,

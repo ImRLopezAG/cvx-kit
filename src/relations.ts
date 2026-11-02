@@ -1085,7 +1085,9 @@ export function defineRelations<
 			pageDto(selection: SelectionMask, groups?: GroupSelection): z.ZodType
 		}
 	> = {}
-	for (const table of names)
+	for (const table of names) {
+		const pageRecipes = new Map<string, DtoRecipe>()
+		const paginationGrammars = new Map<string, FilterGrammarRecipe>()
 		helpers[table] = {
 			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>) {
 				use(table)
@@ -1108,9 +1110,15 @@ export function defineRelations<
 			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): z.ZodType {
 				use(table)
 				assertSelection(selection)
+				const key = JSON.stringify(selection)
+				let grammar = paginationGrammars.get(key)
+				if (!grammar) {
+					grammar = captureFilterGrammar(filterGrammar(internal, table, selection))
+					paginationGrammars.set(key, grammar)
+				}
 				return materializeDto(paginationRecipe).extend({
 					filters: relationFilterSchema(
-						filterGrammar(internal, table, selection),
+						restoreFilterGrammar(grammar),
 						undefined,
 						options,
 					).optional(),
@@ -1121,9 +1129,16 @@ export function defineRelations<
 				use(table)
 				assertSelection(selection)
 				assertGroups(internal, table, groups)
-				return paginated(rowSchema(internal, table, selection, 0, groups)).result
+				const key = JSON.stringify([selection, groups])
+				let recipe = pageRecipes.get(key)
+				if (!recipe) {
+					recipe = captureDto(paginated(rowSchema(internal, table, selection, 0, groups)).result)
+					pageRecipes.set(key, recipe)
+				}
+				return materializeDto(recipe)
 			},
 		}
+	}
 
 	let identity: string | undefined
 	const tableEntries = new Map<string, unknown[]>()
@@ -2069,6 +2084,64 @@ function serializeLeg(leg: Leg): unknown[] {
 			? [leg.table, leg.field, leg.guard ?? null, memberRefs.get(leg)]
 			: [leg.table, leg.field, leg.guard ?? null]
 }
+interface FilterGrammarRecipe {
+	fields: DtoRecipe<z.ZodObject>
+	relations: Record<string, { cardinality: 'one' | 'many'; target: FilterGrammarRecipe }>
+	variants?: { discriminator: string; options: Record<string, FilterGrammarRecipe> }
+}
+
+function captureFilterGrammar(grammar: FilterGrammar): FilterGrammarRecipe {
+	return {
+		fields: captureDto(z.object(grammar.fields)),
+		relations: Object.fromEntries(
+			Object.entries(grammar.relations).map(([name, relation]) => [
+				name,
+				{
+					cardinality: relation.cardinality,
+					target: captureFilterGrammar(relation.target),
+				},
+			]),
+		),
+		variants: grammar.variants
+			? {
+					discriminator: grammar.variants.discriminator,
+					options: Object.fromEntries(
+						Object.entries(grammar.variants.options).map(([tag, branch]) => [
+							tag,
+							captureFilterGrammar(branch),
+						]),
+					),
+				}
+			: undefined,
+	}
+}
+
+function restoreFilterGrammar(recipe: FilterGrammarRecipe): FilterGrammar {
+	return {
+		fields: materializeDto(recipe.fields).shape,
+		relations: Object.fromEntries(
+			Object.entries(recipe.relations).map(([name, relation]) => [
+				name,
+				{
+					cardinality: relation.cardinality,
+					target: restoreFilterGrammar(relation.target),
+				},
+			]),
+		),
+		variants: recipe.variants
+			? {
+					discriminator: recipe.variants.discriminator,
+					options: Object.fromEntries(
+						Object.entries(recipe.variants.options).map(([tag, branch]) => [
+							tag,
+							restoreFilterGrammar(branch),
+						]),
+					),
+				}
+			: undefined,
+	}
+}
+
 function filterGrammar(
 	registry: RegistryMetadata,
 	table: string,

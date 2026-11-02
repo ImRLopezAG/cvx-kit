@@ -1228,6 +1228,7 @@ describe('phase A indexed ordering and ranges', () => {
 							changed.paginate({
 								...args,
 								[slot]: first.continueCursor,
+								// oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- The fixture deliberately distinguishes an absent own field from an explicitly present field.
 								...(changed === q ? { order: order === 'asc' ? 'desc' : 'asc' } : {}),
 							}),
 						).rejects.toThrow('Invalid cursor')
@@ -1236,6 +1237,7 @@ describe('phase A indexed ordering and ranges', () => {
 						q.paginate({ ...args, [slot]: first.continueCursor, filters: { count: 1 } }),
 					).rejects.toThrow('Invalid cursor')
 				}
+				// SAFETY: this negative fixture deliberately bypasses static index or relation guards to test runtime rejection.
 				await expect(base.orderBy('unknown' as 'by_count').paginate(args)).rejects.toThrow(
 					'Unknown ordering index',
 				)

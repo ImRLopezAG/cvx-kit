@@ -866,6 +866,7 @@ test('U6 correction rejects absolute route plus selection overflow before reads'
 	await f.t.run(async (ctx) => {
 		const o = f.context(ctx.db)
 		// SAFETY: deliberately erase the depth constraint to exercise runtime rejection before reads.
+		// SAFETY: this negative fixture deliberately bypasses static index or relation guards to test runtime rejection.
 		await expect(
 			f
 				.querying(o.ctx)
@@ -1051,6 +1052,7 @@ test('phase A direct ordering and ranges retain cursors; unsupported paths rejec
 		await f.t.run(async (ctx) => {
 			const o = f.context(ctx.db),
 				base = f.querying(o.ctx).tasks
+			// SAFETY: generated relation index names are exercised through the runtime ordering guard.
 			const q = base.relation(rows.tasks[1]._id, 'direct').orderBy('by_task_code' as never)
 			const args = {
 				numItems: 100,
@@ -1086,6 +1088,7 @@ test('phase A direct ordering and ranges retain cursors; unsupported paths rejec
 
 			const before = { ...o.counts }
 			for (const slot of ['cursor', 'endCursor'] as const) {
+				// SAFETY: this negative fixture deliberately bypasses static index or relation guards to test runtime rejection.
 				await expect(
 					base
 						.relation(rows.tasks[1]._id, 'direct')
@@ -1103,6 +1106,7 @@ test('phase A direct ordering and ranges retain cursors; unsupported paths rejec
 					q.paginate({ ...args, [slot]: first.continueCursor, filters: { code: { lt: 'c7' } } }),
 				).rejects.toThrow('Invalid cursor')
 			}
+			// SAFETY: this negative fixture deliberately bypasses static index or relation guards to test runtime rejection.
 			await expect(
 				base
 					.relation(rows.tasks[1]._id, 'direct')
@@ -1110,6 +1114,7 @@ test('phase A direct ordering and ranges retain cursors; unsupported paths rejec
 					.paginate(args),
 			).rejects.toThrow('incompatible')
 			for (const path of ['labels', 'codeLabels', 'labels.owner.direct'] as const)
+				// SAFETY: this negative fixture deliberately bypasses static index or relation guards to test runtime rejection.
 				await expect(
 					base
 						.relation(rows.tasks[1]._id, path)

@@ -1,3 +1,4 @@
+import { memoize } from './lazy'
 import type { ContractSchema, ContractInput, ContractOutput } from './contract'
 import type { ErrorContract, ErrorDefinitions } from './errors'
 
@@ -52,9 +53,34 @@ type CheckedDomain<Definition> = {
 
 /** Preserve the declaration's literal keys and opaque validator/error-contract identities. */
 export function defineDomainContract<const Definition extends DomainContract>(
-	definition: Definition & NoInfer<CheckedDomain<Definition>>,
+	definition:
+		| (Definition & NoInfer<CheckedDomain<Definition>>)
+		| (() => Definition & NoInfer<CheckedDomain<Definition>>),
 ): Definition {
-	return definition
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- The public input is a checked declaration or its explicitly supported thunk.
+	if (typeof definition !== 'function') return definition
+	// SAFETY: the first read installs the inferred declaration's own descriptors on this target.
+	const target = {} as Definition
+	const read = memoize(() => {
+		const value = definition()
+		Object.defineProperties(target, Object.getOwnPropertyDescriptors(value))
+		Object.setPrototypeOf(target, Object.getPrototypeOf(value))
+		return target
+	})
+	return new Proxy(target, {
+		// oxlint-disable-next-line anti-slop/no-reflect-get -- Preserve accessor receiver semantics for the forwarded declaration.
+		get: (_target, key, receiver) => Reflect.get(read(), key, receiver),
+		has: (_target, key) => Reflect.has(read(), key),
+		ownKeys: () => Reflect.ownKeys(read()),
+		getOwnPropertyDescriptor: (_target, key) => Reflect.getOwnPropertyDescriptor(read(), key),
+		set: (_target, key, value) => Reflect.set(read(), key, value),
+		defineProperty: (_target, key, descriptor) => Reflect.defineProperty(read(), key, descriptor),
+		deleteProperty: (_target, key) => Reflect.deleteProperty(read(), key),
+		getPrototypeOf: () => Reflect.getPrototypeOf(read()),
+		setPrototypeOf: (_target, prototype) => Reflect.setPrototypeOf(read(), prototype),
+		preventExtensions: () => Reflect.preventExtensions(read()),
+		isExtensible: () => Reflect.isExtensible(read()),
+	})
 }
 
 /** Exactness applies to variables as well as fresh object literals. */

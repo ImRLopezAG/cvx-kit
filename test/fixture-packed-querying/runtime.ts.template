@@ -15,7 +15,7 @@ import { relations } from './convex/relations'
 import { cursor as cursorConfig } from './convex/functions'
 import { authQuery } from './convex/functions'
 
-assert.deepEqual(Object.keys(relationPublic), ['defineRelations'])
+assert.deepEqual(Object.keys(relationPublic).sort(), ['defineRelations', 'verifyRelations'])
 assert.deepEqual(Object.keys(queryingPublic).sort(), ['CursorError', 'FieldGroupError', 'SearchError', 'createQueryEngine', 'queryFailureContract'].sort())
 assert.equal(root.createQueryEngine, queryingPublic.createQueryEngine)
 assert.equal(root.defineRelations, relationPublic.defineRelations)

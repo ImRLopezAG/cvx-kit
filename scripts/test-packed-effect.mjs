@@ -57,6 +57,7 @@ function copyPublicTypeFixture(fixture, filename, publicImport) {
 		.replaceAll(publicImport, 'cvx-kit/effect')
 		.replaceAll('../src/index', 'cvx-kit')
 		.replaceAll('../src/errors', 'cvx-kit/errors')
+		.replaceAll('../src/react/failures', 'cvx-kit/react')
 		.replaceAll('../src/contracts', 'cvx-kit/contracts')
 		.replaceAll('../src/idempotency', 'cvx-kit/idempotency')
 		.replaceAll('../src/modules/contracts/errors', 'cvx-kit/errors')

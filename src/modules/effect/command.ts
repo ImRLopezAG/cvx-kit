@@ -1,3 +1,4 @@
+import { memoize, registerLazyRegistry } from '../contracts/lazy'
 /* oxlint-disable anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- Overload implementation storage is erased; public signatures retain concrete values, errors and services. */
 import { Effect, Exit } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
@@ -175,7 +176,7 @@ export function createEffectCommand<
 		Dependencies &
 		HostCompatible<Resolve, Dependencies>,
 ) {
-	const operations: Operations =
+	const getOperations = memoize<Operations>(() =>
 		configuration.operations(
 			effectOperationFactory<
 				DomainOf<Resolve>,
@@ -183,7 +184,8 @@ export function createEffectCommand<
 				CallbackError<Guard>,
 				CallbackRequirements<Guard>
 			>(),
-		)
+		),
+	)
 	const exec = <Key extends Extract<keyof Operations, string>>(
 		operation: Key,
 		input: EffectOperationArgument<Operations[Key]>,
@@ -194,6 +196,7 @@ export function createEffectCommand<
 		RequirementsOf<Operations[Key], Resolve, Dependencies, Guard>
 	> => {
 		const execution = Effect.suspend(() => {
+			const operations = getOperations()
 			if (!Object.prototype.hasOwnProperty.call(operations, operation))
 				throw Error('The selected command operation is not configured')
 			// SAFETY: this helper checked selected callbacks against their parsed schemas and domain context.
@@ -312,31 +315,35 @@ export function createEffectCommand<
 			RequirementsOf<Operations[Key], Resolve, Dependencies, Guard>
 		>
 	}
-	return {
-		/** Bind invocation context without resolving it or running an operation. */
-		withContext(context: HostOf<Resolve>) {
-			return {
-				exec: <Key extends Extract<keyof Operations, string>>(
-					operation: Key,
-					input: EffectOperationArgument<Operations[Key]>,
-				) => exec(operation, input, context),
-			}
+	return registerLazyRegistry(
+		{
+			/** Bind invocation context without resolving it or running an operation. */
+			withContext(context: HostOf<Resolve>) {
+				return {
+					exec: <Key extends Extract<keyof Operations, string>>(
+						operation: Key,
+						input: EffectOperationArgument<Operations[Key]>,
+					) => exec(operation, input, context),
+				}
+			},
+			expose<const Owner extends symbol, const Key extends Extract<keyof Operations, string>>(
+				owner: Owner,
+				operation: Key,
+			): SelectedOperation<
+				Owner,
+				Key,
+				Operations[Key]['input'],
+				OperationPublicResult<Operations[Key]>
+			> {
+				const operations = getOperations()
+				if (!Object.hasOwn(operations, operation))
+					throw Error('The selected command operation is not configured')
+				return selectOperation(owner, 'mutation', operation, operations[operation])
+			},
+			exec,
 		},
-		expose<const Owner extends symbol, const Key extends Extract<keyof Operations, string>>(
-			owner: Owner,
-			operation: Key,
-		): SelectedOperation<
-			Owner,
-			Key,
-			Operations[Key]['input'],
-			OperationPublicResult<Operations[Key]>
-		> {
-			if (!Object.hasOwn(operations, operation))
-				throw Error('The selected command operation is not configured')
-			return selectOperation(owner, 'mutation', operation, operations[operation])
-		},
-		exec,
-	}
+		getOperations,
+	)
 }
 
 /** Bind trusted application policies without exposing a loose public command kernel. */
@@ -482,23 +489,26 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 		operations: (define: never) => Readonly<Record<string, object>>
 		defaults?: { guard?: (context: never) => unknown }
 	}): unknown {
-		const definitions = configuration.contract
-			? domainEffectFactory(configuration.contract.commands ?? {}, true)
-			: effectOperationFactory()
-		const operations = snapshotOperations(
-			configuration.operations(
-				// SAFETY: the overload chooses this exact inline or contracted helper factory.
-				definitions as never,
-			),
-			configuration.contract,
-			'commands',
-			configuration.audit,
-		)
+		const buildOperations = () => {
+			const definitions = configuration.contract
+				? domainEffectFactory(configuration.contract.commands ?? {}, true)
+				: effectOperationFactory()
+			return snapshotOperations(
+				configuration.operations(
+					// SAFETY: the overload chooses this exact inline or contracted helper factory.
+					definitions as never,
+				),
+				configuration.contract,
+				'commands',
+				configuration.audit,
+			)
+		}
+
 		// SAFETY: overloads check callbacks and schemas; binding validates exact keys and snapshots runtime records.
 		return createEffectCommand({
 			...configuration,
 			...dependencies,
-			operations: () => operations,
+			operations: buildOperations,
 		} as never)
 	}
 	return command

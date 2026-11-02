@@ -33,6 +33,14 @@ const tester = new RuleTester({ cwd: root, languageOptions: { parserOptions: { l
 const options = [{ convexDir: 'backend' }]
 tester.run('physical-reserved-domain-files', rules['reserved-domain-file-anatomy'], {
 	valid: [
+		...[
+			'{ queries: { get: { input: z.string(), result: z.string() } } }',
+			'() => ({ queries: { get: { input: z.string(), result: z.string() } } })',
+		].map((declaration) => ({
+			filename: join(root, 'backend/domain/tasks/contracts.ts'),
+			options,
+			code: `import { defineDomainContract } from 'cvx-kit/contracts'; import { z } from 'zod'; export const contract = defineDomainContract(${declaration})`,
+		})),
 		{
 			filename: join(root, 'backend/domain/tasks/commands.ts'),
 			options,

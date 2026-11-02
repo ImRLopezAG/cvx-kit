@@ -12,6 +12,19 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-11-02
+
+### Changed
+
+- Build ordinary and variant table document, insert, update, command, public DTO and tool schemas on first access, retaining stable property identities and independent field maps. Reuse relation page/filter recipes while preserving independent public validators. Scalar pagination continues to observe changes to its mutable source schema on each call.
+- Build and validate Effect Query and Command operation registries when their first execution runs. Configuration failures remain cached and surface as execution defects; exposing an operation also validates its registry.
+
+### Added
+
+- `defineDomainContract(() => ({ ... }))` defers contract construction until the first property read, enumeration or other object operation, with the same inferred operation types and literal-key checks as object declarations. Both forms satisfy the domain architecture lint rules.
+- `checkArchitecture({ registries: [queries, commands] })` validates deferred Effect registries without executing handlers.
+- An import benchmark covering 87 tables, 30 pagination/page contract pairs and 20 Effect registries: `node scripts/bench-relations.mjs . 11 module-load`.
+
 ## [0.1.25] - 2026-10-30
 
 ### Changed

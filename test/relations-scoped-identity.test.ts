@@ -10,8 +10,10 @@ import { zodTable } from '../src/zod-table'
 import { createPlanner, digest, type QueryInput, type RegistryScope } from '../src/querying/planner'
 import { defineSchema } from 'convex/server'
 
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Generated table names require an erased runtime fixture adapter; public APIs remain precisely typed.
 type RuntimeBuilder = Record<string, any>
 // SAFETY: runtime registration is identical for these names; only the static types are erased.
+// oxlint-disable-next-line anti-slop/no-chained-type-assertions -- This test adapter deliberately exercises runtime guards independently of static declaration constraints.
 const unchecked = defineRelations as unknown as (
 	tables: RelationTables,
 	declare: (r: RuntimeBuilder) => object,

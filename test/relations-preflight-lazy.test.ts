@@ -16,20 +16,26 @@ interface RuntimeRegistry extends RelationRegistryIdentity {
 	tables: Record<
 		string,
 		{
+			// oxlint-disable-next-line anti-slop/no-object-parameters, anti-slop/no-unknown-returns -- This runtime fixture deliberately bypasses compile-time selection guards. Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 			paginationOpts(selection: object): unknown
+			// oxlint-disable-next-line anti-slop/no-object-parameters, anti-slop/no-object-parameters, anti-slop/no-unknown-returns -- This runtime fixture deliberately bypasses compile-time selection guards. Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 			pageDto(selection: object, groups?: object): unknown
+			// oxlint-disable-next-line anti-slop/no-object-parameters, anti-slop/no-unknown-returns -- This runtime fixture deliberately bypasses compile-time selection guards. Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 			filters(contract: object): unknown
 		}
 	>
 }
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Generated table names require an erased runtime fixture adapter; public APIs remain precisely typed.
 type RuntimeBuilder = Record<string, any>
 // SAFETY: runtime registration is identical for generated names; only the static types are erased.
+// oxlint-disable-next-line anti-slop/no-chained-type-assertions -- This test adapter deliberately exercises runtime guards independently of static declaration constraints.
 const unchecked = defineRelations as unknown as (
 	tables: RelationTables,
 	declare: (r: RuntimeBuilder, branch: (table: string, tag: string) => RuntimeBuilder) => object,
 ) => RuntimeRegistry
 
 /** Counts DTO captures and stored-schema reads per table without changing either. */
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 function observed(tables: Record<string, { dto: (includeId: true) => unknown; schema: unknown }>) {
 	const dto: Record<string, number> = {}
 	const stored: Record<string, number> = {}
@@ -171,6 +177,7 @@ describe('deferred checks still throw no later than first use', () => {
 	}
 
 	test('a per-table error surfaces independently on every first-use path', () => {
+		// oxlint-disable-next-line anti-slop/no-unknown-returns -- Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 		const uses: ((registry: RuntimeRegistry) => unknown)[] = [
 			(registry) => registry.tables.bad.pageDto({}),
 			(registry) => registry.tables.bad.paginationOpts({}),

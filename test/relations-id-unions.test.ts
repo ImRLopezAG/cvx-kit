@@ -26,6 +26,7 @@ const verified: typeof defineRelations = (tables, declare) => {
 	verifyRelations(registry)
 	return registry
 }
+// SAFETY: this negative fixture deliberately bypasses static index or relation guards to test runtime rejection.
 const unchecked = verified as (
 	tables: RelationTables,
 	declare: (

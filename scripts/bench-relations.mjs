@@ -1,6 +1,7 @@
 // Bundles the registration benchmark like Convex 1.48 does, then reports the
 // median of cold jitless loads.
-// Usage: node scripts/bench-relations.mjs [repoRoot] [runs] [entry: relations | relations-page]
+// Usage: node scripts/bench-relations.mjs [repoRoot] [runs] [entry: relations | relations-page | module-load]
+// Append lazy-contracts to measure the optional thunk form on module-load.
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
@@ -27,7 +28,10 @@ await esbuild.build({
 	minifySyntax: true,
 	minifyIdentifiers: true,
 	keepNames: true,
-	define: { 'process.env.NODE_ENV': '"production"' },
+	define: {
+		'process.env.NODE_ENV': '"production"',
+		__CVX_BENCH_LAZY_CONTRACTS__: String(process.argv[5] === 'lazy-contracts'),
+	},
 	logLevel: 'error',
 	external: ['node:*'],
 })
@@ -38,7 +42,9 @@ fs.writeFileSync(
 )
 const samples = []
 for (let i = 0; i < runs; i++)
-	samples.push(JSON.parse(execFileSync('node', ['--jitless', '--no-warnings', loader, out]).toString()))
+	samples.push(
+		JSON.parse(execFileSync('node', ['--jitless', '--no-warnings', loader, out]).toString()),
+	)
 const median = (key) => {
 	const values = samples.map((sample) => sample[key]).sort((a, b) => a - b)
 	return values[Math.floor(values.length / 2)]

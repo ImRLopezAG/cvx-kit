@@ -19,6 +19,7 @@ test('variant extraction snapshots own fields before getters and reads current v
 	const executor = getRelationExecutor(defineRelations({ items }, () => ({})))
 	for (const initiallyOwn of [false, true]) {
 		const events: string[] = []
+		// oxlint-disable-next-line anti-slop/no-known-value-widening -- This fixture intentionally accepts generated names or later property mutation.
 		const target: Record<string, Value> = {
 			type: 'entry',
 			get first() {
@@ -26,6 +27,7 @@ test('variant extraction snapshots own fields before getters and reads current v
 				Reflect.set(target, 'later', 42)
 				return 'valid'
 			},
+			// oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- The fixture deliberately distinguishes an absent own field from an explicitly present field.
 			...(initiallyOwn ? { later: 'valid' } : {}),
 			_id: 'items:1',
 			_creationTime: 1,
@@ -37,6 +39,7 @@ test('variant extraction snapshots own fields before getters and reads current v
 			},
 			get(object, key) {
 				events.push(`get ${String(key)}`)
+				// oxlint-disable-next-line anti-slop/no-reflect-get -- The fixture observes arbitrary Proxy keys while preserving getter receiver semantics.
 				return Reflect.get(object, key)
 			},
 		})

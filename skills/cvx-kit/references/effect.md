@@ -5,6 +5,16 @@ runner. Handlers can return ordinary values, Promises, or Effects. Each
 registry returns a lazy Effect from `exec(operation, input, host)`; the API
 adapter provides request services and runs it once.
 
+Operation callbacks and registry validation are also deferred until that first
+execution runs, and the result or configuration failure is cached. `withContext()`
+alone does not build a registry. Calling `expose()` builds it so the selected
+operation can be bound. To catch configuration errors in a test without running
+handlers, import `checkArchitecture` from `cvx-kit/oxlint` and call
+`checkArchitecture({ registries: [queries, commands] })` with your declared registries.
+
+This still performs the normal architecture scan and throws if a supplied registry
+has invalid configuration. Import `cvx-kit/oxlint` in tooling and tests only.
+
 This is the recommended command API. The older `Foundation.Command` facade
 and `exec({ operation, handler })` executor API are deprecated and retained for
 compatibility. Declare handlers inside `command({...})` for new command code.

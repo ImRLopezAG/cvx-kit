@@ -6,8 +6,11 @@ import { defineTables, register } from './relations-fixture'
 const now = () => performance.now()
 function touchTasks(relations: ReturnType<typeof register>) {
 	// SAFETY: the fixture declares tasks.owner and the content group at runtime; types are erased.
+	// oxlint-disable-next-line anti-slop/no-chained-type-assertions -- This test adapter deliberately exercises runtime guards independently of static declaration constraints.
 	const tasks = relations.tables.tasks as unknown as {
+		// oxlint-disable-next-line anti-slop/no-object-parameters, anti-slop/no-unknown-returns -- This runtime fixture deliberately bypasses compile-time selection guards. Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 		paginationOpts(selection: object): unknown
+		// oxlint-disable-next-line anti-slop/no-object-parameters, anti-slop/no-object-parameters, anti-slop/no-unknown-returns -- This runtime fixture deliberately bypasses compile-time selection guards. Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
 		pageDto(selection: object, groups: object): unknown
 	}
 	tasks.paginationOpts({ status: true, owner: { status: true } })

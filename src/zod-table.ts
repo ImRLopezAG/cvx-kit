@@ -1,3 +1,4 @@
+import { memoize } from './modules/contracts/lazy'
 import type { PaginationValidatorOptions } from './querying/shared/filters'
 import { convexToZod, zid, type ConvexValidatorFromZod, type Zid } from 'convex-helpers/server/zod4'
 import {
@@ -205,42 +206,66 @@ export function zodTable<
 		options.commandFields ?? [],
 		options.publicFields ?? [],
 	)
-	const storage: z.ZodObject<Fields & TimestampFields, z.core.$strict> = z.object(columns).strict()
-	const schema = documentSchema(storage, tableName)
+	const storage: z.ZodObject<Fields & TimestampFields, z.core.$strict> = z
+		.object({ ...columns })
+		.strict()
+	const getSchema = memoize(() =>
+		documentSchema<Fields & TimestampFields, Table>(
+			z.object<Fields & TimestampFields>({ ...columns }).strict(),
+			tableName,
+		),
+	)
 	const omittedKeys: readonly (ServerFields[number] | (typeof TIMESTAMP_FIELDS)[number])[] = [
 		...TIMESTAMP_FIELDS,
 		...(options.serverFields ?? []),
 	]
-	const commandKeys: readonly CommandFields[number][] = options.commandFields ?? []
-	const publicKeys: readonly PublicFields[number][] = options.publicFields ?? []
-	const insertSchema: z.ZodObject<WriteFields<Fields, ServerFields>, z.core.$strict> = z
-		.object(omitFields(columns, omittedKeys))
-		.strict()
-	const updateSchema = insertSchema.partial()
-	const commandInput: z.ZodObject<
-		Pick<Fields & TimestampFields, CommandFields[number]>,
-		z.core.$strict
-	> = z.object(pickFields(columns, commandKeys)).strict()
-	const publicDto: z.ZodObject<
-		Pick<Fields & TimestampFields, PublicFields[number]>,
-		z.core.$strict
-	> = z.object(pickFields(columns, publicKeys)).strict()
+	const commandKeys: readonly CommandFields[number][] = [...(options.commandFields ?? [])]
+	const publicKeys: readonly PublicFields[number][] = [...(options.publicFields ?? [])]
+	const getInsertSchema = memoize(
+		(): z.ZodObject<WriteFields<Fields, ServerFields>, z.core.$strict> =>
+			z.object(omitFields(columns, omittedKeys)).strict(),
+	)
+	const getUpdateSchema = memoize(() =>
+		z.object(omitFields(columns, omittedKeys)).strict().partial(),
+	)
+	const getCommandInput = memoize(
+		(): z.ZodObject<Pick<Fields & TimestampFields, CommandFields[number]>, z.core.$strict> =>
+			z.object(pickFields(columns, commandKeys)).strict(),
+	)
+	const getPublicDto = memoize(
+		(): z.ZodObject<Pick<Fields & TimestampFields, PublicFields[number]>, z.core.$strict> =>
+			z.object(pickFields(columns, publicKeys)).strict(),
+	)
+	const derived = {
+		get schema() {
+			return getSchema()
+		},
+		get insertSchema() {
+			return getInsertSchema()
+		},
+		get updateSchema() {
+			return getUpdateSchema()
+		},
+		get commandInput() {
+			return getCommandInput()
+		},
+		get publicDto() {
+			return getPublicDto()
+		},
+	}
+
 	type Public = Pick<Fields & TimestampFields, PublicFields[number]>
 	type Row = z.input<typeof storage>
 	type RuntimeDtoFields = Public & FieldSchemas
 	type RuntimeDto = z.output<StrictObject<RuntimeDtoFields>> & { _id?: GenericId<Table> }
 	type RuntimeOptions = { _id?: boolean; extend?: FieldSchemas; values?: unknown }
 	// Private to this boundary: callers cannot mutate a shared empty validator.
-	const emptyDtoExtension = z.strictObject({})
-	const reservedDtoFields = new Set<string>([
-		'_id',
-		'_creationTime',
-		'tenant',
-		'__proto__',
-		...TIMESTAMP_FIELDS,
-	])
+	const getEmptyDtoExtension = memoize(() => z.strictObject({}))
+	const getReservedDtoFields = memoize(
+		() => new Set<string>(['_id', '_creationTime', 'tenant', '__proto__', ...TIMESTAMP_FIELDS]),
+	)
 
-	function dto(): typeof publicDto
+	function dto(): typeof derived.publicDto
 	function dto<const IncludeId extends boolean>(
 		includeId: IncludeId,
 	): DtoSchema<Table, Public, IncludeId>
@@ -258,21 +283,21 @@ export function zodTable<
 		const normalized = options === true || options === false ? { _id: options } : options
 		const extension = normalized?.extend ?? {}
 		assertDtoExtension(extension)
-		if (!normalized?._id && Object.keys(extension).length === 0) return publicDto
-		const resultSchema = z.object({ ...publicDto.shape, ...extension }).strict()
-		return normalized?._id ? resultSchema.extend({ _id: schema.shape._id }) : resultSchema
+		if (!normalized?._id && Object.keys(extension).length === 0) return derived.publicDto
+		const resultSchema = z.object({ ...derived.publicDto.shape, ...extension }).strict()
+		return normalized?._id ? resultSchema.extend({ _id: derived.schema.shape._id }) : resultSchema
 	}
 
 	function assertDtoExtension(extension: FieldSchemas) {
 		for (const key of Object.keys(extension)) {
-			if (reservedDtoFields.has(key) || Object.hasOwn(publicDto.shape, key)) {
+			if (getReservedDtoFields().has(key) || Object.hasOwn(derived.publicDto.shape, key)) {
 				throw new Error(`DTO extension collision for field "${key}" on table "${tableName}"`)
 			}
 			assertDtoValidationSchema(extension[key])
 		}
 	}
 
-	function toPublicDto(row: Row): z.output<typeof publicDto>
+	function toPublicDto(row: Row): z.output<typeof derived.publicDto>
 	function toPublicDto<const IncludeId extends boolean>(
 		row: DtoRow<Row, IncludeId>,
 		includeId: IncludeId,
@@ -294,27 +319,27 @@ export function zodTable<
 		const normalized = options === true || options === false ? { _id: options } : options
 		// Enforce extension collisions and validation-only schemas before parsing values.
 		assertDtoExtension(normalized?.extend ?? {})
-		const projected = publicDto.parse(
+		const projected = derived.publicDto.parse(
 			Object.fromEntries(
-				Object.keys(publicDto.shape).map((key) => {
-					// SAFETY: publicDto contains only keys selected from the storage fields.
+				Object.keys(derived.publicDto.shape).map((key) => {
+					// SAFETY: derived.publicDto contains only keys selected from the storage fields.
 					return [key, row[key as keyof typeof row]]
 				}),
 			),
 		)
 		const extensionFields = normalized?.extend
 		const extensionSchema =
-			extensionFields == null ? emptyDtoExtension : z.object(extensionFields).strict()
+			extensionFields == null ? getEmptyDtoExtension() : z.object(extensionFields).strict()
 		const extension = extensionSchema.parse(normalized?.values ?? {})
 		const result: RuntimeDto = { ...projected, ...extension }
 		if (normalized?._id) {
-			result._id = schema.shape._id.parse('_id' in row ? row._id : undefined)
+			result._id = derived.schema.shape._id.parse('_id' in row ? row._id : undefined)
 		}
 		return result
 	}
 
-	type InsertSchema = typeof insertSchema
-	type UpdateSchema = typeof updateSchema
+	type InsertSchema = typeof derived.insertSchema
+	type UpdateSchema = typeof derived.updateSchema
 	type InsertMask = z.util.Mask<keyof InsertSchema['shape']>
 	type UpdateMask = z.util.Mask<keyof UpdateSchema['shape']>
 
@@ -323,8 +348,8 @@ export function zodTable<
 		omit: OmitMask,
 	): ZodObjectOmit<InsertSchema, OmitMask>
 	function insert(omit?: InsertMask) {
-		// SAFETY: InsertMask contains only insertSchema keys; the overload retains Zod's exact mask relationship.
-		return omit ? insertSchema.omit(omit as never) : insertSchema
+		// SAFETY: InsertMask contains only derived.insertSchema keys; the overload retains Zod's exact mask relationship.
+		return omit ? derived.insertSchema.omit(omit as never) : derived.insertSchema
 	}
 
 	function update(): UpdateSchema
@@ -332,44 +357,87 @@ export function zodTable<
 		omit: OmitMask,
 	): ZodObjectOmit<UpdateSchema, OmitMask>
 	function update(omit?: UpdateMask) {
-		// SAFETY: UpdateMask contains only updateSchema keys; the overload retains Zod's exact mask relationship.
-		return omit ? updateSchema.omit(omit as never) : updateSchema
+		// SAFETY: UpdateMask contains only derived.updateSchema keys; the overload retains Zod's exact mask relationship.
+		return omit ? derived.updateSchema.omit(omit as never) : derived.updateSchema
 	}
 
 	const nativeStorage = zodToConvex(storage)
 	const table: TableDefinition<ConvexValidatorFromZod<typeof storage, 'required'>> =
 		defineTable(nativeStorage)
+	// The public shape is mutable. Reconvert its fields on each call so subsequent
+	// pagination validators observe replacements and nested schema changes.
+	const getPaginationFields = () =>
+		Object.fromEntries(
+			Object.entries(derived.schema.shape).map(([key, field]) => [key, zodToConvex(field)]),
+		)
 	type EntityFields = Fields & TimestampFields & SystemFields<Table>
 	function paginationOpts<const Selection extends ScalarSelection<EntityFields>>(
 		selection: ExactScalarSelection<EntityFields, Selection>,
 		options?: PaginationValidatorOptions,
 	): ScalarPaginationSchema<EntityFields, Selection> {
 		return scalarPaginationSchema<EntityFields, Selection>(
-			zodToConvex(schema).fields,
+			getPaginationFields(),
 			selection,
 			options,
 		)
 	}
+	const getTools = memoize(() => ({
+		// jsonSafeZid (not zid): tool masks feed generated JSON schemas, so
+		// ids must present as plain strings while keeping the Id<...> type.
+		insert: derived.commandInput,
+		update: z
+			.object({
+				data: z.object(pickFields(columns, commandKeys)).strict().partial(),
+				id: jsonSafeZid(tableName),
+			})
+			.strict(),
+		id: z.object({ id: jsonSafeZid(tableName) }).strict(),
+	}))
+
 	return {
 		tableName,
-		schema,
+		get schema() {
+			return derived.schema
+		},
+		set schema(value: ReturnType<typeof getSchema>) {
+			replaceBoundaryValue(this, 'schema', value)
+		},
 		storage,
-		insertSchema,
-		updateSchema,
-		commandInput,
-		publicDto,
+		get insertSchema() {
+			return derived.insertSchema
+		},
+		set insertSchema(value: ReturnType<typeof getInsertSchema>) {
+			replaceBoundaryValue(this, 'insertSchema', value)
+		},
+		get updateSchema() {
+			return derived.updateSchema
+		},
+		set updateSchema(value: ReturnType<typeof getUpdateSchema>) {
+			replaceBoundaryValue(this, 'updateSchema', value)
+		},
+		get commandInput() {
+			return derived.commandInput
+		},
+		set commandInput(value: ReturnType<typeof getCommandInput>) {
+			replaceBoundaryValue(this, 'commandInput', value)
+		},
+		get publicDto() {
+			return derived.publicDto
+		},
+		set publicDto(value: ReturnType<typeof getPublicDto>) {
+			replaceBoundaryValue(this, 'publicDto', value)
+		},
 		dto,
 		toPublicDto,
 		paginationOpts,
 		table,
 		insert,
 		update,
-		tools: {
-			// jsonSafeZid (not zid): tool masks feed generated JSON schemas, so
-			// ids must present as plain strings while keeping the Id<...> type.
-			insert: commandInput,
-			update: z.object({ data: commandInput.partial(), id: jsonSafeZid(tableName) }).strict(),
-			id: z.object({ id: jsonSafeZid(tableName) }).strict(),
+		get tools() {
+			return getTools()
+		},
+		set tools(value: ReturnType<typeof getTools>) {
+			replaceBoundaryValue(this, 'tools', value)
 		},
 	}
 }
@@ -803,6 +871,7 @@ function deriveVariantTable(
 		)
 	if (declared.def.checks?.length)
 		throw new Error('Variant boundaries do not support union-level refinements')
+	const timestamps = options.timestamps
 	const discriminator = options.discriminator
 	if (['_id', '_creationTime', ...TIMESTAMP_FIELDS].includes(discriminator))
 		throw new Error('Variant discriminator cannot be a reserved field')
@@ -815,6 +884,7 @@ function deriveVariantTable(
 			update: StrictObject<FieldSchemas>
 			command: StrictObject<FieldSchemas>
 			commandUpdate: StrictObject<FieldSchemas>
+			toolCommand: StrictObject<FieldSchemas>
 			public: StrictObject<FieldSchemas>
 		}
 	>()
@@ -842,20 +912,24 @@ function deriveVariantTable(
 		if (branches.has(tagValue)) throw new Error(`Duplicate variant discriminator "${tagValue}"`)
 		if (!Object.hasOwn(options.variants, tagValue))
 			throw new Error(`Missing variant configuration "${tagValue}"`)
-		const config = options.variants[tagValue]
+		const config = {
+			serverFields: [...(options.variants[tagValue].serverFields ?? [])],
+			commandFields: [...(options.variants[tagValue].commandFields ?? [])],
+			publicFields: [...(options.variants[tagValue].publicFields ?? [])],
+		}
 		assertOwnedFields(branch.shape, [
 			'_id',
 			'_creationTime',
-			...(options.timestamps === false ? [] : TIMESTAMP_FIELDS),
+			...(timestamps === false ? [] : TIMESTAMP_FIELDS),
 		])
 		const columns = { ...branch.shape } satisfies FieldSchemas
-		if (options.timestamps) Object.assign(columns, timestampFields)
+		if (timestamps) Object.assign(columns, timestampFields)
 		assertFieldLists(
 			columns,
 			config.serverFields ?? [],
 			config.commandFields ?? [],
 			config.publicFields ?? [],
-			options.timestamps !== false,
+			timestamps !== false,
 		)
 		for (const mask of [config.serverFields, config.commandFields, config.publicFields]) {
 			if (mask?.includes(discriminator))
@@ -863,26 +937,64 @@ function deriveVariantTable(
 					'The variant discriminator is retained automatically and cannot appear in masks',
 				)
 		}
-		const stored = z.strictObject(columns)
-		const insert = z.strictObject(
-			omitFields(columns, [
-				...(options.timestamps === false ? [] : TIMESTAMP_FIELDS),
-				...(config.serverFields ?? []),
-			]),
+		for (const field of config.commandFields) assertVariantToolField(columns[field])
+		const stored = z.strictObject({ ...columns })
+		const getInsert = memoize(() =>
+			z.strictObject(
+				omitFields(columns, [
+					...(timestamps === false ? [] : TIMESTAMP_FIELDS),
+					...(config.serverFields ?? []),
+				]),
+			),
 		)
-		const command = z.strictObject(
-			pickFields(columns, [discriminator, ...(config.commandFields ?? [])]),
+		const getCommand = memoize(() =>
+			z.strictObject(pickFields(columns, [discriminator, ...(config.commandFields ?? [])])),
 		)
 		const partial = (schema: StrictObject<FieldSchemas>) =>
 			schema.partial().extend({ [discriminator]: tagSchema })
+		const getDocument = memoize(() => documentSchema(z.strictObject({ ...columns }), tableName))
+		const getUpdate = memoize(() =>
+			partial(
+				z.strictObject(
+					omitFields(columns, [
+						...(timestamps === false ? [] : TIMESTAMP_FIELDS),
+						...config.serverFields,
+					]),
+				),
+			),
+		)
+		const getCommandUpdate = memoize(() =>
+			partial(z.strictObject(pickFields(columns, [discriminator, ...config.commandFields]))),
+		)
+		const getToolCommand = memoize(() =>
+			z.strictObject(pickFields(columns, [discriminator, ...config.commandFields])),
+		)
+		const getPublic = memoize(() =>
+			z.strictObject(pickFields(columns, [discriminator, ...(config.publicFields ?? [])])),
+		)
 		branches.set(tagValue, {
 			storage: stored,
-			document: documentSchema(stored, tableName),
-			insert,
-			update: partial(insert),
-			command,
-			commandUpdate: partial(command),
-			public: z.strictObject(pickFields(columns, [discriminator, ...(config.publicFields ?? [])])),
+			get document() {
+				return getDocument()
+			},
+			get insert() {
+				return getInsert()
+			},
+			get update() {
+				return getUpdate()
+			},
+			get command() {
+				return getCommand()
+			},
+			get commandUpdate() {
+				return getCommandUpdate()
+			},
+			get toolCommand() {
+				return getToolCommand()
+			},
+			get public() {
+				return getPublic()
+			},
 		})
 	}
 	for (const tag of Object.keys(options.variants)) {
@@ -890,7 +1002,7 @@ function deriveVariantTable(
 	}
 	function union(mode: VariantMode, includeId = false, tool = false) {
 		const schemas = [...branches.values()].map((branch) => {
-			const schema = branch[mode]
+			const schema = tool && mode === 'command' ? branch.toolCommand : branch[mode]
 			if (tool)
 				return z.strictObject(
 					Object.fromEntries(
@@ -907,13 +1019,13 @@ function deriveVariantTable(
 		)
 	}
 	const storage = union('storage')
-	const schema = union('document')
-	const insertSchema = union('insert')
-	const updateSchema = union('update')
-	const commandInput = union('command')
-	const publicDto = union('public')
+	const getSchema = memoize(() => union('document'))
+	const getInsertSchema = memoize(() => union('insert'))
+	const getUpdateSchema = memoize(() => union('update'))
+	const getCommandInput = memoize(() => union('command'))
+	const getPublicDto = memoize(() => union('public'))
 	function dto(includeId = false) {
-		return includeId ? union('public', true) : publicDto
+		return includeId ? union('public', true) : getPublicDto()
 	}
 	// Projection-only ID schema is never returned by dto() or exposed on the declaration.
 	let projectionId: Zid<string> | undefined
@@ -932,25 +1044,91 @@ function deriveVariantTable(
 			),
 		)
 	}
+	const getTools = memoize(() => ({
+		id: z.strictObject({ id: jsonSafeZid(tableName) }),
+		insert: union('command', false, true),
+		update: z.strictObject({
+			id: jsonSafeZid(tableName),
+			data: union('commandUpdate', false, true),
+		}),
+	}))
+
 	return {
 		tableName,
 		storage,
-		schema,
-		insertSchema,
-		updateSchema,
-		commandInput,
-		publicDto,
+		get schema() {
+			return getSchema()
+		},
+		set schema(value: ReturnType<typeof getSchema>) {
+			replaceBoundaryValue(this, 'schema', value)
+		},
+		get insertSchema() {
+			return getInsertSchema()
+		},
+		set insertSchema(value: ReturnType<typeof getInsertSchema>) {
+			replaceBoundaryValue(this, 'insertSchema', value)
+		},
+		get updateSchema() {
+			return getUpdateSchema()
+		},
+		set updateSchema(value: ReturnType<typeof getUpdateSchema>) {
+			replaceBoundaryValue(this, 'updateSchema', value)
+		},
+		get commandInput() {
+			return getCommandInput()
+		},
+		set commandInput(value: ReturnType<typeof getCommandInput>) {
+			replaceBoundaryValue(this, 'commandInput', value)
+		},
+		get publicDto() {
+			return getPublicDto()
+		},
+		set publicDto(value: ReturnType<typeof getPublicDto>) {
+			replaceBoundaryValue(this, 'publicDto', value)
+		},
 		dto,
 		toPublicDto,
 		table: defineTable(zodToConvex(storage)),
-		tools: {
-			id: z.strictObject({ id: jsonSafeZid(tableName) }),
-			insert: union('command', false, true),
-			update: z.strictObject({
-				id: jsonSafeZid(tableName),
-				data: union('commandUpdate', false, true),
-			}),
+		get tools() {
+			return getTools()
 		},
+		set tools(value: ReturnType<typeof getTools>) {
+			replaceBoundaryValue(this, 'tools', value)
+		},
+	}
+}
+
+/** Validate tool eligibility without constructing any derived command/tool objects. */
+function assertVariantToolField(schema: z.core.$ZodType): void {
+	if (!(schema instanceof z.ZodType))
+		throw new Error('Variant tools require classic Zod field schemas')
+	if (
+		schema instanceof z.ZodBigInt ||
+		(schema instanceof z.ZodLiteral &&
+			[...schema.values].some((value) => z.bigint().safeParse(value).success))
+	)
+		throw new Error(
+			'Variant tool command fields cannot contain bigint; JSON Schema cannot represent it',
+		)
+	if (
+		schema instanceof z.ZodOptional ||
+		schema instanceof z.ZodNullable ||
+		schema instanceof z.ZodNonOptional
+	)
+		assertVariantToolField(schema.unwrap())
+	else if (schema instanceof z.ZodArray) assertVariantToolField(schema.element)
+	else if (schema instanceof z.ZodObject)
+		Object.values(schema.shape).forEach(assertVariantToolField)
+	else if (schema instanceof z.ZodUnion) schema.options.forEach(assertVariantToolField)
+	else if (schema instanceof z.ZodRecord) {
+		assertVariantToolField(schema.keyType)
+		assertVariantToolField(schema.valueType)
+	} else if (schema instanceof z.ZodTuple) {
+		schema.def.items.forEach(assertVariantToolField)
+		if (schema.def.rest) assertVariantToolField(schema.def.rest)
+	} else if (schema instanceof z.ZodIntersection) {
+		assertVariantToolField(schema.def.left)
+		assertVariantToolField(schema.def.right)
 	}
 }
 
@@ -1020,6 +1198,20 @@ type ZodObjectOmit<
 				Config
 			>
 		: never
+
+/** A public replacement never changes the private schemas captured by boundary helpers. */
+function replaceBoundaryValue<Boundary extends object, Key extends keyof Boundary>(
+	boundary: Boundary,
+	key: Key,
+	value: Boundary[Key],
+): void {
+	Object.defineProperty(boundary, key, {
+		value,
+		writable: true,
+		enumerable: true,
+		configurable: true,
+	})
+}
 
 function documentSchema<Fields extends FieldSchemas, Table extends string>(
 	storage: StrictObject<Fields>,

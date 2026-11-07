@@ -553,7 +553,7 @@ tester.run('consumer/no-manual-timestamps', consumerRules['no-manual-timestamps'
 		},
 		{
 			filename: resolve('convex/components/local/functions.ts'),
-			code: 'ctx.db.patch(id, { updatedAt: Date.now() })',
+			code: 'ctx.db.patch(id, { archivedAt: Date.now() })',
 		},
 	],
 	invalid: [

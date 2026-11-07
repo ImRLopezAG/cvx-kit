@@ -13,6 +13,7 @@ import { reservedDomainFiles } from './oxlint/reserved-files'
 import { ownershipRules, type OwnershipRuleName } from './oxlint/ownership'
 import {
 	appFile,
+	consumerOptions,
 	imported,
 	sourceVisitors,
 	isFunctionsImport,
@@ -87,7 +88,7 @@ const applicationRules: Record<RuleName, CreateRule> = {
 			facade: 'Configure {{name}} once in convex/{{file}}; import that facade elsewhere.',
 		}),
 		create(context) {
-			if (componentRoot(context, context.filename)) return {}
+			const owner = componentRoot(context, context.filename)
 			const seen = new Set<string>()
 			function check(node: ESTree.CallExpression | ESTree.NewExpression) {
 				const ref = imported(context, node.callee)
@@ -115,7 +116,11 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				)
 					file = 'foundation.ts'
 				if (!file) return
-				if (appFile(context) !== file || seen.has(ref.name))
+				if (
+					(owner ? relative(owner, context.filename).split(sep).join('/') : appFile(context)) !==
+						file ||
+					seen.has(ref.name)
+				)
 					context.report({ node, messageId: 'facade', data: { name: ref.name, file } })
 				seen.add(ref.name)
 			}
@@ -128,7 +133,12 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				'Import raw builders only in convex/functions.ts; use auth*/role*/admin* or system* elsewhere.',
 		}),
 		create(context) {
-			if (appFile(context) === 'functions.ts' || componentRoot(context, context.filename)) return {}
+			const owner = componentRoot(context, context.filename)
+			if (
+				(owner ? relative(owner, context.filename).split(sep).join('/') : appFile(context)) ===
+				'functions.ts'
+			)
+				return {}
 			const resolver = createResolver()
 			return {
 				ImportDeclaration(node) {
@@ -195,6 +205,7 @@ const applicationRules: Record<RuleName, CreateRule> = {
 		}),
 		create(context) {
 			const file = appFile(context)
+			if (componentRoot(context, context.filename)) return {}
 			const resolver = createResolver()
 			return sourceVisitors(context, (node, source) => {
 				if (!file) return
@@ -206,6 +217,7 @@ const applicationRules: Record<RuleName, CreateRule> = {
 						context.report({ node, messageId: 'boundary' })
 					return
 				}
+				const { domainPublicFiles } = consumerOptions.parse(context.options[0] ?? {})
 				const from = file.split('/')
 				const to = target.split('/')
 				let forbidden = false
@@ -219,7 +231,8 @@ const applicationRules: Record<RuleName, CreateRule> = {
 					) {
 						forbidden =
 							from[1] === 'shared' ||
-							!['rules', 'queries', 'contracts'].includes(to.slice(2).join('/'))
+							(!['rules', 'queries', 'contracts'].includes(to.slice(2).join('/')) &&
+								!domainPublicFiles[to[1]]?.includes(to.slice(2).join('/')))
 					}
 				} else if (from[0] === 'api') {
 					forbidden =
@@ -342,7 +355,6 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				'Apply eligibility filters in the indexed query before take(), execute(), or paginate(); filtering a bounded result can omit eligible rows. Do not move the predicate automatically.',
 		}),
 		create(context) {
-			if (componentRoot(context, context.filename)) return {}
 			return {
 				CallExpression(node) {
 					if (node.callee.type !== 'MemberExpression') return
@@ -429,7 +441,6 @@ const applicationRules: Record<RuleName, CreateRule> = {
 			timestamp: 'Remove {{field}} from this write; register the timestamps trigger instead.',
 		}),
 		create(context) {
-			if (componentRoot(context, context.filename)) return {}
 			return {
 				CallExpression(node) {
 					if (!isDbWrite(node)) return
@@ -575,9 +586,13 @@ const applicationRules: Record<RuleName, CreateRule> = {
 						ref &&
 						['cvx-kit', 'cvx-kit/zod-table'].includes(ref.source) &&
 						['zodTable', 'tenantTable', 'zodVariantTable'].includes(ref.name) &&
-						!/^domain\/[^/]+\/schema\.ts$/.test(file)
+						!/^domain\/[^/]+\/schema\.ts$/.test(file) &&
+						!(
+							componentRoot(context, context.filename) &&
+							['schema.ts', 'table.ts'].includes(basename(file))
+						)
 					)
-						expected = 'domain/<module>/schema.ts'
+						expected = 'domain/<module>/schema.ts or a component schema.ts/table.ts'
 					if (expected)
 						context.report({
 							node,
@@ -588,13 +603,19 @@ const applicationRules: Record<RuleName, CreateRule> = {
 						node.callee.type === 'MemberExpression' &&
 						['index', 'searchIndex', 'vectorIndex'].includes(propertyName(node.callee) ?? '') &&
 						isTableChain(node.callee.object) &&
-						!componentRoot(context, context.filename) &&
-						!/^domain\/[^/]+\/table\.ts$/.test(file)
+						!(componentRoot(context, context.filename)
+							? basename(file) === 'table.ts'
+							: /^domain\/[^/]+\/table\.ts$/.test(file))
 					) {
 						context.report({
 							node,
 							messageId: 'schema',
-							data: { builder: 'Table indexes', file: 'domain/<module>/table.ts' },
+							data: {
+								builder: 'Table indexes',
+								file: componentRoot(context, context.filename)
+									? 'a component table.ts'
+									: 'domain/<module>/table.ts',
+							},
 						})
 					}
 				},
@@ -692,6 +713,10 @@ function scopeRules(source: Record<RuleName, CreateRule>): Record<RuleName, Rule
 	// SAFETY: source is the closed applicationRules record; its own keys are exactly RuleName.
 	const names = Object.keys(source) as RuleName[]
 	for (const name of names) {
+		const commonProperties = {
+			convexDir: { type: 'string', minLength: 1 },
+			componentDirs: { type: 'array', items: { type: 'string', minLength: 1 } },
+		}
 		const rule = source[name]
 		scoped[name] = {
 			meta: {
@@ -699,7 +724,19 @@ function scopeRules(source: Record<RuleName, CreateRule>): Record<RuleName, Rule
 				schema: [
 					{
 						type: 'object',
-						properties: { convexDir: { type: 'string', minLength: 1 } },
+						properties:
+							name === 'domain-import-boundaries'
+								? {
+										...commonProperties,
+										domainPublicFiles: {
+											type: 'object',
+											additionalProperties: {
+												type: 'array',
+												items: { type: 'string', minLength: 1 },
+											},
+										},
+									}
+								: commonProperties,
 						additionalProperties: false,
 					},
 				],

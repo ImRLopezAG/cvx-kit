@@ -151,6 +151,7 @@ export const ownershipRules = {
 				if (path?.startsWith('domain/') && !match && !path.startsWith('domain/shared/')) flag(node)
 				if (
 					!path &&
+					!componentRoot(context, context.filename) &&
 					![
 						'cvx-kit',
 						'cvx-kit/components/foundation',
@@ -258,7 +259,8 @@ export const ownershipRules = {
 		create(context) {
 			const file = appFile(context) ?? ''
 			const assembly = file === 'domain/table.ts'
-			if (!assembly && !/^domain\/[^/]+\//.test(file)) return {}
+			if (!assembly && !/^domain\/[^/]+\//.test(file) && !componentRoot(context, context.filename))
+				return {}
 			const role = basename(file).replace(/\.[cm]?[jt]s$/, '')
 			const pure = role === 'rules'
 			const read = role === 'queries'
@@ -285,6 +287,7 @@ export const ownershipRules = {
 				if (
 					(pure || read || declarative) &&
 					!path &&
+					!componentRoot(context, context.filename) &&
 					![
 						'zod',
 						'zod/v4',

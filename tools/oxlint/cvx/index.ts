@@ -1,6 +1,7 @@
 import { basename, dirname, relative, resolve, sep } from 'node:path'
 import type { Context, ESTree, Plugin, Rule, RuleMeta, Scope } from '@oxlint/plugins'
 import { z } from 'zod'
+import { findComponentRoot } from '../../../src/oxlint/components.ts'
 
 const entryPointOptions = z.object({ entryPoints: z.array(z.string()).default(['src/index.ts']) })
 const componentOptions = z.object({ packageName: z.string().min(1).optional() })
@@ -154,6 +155,18 @@ export const rules: Record<RuleName, Rule> = {
 			if (!componentRoot(context.filename)) return {}
 			return {
 				CallExpression(node) {
+					if (
+						node.callee.type === 'MemberExpression' &&
+						['index', 'searchIndex', 'vectorIndex'].includes(propertyName(node.callee) ?? '') &&
+						isTableChain(node.callee.object) &&
+						basename(context.filename) !== 'table.ts'
+					) {
+						context.report({
+							node,
+							messageId: 'schema',
+							data: { builder: 'Table indexes', file: 'table.ts' },
+						})
+					}
 					const callee = node.callee
 					const identifier =
 						callee.type === 'Identifier'
@@ -166,7 +179,7 @@ export const rules: Record<RuleName, Rule> = {
 						(def) =>
 							def.type === 'ImportBinding' &&
 							def.parent?.type === 'ImportDeclaration' &&
-							def.parent.source.value === 'convex/server',
+							['convex/server', 'cvx-kit', 'cvx-kit/zod-table'].includes(def.parent.source.value),
 					)
 					if (!definition) return
 					const builder =
@@ -178,7 +191,11 @@ export const rules: Record<RuleName, Rule> = {
 					const file = basename(context.filename)
 					if (builder === 'defineSchema' && file !== 'schema.ts') {
 						context.report({ node, messageId: 'schema', data: { builder, file: 'schema.ts' } })
-					} else if (builder === 'defineTable' && !['schema.ts', 'table.ts'].includes(file)) {
+					} else if (
+						(builder === 'defineTable' && !['schema.ts', 'table.ts'].includes(file)) ||
+						(['zodTable', 'tenantTable', 'zodVariantTable'].includes(builder ?? '') &&
+							!['schema.ts', 'table.ts'].includes(file))
+					) {
 						context.report({
 							node,
 							messageId: 'schema',
@@ -299,7 +316,7 @@ function componentRoot(filename: string) {
 		.split(sep)
 		.join('/')
 		.match(/^(.*\/src\/components\/[^/]+)(?:\/|$)/)
-	return match ? resolve(match[1]) : null
+	return findComponentRoot(filename) ?? (match ? resolve(match[1]) : null)
 }
 
 function staticString(node: ESTree.Node | null | undefined) {
@@ -343,4 +360,10 @@ function exportedNames(program: ESTree.Program) {
 
 function exportName(node: ESTree.Node): string | null {
 	return node.type === 'Identifier' ? node.name : staticString(node)
+}
+
+function isTableChain(node: ESTree.Node): boolean {
+	if (node.type === 'MemberExpression')
+		return propertyName(node) === 'table' || isTableChain(node.object)
+	return node.type === 'CallExpression' && isTableChain(node.callee)
 }

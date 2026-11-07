@@ -4,8 +4,13 @@ import type { Context, ESTree, RuleMeta, Scope, Visitor } from '@oxlint/plugins'
 import { z } from 'zod'
 import { parseSync, type Node } from 'oxc-parser'
 import { createResolver, resolveImport } from './architecture'
+import { findComponentRoot, conventionalComponentRoot } from './components'
 
-export const consumerOptions = z.object({ convexDir: z.string().min(1).default('convex') })
+export const consumerOptions = z.object({
+	convexDir: z.string().min(1).default('convex'),
+	componentDirs: z.array(z.string().min(1)).default([]),
+	domainPublicFiles: z.record(z.string(), z.array(z.string().min(1))).default({}),
+})
 
 export function appFile(context: Context, filename = context.filename) {
 	const requestedRoot = resolve(
@@ -212,7 +217,14 @@ export function isFunctionsImport(context: Context, source: string) {
 	const target = source.startsWith('.')
 		? resolve(dirname(context.filename), source)
 		: resolveImport(createResolver(), context.filename, source)
-	return target !== null && appFile(context, target)?.replace(/\.[cm]?[jt]s$/, '') === 'functions'
+	if (!target) return false
+	const owner = componentRoot(context, context.filename)
+	return (
+		(owner ? relative(owner, target).split(sep).join('/') : appFile(context, target))?.replace(
+			/\.[cm]?[jt]s$/,
+			'',
+		) === 'functions'
+	)
 }
 
 export function typeOnlySource(node: ESTree.Node) {
@@ -309,17 +321,27 @@ export function metadata(description: string, messages: Record<string, string>):
 	return { type: 'problem', docs: { description }, schema: [], messages }
 }
 
+const componentRoots = new WeakMap<Context, Map<string, string | null>>()
+
 export function componentRoot(context: Context, filename: string) {
+	let cache = componentRoots.get(context)
+	if (!cache) {
+		cache = new Map()
+		componentRoots.set(context, cache)
+	}
+	if (cache.has(filename)) return cache.get(filename) ?? null
 	const requestedRoot = resolve(
 		context.cwd,
 		consumerOptions.parse(context.options[0] ?? {}).convexDir,
 	)
 	const root = existsSync(requestedRoot) ? realpathSync(requestedRoot) : requestedRoot
-	const file = relative(root, existsSync(filename) ? realpathSync(filename) : filename)
-		.split(sep)
-		.join('/')
-	const match = file.match(/^components\/([^/]+)(?:\/|$)/)
-	return match ? resolve(root, 'components', match[1]) : null
+	const file = existsSync(filename) ? realpathSync(filename) : resolve(filename)
+	const roots = consumerOptions
+		.parse(context.options[0] ?? {})
+		.componentDirs.map((path) => resolve(root, path))
+	const owner = findComponentRoot(file, roots) ?? conventionalComponentRoot(file, root)
+	cache.set(filename, owner)
+	return owner
 }
 
 export function staticString(node: ESTree.Node | null | undefined) {
@@ -393,7 +415,8 @@ function importedReadProvenance(
 	if (
 		!target ||
 		!file ||
-		!/^(?:domain\/.+\/schema\.ts|querying\.ts|foundation\.ts)$/.test(file) ||
+		(!/^(?:domain\/.+\/schema\.ts|querying\.ts|foundation\.ts)$/.test(file) &&
+			!(componentRoot(context, target) && /(?:^|\/)(?:schema|table|foundation)\.ts$/.test(file))) ||
 		!existsSync(target)
 	)
 		return null

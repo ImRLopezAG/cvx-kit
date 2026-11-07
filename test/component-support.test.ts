@@ -157,4 +157,22 @@ describe('cvx-kit in a registered component', () => {
 		const required = intents.schema.required({ createdAt: true, updatedAt: true })
 		expect(required.safeParse(legacy).success).toBe(false)
 	})
+	it('explicitly strips injected timestamps from a projected result contract', () => {
+		const row = {
+			_id: 'intent',
+			_creationTime: 1,
+			key: 'one',
+			count: 1,
+			createdAt: 1000,
+			updatedAt: 1000,
+		}
+		const projection = intents.schema.omit({ createdAt: true, updatedAt: true, archivedAt: true })
+		expect(projection.safeParse(row).success).toBe(false)
+		expect(projection.strip().parse(row)).toEqual({
+			_id: 'intent',
+			_creationTime: 1,
+			key: 'one',
+			count: 1,
+		})
+	})
 })

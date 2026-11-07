@@ -75,3 +75,10 @@ createAuthFunctions<DataModel>({ ..., triggers })
    validation triggers should throw; best-effort denormalization should not.
 4. **Triggers run per write, in registration order.** Keep them small; heavy
    work belongs in a scheduled function, not in a trigger.
+
+## Component mutations
+
+Use `triggerContext(triggers)` with `zCustomMutation` or `customMutation` for
+both public and internal component mutation builders. It customizes only
+`ctx.db` and uses the component-local data model. See [components](components.md)
+for full wiring, contracts and host authentication.

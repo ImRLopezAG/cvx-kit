@@ -78,3 +78,6 @@ and provider checks in the result.
 
 Maintainers edit `skills/cvx-kit/references/*.md` directly. CI verifies portable
 relative links with `bun run skills:check`.
+
+For authoring portable components with local schemas, Effect builders and triggers,
+read [components](references/components.md).

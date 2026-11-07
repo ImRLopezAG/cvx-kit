@@ -11,6 +11,7 @@ const required = [
 	'test/convex-auth.test.ts',
 	'test/convex-auth-resolve-org.test.ts',
 	'test/convex-components.test.ts',
+	'test/component-support.test.ts',
 	'test/convex-tenancy.test.ts',
 	'test/crud.test.ts',
 	'test/domain-boundaries.test.ts',

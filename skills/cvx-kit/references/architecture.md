@@ -1,5 +1,7 @@
 # Architecture — the shape of a cvx-kit application
 
+For component-local schemas, builders and triggers, see [components](components.md).
+
 cvx-kit was extracted from a production Convex application (~12k LOC backend).
 This document describes the architecture that application follows and that the
 kit is designed to reproduce: strict ownership boundaries, injected policy,

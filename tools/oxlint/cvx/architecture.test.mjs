@@ -245,3 +245,89 @@ it('U7 R1 nested local business callbacks retain root test ownership', () => {
 		check({ 'convex/relations.ts': code, 'convex/__tests__/relations.test.ts': testCode }),
 	).toEqual([])
 })
+
+const componentConfig =
+	"import { defineComponent } from 'convex/server'; export default defineComponent('omni')"
+describe('component architecture', () => {
+	it('accepts standalone component entry files and behavioral submodules', () => {
+		expect(
+			check(
+				{
+					'component/convex.config.ts': componentConfig,
+					'component/__tests__/wiring.test.ts': testCode,
+					'component/agents/commands.ts': 'export const create = () => 1',
+					'component/agents/__tests__/commands.test.ts': testCode,
+					'component/querying.ts':
+						"import {createQueryEngine} from 'cvx-kit/querying'; export const querying = createQueryEngine(config, options)",
+				},
+				'component',
+			),
+		).toEqual([])
+	})
+	it('exempts only declarative local query and relation facades from root tests', () => {
+		const files = {
+			'convex/components/omni/querying.ts':
+				"import {createQueryEngine} from 'cvx-kit/querying'; export const querying = createQueryEngine(config, options)",
+			'convex/components/omni/relations.ts':
+				"import {defineRelations} from 'cvx-kit/relations'; export const relations = defineRelations(tables, r => ({}))",
+		}
+		expect(check(files)).toEqual([])
+		expect(
+			check({
+				...files,
+				'convex/components/omni/querying.ts': 'export function querying() { return 1 }',
+			}),
+		).toContainEqual(expect.objectContaining({ code: 'tests', file: 'components/omni' }))
+	})
+	it('recognizes discovered component containers and explicit roots', () => {
+		const cwd = fixture({
+			'convex/portable/omni/convex.config.ts': componentConfig,
+			'convex/portable/omni/__tests__/wiring.test.ts': testCode,
+			'convex/portable/omni/agents/queries.ts': 'export const list = () => 1',
+			'convex/portable/omni/agents/__tests__/queries.test.ts': testCode,
+			'convex/extensions/injected/agents/queries.ts': 'export const list = () => 1',
+			'convex/extensions/injected/agents/__tests__/queries.test.ts': testCode,
+		})
+		expect(checkArchitecture({ cwd, componentDirs: ['extensions/injected'] })).toEqual([])
+	})
+	it('does not let host or child tests satisfy component tests', () => {
+		expect(
+			check({
+				'convex/components/omni/convex.config.ts': componentConfig,
+				'convex/__tests__/host.test.ts': testCode,
+				'convex/components/omni/agents/queries.ts': 'export const list = () => 1',
+				'convex/components/omni/agents/nested/__tests__/queries.test.ts': testCode,
+			})
+				.filter((x) => x.code === 'tests')
+				.map((x) => x.file),
+		).toEqual(['components/omni', 'components/omni/agents'])
+	})
+	it('detects component runtime cycles through entries, submodules and aliases', () => {
+		const issues = check({
+			'tsconfig.json': JSON.stringify({
+				compilerOptions: { baseUrl: '.', paths: { '@omni/*': ['convex/components/omni/*'] } },
+			}),
+			'convex/components/omni/convex.config.ts': componentConfig,
+			'convex/components/omni/agents.ts': "export { run } from '@omni/runs/queries'",
+			'convex/components/omni/runs/queries.ts':
+				"import { run } from '../agents'; export const next = run",
+			'convex/components/omni/__tests__/entry.test.ts': testCode,
+			'convex/components/omni/runs/__tests__/queries.test.ts': testCode,
+		})
+		expect(issues.filter((x) => x.code === 'cycle')).toHaveLength(1)
+		expect(issues.find((x) => x.code === 'cycle').message).toContain('components/omni/agents.ts')
+	})
+	it('keeps type-only component edges out of runtime cycles and skips generated code', () => {
+		expect(
+			check({
+				'convex/components/omni/convex.config.ts': componentConfig,
+				'convex/components/omni/__tests__/entry.test.ts': testCode,
+				'convex/components/omni/agents.ts':
+					"import type {Run} from './runs/types'; export type Agent = Run",
+				'convex/components/omni/runs/types.ts':
+					"import type {Agent} from '../agents'; export type Run = Agent",
+				'convex/components/omni/_generated/api.ts': 'invalid generated syntax !',
+			}),
+		).toEqual([])
+	})
+})

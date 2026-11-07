@@ -192,6 +192,28 @@ tester.run('component root facades own infrastructure', rules['root-facade-owner
 		},
 	],
 })
+for (const [factory, module, facade] of [
+	['defineRelations', 'relations', 'relations.ts'],
+	['createQueryEngine', 'querying', 'querying.ts'],
+]) {
+	tester.run(`component ${factory} has a local facade owner`, rules['root-facade-ownership'], {
+		valid: [
+			{
+				filename: join(component, facade),
+				options,
+				code: `import { ${factory} } from 'cvx-kit/${module}'; export const facade = ${factory}({})`,
+			},
+		],
+		invalid: [
+			{
+				filename: join(component, 'intents', facade),
+				options,
+				code: `import { ${factory} } from 'cvx-kit/${module}'; export const facade = ${factory}({})`,
+				errors: [{ messageId: 'facade' }],
+			},
+		],
+	})
+}
 tester.run('component reads must be bounded', rules['no-unbounded-reads'], {
 	valid: [
 		{

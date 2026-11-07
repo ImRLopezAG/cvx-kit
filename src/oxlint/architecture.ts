@@ -2,10 +2,13 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, resolve, sep } from 'node:path'
 import { parseSync, Visitor, type Program, type Node, type CallExpression } from 'oxc-parser'
 import { ResolverFactory } from 'oxc-resolver'
+import { findComponentRoot, conventionalComponentRoot } from './components'
 
 export interface ArchitectureOptions {
 	cwd?: string
 	convexDir?: string
+	/** Additional component roots, relative to convexDir. */
+	componentDirs?: readonly string[]
 	/** Build these registries to surface deferred configuration errors in tests. */
 	registries?: readonly object[]
 }
@@ -33,10 +36,32 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 		return [
 			{ code: 'missing-root', file: '.', message: `Convex directory does not exist: ${root}` },
 		]
-	const files = sourceFiles(root, diagnostics)
+	const explicitRoots = (options.componentDirs ?? []).map((path) => resolve(root, path))
+	const files = [...sourceFiles(root, diagnostics)]
+	const owners = new Map<string, string>()
+	for (const file of files) {
+		const owner =
+			findComponentRoot(resolve(root, file), explicitRoots) ??
+			conventionalComponentRoot(resolve(root, file), root)
+		if (owner && (owner === root || owner.startsWith(root + sep)))
+			owners.set(file, relative(root, owner).split(sep).join('/'))
+	}
+	const componentRoots = new Set(owners.values())
+	// Component submodules have their own layout; only host directories use the app allowlist.
+	for (let index = diagnostics.length - 1; index >= 0; index--) {
+		const issue = diagnostics[index]
+		if (
+			issue.code === 'root-directory' &&
+			[...componentRoots].some(
+				(owner) => !owner || owner === issue.file || owner.startsWith(issue.file + '/'),
+			)
+		)
+			diagnostics.splice(index, 1)
+	}
 	const required = new Set<string>()
 	const tested = new Set<string>()
 	const graph = new Map<string, Set<string>>()
+	const componentGraph = new Map<string, Set<string>>()
 	const dependencies = new Map<string, Set<string>>()
 	const resolver = createResolver()
 	for (const file of files) {
@@ -62,7 +87,12 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 			continue
 		}
 		if (file.split('/').includes('__tests__')) continue
-		if (/^domain\/[^/]+$/.test(file) && file !== 'domain/table.ts')
+		const component = owners.get(file)
+		const localFile =
+			component === undefined
+				? file
+				: relative(resolve(root, component), filename).split(sep).join('/')
+		if (component === undefined && /^domain\/[^/]+$/.test(file) && file !== 'domain/table.ts')
 			diagnostics.push({
 				code: 'domain-entry',
 				file,
@@ -72,7 +102,7 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 		if (
 			executable(parsed.program) &&
 			file !== 'domain/table.ts' &&
-			!narrowRootDeclaration(file, readFileSync(filename, 'utf8'))
+			!narrowRootDeclaration(localFile, readFileSync(filename, 'utf8'))
 		)
 			required.add(dirname(file))
 		const owner = moduleOwner(file) ?? ''
@@ -83,6 +113,11 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 			if (!target) continue
 			const targetFile = relative(root, target).split(sep).join('/')
 			targets.add(targetFile)
+			if (component !== undefined && owners.get(targetFile) === component) {
+				const edges = componentGraph.get(file) ?? new Set<string>()
+				componentGraph.set(file, edges)
+				edges.add(targetFile)
+			}
 			const targetOwner = moduleOwner(targetFile)
 			if (owner && targetOwner && owner !== targetOwner) {
 				const edges = graph.get(owner) ?? new Set<string>()
@@ -100,7 +135,7 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 			})
 	}
 	diagnostics.push(...sharedOwnership(dependencies))
-	for (const cycle of cycles(graph))
+	for (const cycle of [...cycles(graph), ...cycles(componentGraph)])
 		diagnostics.push({
 			code: 'cycle',
 			file: cycle[0],

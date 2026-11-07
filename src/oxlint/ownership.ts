@@ -47,6 +47,7 @@ export const ownershipRules = {
 					for (const issue of inspectArchitecture({
 						cwd: context.cwd,
 						convexDir: settings.convexDir,
+						componentDirs: settings.componentDirs,
 					}))
 						context.report({
 							node,

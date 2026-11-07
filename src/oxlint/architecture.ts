@@ -54,7 +54,8 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 			issue.code === 'root-directory' &&
 			[...componentRoots].some(
 				(owner) => !owner || owner === issue.file || owner.startsWith(issue.file + '/'),
-			)
+			) &&
+			!files.some((file) => file.startsWith(issue.file + '/') && !owners.has(file))
 		)
 			diagnostics.splice(index, 1)
 	}

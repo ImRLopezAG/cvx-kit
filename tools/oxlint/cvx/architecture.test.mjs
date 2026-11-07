@@ -290,6 +290,22 @@ describe('component architecture', () => {
 		})
 		expect(checkArchitecture({ cwd, componentDirs: ['extensions/injected'] })).toEqual([])
 	})
+	it.each(['discovered', 'explicit'])(
+		'keeps host source in %s component containers subject to root layout checks',
+		(kind) => {
+			const files = {
+				'convex/extras/omni/queries.ts': 'export const list = () => 1',
+				'convex/extras/omni/__tests__/queries.test.ts': testCode,
+				'convex/extras/hostBusiness.ts': 'export const run = () => 1',
+				'convex/extras/__tests__/hostBusiness.test.ts': testCode,
+			}
+			if (kind === 'discovered') files['convex/extras/omni/convex.config.ts'] = componentConfig
+			const cwd = fixture(files)
+			expect(
+				checkArchitecture({ cwd, componentDirs: kind === 'explicit' ? ['extras/omni'] : [] }),
+			).toContainEqual(expect.objectContaining({ code: 'root-directory', file: 'extras' }))
+		},
+	)
 	it('does not let host or child tests satisfy component tests', () => {
 		expect(
 			check({

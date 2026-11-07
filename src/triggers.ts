@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { Triggers, type Change, type Trigger } from 'convex-helpers/server/triggers'
-import type { GenericDataModel, TableNamesInDataModel } from 'convex/server'
+import type { GenericDataModel, GenericMutationCtx, TableNamesInDataModel } from 'convex/server'
+import { customCtx } from 'convex-helpers/server/customFunctions'
 
 export { Triggers }
 export type { Change, Trigger }
@@ -13,6 +14,11 @@ export type { Change, Trigger }
  */
 export function createTriggers<DataModel extends GenericDataModel>(): Triggers<DataModel> {
 	return new Triggers<DataModel>()
+}
+
+/** Customize zCustomMutation/customMutation with this component's trigger registry. */
+export function triggerContext<DataModel extends GenericDataModel>(triggers: Triggers<DataModel>) {
+	return customCtx((ctx: GenericMutationCtx<DataModel>) => ({ db: triggers.wrapDB(ctx).db }))
 }
 
 /**

@@ -64,6 +64,15 @@ try {
 		const oxlint = join(fixture, 'node_modules/.bin/oxlint')
 		run(oxlint, ['--config', '.oxlintrc.json', 'convex'], fixture)
 		writeFileSync(
+			join(fixture, 'convex/components/example/convex.config.ts'),
+			"import { defineComponent } from 'convex/server'; export default defineComponent('example')\n",
+		)
+		writeFileSync(
+			join(fixture, 'convex/components/example/table.ts'),
+			"import { z } from 'zod'; import { zodTable } from 'cvx-kit/zod-table'; export const intents = zodTable('intents', () => ({ key: z.string() })); export const tables = { intents: intents.table.index('by_key', ['key']) }\n",
+		)
+		run(oxlint, ['--config', '.oxlintrc.json', 'convex/components/example'], fixture)
+		writeFileSync(
 			join(fixture, 'convex/components/example/bad.ts'),
 			`
 import { defineTable } from 'convex/server'

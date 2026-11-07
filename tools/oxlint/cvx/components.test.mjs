@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RuleTester } from 'oxlint/plugins-dev'
@@ -241,6 +241,28 @@ tester.run('library component index ownership', libraryRules['schema-file-bounda
 			filename: join(component, 'schema.ts'),
 			code: "intents.table.index('by_key', ['key'])",
 			errors: [{ messageId: 'schema' }],
+		},
+	],
+})
+
+mkdirSync(join(root, 'packages', 'shared'), { recursive: true })
+mkdirSync(join(root, 'node_modules'), { recursive: true })
+writeFileSync(join(root, 'packages', 'shared', 'index.ts'), 'export const value = 1')
+writeFileSync(
+	join(root, 'packages', 'shared', 'package.json'),
+	JSON.stringify({ name: 'shared', main: 'index.ts' }),
+)
+symlinkSync(join(root, 'packages', 'shared'), join(root, 'node_modules', 'shared'))
+tester.run('component imports installed workspace packages', rules['component-boundaries'], {
+	valid: [
+		{ filename: join(component, 'functions.ts'), options, code: "import { value } from 'shared'" },
+	],
+	invalid: [
+		{
+			filename: join(component, 'functions.ts'),
+			options,
+			code: "import { value } from '../../packages/shared/index'",
+			errors: [{ messageId: 'boundary' }],
 		},
 	],
 })

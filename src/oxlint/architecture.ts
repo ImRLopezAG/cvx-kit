@@ -109,7 +109,7 @@ export function inspectArchitecture(options: ArchitectureOptions = {}): Architec
 	return diagnostics.sort((a, b) => a.file.localeCompare(b.file) || a.code.localeCompare(b.code))
 }
 
-export function createResolver() {
+export function createResolver(symlinks = true) {
 	return new ResolverFactory({
 		tsconfig: 'auto',
 		extensions: ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.json'],
@@ -119,7 +119,7 @@ export function createResolver() {
 			'.cjs': ['.cts', '.cjs'],
 		},
 		conditionNames: ['types', 'import', 'node', 'default'],
-		symlinks: true,
+		symlinks,
 	})
 }
 

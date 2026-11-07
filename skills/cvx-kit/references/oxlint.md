@@ -82,9 +82,9 @@ Every name below has the `cvx/` prefix in lint configuration.
   and combines them with `createModule` from `cvx-kit/zod-table`.
 - API adapters may delegate and perform the documented bounded inline query
   and DTO projection. `system*` constructors may live in domain modules.
-- Authored components under `convex/components/<name>/` may use their own raw
-  builders and raw tables. Host-specific facade, timestamp, and bounded-read
-  rules do not apply there. Configuration imports for mounting components are
+- Authored components own local `functions.ts`, `foundation.ts` and `triggers.ts`
+  facades. Timestamp and bounded-read rules apply inside components. Kit tables
+  belong in component `schema.ts`/`table.ts`, with indexes in `table.ts`. Configuration imports for mounting components are
   allowed from root `convex.config.ts`.
 - Host schemas use kit table constructors in `domain/<module>/schema.ts` and
   attach indexes in `domain/<module>/table.ts`. `schema.ts` assembles them.
@@ -258,3 +258,11 @@ ownership; their ownership still needs review.
 ## Reserved domain files
 
 Enable `cvx/reserved-domain-file-anatomy` to require exported Command/Query registries, declarative contracts, zodTable shapes, and table topology or createModule assembly. Constructor provenance is traced through imported aliases, namespaces, direct Foundation factories, and the root foundation.ts facade. Pair it with `cvx/domain-file-responsibilities` to reject handlers and database/runtime work in contracts.ts. Backend scope and test/generated exclusions apply; absent files are not required.
+
+## Component roots and explicit domain public files
+
+See [components](components.md#lint-configuration) for `componentDirs`, the
+opt-in `domainPublicFiles` extension, and the component behavior of each rule.
+`componentDirs` is available on every consumer rule; its entries are relative
+to `convexDir`. `domainPublicFiles` is accepted only by
+`domain-import-boundaries`, and keeps the existing strict defaults.

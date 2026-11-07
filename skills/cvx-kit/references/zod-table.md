@@ -1,5 +1,7 @@
 # `cvx-kit/zod-table` — one zod shape per entity, masked into every boundary
 
+For component-local schemas, builders and triggers, see [components](components.md).
+
 The core idea: an entity's shape is declared **once** as a zod object, and every
 boundary that shape crosses — storage, insert, update, command input, public
 DTO, LLM tool input — is a _derived mask_ of that single declaration. There is

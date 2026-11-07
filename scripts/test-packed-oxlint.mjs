@@ -72,6 +72,26 @@ try {
 			"import { z } from 'zod'; import { zodTable } from 'cvx-kit/zod-table'; export const intents = zodTable('intents', () => ({ key: z.string() })); export const tables = { intents: intents.table.index('by_key', ['key']) }\n",
 		)
 		run(oxlint, ['--config', '.oxlintrc.json', 'convex/components/example'], fixture)
+		for (const guide of [
+			'skills/cvx-kit/references/components.md',
+			'docs/references/components.md',
+		]) {
+			const markdown = readFileSync(join(root, guide), 'utf8')
+			const documentedRules = JSON.parse(markdown.split('```json\n')[1].split('\n```')[0])
+			writeFileSync(
+				join(fixture, '.components.oxlintrc.json'),
+				JSON.stringify({
+					jsPlugins: [{ name: 'cvx', specifier: 'cvx-kit/oxlint' }],
+					rules: Object.fromEntries(
+						Object.entries(documentedRules).map(([name, [severity, options]]) => [
+							name,
+							[severity, { ...options, convexDir: 'convex' }],
+						]),
+					),
+				}),
+			)
+			run(oxlint, ['--config', '.components.oxlintrc.json', 'convex/components/example'], fixture)
+		}
 		writeFileSync(
 			join(fixture, 'convex/components/example/bad.ts'),
 			`

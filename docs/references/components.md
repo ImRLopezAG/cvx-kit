@@ -241,17 +241,33 @@ Only the app's server can call mounted component functions. Export a client
 facade when app domain code needs access; the app's root `convex.config.ts`
 may import component configuration directly. Do not import private component
 implementation files into host domains. Use generated references inside a
-host facade (for example root `outbox.ts`):
+host facade. Keep the delegation in the component client and instantiate it
+once at the app root:
 
 ```ts
-import { components } from './_generated/api'
-import type { MutationCtx } from './_generated/server'
-export function enqueue(ctx: MutationCtx, key: string, payload: string) {
-  return ctx.runMutation(components.outbox.functions.create, { key, payload })
+// components/outbox/client.ts
+import type { GenericDataModel, GenericMutationCtx } from 'convex/server'
+import type { ComponentApi } from './_generated/component'
+
+export function createOutbox(component: ComponentApi) {
+  return {
+    enqueue: (
+      ctx: Pick<GenericMutationCtx<GenericDataModel>, 'runMutation'>,
+      key: string,
+      payload: string,
+    ) => ctx.runMutation(component.functions.create, { key, payload }),
+  }
 }
 ```
 
-Expose the facade through the app's authenticated API constructor, check tenant
+```ts
+// <convex root>/outbox.ts
+import { components } from './_generated/api'
+import { createOutbox } from './components/outbox/client'
+export const outbox = createOutbox(components.outbox)
+```
+
+Call `outbox.enqueue(ctx, key, payload)` through the app's authenticated API constructor, check tenant
 membership/authorization there, and derive actor/scope from the trusted auth
 context. If the component accepts tenant or actor fields, pass them from that
 context rather than accepting caller-supplied authority. Treat host IDs as
@@ -267,15 +283,15 @@ override. Ordinary `components/<name>` needs no additional option.
 
 ```json
 {
-  "convex/domain-import-boundaries": ["error", {
+  "cvx/domain-import-boundaries": ["error", {
     "convexDir": "src",
     "domainPublicFiles": {
       "communication": ["helpers/delivery"]
     }
   }],
-  "convex/schema-file-boundaries": ["error", { "convexDir": "src" }],
-  "convex/no-raw-builders": ["error", { "convexDir": "src" }],
-  "convex/no-manual-timestamps": ["error", { "convexDir": "src" }]
+  "cvx/schema-file-boundaries": ["error", { "convexDir": "src" }],
+  "cvx/no-raw-builders": ["error", { "convexDir": "src" }],
+  "cvx/no-manual-timestamps": ["error", { "convexDir": "src" }]
 }
 ```
 

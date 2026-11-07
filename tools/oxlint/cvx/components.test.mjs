@@ -1,5 +1,13 @@
 // @vitest-environment node
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync } from 'node:fs'
+import {
+	mkdtempSync,
+	mkdirSync,
+	writeFileSync,
+	readFileSync,
+	rmSync,
+	realpathSync,
+	symlinkSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RuleTester } from 'oxlint/plugins-dev'
@@ -22,8 +30,43 @@ const tester = new RuleTester({
 	languageOptions: { parserOptions: { lang: 'ts' } },
 })
 const options = [{ convexDir: root }]
+mkdirSync(join(component, '_generated'), { recursive: true })
+writeFileSync(join(component, '_generated', 'server.ts'), 'export const mutation = () => {}')
+writeFileSync(
+	join(root, 'tsconfig.json'),
+	JSON.stringify({
+		compilerOptions: {
+			baseUrl: '.',
+			paths: { '@outbox/server': ['portable/outbox/_generated/server.ts'] },
+		},
+	}),
+)
 const schema =
 	"import { zodTable as table } from 'cvx-kit/zod-table'; export const intents = table('intents', () => ({}))"
+
+for (const guide of ['skills/cvx-kit/references/components.md', 'docs/references/components.md']) {
+	const markdown = readFileSync(new URL(`../../../${guide}`, import.meta.url), 'utf8')
+	const codeFor = (filename) => {
+		const marker = '```ts\n// ' + filename + '\n'
+		return markdown.split(marker)[1].split('\n```')[0]
+	}
+	tester.run(`${guide} host facade wires the component client`, rules['root-wiring-only'], {
+		valid: [
+			{ filename: join(root, 'outbox.ts'), options, code: codeFor('<convex root>/outbox.ts') },
+		],
+		invalid: [],
+	})
+	tester.run(`${guide} client stays inside the component boundary`, rules['component-boundaries'], {
+		valid: [
+			{
+				filename: join(component, 'client.ts'),
+				options,
+				code: codeFor('components/outbox/client.ts'),
+			},
+		],
+		invalid: [],
+	})
+}
 
 tester.run('component schema ownership', rules['schema-file-boundaries'], {
 	valid: [
@@ -105,12 +148,29 @@ tester.run('component raw builders belong to its functions facade', rules['no-ra
 			options,
 			code: "import { mutation } from './_generated/server'",
 		},
+		{
+			filename: join(component, 'functions.ts'),
+			options,
+			code: "import { mutation } from '@outbox/server'",
+		},
 	],
 	invalid: [
 		{
 			filename: join(component, 'intents', 'commands.ts'),
 			options,
 			code: "import { mutation } from '../_generated/server'",
+			errors: [{ messageId: 'builder' }],
+		},
+		{
+			filename: join(component, 'intents', 'commands.ts'),
+			options,
+			code: "import { mutation as raw } from '@outbox/server'",
+			errors: [{ messageId: 'builder' }],
+		},
+		{
+			filename: join(component, 'intents', 'commands.ts'),
+			options,
+			code: "import * as raw from '@outbox/server'",
 			errors: [{ messageId: 'builder' }],
 		},
 	],

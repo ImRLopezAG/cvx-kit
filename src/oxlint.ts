@@ -145,10 +145,12 @@ const applicationRules: Record<RuleName, CreateRule> = {
 					if (node.importKind === 'type') return
 					const importedSource = node.source.value
 					const target = resolveImport(resolver, context.filename, importedSource)
-					const source =
-						target && appFile(context, target)?.startsWith('_generated/')
-							? appFile(context, target)!
-							: importedSource
+					const localTarget = target
+						? owner
+							? relative(owner, target).split(sep).join('/')
+							: appFile(context, target)
+						: null
+					const source = localTarget?.startsWith('_generated/') ? localTarget : importedSource
 					if (
 						!/(?:^|\/)_generated\/server(?:\.[cm]?[jt]s)?$/.test(source) &&
 						source !== 'convex/server'

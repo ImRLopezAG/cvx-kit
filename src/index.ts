@@ -47,6 +47,7 @@ export {
 	appendOnly,
 	tenantOwnership,
 	createTriggers,
+	triggerContext,
 	noDelete,
 	timestamps,
 	Triggers,

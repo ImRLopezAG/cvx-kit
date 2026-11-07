@@ -1,5 +1,8 @@
 # `cvx-kit/querying` — typed, authorized stream pagination
 
+For component-local tables, host-supplied query authority and cursor keys, see
+[components](components.md).
+
 For a field containing IDs from several tables, see
 [native-ID union relations](./native-id-relations.md).
 

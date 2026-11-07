@@ -1,5 +1,7 @@
 # `cvx-kit/tenancy` — row-level security, with tenancy as an opt-in layer
 
+For component-local tenancy with host-derived scope, see [components](components.md).
+
 Row-level security and tenancy are **separate, composable features** of the
 same `security` config on `createAuthFunctions`:
 

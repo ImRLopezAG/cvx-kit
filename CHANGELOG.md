@@ -12,6 +12,21 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.28] - 2026-11-07
+
+### Added
+
+- Support Convex component schemas, table indexes, local infrastructure and mutation builders in the Oxlint plugin. Discover component roots from `defineComponent`, conventional layouts or explicit `componentDirs`.
+- Expose `triggerContext(triggers)` to run component-local triggers, including timestamps and tenant ownership, through public and internal custom mutation builders.
+- Allow explicit additional domain public files with `domainPublicFiles`, preserving the strict default import surface.
+- Recognize component roots, sibling tests and local runtime cycles in architecture checks without exempting neighboring host source.
+- Document component authoring across query engines, relations, DTOs, operations, contracts, audit, tenancy, typed host clients and nested tests. Registered-component proofs cover local query authority, timestamp and audit rollback, typed errors and nested workflow dispatch.
+
+### Fixed
+
+- Accept installed workspace package dependencies and builder aliases at component boundaries.
+- Clarify component row contracts: native IDs remain supported, while required timestamp results must explicitly validate optional storage fields.
+
 ## [0.1.27] - 2026-11-02
 
 ### Fixed

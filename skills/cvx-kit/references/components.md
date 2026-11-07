@@ -16,6 +16,9 @@ the component does not import the app's domains, auth singleton or environment.
   foundation.ts          # createEffectFoundation
   errors.ts              # defineErrorContract
   triggers.ts            # component-local registry and registrations
+  relations.ts           # component-local relation registry
+  querying.ts            # query engine and explicit scope policy
+  __tests__/             # root wiring and boundary proofs
   functions.ts           # wraps this component's generated builders
   intents/
     contracts.ts
@@ -316,9 +319,271 @@ Component-aware rule behavior:
 | `component-boundaries`, `no-component-env` | Isolation and injected configuration still apply. |
 | `domain-import-boundaries` | Host layering does not apply inside a component; component isolation does. |
 | `reserved-domain-file-anatomy` | Still specific to host `domain/` registries; component files may also export API adapters. |
-| Host root/project/API rules | Keep their existing app-root and `api/` scope. |
+| `project-structure` and architecture checks | Recognize component roots, local entry files, tests and runtime cycles. |
+| Remaining host root/API rules | Keep their existing app-root and `api/` scope. |
 | Remaining vocabulary, DTO, pagination, reference and export rules | Keep their existing checks; no component exemption. |
 
 These stricter checks can expose existing component timestamp writes, unbounded
 reads and raw builders. Migrate those calls to the local facades and triggers
 instead of disabling the rules.
+
+## Query engine, relations and ordinary include
+
+Put `defineRelations` in component-root `relations.ts` and `createQueryEngine`
+in component-root `querying.ts`. Register every table in the schema in the
+relation registry, including tables with no relations. Use only this component's
+table declarations and generated data model. A host ID stored as a string is
+not a relation into the app database: fetch authorized host facts in the host
+adapter, then pass the facts or call a narrowly scoped host function handle.
+
+A component has no authenticated query capability from `createAuthFunctions`.
+The query engine therefore rejects an ordinary component context by default.
+Use its explicit `trustedAdapter` to attest the effective tenant and row policy.
+This adapter is server code, not a browser-supplied option. The following factory
+also avoids module-global request scope and accepts keys supplied by the host:
+
+```ts
+// querying.ts
+import { createQueryEngine, type QueryEngineOptions } from 'cvx-kit/querying'
+import { createTenantRules } from 'cvx-kit/tenancy'
+import type { DataModel } from './_generated/dataModel'
+import type { QueryCtx } from './_generated/server'
+import schema from './schema'
+import { relations } from './relations'
+
+type Scope = { actor: string; tenant: string }
+type CursorKeys = NonNullable<QueryEngineOptions<typeof schema>['cursor']>
+
+export function createComponentQuerying(ctx: QueryCtx, scope: Scope, cursor: CursorKeys) {
+  const reader = { db: ctx.db }
+  const engine = createQueryEngine({ schema, relations }, {
+    cursor,
+    policyVersion: 'omni-v1',
+    trustedAdapter: candidate => candidate === reader ? {
+      reader: ctx.db,
+      scope: {
+        mode: 'trusted', principal: scope.actor, tenant: scope.tenant,
+        organization: null, role: null,
+      },
+      rules: createTenantRules<DataModel>(scope.tenant, ['intents']),
+      defaultPolicy: 'deny',
+    } : null,
+  })
+  return engine(reader)
+}
+```
+
+Use the **query** context here. Engine admission rejects mutation writers.
+The factory is behavioral wiring and needs component-root tests. A simple
+module-level declarative engine/relations declaration retains the usual
+architecture exemption. For richer policies, AND-compose `createTenantRules`
+with local rules via `composeRules`; attest those exact composed rules in the
+adapter. Row policies run for roots, related targets and junctions. Field group
+policies belong in the engine's `fieldGroups` option; opt in using
+`.include({ group: 'required' })` or `'if-permitted'`.
+
+At the API boundary, use `relations.tables.intents.paginationOpts(selection)`
+(or `intents.paginationOpts` for scalar fields), and the matching
+`relations.tables.intents.pageDto(relationSelection)`. Execute with
+`createComponentQuerying(ctx, scope, keys).intents.with(selection).paginate(page)`.
+The public projection omits private fields; a filter does not authorize a row.
+See [querying](querying.md) and [zod-table](zod-table.md).
+
+The host loads cursor keys from its environment and passes a validated key ring
+only in server-to-component arguments. Convex arguments cannot contain
+`Uint8Array`: transport keys as arrays of 64 integers from 0 through 255, then
+convert to `Uint8Array` before calling this factory. Keep `version`,
+`currentKeyId` and old keys stable across requests, including rotation. Never
+accept keys from browser args, log them, store them in audit entries, return them
+in DTOs, or use a fixed production key from a source example. Do not omit the
+`cursor` option: its environment fallback belongs to the host. For large
+registries, a component-local persisted configuration table can hold a
+host-installed key ring; access it through a dedicated server-only path and
+keep authority per request. No global mutable engine may hold tenant scope.
+
+Ordinary `include` is separate from relation `.include(...)`:
+
+```ts
+import { createInclude } from 'cvx-kit/auth'
+import { createTenantRules, wrapDatabaseReader } from 'cvx-kit/tenancy'
+const include = createInclude({ maxRows: 100 })
+// Inside a component query, after validating host-supplied scope:
+const db = wrapDatabaseReader({}, ctx.db,
+  createTenantRules<DataModel>(scope.tenant, ['intents']), { defaultPolicy: 'deny' })
+const rows = await include(db.query('intents'))
+  .matching('by_tenant', q => q.eq('tenant', scope.tenant))
+  .execute(20, rows => rows.map(row => intents.toPublicDto(row)))
+```
+
+`createInclude` supplies bounds, not authorization. Wrap the reader first.
+Use `.execute(limit)` or `.paginate(paginationOpts)` as the terminal. Native
+`paginated(intents.publicDto)` supplies args/result schemas for ordinary
+pagination; pass a page projection to include's `.paginate(opts, projectPage)`.
+Do not interchange its native cursors with query-engine cursors.
+
+## Tenant tables, operations and audit context
+
+`tenantTable` works with a component's local model. It excludes `tenant` from
+command input; a validated host-supplied scope must enrich inserts. Register
+both `timestamps(triggers, ...tenantTables)` and
+`tenantOwnership(triggers, ...tenantTables)` in component `triggers.ts`.
+`createTenantRules` checks reads/inserts/pre-image modifications;
+`tenantOwnership` rejects tenant reassignment after a write.
+
+For mutations, first apply `triggerContext(triggers)`, then wrap that database
+with `wrapDatabaseWriter(scope, ctx.db, composedRules, { defaultPolicy: 'deny' })`
+for handler use. Thus handler writes pass RLS and then triggers. Triggers own
+invariants and may need access to tables hidden from handlers. Register explicit
+rules for audit and other non-tenant tables when using default deny. Avoid
+wrapping the same trigger registry twice.
+
+`Command`, `Query` and `createEffectCrud` from `cvx-kit/effect` use the component
+foundation normally, with `defineDomainContract` from `cvx-kit/contracts`. No host domain registry or `ctx.auth` is
+required. See [commands](commands.md), [domain contracts](domain-contracts.md),
+[domain operations](domain-operations.md) and [CRUD](crud.md).
+
+For CRUD, pass `context`, `actor: ctx => ctx.actor`,
+`enrich: ctx => ({ tenant: ctx.tenant, ...serverOwnedFields })`, bounded `read`
+methods over the secured reader, and a DTO `project`. Declare
+`policy.permissions` for operations that must invoke the foundation permission
+hook; merely installing `checkPermission` does not assign permissions to CRUD. If query and mutation
+contexts share a reader-only type, provide the writer through an Effect service
+or a checked mutation-only repository, as in the registered-component proof.
+Tool/JSON inputs expose strings for IDs; parse repository values through the
+local storage schema to recover native ID brands instead of casting them.
+`notes.storage.partial().parse(patch)` validates a stored patch; tenant invariants
+still require the trigger.
+
+`createEffectFoundation` options also apply: `checkPermission` receives the
+explicit context, `observability.emit` receives operation outcomes,
+`classifyError` classifies failures, and `writeAudit` can write component-local
+evidence. Keep authority fields separate from operation input. Return
+`Effect.fail(errors.create(...))` for declared permission/operation failures;
+ordinary throws and rejected promises are defects and remain redacted.
+Observability should contain safe codes and metadata, not keys/provider payloads.
+
+Audit actor, tenant and correlation facts must come from the authenticated host
+adapter. A local audit writer runs in the mutation transaction: if it fails,
+the component's business and audit writes roll back. Queries cannot write audit
+rows. External logging and action I/O cannot be rolled back. If the app must own
+audit storage, synchronously compose the app and component writes in the host
+mutation, or use a narrowly authorized callback with explicit arguments. Do not
+pass a host context object, assume component `ctx.auth`, or replace atomic
+acquisition/fencing with an eventual action/event.
+
+## Typed client errors at the host boundary
+
+A typed `createOutbox(component: ComponentApi)` factory above is sufficient;
+cvx-kit does not need another client wrapper. The generated component API checks
+args and results, while the host's authenticated builder owns authentication and
+tenant membership. Its browser contract includes only business input. Derive
+scope after auth and pass it explicitly on every call; actor/tenant arguments
+on a component function are trusted only because the caller is host server code.
+
+A transported error has lost the identity of the original error object.
+Decode its envelope and map declared failures to the app's catalogue. An Effect
+client method can preserve the typed failure channel like this:
+
+```ts
+// Inside createOutbox(component), in client.ts. Supply a host-owned mapper
+// rather than importing host domains into this component package.
+import { Effect } from 'effect'
+import { decodeFailure } from 'cvx-kit/errors'
+import { outboxErrors } from './errors'
+
+const read = <HostMissingError>(ctx: Pick<GenericQueryCtx<GenericDataModel>, 'runQuery'>,
+  id: string, mapMissing: () => HostMissingError) => Effect.tryPromise({
+  try: () => ctx.runQuery(component.functions.read, { id }),
+  catch: error => {
+    const failure = decodeFailure(error, outboxErrors)
+    if (failure._tag === 'DeclaredFailure' && failure.code === 'INTENT_NOT_FOUND') {
+      return mapMissing()
+    }
+    return error
+  },
+})
+```
+
+Here `HostMissingError` is a generic return type parameter of the client method
+and `mapMissing` returns `hostErrors.create('HOST_INTENT_MISSING', {})` from the
+host. Import `GenericQueryCtx`/`GenericDataModel` as types from `convex/server`.
+Use the host catalogue in the host Effect API builder. Forward the returned
+Effect directly, or compose it with `yield*`; awaiting it as an ordinary promise
+would discard the intended error channel. For unchanged public codes,
+`combineErrorContracts(hostErrors, outboxErrors)` can project validated
+transported failures when the call is lifted using `Effect.tryPromise`.
+Unknown envelopes remain `UnknownFailure`; never parse an exception message or
+turn arbitrary provider errors into a declared user error.
+
+## Registered component tests and child components
+
+```ts
+import { convexTest } from 'convex-test'
+import { defineSchema } from 'convex/server'
+import workflowTest from '@convex-dev/workflow/test'
+import schema from '../schema'
+
+const t = convexTest(defineSchema({}), hostModules)
+t.registerComponent('omni', schema, import.meta.glob('../**/*.ts'))
+workflowTest.register(t, 'omni/workflow')
+```
+
+Use the exact mount path from each `convex.config.ts`. With the installed
+workflow helper this registers workflow, its workpool, and workpool's
+`batchWorker` child. Call the workflow through the parent's generated
+`components.workflow` reference inside an omni function; a child reference is
+relative to its current component, so a helper's slash-containing return value
+is not a root-call shortcut. For a standalone workpool mount, use its installed
+package's `test` helper at `omni/workpool`. For RAG, use the installed RAG
+version's test registration helper and register every child it requires. RAG
+is not a cvx-kit dependency, and this repo does not claim RAG-provider/runtime
+coverage. The same registration pattern applies to other child components.
+
+In convex-test 0.0.65, `t.run` addresses the host database. Seed component tables
+through a test-only mutation registered in the component module map; it must
+never become a production export. Call real wrapped mutations when timestamps,
+RLS or triggers are part of the proof. `t.withIdentity` authenticates the host;
+the host adapter still supplies explicit component scope. Test missing identity,
+foreign tenants, spoofed scope, denied related rows, cursor scope changes,
+audit/trigger rollback and unknown-error redaction.
+
+The executable examples are `test/component-support.test.ts` (contracts and
+triggers) and `test/component-capabilities.test.ts` (querying, relations, native
+include, tenant CRUD, audit, host auth/error mapping and nested workflow calls).
+They run against registered component databases; they do not deploy services
+or prove provider integration behavior.
+
+## Architecture checks and applicability
+
+`inspectArchitecture` and `checkArchitecture` accept `componentDirs` relative to
+`convexDir`, using the same config discovery and conventional layout as lint.
+A component can also be the scan root. Entry files and submodules belong to that
+component; runtime import cycles are checked within it, including re-exports
+and resolved aliases. Type-only edges and `_generated` files are excluded.
+Executable directories need their own sibling `__tests__` with runnable tests;
+host, parent and child test directories do not substitute for them. Pass local
+relation registries to the architecture check's `registries` option to force
+otherwise-deferred registry validation.
+
+| Area | Component support and boundary |
+| --- | --- |
+| Tables, timestamps, tenancy | Local generated model, wrapped writers, explicit host tenant. No direct host-table access. |
+| Querying, relations, include, DTOs | Local tables and policies; explicit query authority and cursor keys. No cross-database relation join. |
+| Foundation, catalogues, contracts, CRUD | Local contexts, permissions, audit and observations; typed failures via Effect. |
+| Client facade | Generated `ComponentApi` plus a typed `client.ts` factory; host auth and explicit error mapping. |
+| Tests and architecture | Registered/nested components, local probes, tests and cycles; package-specific child setup. |
+| Filters, state machines, agent tools | Schema/pure operation helpers work over local contracts. Expose only authorized operations through the host adapter. |
+| Idempotency and workflow protocols | Supply component-local repositories/operations and child mounts; persistence and fencing stay with their owner. Host/component transactions must be composed synchronously where atomicity is required. |
+| Built-in foundation/approvals components | Mount as children when component-owned; `cvx-kit/test` registration helpers accept a nested name. They remain separate databases, not local table facades. |
+| Auth constructors, HTTP, webhooks, env | Host responsibilities for this pattern: authenticate browser/provider requests, verify signatures, read env and pass only required configuration/facts. Components can orchestrate action work through injected callbacks; keep provider SDK adapters in the host to satisfy the portable-component lint rules. They do not inherit host auth or HTTP routes. |
+| React/client hooks | Run in the app against app API references and public contracts, outside the server component database. |
+
+For Accord's omni migration, keep agents, channels, conversations, runs,
+knowledge, procedures and workflow-definition tables local to omni; keep app
+RBAC, HTTP, provider env and automation-engine tables in the host. Convert host
+references to opaque strings and pass trusted actor/tenant/permission facts or
+narrow callbacks through the host facade. Mount RAG/workflow/workpool only where
+their lifecycle is owned. Preserve synchronous owner/revision fences in host
+mutations. Data backfills, existing job handles, provider setup and deployment
+cutover remain Accord migration work; adopting these authoring APIs does not
+perform that migration.

@@ -336,6 +336,21 @@ table declarations and generated data model. A host ID stored as a string is
 not a relation into the app database: fetch authorized host facts in the host
 adapter, then pass the facts or call a narrowly scoped host function handle.
 
+The tenant-scoped examples below replace the earlier plain `zodTable` with a
+`tenantTable` and add a tenant index in `table.ts`:
+
+```ts
+import { tenantTable } from 'cvx-kit/zod-table'
+
+export const intents = tenantTable('intents', () => ({
+  key: z.string(),
+  payload: z.string(),
+}))
+export const tables = {
+  intents: intents.table.index('by_key', ['key']).index('by_tenant', ['tenant']),
+}
+```
+
 A component has no authenticated query capability from `createAuthFunctions`.
 The query engine therefore rejects an ordinary component context by default.
 Use its explicit `trustedAdapter` to attest the effective tenant and row policy.

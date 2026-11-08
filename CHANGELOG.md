@@ -12,6 +12,12 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.29] - 2026-11-08
+
+### Added
+
+- `serviceQuery(principal)` and `serviceMutation(principal)` on `createAuthFunctions` and `createEffectAuthFunctions`: internal constructors that run as a host-derived service principal with tenancy and `security.rules` fully applied, registered with the query engine in `trusted` scope. Extra fields returned by the principal factory reach `ctx` and `security.rules` (`SecurityBundle<Role>`). No identity lookup or membership verification runs; `system*` behaviour is unchanged.
+
 ## [0.1.28] - 2026-11-07
 
 ### Added

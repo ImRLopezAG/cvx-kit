@@ -6,6 +6,7 @@ import { zodOutputToConvex, type CustomBuilder } from 'convex-helpers/server/zod
 import { addFieldsToValidator } from 'convex-helpers/validators'
 import type {
 	ActionBuilder,
+	DefaultFunctionArgs,
 	FunctionVisibility,
 	GenericActionCtx,
 	GenericDataModel,
@@ -110,6 +111,19 @@ export function zCustomAction<
 	>
 }
 
+/** Raw (unparsed) function arguments, keyed by the native ctx of one invocation. */
+const rawArguments = new WeakMap<object, DefaultFunctionArgs>()
+
+/**
+ * The raw arguments of the invocation that produced `ctx`, before zod parsing.
+ * Available inside a customization `input` callback; empty for unknown contexts.
+ */
+export function rawFunctionArgs<DataModel extends GenericDataModel>(
+	ctx: GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel> | GenericActionCtx<DataModel>,
+): DefaultFunctionArgs {
+	return rawArguments.get(ctx) ?? {}
+}
+
 function customFnBuilder(
 	builder: (args: any) => any,
 	customization: Customization<any, any, any, any, any>,
@@ -150,6 +164,7 @@ function customFnBuilder(
 				...returnValidator,
 				handler: async (ctx: any, allArgs: any) => {
 					boundary?.preflight(allArgs)
+					rawArguments.set(ctx, allArgs)
 					const added = await customInput(ctx, pick(allArgs, Object.keys(inputArgs)), extra)
 					const rawArgs = pick(allArgs, argsKeys)
 					const parsed = await argsSchema.safeParseAsync(rawArgs)
@@ -182,6 +197,7 @@ function customFnBuilder(
 		return builder({
 			...returnValidator,
 			handler: async (ctx: any, args: any) => {
+				rawArguments.set(ctx, args)
 				const added = await customInput(ctx, args, extra)
 				const finalCtx = { ...ctx, ...added.ctx }
 				const finalArgs = { ...args, ...added.args }

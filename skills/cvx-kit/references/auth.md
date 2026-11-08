@@ -191,6 +191,7 @@ at module scope. Denied requests never run the callbacks.
 | `mutation`                                        | Trusted auth bundle, secured triggered DB writer, `include`; bind queries and mutation commands.                                                                       |
 | `action`                                          | Live-verified auth bundle, `runQuery`/`runMutation`; use action-compatible registries or forward to registered functions. No DB or `include`.                          |
 | `systemQuery` / `systemMutation` / `systemAction` | Existing internal authority, configured separately. No fabricated actor or inherited public handles; system mutations retain triggers and bypass public RLS as before. |
+| `serviceQuery` / `serviceMutation`                | Share the `query` / `mutation` policies: the host-derived service bundle (plus its extra fields), secured reader or triggered secured writer, `include`.               |
 
 Every auth/role/admin constructor of a kind shares that kind's policy. System
 policies are deliberately explicit; choose their trusted capabilities rather
@@ -279,6 +280,7 @@ domain registries, error mapping, scoped services, and tracing.
 | `authQuery` / `authMutation` / `authAction`                     | public     | any authenticated org member | actions live-verify membership   |
 | `roleQuery(...roles)` / `roleMutation(...)` / `roleAction(...)` | public     | listed roles only            | factory — call with your roles   |
 | `adminQuery` / `adminMutation` / `adminAction`                  | public     | `config.adminRoles`          | pre-built `role*(...adminRoles)` |
+| `serviceQuery(principal)` / `serviceMutation(principal)`        | internal   | host-supplied principal      | RLS applied, no identity lookup  |
 | `systemQuery`                                                   | internal   | none (trusted caller)        | include-equipped, RLS-unwrapped  |
 | `systemMutation`                                                | internal   | none (trusted caller)        | still trigger-wrapped            |
 | `systemAction`                                                  | internal   | none                         | plain internal action            |
@@ -428,6 +430,54 @@ then the RLS writer; `system*` stays unwrapped. With tenancy configured, ctx
 gains `ctx.tenant` (actions re-derive it from live verification). Full
 treatment: `tenancy.md`.
 
+## Service principals (`serviceQuery` / `serviceMutation`)
+
+Some trusted server-side work must run _as_ a principal the JWT cannot
+describe — an AI agent runtime acting for one verified customer, a scheduled
+job acting for a tenant — while every row-level rule still applies.
+`systemQuery` is the wrong tool: it bypasses policy entirely. `serviceQuery`
+and `serviceMutation` are **internal** constructors whose principal comes
+from a host factory, not from the caller:
+
+```ts
+// convex/functions.ts — the only place the factory lives
+const agentPrincipal = (ctx, args) => ({
+	identity: agentIdentity, // any UserIdentity-shaped record for audits
+	user: { id: `agent:${args.clientId}` },
+	org: { organizationId: args.organizationId, role: 'writer' },
+	role: 'writer',
+	actor: { userId: `agent:${args.clientId}`, organizationId: args.organizationId, role: 'writer' },
+	tenant: args.organizationId,
+	clientId: args.clientId, // extra field: forwarded to security.rules and ctx
+})
+export const agentQuery = serviceQuery(agentPrincipal)
+export const agentMutation = serviceMutation(agentPrincipal)
+
+// convex/agent/notes.ts
+export const list = agentQuery({
+	args: { clientId: z.string(), organizationId: z.string() },
+	handler: (ctx, args) => querying(ctx).notes.paginate(args), // scope: ctx.clientId
+})
+```
+
+- **Trusted host only.** Both are built on `internalQuery`/`internalMutation`.
+  The factory receives the ctx and the raw invocation args; the args are
+  whatever the trusted internal caller (an action, a scheduler, a workflow)
+  passed. Never let a model or an end user supply those args unchecked.
+- **Scope comes from the host, not the caller.** The factory derives the
+  bundle — user, organization, role, tenant, and any extra fields such as a
+  client id — and nothing in the request can replace it. Extra fields are
+  spread onto `ctx` and handed to `security.rules(bundle)` as
+  `SecurityBundle<Role>` (`AuthBundle<Role> & Readonly<Record<string, unknown>>`).
+- **Rules decide.** The reader is the same secured reader `authQuery` uses
+  (tenancy + `security.rules`, `defaultPolicy` from config) registered with
+  scope mode `trusted`; the mutation runs triggers first, then the secured
+  writer. The query engine accepts the ctx like any `authQuery` ctx. No
+  identity lookup, `getAuthUser`, or membership verification runs.
+
+The factory must return a complete `AuthBundle` (`user.id` and `tenant` are
+checked at runtime). Keep it in `convex/functions.ts` next to the constructors.
+
 ## Errors
 
 All rejections go through the injected `ErrorFactory` (default: throws
@@ -443,8 +493,9 @@ errors: { throw: (input) => { throw App.errors.from(input) } }
 1. Build constructors once in `convex/functions.ts`; import them everywhere
    else. Raw `_generated/server` builders appear nowhere else.
 2. Public functions: `auth*`/`role*`/`admin*`. Scheduled/internal work:
-   `system*`. Never expose an unauthenticated public function unless it is
-   deliberately anonymous (and then document why).
+   `system*`; internal work that must stay inside one principal's rows:
+   `service*` with a host factory. Never expose an unauthenticated public
+   function unless it is deliberately anonymous (and then document why).
 3. Reads go through `ctx.include(...)` with an explicit limit.
 4. Use `ctx.actor` as the actor reference in audits and approvals — never
    re-derive identity in a handler.

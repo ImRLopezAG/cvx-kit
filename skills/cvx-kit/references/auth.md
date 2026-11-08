@@ -476,7 +476,10 @@ export const list = agentQuery({
   identity lookup, `getAuthUser`, or membership verification runs.
 
 The factory must return a complete `AuthBundle` (`user.id` and `tenant` are
-checked at runtime). Keep it in `convex/functions.ts` next to the constructors.
+checked at runtime). An extra named like a native context handle (`db`,
+`auth`, `storage`, `scheduler`, ...) is rejected, so a host mistake can never
+swap the secured reader or writer for the raw one; `include` is always the
+library's. Keep the factory in `convex/functions.ts` next to the constructors.
 
 ## Errors
 

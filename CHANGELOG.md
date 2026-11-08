@@ -16,7 +16,11 @@ are this file's matching section.
 
 ### Added
 
-- `serviceQuery(principal)` and `serviceMutation(principal)` on `createAuthFunctions` and `createEffectAuthFunctions`: internal constructors that run as a host-derived service principal with tenancy and `security.rules` fully applied, registered with the query engine in `trusted` scope. Extra fields returned by the principal factory reach `ctx` and `security.rules` (`SecurityBundle<Role>`). No identity lookup or membership verification runs; `system*` behaviour is unchanged.
+- `serviceQuery(principal)` and `serviceMutation(principal)` on `createAuthFunctions` and `createEffectAuthFunctions`: internal constructors that run as a host-derived service principal with tenancy and `security.rules` fully applied. Service queries register their secured reader with the query engine in `trusted` scope; service mutations run triggers and then the same secured writer as `authMutation`. Extra fields returned by the principal factory reach `ctx` and `security.rules` (`SecurityBundle<Role>`); an extra named like a native context handle (`db`, `auth`, ...) is rejected. No identity lookup or membership verification runs; `system*` behaviour is unchanged.
+
+### Fixed
+
+- Relation registration no longer rejects Zod's built-in `default`/`prefault` accessors when a bundle contains two Zod copies (esbuild renames the module namespace, e.g. `util_exports2.shallowClone`). Convex module analysis of consumers that resolve `cvx-kit` through a linked checkout failed with `Unsupported stored schema accessor`.
 
 ## [0.1.28] - 2026-11-07
 

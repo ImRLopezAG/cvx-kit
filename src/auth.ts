@@ -611,6 +611,12 @@ export function createAuthFunctions<
 		if (!servicePrincipalContract.safeParse(bundle).success) {
 			throw new Error('A service principal must be an AuthBundle with user.id and tenant')
 		}
+		// Extras are spread onto the secured ctx; a host field named like a native
+		// handle (db, auth, scheduler, ...) would silently replace the secured one.
+		const reserved = Object.keys(bundle).filter((key) => key in ctx)
+		if (reserved.length > 0) {
+			throw new Error(`A service principal cannot override native context fields: ${reserved.join(', ')}`)
+		}
 		return bundle
 	}
 
@@ -623,7 +629,7 @@ export function createAuthFunctions<
 			input: async (ctx) => {
 				const bundle = await servicePrincipal(principal, ctx)
 				return {
-					ctx: { ...secureReader(ctx, bundle, 'trusted'), include, ...bundle },
+					ctx: { ...secureReader(ctx, bundle, 'trusted'), ...bundle, include },
 					args: {},
 				}
 			},
@@ -639,7 +645,7 @@ export function createAuthFunctions<
 			input: async (ctx) => {
 				const bundle = await servicePrincipal(principal, ctx)
 				return {
-					ctx: { ...secureWriter(wrapDB(ctx), bundle), include, ...bundle },
+					ctx: { ...secureWriter(wrapDB(ctx), bundle), ...bundle, include },
 					args: {},
 				}
 			},

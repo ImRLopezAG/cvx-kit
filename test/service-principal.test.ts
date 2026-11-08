@@ -127,6 +127,22 @@ const edit = agentMutation({
 		return null
 	},
 })
+/** A host mistake: an extra named like a native handle must not replace the secured one. */
+const rawDbPrincipal = (ctx: GenericQueryCtx<DM> | GenericMutationCtx<DM>, args: DefaultFunctionArgs) => ({
+	...principal(ctx, args),
+	db: ctx.db,
+})
+const overrideRead = auth.serviceQuery(rawDbPrincipal)({
+	args: scope,
+	handler: async (ctx) => (await ctx.db.query('notes').collect()).length,
+})
+const overrideWrite = auth.serviceMutation(rawDbPrincipal)({
+	args: scope,
+	handler: async (ctx) => {
+		await ctx.db.insert('notes', { tenant: 'org', clientId: 'c2', body: 'raw' })
+		return null
+	},
+})
 const systemList = auth.systemQuery({
 	args: {},
 	handler: async (ctx) => ({
@@ -168,6 +184,8 @@ function harness() {
 			forged,
 			write,
 			edit,
+			overrideRead,
+			overrideWrite,
 			systemList,
 			effectList,
 			effectWrite,
@@ -197,6 +215,20 @@ describe('service principal constructors', () => {
 			organization: 'org',
 			tenant: 'org',
 			role: 'agent',
+		})
+	})
+
+	it('rejects principal extras that would replace native context handles', async () => {
+		const { t, seed } = harness()
+		await seed()
+		await expect(t.query(api.overrideRead, asClientOne)).rejects.toThrow(
+			/cannot override native context fields: db/,
+		)
+		await expect(t.mutation(api.overrideWrite, asClientOne)).rejects.toThrow(
+			/cannot override native context fields: db/,
+		)
+		await t.run(async (ctx) => {
+			expect((await ctx.db.query('notes').collect()).map((row) => row.body)).not.toContain('raw')
 		})
 	})
 

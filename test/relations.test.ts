@@ -812,6 +812,109 @@ describe('immutable registry identity', () => {
 		expect(() => verified({ tasks }, () => ({}))).toThrow(/Unsupported native validation form/)
 		expect(calls).toBe(0)
 	})
+	test.each(['default', 'prefault'] as const)(
+		'renamed bundled %s accessor registers without invocation',
+		(type) => {
+			let calls = 0
+			// SAFETY: keep Zod's declared fallback union so the fixture can reproduce its getter body.
+			const defaultValue = 'fallback' as string | (() => string)
+			const util_exports2 = {
+				shallowClone(value: string) {
+					calls++
+					return value
+				},
+			}
+			// oxlint-disable anti-slop/no-runtime-typeof -- Keep the built-in getter body verbatim, including its typeof check.
+			const definition = {
+				get defaultValue() {
+					return typeof defaultValue === 'function'
+						? defaultValue()
+						: util_exports2.shallowClone(defaultValue)
+				},
+			}
+			// oxlint-enable anti-slop/no-runtime-typeof
+			const output =
+				type === 'default' ? z.string().default('fallback') : z.string().prefault('fallback')
+			Object.defineProperty(
+				output._zod.def,
+				'defaultValue',
+				Object.getOwnPropertyDescriptor(definition, 'defaultValue')!,
+			)
+			const tasks = zodTable(
+				'tasks',
+				() => ({
+					title: z.string(),
+					hidden: new z.ZodPipe({ type: 'pipe', in: z.string(), out: output }),
+				}),
+				{ publicFields: ['title'] },
+			)
+			const registry = verified({ tasks }, () => ({}))
+			expect(getRelationMetadata(registry).tables.tasks.fields.hidden.kind).toBe('string')
+			expect(calls).toBe(0)
+		},
+	)
+	test('stored fallback accessor with a dotted receiver rejects without invocation', () => {
+		let calls = 0
+		// SAFETY: keep Zod's declared fallback union so the fixture can reproduce its getter body.
+		const defaultValue = 'fallback' as string | (() => string)
+		const attacker = {
+			payload: {
+				shallowClone(value: string) {
+					calls++
+					return value
+				},
+			},
+		}
+		// oxlint-disable anti-slop/no-runtime-typeof -- Keep the built-in getter body apart from its receiver.
+		const output = new z.ZodDefault({
+			type: 'default',
+			innerType: z.string(),
+			get defaultValue() {
+				return typeof defaultValue === 'function'
+					? defaultValue()
+					: attacker.payload.shallowClone(defaultValue)
+			},
+		})
+		// oxlint-enable anti-slop/no-runtime-typeof
+		const tasks = zodTable(
+			'tasks',
+			() => ({
+				title: z.string(),
+				hidden: new z.ZodPipe({ type: 'pipe', in: z.string(), out: output }),
+			}),
+			{ publicFields: ['title'] },
+		)
+		expect(() => verified({ tasks }, () => ({}))).toThrow('Unsupported stored schema accessor')
+		expect(calls).toBe(0)
+	})
+	test('stored fallback accessor with an extra statement rejects without invocation', () => {
+		let calls = 0
+		// SAFETY: keep Zod's declared fallback union so the fixture can reproduce its getter body.
+		const defaultValue = 'fallback' as string | (() => string)
+		const util_exports2 = { shallowClone: (value: string) => value }
+		// oxlint-disable anti-slop/no-runtime-typeof -- Keep the built-in getter body apart from the extra statement.
+		const output = new z.ZodDefault({
+			type: 'default',
+			innerType: z.string(),
+			get defaultValue() {
+				calls++
+				return typeof defaultValue === 'function'
+					? defaultValue()
+					: util_exports2.shallowClone(defaultValue)
+			},
+		})
+		// oxlint-enable anti-slop/no-runtime-typeof
+		const tasks = zodTable(
+			'tasks',
+			() => ({
+				title: z.string(),
+				hidden: new z.ZodPipe({ type: 'pipe', in: z.string(), out: output }),
+			}),
+			{ publicFields: ['title'] },
+		)
+		expect(() => verified({ tasks }, () => ({}))).toThrow('Unsupported stored schema accessor')
+		expect(calls).toBe(0)
+	})
 	test.each(['defaultValue', 'unexpected'] as const)(
 		'unknown stored prefault %s accessor rejects without invocation',
 		(key) => {

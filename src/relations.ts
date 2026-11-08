@@ -2546,6 +2546,17 @@ function assertSystemFields(table: string, fields: Record<string, GenericValidat
 		throw new Error(`Native stored document disagrees with boundary "${table}"`)
 }
 
+// Duplicate Zod copies in one bundle receive renamed module identifiers
+// (esbuild: `util_exports2.shallowClone`), so the built-in getter text is
+// compared with its single-identifier namespace receiver normalized. Anything
+// else — a dotted receiver, another call — stays a foreign accessor.
+function normalizeAccessorSource(text: string): string {
+	return text
+		.replace(/\s+/g, ' ')
+		.replace(/(?<![\w$.])[\w$]+\.shallowClone\b/g, 'namespace.shallowClone')
+		.trim()
+}
+
 // Compare against this peer's own built-in accessor, using the intrinsic rather
 // than a caller-provided toString. Older Zod clones retain this accessor even
 // after reading shape, because it caches on the original definition.
@@ -2562,17 +2573,21 @@ const builtinObjectGetters = new Set(
 		objectAccessorSample.required(),
 	].flatMap((schema) => {
 		const getter = Object.getOwnPropertyDescriptor(schema._zod.def, 'shape')?.get
-		return getter ? [Function.prototype.toString.call(getter)] : []
+		return getter ? [normalizeAccessorSource(Function.prototype.toString.call(getter))] : []
 	}),
 )
 
 // Stored schemas already passed the native input boundary. Track their graph
 // independently of public DTO admissibility, without running any stored parser.
-const builtinDefaultGetter = Function.prototype.toString.call(
-	Object.getOwnPropertyDescriptor(z.string().default('')._zod.def, 'defaultValue')!.get!,
+const builtinDefaultGetter = normalizeAccessorSource(
+	Function.prototype.toString.call(
+		Object.getOwnPropertyDescriptor(z.string().default('')._zod.def, 'defaultValue')!.get!,
+	),
 )
-const builtinPrefaultGetter = Function.prototype.toString.call(
-	Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
+const builtinPrefaultGetter = normalizeAccessorSource(
+	Function.prototype.toString.call(
+		Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
+	),
 )
 
 /** Registration-only admissibility traversal; never runs a stored parser. */
@@ -2636,7 +2651,7 @@ function preflightSchema(dto: z.ZodType, boundary: 'dto' | 'stored'): void {
 					if (descriptor?.get) {
 						if (
 							descriptor.set ||
-							Function.prototype.toString.call(descriptor.get) !==
+							normalizeAccessorSource(Function.prototype.toString.call(descriptor.get)) !==
 								(def.type === 'default' ? builtinDefaultGetter : builtinPrefaultGetter)
 						)
 							throw new Error('Unsupported stored schema accessor')
@@ -2652,7 +2667,9 @@ function preflightSchema(dto: z.ZodType, boundary: 'dto' | 'stored'): void {
 					if (descriptor?.get) {
 						if (
 							descriptor.set ||
-							!builtinObjectGetters.has(Function.prototype.toString.call(descriptor.get))
+							!builtinObjectGetters.has(
+								normalizeAccessorSource(Function.prototype.toString.call(descriptor.get)),
+							)
 						)
 							throw new Error('Unsupported DTO schema accessor')
 						const fields = def.shape

@@ -1,8 +1,9 @@
 import { z } from 'zod'
-import { zCustomAction, zCustomMutation, zCustomQuery } from './zod-registration'
+import { rawFunctionArgs, zCustomAction, zCustomMutation, zCustomQuery } from './zod-registration'
 import type { CustomBuilder } from 'convex-helpers/server/zod4'
 import type {
 	ActionBuilder,
+	DefaultFunctionArgs,
 	DocumentByInfo,
 	PaginationOptions,
 	PaginationResult,
@@ -59,6 +60,29 @@ export type AuthBundle<Role extends string> = Readonly<{
 }>
 
 /**
+ * The bundle handed to security rules. Service principals (serviceQuery /
+ * serviceMutation) may carry extra host-supplied fields beside the standard
+ * bundle; rules read them as unknown and narrow as needed.
+ */
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Host extras are open by design; rules narrow the fields they own.
+export type SecurityBundle<Role extends string> = AuthBundle<Role> & ServiceExtras
+
+/** Extra fields a host factory attaches to a service principal. */
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Host extras are open by design; rules narrow the fields they own.
+export type ServiceExtras = Readonly<Record<string, unknown>>
+
+/**
+ * A trusted host factory producing the principal a service function runs as.
+ * `args` are the raw (unparsed) arguments of the invocation, so the host can
+ * derive the scope (e.g. a client id) from them. Never accept the principal
+ * itself from the caller — only derive it.
+ */
+export type ServicePrincipal<Ctx, Role extends string, Extra extends Record<string, unknown>> = (
+	ctx: Ctx,
+	args: DefaultFunctionArgs,
+) => (AuthBundle<Role> & Extra) | Promise<AuthBundle<Role> & Extra>
+
+/**
  * Row-level security configuration. Tenant isolation and role-level rules
  * compose (AND) onto the same wrapped database: queries get a wrapped
  * reader, mutations get triggers first, then a wrapped writer.
@@ -79,7 +103,7 @@ export type SecurityConfig<DataModel extends GenericDataModel, Role extends stri
 	 * composed AND-wise with tenant isolation. E.g. gate `modify` on a table
 	 * to admin roles.
 	 */
-	rules?: (bundle: AuthBundle<Role>) => Rules<SecurityPolicyContext<DataModel>, DataModel>
+	rules?: (bundle: SecurityBundle<Role>) => Rules<SecurityPolicyContext<DataModel>, DataModel>
 	/**
 	 * Policy for tables with no rule. Defaults to 'deny' when tenancy is
 	 * configured (unlisted tables are unreachable — fail closed), 'allow'
@@ -151,8 +175,9 @@ export type AuthFunctionsConfig<DataModel extends GenericDataModel, Role extends
 	maxIncludedQueryRows?: number
 	/**
 	 * Row-level security: tenant isolation (from a table registry) and
-	 * role-level rules, applied structurally inside every auth*, role*, and
-	 * admin* constructor. system* constructors stay unwrapped (trusted).
+	 * role-level rules, applied structurally inside every auth*, role*,
+	 * admin*, and service* constructor. system* constructors stay unwrapped
+	 * (trusted).
 	 */
 	security?: SecurityConfig<DataModel, Role>
 }
@@ -243,6 +268,18 @@ export type AuthFunctions<DataModel extends GenericDataModel, Role extends strin
 	adminQuery: AuthFunctions<DataModel, Role>['authQuery']
 	adminMutation: AuthFunctions<DataModel, Role>['authMutation']
 	adminAction: AuthFunctions<DataModel, Role>['authAction']
+	/**
+	 * Internal query running as a host-supplied service principal with the
+	 * app's security rules fully applied. No identity lookup; the trusted
+	 * host's factory is the only principal source.
+	 */
+	serviceQuery: <Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+	) => ServiceQuery<DataModel, Role, Extra>
+	/** Internal mutation running as a service principal: triggers first, then the secured writer. */
+	serviceMutation: <Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+	) => ServiceMutation<DataModel, Role, Extra>
 	systemQuery: CustomBuilder<
 		'query',
 		{},
@@ -271,6 +308,34 @@ export type AuthFunctions<DataModel extends GenericDataModel, Role extends strin
 		object
 	>
 }
+
+export type ServiceQuery<
+	DataModel extends GenericDataModel,
+	Role extends string,
+	Extra extends Record<string, unknown> = {},
+> = CustomBuilder<
+	'query',
+	{},
+	GenericQueryCtx<DataModel> & AuthBundle<Role> & Extra & { include: Include },
+	{},
+	GenericQueryCtx<DataModel>,
+	'internal',
+	object
+>
+
+export type ServiceMutation<
+	DataModel extends GenericDataModel,
+	Role extends string,
+	Extra extends Record<string, unknown> = {},
+> = CustomBuilder<
+	'mutation',
+	{},
+	GenericMutationCtx<DataModel> & AuthBundle<Role> & Extra & { include: Include },
+	{},
+	GenericMutationCtx<DataModel>,
+	'internal',
+	object
+>
 
 /** Builds an include() that selects the first matching indexed query and bounds the read. */
 export function createInclude(options?: { errors?: ErrorFactory; maxRows?: number }): Include {
@@ -421,6 +486,7 @@ export function createAuthFunctions<
 	function secureReader(
 		ctx: GenericQueryCtx<DataModel>,
 		bundle: AuthBundle<Role>,
+		mode: 'authenticated' | 'trusted' = 'authenticated',
 	): GenericQueryCtx<DataModel> {
 		const rules = securityRules(bundle)
 		const defaultPolicy = securityConfig?.defaultPolicy ?? 'allow'
@@ -436,7 +502,7 @@ export function createAuthFunctions<
 			...ctx,
 			db: registerQueryReader(ctx.db, ordinary, {
 				scope: {
-					mode: 'authenticated',
+					mode,
 					principal: bundle.user.id,
 					organization: bundle.org.organizationId,
 					tenant: bundle.tenant,
@@ -537,6 +603,49 @@ export function createAuthFunctions<
 		}
 	}
 
+	async function servicePrincipal<
+		Ctx extends GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
+		Extra extends Record<string, unknown>,
+	>(principal: ServicePrincipal<Ctx, Role, Extra>, ctx: Ctx) {
+		const bundle = await principal(ctx, rawFunctionArgs(ctx))
+		if (!servicePrincipalContract.safeParse(bundle).success) {
+			throw new Error('A service principal must be an AuthBundle with user.id and tenant')
+		}
+		return bundle
+	}
+
+	/** Internal query running as the host-derived service principal, rules applied. */
+	function serviceQuery<Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+	): ServiceQuery<DataModel, Role, Extra> {
+		return zCustomQuery(config.internalQuery, {
+			args: {},
+			input: async (ctx) => {
+				const bundle = await servicePrincipal(principal, ctx)
+				return {
+					ctx: { ...secureReader(ctx, bundle, 'trusted'), include, ...bundle },
+					args: {},
+				}
+			},
+		})
+	}
+
+	/** Internal mutation running as the host-derived service principal: triggers, then rules. */
+	function serviceMutation<Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+	): ServiceMutation<DataModel, Role, Extra> {
+		return zCustomMutation(config.internalMutation, {
+			args: {},
+			input: async (ctx) => {
+				const bundle = await servicePrincipal(principal, ctx)
+				return {
+					ctx: { ...secureWriter(wrapDB(ctx), bundle), include, ...bundle },
+					args: {},
+				}
+			},
+		})
+	}
+
 	/** Query constructor allowing only the given roles. */
 	function roleQuery(...allowed: readonly Role[]) {
 		return zCustomQuery(config.query, {
@@ -591,6 +700,8 @@ export function createAuthFunctions<
 		adminQuery: roleQuery(...config.adminRoles),
 		adminMutation: roleMutation(...config.adminRoles),
 		adminAction: roleAction(...config.adminRoles),
+		serviceQuery,
+		serviceMutation,
 		systemQuery: zCustomQuery(config.internalQuery, {
 			args: {},
 			input: async (ctx) => ({
@@ -622,6 +733,12 @@ export function createAuthFunctions<
 		}),
 	}
 }
+
+/** The minimum a host factory must return; the rest of the bundle is the host's contract. */
+const servicePrincipalContract = z.object({
+	user: z.object({ id: z.string() }),
+	tenant: z.string(),
+})
 
 const organizationClaims = z.object({
 	organization: z

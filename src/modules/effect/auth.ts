@@ -13,13 +13,17 @@ import {
 	type AuthBundle,
 	type DefaultRole,
 	type Include,
+	type ServicePrincipal,
+	type ServiceQuery,
+	type ServiceMutation,
 } from '../../auth'
 import { effectZodApiBuilder, type EffectZodApiBuilder } from './api-zod'
-import type {
-	EffectApiOptions,
-	EffectApiServices,
-	EffectApiContext,
-	ProvidedServices,
+import {
+	wrapEffectBuilder,
+	type EffectApiOptions,
+	type EffectApiServices,
+	type EffectApiContext,
+	type ProvidedServices,
 } from './api-runtime'
 import type { EffectValue } from './operation'
 
@@ -88,6 +92,14 @@ export type EffectAuthFunctions<
 		...allowed: readonly Role[]
 	) => Adapted<AuthFunctions<DataModel, Role>['authAction'], ActionServices, ActionAdded>
 	adminAction: Adapted<AuthFunctions<DataModel, Role>['authAction'], ActionServices, ActionAdded>
+	/** Service principals share the `query` policy; the host factory is the only principal source. */
+	serviceQuery: <Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+	) => Adapted<ServiceQuery<DataModel, Role, Extra>, QueryServices, QueryAdded>
+	/** Service principals share the `mutation` policy. */
+	serviceMutation: <Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+	) => Adapted<ServiceMutation<DataModel, Role, Extra>, MutationServices, MutationAdded>
 	systemQuery: Adapted<
 		AuthFunctions<DataModel, Role>['systemQuery'],
 		SystemQueryServices,
@@ -185,8 +197,33 @@ export function createEffectAuthFunctions<
 		authAction: effectZodApiBuilder(auth.authAction, options.action),
 		roleAction: (...allowed) => effectZodApiBuilder(auth.roleAction(...allowed), options.action),
 		adminAction: effectZodApiBuilder(auth.adminAction, options.action),
+		serviceQuery: <Extra extends Record<string, unknown> = {}>(
+			principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+		) =>
+			adaptService<ServiceQuery<DataModel, Role, Extra>, QueryServices, QueryAdded>(
+				auth.serviceQuery(principal),
+				options.query,
+			),
+		serviceMutation: <Extra extends Record<string, unknown> = {}>(
+			principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+		) =>
+			adaptService<ServiceMutation<DataModel, Role, Extra>, MutationServices, MutationAdded>(
+				auth.serviceMutation(principal),
+				options.mutation,
+			),
 		systemQuery: effectZodApiBuilder(auth.systemQuery, options.systemQuery),
 		systemMutation: effectZodApiBuilder(auth.systemMutation, options.systemMutation),
 		systemAction: effectZodApiBuilder(auth.systemAction, options.systemAction),
 	}
+}
+
+/** Service builders reuse the query/mutation policy; the ctx adds only host extras. */
+function adaptService<Builder extends Function, Services extends EffectApiServices, Added>(
+	builder: Builder,
+	options: Parameters<typeof wrapEffectBuilder>[1],
+): Adapted<Builder, Services, Added> {
+	// SAFETY: the shared policy callbacks read only the standard auth bundle, which every
+	// service ctx carries; wrapEffectBuilder swaps the handler and keeps the builder's
+	// registration kind, validation and visibility, as effectZodApiBuilder does.
+	return wrapEffectBuilder(builder, options) as Adapted<Builder, Services, Added>
 }

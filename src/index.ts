@@ -31,7 +31,11 @@ export {
 	type DefaultRole,
 	type Include,
 	type IncludedQuery,
+	type SecurityBundle,
 	type SecurityConfig,
+	type ServiceMutation,
+	type ServicePrincipal,
+	type ServiceQuery,
 } from './auth'
 export { createAgentTools, type AgentToolHandlers, type AgentToolRecord } from './agent-tools'
 export { createCrudCommands, type CrudConfig } from './crud'

@@ -38,7 +38,9 @@ copy that API into new implementations.
 2. **Raw `query`/`mutation`/`action`/`internal*` builders appear only in
    `convex/functions.ts`** (the `createAuthFunctions` call). All other
    functions use `authQuery/authMutation/authAction`, `roleQuery/...`,
-   `adminQuery/...` (public) or `systemQuery/systemMutation/systemAction` (internal),
+   `adminQuery/...` (public), `systemQuery/systemMutation/systemAction` (internal),
+   or `serviceQuery(principal)/serviceMutation(principal)` (internal, host-derived
+   principal with row-level rules applied; see `auth.md`),
    built once with `createEffectAuthFunctions(config, policies)` from `cvx-kit/effect`
    for shared Effect handles, or individually wrapped with `effectZodApiBuilder`.
    This is what guarantees auth, triggers, and bounded reads.

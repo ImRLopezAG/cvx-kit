@@ -1,4 +1,5 @@
 /* oxlint-disable anti-slop/no-object-parameters, anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- Configuration boundary validates heterogeneous own-key records and callback presence; validators remain opaque identities. */
+import { memoize } from './lazy'
 import type { DomainContract, DomainOperationContract } from './domain'
 
 declare const declaredSchemas: unique symbol
@@ -22,13 +23,20 @@ export type BoundOperations<
 const protectedFields = ['input', 'result', 'classification', 'replayResult', 'wire'] as const
 const bindings = new WeakMap<object, { key: string; declaration: object }>()
 const pending = new WeakMap<object, Readonly<Record<string, object>>>()
+const deferred = new WeakMap<object, { key: string; entries: Readonly<Record<string, object>> }>()
 
 /** Both adapters bind declarations through the same configuration boundary. */
 export function domainHelpers(entries: Readonly<Record<string, object>>) {
 	const helpers = Object.fromEntries(
 		Object.keys(entries).map((key) => [
 			key,
-			(implementation: object) => bindDomainImplementation(key, entries[key], implementation),
+			(implementation: object) => {
+				if (!isLazyOperation(entries, key))
+					return bindDomainImplementation(key, entries[key], implementation)
+				const draft = { ...implementation }
+				deferred.set(draft, { key, entries })
+				return draft
+			},
 		]),
 	)
 	const namedHandler = helpers.handler
@@ -75,8 +83,11 @@ export function snapshotOperations(
 			keys.some((key) => !Object.prototype.hasOwnProperty.call(declarations, key)))
 	)
 		throw Error('Contract operation keys must match exactly')
-	const entries = keys.map((key) => {
+	const bind = (key: string) => {
 		let original = operations[key]
+		// A deferred helper result binds to its own declaration wherever it is registered.
+		const draft = deferred.get(original)
+		if (draft) original = bindDomainImplementation(draft.key, draft.entries[draft.key], original)
 		if (declarations) {
 			if (pending.has(original)) {
 				if (pending.get(original) !== declarations)
@@ -120,7 +131,26 @@ export function snapshotOperations(
 			}
 		}
 		// SAFETY: this configuration boundary compares opaque fields or restores callback slots checked by the public helpers.
-		return [key, Object.freeze(definition)] as const
-	})
-	return Object.freeze(Object.fromEntries(entries))
+		return Object.freeze(definition)
+	}
+	const snapshot: Record<string, Readonly<Record<string, unknown>>> = {}
+	for (const key of keys) {
+		if (declarations && isLazyOperation(declarations, key))
+			Object.defineProperty(snapshot, key, { enumerable: true, get: memoize(() => bind(key)) })
+		else snapshot[key] = bind(key)
+	}
+	return Object.freeze(snapshot)
+}
+
+/** Getter-declared operations, or operations with getter-declared protected fields, bind on first access. */
+function isLazyOperation(entries: Readonly<Record<string, object>>, key: string) {
+	const descriptor = Object.getOwnPropertyDescriptor(entries, key)
+	if (!descriptor) return false
+	if (descriptor.get) return true
+	const value: unknown = descriptor.value
+	return (
+		!!value &&
+		typeof value === 'object' &&
+		protectedFields.some((field) => !!Object.getOwnPropertyDescriptor(value, field)?.get)
+	)
 }

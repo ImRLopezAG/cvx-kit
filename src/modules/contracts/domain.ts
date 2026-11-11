@@ -58,11 +58,11 @@ export function defineDomainContract<const Definition extends DomainContract>(
 		| (() => Definition & NoInfer<CheckedDomain<Definition>>),
 ): Definition {
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- The public input is a checked declaration or its explicitly supported thunk.
-	if (typeof definition !== 'function') return definition
+	if (typeof definition !== 'function') return memoizeAccessors(definition)
 	// SAFETY: the first read installs the inferred declaration's own descriptors on this target.
 	const target = {} as Definition
 	const read = memoize(() => {
-		const value = definition()
+		const value = memoizeAccessors(definition())
 		Object.defineProperties(target, Object.getOwnPropertyDescriptors(value))
 		Object.setPrototypeOf(target, Object.getPrototypeOf(value))
 		return target
@@ -103,3 +103,45 @@ export type DomainAuditInput<Commands> = {
 			}
 		: never
 }[Extract<keyof Commands, string>]
+
+/* oxlint-disable anti-slop/no-object-parameters, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type, anti-slop/no-runtime-typeof -- Wrapping walks checked declarations by descriptor and keeps schemas as opaque identities. */
+const lazyFields = ['input', 'result', 'replayResult', 'wire'] as const
+
+/** Replace configurable getters with memoized ones in place, without invoking any of them. */
+function memoizeGetters(
+	target: object,
+	keys: readonly PropertyKey[],
+	wrap: (value: unknown) => unknown,
+) {
+	for (const key of keys) {
+		const descriptor = Object.getOwnPropertyDescriptor(target, key)
+		if (!descriptor?.get || !descriptor.configurable) continue
+		const get = descriptor.get
+		Object.defineProperty(target, key, {
+			configurable: true,
+			enumerable: descriptor.enumerable,
+			get: memoize(() => wrap(get.call(target))),
+		})
+	}
+}
+
+function memoizeOperation(operation: unknown) {
+	if (operation && typeof operation === 'object') memoizeGetters(operation, lazyFields, (value) => value)
+	return operation
+}
+
+/** Getter-declared operations and fields build at most once and keep a stable identity. */
+function memoizeAccessors<Definition>(definition: Definition): Definition {
+	for (const name of ['commands', 'queries'] as const) {
+		// SAFETY: the checked declaration's sections are plain records of operation declarations.
+		const section = (definition as Record<string, unknown> | undefined)?.[name]
+		if (!section || typeof section !== 'object') continue
+		for (const key of Object.keys(section)) {
+			const descriptor = Object.getOwnPropertyDescriptor(section, key)
+			if (descriptor && 'value' in descriptor) memoizeOperation(descriptor.value)
+		}
+		memoizeGetters(section, Object.keys(section), memoizeOperation)
+	}
+	return definition
+}
+/* oxlint-enable anti-slop/no-object-parameters, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type, anti-slop/no-runtime-typeof */

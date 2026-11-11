@@ -87,3 +87,46 @@ defineDomainContract(() => ({
 }))
 // @ts-expect-error thunk command classification is still required
 defineDomainContract(() => ({ commands: { bad: { input: z.string(), result: z.string() } } }))
+
+const getterDomain = defineDomainContract(() => ({
+	commands: {
+		get create() {
+			return {
+				input: z.string().transform((text) => text.length),
+				result: z.number(),
+				classification: 'business',
+			}
+		},
+	},
+	queries: {
+		get: {
+			get input() {
+				return z.number()
+			},
+			result: z.string(),
+		},
+	},
+}))
+const getterAssertions: [
+	Assert<Equal<keyof typeof getterDomain.commands, 'create'>>,
+	Assert<Equal<ContractInput<typeof getterDomain.commands.create.input>, string>>,
+	Assert<Equal<ContractOutput<typeof getterDomain.commands.create.input>, number>>,
+	Assert<Equal<ContractInput<typeof getterDomain.queries.get.input>, number>>,
+] = [true, true, true, true]
+void getterAssertions
+defineDomainContract({
+	commands: {
+		// @ts-expect-error getter-declared commands still require a classification
+		get bad() {
+			return { input: z.string(), result: z.string() }
+		},
+	},
+})
+defineDomainContract({
+	queries: {
+		// @ts-expect-error getter-declared operations keep forbidden implementation-field checks
+		get bad() {
+			return { input: z.string(), result: z.string(), handler: () => '' }
+		},
+	},
+})

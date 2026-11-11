@@ -12,7 +12,6 @@ import type { GenericId } from 'convex/values'
 import { z } from 'zod'
 
 import { zodToConvex } from './zod-convex'
-import { trustNativeTableAccessor } from './native-table-accessor'
 
 import {
 	scalarPaginationSchema,
@@ -361,10 +360,9 @@ export function zodTable<
 		return omit ? derived.updateSchema.omit(omit as never) : derived.updateSchema
 	}
 
-	const getTable = memoize(
-		(): TableDefinition<ConvexValidatorFromZod<typeof storage, 'required'>> =>
-			defineTable(zodToConvex(storage)),
-	)
+	const nativeStorage = zodToConvex(storage)
+	const table: TableDefinition<ConvexValidatorFromZod<typeof storage, 'required'>> =
+		defineTable(nativeStorage)
 	// The public shape is mutable. Reconvert its fields on each call so subsequent
 	// pagination validators observe replacements and nested schema changes.
 	const getPaginationFields = () =>
@@ -393,7 +391,7 @@ export function zodTable<
 		id: z.strictObject({ id: jsonSafeZid(tableName) }),
 	}))
 
-	return trustNativeTableAccessor({
+	return {
 		tableName,
 		get schema() {
 			return derived.schema
@@ -429,12 +427,7 @@ export function zodTable<
 		dto,
 		toPublicDto,
 		paginationOpts,
-		get table() {
-			return getTable()
-		},
-		set table(value: ReturnType<typeof getTable>) {
-			replaceBoundaryValue(this, 'table', value)
-		},
+		table,
 		insert,
 		update,
 		get tools() {
@@ -443,7 +436,7 @@ export function zodTable<
 		set tools(value: ReturnType<typeof getTools>) {
 			replaceBoundaryValue(this, 'tools', value)
 		},
-	})
+	}
 }
 
 /** Reuses ordinary fields while deriving every boundary through zodTable. */
@@ -818,18 +811,12 @@ export function zodVariantTable(
 	},
 ) {
 	if (options) return deriveVariantTable(tableName, storage, options)
-	const getTable = memoize(() => defineTable(zodToConvex(storage)))
-	return trustNativeTableAccessor({
+	return {
 		tableName,
 		storage,
 		insertSchema: storage,
-		get table() {
-			return getTable()
-		},
-		set table(value: ReturnType<typeof getTable>) {
-			replaceBoundaryValue(this, 'table', value)
-		},
-	})
+		table: defineTable(zodToConvex(storage)),
+	}
 }
 
 /**
@@ -1053,8 +1040,7 @@ function deriveVariantTable(
 		}),
 	}))
 
-	const getTable = memoize(() => defineTable(zodToConvex(storage)))
-	return trustNativeTableAccessor({
+	return {
 		tableName,
 		storage,
 		get schema() {
@@ -1089,19 +1075,14 @@ function deriveVariantTable(
 		},
 		dto,
 		toPublicDto,
-		get table() {
-			return getTable()
-		},
-		set table(value: ReturnType<typeof getTable>) {
-			replaceBoundaryValue(this, 'table', value)
-		},
+		table: defineTable(zodToConvex(storage)),
 		get tools() {
 			return getTools()
 		},
 		set tools(value: ReturnType<typeof getTools>) {
 			replaceBoundaryValue(this, 'tools', value)
 		},
-	})
+	}
 }
 
 /** Validate tool eligibility without constructing any derived command/tool objects. */

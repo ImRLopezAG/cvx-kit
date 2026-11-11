@@ -1,0 +1,4 @@
+{
+	"eager": { "load": 50, "retainedMB": 12 },
+	"getter": { "load": 56, "retainedMB": 12 }
+}

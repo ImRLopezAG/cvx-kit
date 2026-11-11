@@ -164,6 +164,7 @@
 		"test:package:smoke:bun": "bun scripts/smoke-packed-components.mjs bun",
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
 		"skills:check": "node scripts/check-skills.mjs",
+		"bench:app-load": "node scripts/bench-app-load.mjs --check scripts/bench/app-load-budget.json",
 		"prepublishOnly": "bun run build && bun run typecheck && bun run test && bun run skills:check",
 		"build:codegen": "convex codegen --component-dir ./src/components/foundation && convex codegen --component-dir ./src/components/approvals && vp pack",
 		"release": "npm version patch && git push --follow-tags",

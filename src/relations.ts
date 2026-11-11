@@ -1090,6 +1090,8 @@ export function defineRelations<
 	for (const table of names) {
 		const pageRecipes = new Map<string, DtoRecipe>()
 		const paginationGrammars = new Map<string, FilterGrammarRecipe>()
+		const builtPages = new Set<string>()
+		const builtGrammars = new Set<string>()
 		helpers[table] = {
 			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>) {
 				use(table)
@@ -1114,16 +1116,20 @@ export function defineRelations<
 				assertSelection(selection)
 				const key = JSON.stringify(selection)
 				let grammar = paginationGrammars.get(key)
-				if (!grammar) {
+				let fresh: FilterGrammar
+				if (grammar) fresh = restoreFilterGrammar(grammar)
+				else if (!builtGrammars.has(key)) {
+					// A module usually asks for each selection once per request, so the
+					// first build is used directly; capture only pays off on repeats.
+					builtGrammars.add(key)
+					fresh = filterGrammar(internal, table, selection)
+				} else {
 					grammar = captureFilterGrammar(filterGrammar(internal, table, selection))
 					paginationGrammars.set(key, grammar)
+					fresh = restoreFilterGrammar(grammar)
 				}
 				return materializeDto(paginationRecipe).extend({
-					filters: relationFilterSchema(
-						restoreFilterGrammar(grammar),
-						undefined,
-						options,
-					).optional(),
+					filters: relationFilterSchema(fresh, undefined, options).optional(),
 					order: z.enum(['asc', 'desc']).optional(),
 				})
 			},
@@ -1134,21 +1140,25 @@ export function defineRelations<
 				const key = JSON.stringify([selection, groups])
 				let recipe = pageRecipes.get(key)
 				if (!recipe) {
-					const ordinary = ordinaryDtoConstruction()
-					const result = pageResult(rowSchema(internal, table, selection, 0, groups))
-					recipe = captureDto(result)
-					pageRecipes.set(key, recipe)
 					// Unselected ordinary rows contain only independently restored DTOs.
 					// Composed relations and groups may share validators across variant
 					// branches, so retain reconstruction to isolate every occurrence.
-					if (
-						ordinary &&
+					const plain =
 						!metadata[table].branches &&
 						Object.keys(selection).length === 0 &&
-						Object.keys(groups).length === 0 &&
-						ordinaryDtoConstruction()
-					)
+						Object.keys(groups).length === 0
+					const ordinary = plain && ordinaryDtoConstruction()
+					const result = pageResult(rowSchema(internal, table, selection, 0, groups))
+					const reusable = ordinary && ordinaryDtoConstruction()
+					// The first plain build is returned without a recipe; a repeated
+					// request captures one so later calls can reconstruct from it.
+					if (reusable && !builtPages.has(key)) {
+						builtPages.add(key)
 						return result
+					}
+					recipe = captureDto(result)
+					pageRecipes.set(key, recipe)
+					if (reusable) return result
 				}
 				return materializeDto(recipe)
 			},

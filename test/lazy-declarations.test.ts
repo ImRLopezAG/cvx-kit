@@ -135,11 +135,15 @@ it('memoizes page composition while returning independent public validators', as
 	const { defineRelations } = await import('../src/relations')
 	const items = zodTable('items', () => ({ name: z.string() }), { publicFields: ['name'] })
 	const registry = defineRelations({ items }, () => ({}))
+	// The first call returns its fresh build; a repeated selection captures the
+	// recipe, and only later calls reconstruct without recomposing.
 	const first = registry.tables.items.pageDto({})
+	const captured = registry.tables.items.pageDto({})
 	const extend = vi.spyOn(z.ZodObject.prototype, 'extend')
 	const second = registry.tables.items.pageDto({})
 	expect(extend).not.toHaveBeenCalled()
 	expect(second).not.toBe(first)
+	expect(second).not.toBe(captured)
 	const page = { page: [{ _id: 'items:1', name: 'ok' }], isDone: true, continueCursor: '' }
 	expect(second.parse(page)).toEqual(page)
 })

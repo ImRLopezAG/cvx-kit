@@ -204,12 +204,13 @@ function customFnBuilder(
 
 		if (declaredArgs.present) {
 			const dataArgs = declaredArgs.data
-			// Data-declared args keep the registration-time shape check.
-			if (dataArgs) argumentFields(declaredArgs.read())
+			// Data-declared fields are shape-checked and captured now, as registration always did;
+			// only schema construction waits.
+			const capturedFields = dataArgs ? { ...argumentFields(declaredArgs.read()) } : undefined
 			const argsState = memoize(() => {
 				// Capture top-level fields once, matching the native validator's registration lifetime.
 				// Nested schemas retain their identity; parsing and callbacks still run per invocation.
-				const argsSchema = z.object({ ...argumentFields(declaredArgs.read()) })
+				const argsSchema = z.object(capturedFields ?? { ...argumentFields(declaredArgs.read()) })
 				const argsKeys = Object.keys(argsSchema.shape)
 				// Skipped validation still rejects schemas Convex cannot represent.
 				if (skipConvexValidation) zodToConvex(argsSchema)

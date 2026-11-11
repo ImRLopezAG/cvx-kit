@@ -3,6 +3,8 @@ import { expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
+import { createEffectFoundation } from '../src/effect'
+import { checkArchitecture } from '../src/oxlint'
 
 function counted() {
 	const reads: string[] = []
@@ -216,4 +218,79 @@ it('validates a lazy helper result registered without a contract, like a data-de
 	}
 	expect(outcomes[1]).toEqual(outcomes[0])
 	expect(outcomes[0]![1]).not.toBe('accepted')
+})
+
+it.each(['data', 'getter'] as const)(
+	'checkArchitecture binds every %s-declared operation of a forced registry',
+	(form) => {
+		const { track } = counted()
+		const declared = lazyContract(track)
+		const contract = defineDomainContract(
+			form === 'getter'
+				? declared
+				: { commands: { save: declared.commands.save }, queries: declared.queries },
+		)
+		const commands = createEffectFoundation({
+			observability: {
+				enabled: false,
+				classifyError: () => ({ outcome: 'failed', errorCode: 'FAIL' }),
+			},
+			writeAudit: () => {},
+		}).Command({
+			contract,
+			context: () => ({}),
+			// SAFETY: the missing audit callback is the configuration failure under test.
+			...({} as { audit: never }),
+			// SAFETY: the runtime helper accepts a bare handler; only the binding failure is under test.
+			operations: (({ command }: never) => ({
+				save: (command as never as { handler: Function }).handler((input: number) => input),
+			})) as never,
+		})
+		expect(() => checkArchitecture({ registries: [commands] })).toThrow(
+			'Command save requires an audit callback',
+		)
+	},
+)
+
+it('builds getter fields of a data-declared operation only when that operation runs', async () => {
+	const { reads, track } = counted()
+	const contract = defineDomainContract({
+		queries: {
+			plain: { input: z.number(), result: z.number() },
+			fields: {
+				get input() {
+					return track('fields.input', z.string().transform(Number))
+				},
+				get result() {
+					return track('fields.result', z.number())
+				},
+			},
+		},
+	})
+	const queries = foundation().Query({
+		contract,
+		context: () => ({}),
+		operations: ({ query }) => ({
+			plain: query.handler((input) => input),
+			fields: query.handler((input) => input + 1),
+		}),
+	})
+	expect(await queries.exec('plain', 1, {} as never)).toBe(1)
+	expect(reads).toEqual([])
+	expect(await queries.exec('fields', '2' as never, {} as never)).toBe(3)
+	expect(await queries.exec('fields', '4' as never, {} as never)).toBe(5)
+	expect(reads.toSorted()).toEqual(['fields.input', 'fields.result'])
+	expect(contract.queries.fields.input).toBe(contract.queries.fields.input)
+	const overriding = foundation().Query({
+		contract,
+		context: () => ({}),
+		operations: ({ query }) => ({
+			plain: query.handler((input) => input),
+			// SAFETY: the protected override is the runtime failure under test.
+			fields: query.fields({ handler: (input: number) => input, input: z.number() } as never),
+		}),
+	})
+	await expect(overriding.exec('fields', '1' as never, {} as never)).rejects.toThrow(
+		'Contracted operation fields cannot override input',
+	)
 })

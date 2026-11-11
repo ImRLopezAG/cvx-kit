@@ -577,6 +577,33 @@ interface MutableArgumentFields {
 	[field: string]: z.ZodType
 }
 
+it.each(['object', 'shape'] as const)(
+	'captures %s argument fields at registration even before the first export or call',
+	async (kind) => {
+		const argumentFields: MutableArgumentFields = { value: z.string() }
+		const args = z.object(argumentFields)
+		const fn = kitQuery(
+			queryGeneric,
+			NoOp,
+		)({
+			args: kind === 'object' ? args : argumentFields,
+			handler: (_, parsed) => parsed,
+		})
+		const liveArgumentFields = kind === 'object' ? args.shape : argumentFields
+		liveArgumentFields.later = z.string()
+		liveArgumentFields.value = z.number()
+		expect(JSON.parse(runtime(fn).exportArgs())).toEqual({
+			type: 'object',
+			value: { value: { fieldType: { type: 'string' }, optional: false } },
+		})
+		expect(
+			await harness().run((ctx) =>
+				runtime(fn)._handler(ctx, { value: 'original', later: 'extra' }),
+			),
+		).toEqual({ value: 'original' })
+	},
+)
+
 // Capturing keys at registration intentionally tightens the helper's dynamic shape behavior.
 it.each(['object', 'shape'] as const)(
 	'captures %s argument fields without freezing nested validators',

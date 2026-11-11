@@ -10,6 +10,7 @@ import {
 } from './querying/schema-snapshot'
 import { convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
 import { zodToConvex } from './zod-convex'
+import { isLazyNativeTable } from './native-table-accessor'
 import { defineSchema, defineTable, type TableDefinition } from 'convex/server'
 import {
 	v,
@@ -826,7 +827,11 @@ export function defineRelations<
 ): RelationRegistry<Tables, D> {
 	const sources: Record<
 		string,
-		{ table: RelationTable; native: TableDefinition; skeleton?: NativeSkeleton }
+		{
+			table: RelationTable
+			native: () => TableDefinition
+			skeleton: () => NativeSkeleton | undefined
+		}
 	> = Object.create(null)
 	const nativeTables: Record<string, TableDefinition> = {}
 	for (const [name, table] of Object.entries(tables)) {
@@ -836,13 +841,21 @@ export function defineRelations<
 		)
 			throw new Error(`Invalid relation table "${name}"`)
 		// The native table is captured by descriptor; its preflight runs before
-		// any export or conversion, on first use. Stored parsers never run.
+		// any export or conversion, on first use. Stored parsers never run. Only a
+		// boundary's own memoized getter is trusted, and it is first read on use.
 		const nativeDescriptor = Object.getOwnPropertyDescriptor(table, 'table')
-		if (!nativeDescriptor || !('value' in nativeDescriptor))
+		const getter = nativeDescriptor?.get
+		if (!nativeDescriptor || !('value' in nativeDescriptor || isLazyNativeTable(getter)))
 			throw new Error('Unsupported native table accessor')
-		const native: TableDefinition = nativeDescriptor.value
-		sources[name] = { table, native, skeleton: nativeSkeleton(table, native) }
-		nativeTables[name] = native
+		// Conversion reads the boundary's storage schema, so its accessors are rejected first.
+		const native = isLazyNativeTable(getter)
+			? once(() => {
+					preflightSchema(Object.getOwnPropertyDescriptor(table, 'storage')?.value, 'stored')
+					return getter.call(table)
+				})
+			: once((): TableDefinition => nativeDescriptor.value)
+		sources[name] = { table, native, skeleton: once(() => nativeSkeleton(table, native())) }
+		Object.defineProperty(nativeTables, name, { enumerable: true, get: native })
 	}
 	const names = Object.keys(sources)
 
@@ -863,7 +876,7 @@ export function defineRelations<
 		if (state.busy) throw new Error(`Cyclic relation table materialization "${name}"`)
 		state.busy = true
 		try {
-			return (state.stored = captureStoredTier(name, sources[name].table, sources[name].native))
+			return (state.stored = captureStoredTier(name, sources[name].table, sources[name].native()))
 		} catch (error) {
 			state.failure = { error }
 			throw error
@@ -882,7 +895,7 @@ export function defineRelations<
 			const { table, native } = sources[name]
 			state.data = state.stored
 				? finishTable(name, table, state.stored)
-				: materializeTable(name, table, native)
+				: materializeTable(name, table, native())
 			const checks = pending[name] ?? []
 			delete pending[name]
 			for (const check of checks) check()
@@ -973,7 +986,7 @@ export function defineRelations<
 	function referencesFor(name: string) {
 		return (tableRefs[name] ??= makeReferences(
 			name,
-			sources[name].skeleton?.common ?? Object.keys(ready(name).fields),
+			sources[name].skeleton()?.common ?? Object.keys(ready(name).fields),
 		))
 	}
 	type EdgeFactory = (spec: { from: Leg; to: Leg }) => AnyEdge
@@ -997,7 +1010,7 @@ export function defineRelations<
 		const key = JSON.stringify([table, tag])
 		if (!branchRefs.has(key) && names.includes(table) && !branchTables.has(table)) {
 			branchTables.add(table)
-			const skeleton = sources[table].skeleton
+			const skeleton = sources[table].skeleton()
 			// Object tables have no branches; an unknown skeleton materializes the table.
 			const branches = skeleton
 				? (skeleton.branches ?? [])
@@ -1021,7 +1034,7 @@ export function defineRelations<
 	)
 	for (const [source, declared] of Object.entries(edges)) {
 		if (!Object.hasOwn(metadata, source)) throw new Error(`Unknown source table "${source}"`)
-		const skeleton = sources[source].skeleton
+		const skeleton = sources[source].skeleton()
 		for (const [name, edge] of Object.entries(declared)) {
 			// Field-name collisions are rechecked against normalized fields on first use.
 			if (

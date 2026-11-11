@@ -12,6 +12,8 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.30] - 2026-11-11
+
 ### Added
 
 - `createAuthReaders(config)` in `cvx-kit/auth` returns the query and action constructors (with `include` and `authenticatedUser`) from a config that has no triggers, `wrapDB` or mutation builders. It shares `createAuthFunctions`' implementation and offers no mutation constructors. `AuthFunctionsConfig` is now `AuthReadersConfig` plus the mutation-side fields, so one base config feeds both. Build query modules from readers so their import graph excludes the trigger registry. The Effect auth constructors (`createEffectAuthFunctions`) have no reader variant yet.

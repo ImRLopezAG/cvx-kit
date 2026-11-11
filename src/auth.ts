@@ -117,13 +117,16 @@ type AnyAuthContext<DataModel extends GenericDataModel> =
 	| GenericMutationCtx<DataModel>
 	| GenericActionCtx<DataModel>
 
-export type AuthFunctionsConfig<DataModel extends GenericDataModel, Role extends string> = {
+/**
+ * Configuration for createAuthReaders: everything createAuthFunctions takes
+ * except the mutation builders and trigger wrapping, so a module built from
+ * it never has to import the trigger registry.
+ */
+export type AuthReadersConfig<DataModel extends GenericDataModel, Role extends string> = {
 	/** The consumer's generated function builders (from ./_generated/server). */
 	query: QueryBuilder<DataModel, 'public'>
-	mutation: MutationBuilder<DataModel, 'public'>
 	action: ActionBuilder<DataModel, 'public'>
 	internalQuery: QueryBuilder<DataModel, 'internal'>
-	internalMutation: MutationBuilder<DataModel, 'internal'>
 	internalAction: ActionBuilder<DataModel, 'internal'>
 	/**
 	 * Resolves the synchronized principal, e.g. (ctx) => authKit.getAuthUser(ctx).
@@ -163,14 +166,6 @@ export type AuthFunctionsConfig<DataModel extends GenericDataModel, Role extends
 	}) => Promise<{ organizationId: string; roleSlug: string } | null>
 	/** Host error policy; defaults to throwing KitError. */
 	errors?: ErrorFactory
-	/**
-	 * Application trigger registry. When set, every authMutation,
-	 * roleMutation, and systemMutation write runs through triggers.wrapDB —
-	 * evaluations registered on tables fire structurally.
-	 */
-	triggers?: Triggers<DataModel>
-	/** Lower-level alternative to `triggers`: a custom ctx wrapper. */
-	wrapDB?: (ctx: GenericMutationCtx<DataModel>) => GenericMutationCtx<DataModel>
 	/** Upper bound for include() reads. */
 	maxIncludedQueryRows?: number
 	/**
@@ -180,6 +175,23 @@ export type AuthFunctionsConfig<DataModel extends GenericDataModel, Role extends
 	 * (trusted).
 	 */
 	security?: SecurityConfig<DataModel, Role>
+}
+
+/** A reader config plus the mutation builders and trigger wrapping. */
+export type AuthFunctionsConfig<
+	DataModel extends GenericDataModel,
+	Role extends string,
+> = AuthReadersConfig<DataModel, Role> & {
+	mutation: MutationBuilder<DataModel, 'public'>
+	internalMutation: MutationBuilder<DataModel, 'internal'>
+	/**
+	 * Application trigger registry. When set, every authMutation,
+	 * roleMutation, and systemMutation write runs through triggers.wrapDB —
+	 * evaluations registered on tables fire structurally.
+	 */
+	triggers?: Triggers<DataModel>
+	/** Lower-level alternative to `triggers`: a custom ctx wrapper. */
+	wrapDB?: (ctx: GenericMutationCtx<DataModel>) => GenericMutationCtx<DataModel>
 }
 
 /** WorkOS-style default: `member` writes; reader/writer/admin pass through. */
@@ -309,6 +321,12 @@ export type AuthFunctions<DataModel extends GenericDataModel, Role extends strin
 	>
 }
 
+/** The read-only constructors: everything AuthFunctions has except mutations. */
+export type AuthReaders<
+	DataModel extends GenericDataModel,
+	Role extends string = DefaultRole,
+> = Omit<AuthFunctions<DataModel, Role>, `${string}Mutation`>
+
 export type ServiceQuery<
 	DataModel extends GenericDataModel,
 	Role extends string,
@@ -413,11 +431,84 @@ export function createAuthFunctions<
 	DataModel extends GenericDataModel,
 	const Role extends string = DefaultRole,
 >(config: AuthFunctionsConfig<DataModel, Role>): AuthFunctions<DataModel, Role> {
-	const errors = config.errors ?? defaultErrors
+	const core = createAuthCore(config)
+	const { include, secureWriter, servicePrincipal, requireRole } = core
 	const triggers = config.triggers
 	const wrapDB = triggers
 		? (ctx: GenericMutationCtx<DataModel>) => triggers.wrapDB(ctx)
 		: (config.wrapDB ?? ((ctx) => ctx))
+
+	async function mutationInput(ctx: GenericMutationCtx<DataModel>) {
+		const bundle = await core.authenticatedUser(ctx)
+		return {
+			ctx: { ...secureWriter(wrapDB(ctx), bundle), include, ...bundle },
+			args: {},
+		}
+	}
+
+	/** Internal mutation running as the host-derived service principal: triggers, then rules. */
+	function serviceMutation<Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+	): ServiceMutation<DataModel, Role, Extra> {
+		return zCustomMutation(config.internalMutation, {
+			args: {},
+			input: async (ctx) => {
+				const bundle = await servicePrincipal(principal, ctx)
+				return {
+					ctx: { ...secureWriter(wrapDB(ctx), bundle), ...bundle, include },
+					args: {},
+				}
+			},
+		})
+	}
+
+	/** Mutation constructor allowing only the given roles. */
+	function roleMutation(...allowed: readonly Role[]) {
+		return zCustomMutation(config.mutation, {
+			args: {},
+			input: async (ctx) => {
+				const authenticated = await mutationInput(ctx)
+				requireRole(authenticated.ctx.actor.role, allowed)
+				return authenticated
+			},
+		})
+	}
+
+	return {
+		...core.readers,
+		roleMutation,
+		authMutation: zCustomMutation(config.mutation, {
+			args: {},
+			input: mutationInput,
+		}),
+		adminMutation: roleMutation(...config.adminRoles),
+		serviceMutation,
+		systemMutation: zCustomMutation(config.internalMutation, {
+			args: {},
+			input: async (ctx) => ({ ctx: { ...wrapDB(ctx), include }, args: {} }),
+		}),
+	}
+}
+
+/**
+ * Builds the read-only constructors (queries and actions) from the same
+ * policy as createAuthFunctions, without mutation builders or triggers.
+ * Identity, tenancy, rules, role gates, membership checks and errors are the
+ * same implementation, so a module built from these never imports the
+ * trigger registry or the domains it pulls in.
+ */
+export function createAuthReaders<
+	DataModel extends GenericDataModel,
+	const Role extends string = DefaultRole,
+>(config: AuthReadersConfig<DataModel, Role>): AuthReaders<DataModel, Role> {
+	return createAuthCore(config).readers
+}
+
+/** Shared implementation behind createAuthFunctions and createAuthReaders. */
+function createAuthCore<DataModel extends GenericDataModel, Role extends string>(
+	config: AuthReadersConfig<DataModel, Role>,
+) {
+	const errors = config.errors ?? defaultErrors
 	const include = createInclude({
 		errors,
 		maxRows: config.maxIncludedQueryRows,
@@ -561,14 +652,6 @@ export function createAuthFunctions<
 		}
 	}
 
-	async function mutationInput(ctx: GenericMutationCtx<DataModel>) {
-		const bundle = await authenticatedUser(ctx)
-		return {
-			ctx: { ...secureWriter(wrapDB(ctx), bundle), include, ...bundle },
-			args: {},
-		}
-	}
-
 	async function actionInput(ctx: GenericActionCtx<DataModel>) {
 		const authenticated = await authenticatedUser(ctx)
 		const membership = await verifiedMembership(
@@ -615,7 +698,9 @@ export function createAuthFunctions<
 		// handle (db, auth, scheduler, ...) would silently replace the secured one.
 		const reserved = Object.keys(bundle).filter((key) => key in ctx)
 		if (reserved.length > 0) {
-			throw new Error(`A service principal cannot override native context fields: ${reserved.join(', ')}`)
+			throw new Error(
+				`A service principal cannot override native context fields: ${reserved.join(', ')}`,
+			)
 		}
 		return bundle
 	}
@@ -636,40 +721,12 @@ export function createAuthFunctions<
 		})
 	}
 
-	/** Internal mutation running as the host-derived service principal: triggers, then rules. */
-	function serviceMutation<Extra extends Record<string, unknown> = {}>(
-		principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
-	): ServiceMutation<DataModel, Role, Extra> {
-		return zCustomMutation(config.internalMutation, {
-			args: {},
-			input: async (ctx) => {
-				const bundle = await servicePrincipal(principal, ctx)
-				return {
-					ctx: { ...secureWriter(wrapDB(ctx), bundle), ...bundle, include },
-					args: {},
-				}
-			},
-		})
-	}
-
 	/** Query constructor allowing only the given roles. */
 	function roleQuery(...allowed: readonly Role[]) {
 		return zCustomQuery(config.query, {
 			args: {},
 			input: async (ctx) => {
 				const authenticated = await queryInput(ctx)
-				requireRole(authenticated.ctx.actor.role, allowed)
-				return authenticated
-			},
-		})
-	}
-
-	/** Mutation constructor allowing only the given roles. */
-	function roleMutation(...allowed: readonly Role[]) {
-		return zCustomMutation(config.mutation, {
-			args: {},
-			input: async (ctx) => {
-				const authenticated = await mutationInput(ctx)
 				requireRole(authenticated.ctx.actor.role, allowed)
 				return authenticated
 			},
@@ -688,26 +745,19 @@ export function createAuthFunctions<
 		})
 	}
 
-	return {
+	const readers: AuthReaders<DataModel, Role> = {
 		include,
 		authenticatedUser,
 		roleQuery,
-		roleMutation,
 		roleAction,
 		authQuery: zCustomQuery(config.query, { args: {}, input: queryInput }),
-		authMutation: zCustomMutation(config.mutation, {
-			args: {},
-			input: mutationInput,
-		}),
 		authAction: zCustomAction(config.action, {
 			args: {},
 			input: actionInput,
 		}),
 		adminQuery: roleQuery(...config.adminRoles),
-		adminMutation: roleMutation(...config.adminRoles),
 		adminAction: roleAction(...config.adminRoles),
 		serviceQuery,
-		serviceMutation,
 		systemQuery: zCustomQuery(config.internalQuery, {
 			args: {},
 			input: async (ctx) => ({
@@ -729,15 +779,12 @@ export function createAuthFunctions<
 				args: {},
 			}),
 		}),
-		systemMutation: zCustomMutation(config.internalMutation, {
-			args: {},
-			input: async (ctx) => ({ ctx: { ...wrapDB(ctx), include }, args: {} }),
-		}),
 		systemAction: zCustomAction(config.internalAction, {
 			args: {},
 			input: async (ctx) => ({ ctx, args: {} }),
 		}),
 	}
+	return { readers, include, authenticatedUser, secureWriter, servicePrincipal, requireRole }
 }
 
 /** The minimum a host factory must return; the rest of the bundle is the host's contract. */

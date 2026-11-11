@@ -153,3 +153,28 @@ declarative; schema.ts may declare several zodTable shapes; table.ts owns their
 topology, and domain/table.ts uses createModule to assemble module maps. The rules
 recognize aliases, namespaces, and the root foundation.ts facade. They do not
 require absent reserved files to be created.
+
+## Per-request cost: lazy operations
+
+Convex evaluates the whole import graph on every request, and module state never survives to the next one. A thunk defers the declaration, but the first read of any operation still builds all of them. A registry's first `exec` also binds every operation. Declare operations, or their `input`/`result`, as getters so a module builds only what it reads or executes:
+
+```ts
+const paymentId = z.strictObject({ id: z.string() })
+export const financeContract = defineDomainContract(() => ({
+	queries: {
+		get listPayments() {
+			return {
+				input: z.strictObject({ cursor: z.string().nullable(), numItems: z.number() }),
+				result: z.array(z.strictObject({ id: z.string(), amount: z.number() })),
+			}
+		},
+		get getPayment() {
+			return { input: paymentId, result: z.number().nullable() }
+		},
+	},
+}))
+```
+
+Put the expensive builders, such as `relations.tables.x.paginationOpts(...)` and `pageDto(...)`, inside the getter that needs them.
+
+`defineDomainContract` memoizes each getter, so schema identity is stable and every operation is built at most once. A registry binds a getter-declared operation on its first execution. That binding runs the same helper-ownership, protected-field and audit checks, and a failure is rethrown on every later execution. Key-set mismatches still fail when the registry is first used. Data-declared operations bind exactly as before. Pair this with `get args()` / `get returns()` on the registered functions (README, "Per-request import cost"). Otherwise `args: contract.queries.x.input` reads the operation at import anyway.

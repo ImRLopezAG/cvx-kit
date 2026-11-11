@@ -16,7 +16,13 @@ import {
 import { v } from 'convex/values'
 import { z } from 'zod'
 import { Context } from 'effect'
-import { createAuthFunctions, type AuthBundle, type Include } from 'cvx-kit/auth'
+import {
+	createAuthFunctions,
+	createAuthReaders,
+	type AuthBundle,
+	type AuthReadersConfig,
+	type Include,
+} from 'cvx-kit/auth'
 import { createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
 
 const schema = defineSchema({ notes: defineTable({ title: v.string() }) })
@@ -177,3 +183,40 @@ const legacyLookup: Parameters<typeof createAuthFunctions<Model, Role>>[0]['getA
 	ctx,
 ) => ({ id: (await ctx.auth.getUserIdentity())?.subject ?? 'missing' })
 void legacyLookup
+
+// One triggers-free base config builds both the readers and the full set.
+const readerBase = {
+	query: queryGeneric,
+	action: actionGeneric,
+	internalQuery: internalQueryGeneric,
+	internalAction: internalActionGeneric,
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- The fixture resolves users from the identity alone.
+	getAuthUser: async (_ctx: unknown, identity: UserIdentity) => ({ id: identity.subject }),
+	mapRole: (slug?: string): Role | null => (slug === 'owner' || slug === 'viewer' ? slug : null),
+	adminRoles: ['owner'],
+} satisfies AuthReadersConfig<Model, Role>
+const readers = createAuthReaders<Model, Role>(readerBase)
+createAuthFunctions<Model, Role>({
+	...readerBase,
+	mutation: mutationGeneric,
+	internalMutation: internalMutationGeneric,
+	wrapDB: (ctx) => ctx,
+})
+readers.authQuery({
+	args: {},
+	handler: (ctx) => {
+		queryContext(ctx)
+		const role: Role = ctx.role
+		void role
+		return null
+	},
+})
+readers.roleAction('owner')({ args: {}, handler: (ctx) => void actionContext(ctx) })
+// @ts-expect-error readers expose no mutation constructors
+void readers.authMutation
+// @ts-expect-error readers expose no mutation constructors
+void readers.systemMutation
+// @ts-expect-error readers take no trigger registry
+createAuthReaders<Model, Role>({ ...readerBase, triggers: undefined })
+// @ts-expect-error readers take no trigger wrapper
+createAuthReaders<Model, Role>({ ...readerBase, wrapDB: (ctx: GenericMutationCtx<Model>) => ctx })

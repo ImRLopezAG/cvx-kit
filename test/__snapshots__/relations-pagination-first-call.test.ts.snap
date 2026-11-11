@@ -1,0 +1,19 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`pageDto field groups: calls 1, 2 and 3 validate identically 1`] = `"d0f0b714030457a88bd9a65e26ead7f8290f22f0613a99c332fb1b6719d76aa4"`;
+
+exports[`pageDto relation join: calls 1, 2 and 3 validate identically 1`] = `"a7e811968103cf5db5621ab8831b3fab6ed40be507021c462252d9c60731fdec"`;
+
+exports[`pageDto scalar: calls 1, 2 and 3 validate identically 1`] = `"ebbb15d7f0d68c807d64f9bcddf7d8b36aa6b3292a0ed775b86f19196c683756"`;
+
+exports[`pageDto variant relation: calls 1, 2 and 3 validate identically 1`] = `"0a683772bd48fe7f4282d810e79047562fdd37ea6e0454f03d5dd1beb9840109"`;
+
+exports[`pageDto variant: calls 1, 2 and 3 validate identically 1`] = `"76c1b7c0216aac5e9fb1434faae8e2ee84183ea4d08035933abbfe26edf9de5a"`;
+
+exports[`paginationOpts compact: calls 1, 2 and 3 validate identically 1`] = `"cdf22d99cb3515a0764b0581f911f0176b9217fa90887d5fa6af44165dffa368"`;
+
+exports[`paginationOpts relation join: calls 1, 2 and 3 validate identically 1`] = `"cdf22d99cb3515a0764b0581f911f0176b9217fa90887d5fa6af44165dffa368"`;
+
+exports[`paginationOpts scalar: calls 1, 2 and 3 validate identically 1`] = `"3d3951b5f0c9187ecea6b0d2838140e7d4a1364a482eb4c50305999fa0245f4a"`;
+
+exports[`paginationOpts variant selection: calls 1, 2 and 3 validate identically 1`] = `"b220e8dfab059a463f78710890fdf07eff70af8ce361eeb664384a73d8cc5bbb"`;

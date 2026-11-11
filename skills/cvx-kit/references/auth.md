@@ -77,6 +77,57 @@ do not change the registered parser. Nested schemas remain shared. Input
 parsing, defaults, refinements, transforms, and callbacks run on every call;
 parsed values are never cached between invocations.
 
+## Keep triggers out of query and action modules
+
+Convex evaluates a function's whole static import graph on every request, and
+queries and mutations cannot use dynamic `import()`. A trigger registry
+imports every domain, so building all constructors in one module with
+`triggers` makes every query load every domain. Split the setup:
+
+```ts
+// convex/functions/base.ts — the shared policy; imports no triggers
+export const base = {
+	query,
+	action,
+	internalQuery,
+	internalAction,
+	getAuthUser: (ctx) => authKit.getAuthUser(ctx),
+	mapRole: defaultRoleMap,
+	adminRoles: ['admin'],
+	verifyMembership,
+	security,
+} satisfies AuthReadersConfig<DataModel, DefaultRole>
+
+// convex/functions/read.ts — never imports the trigger registry
+export const {
+	authQuery,
+	roleQuery,
+	adminQuery,
+	serviceQuery,
+	systemQuery,
+	authAction,
+	roleAction,
+	adminAction,
+	systemAction,
+	include,
+	authenticatedUser,
+} = createAuthReaders<DataModel>(base)
+
+// convex/functions/write.ts
+import { triggers } from '../triggers'
+export const { authMutation, roleMutation, adminMutation, serviceMutation, systemMutation } =
+	createAuthFunctions<DataModel>({ ...base, mutation, internalMutation, triggers })
+```
+
+Query and action modules import builders only from `read.ts`, so their import
+graph excludes the triggers and every domain the triggers import.
+`createAuthReaders` shares `createAuthFunctions`' implementation: identity,
+tenancy, rules, role gates, membership checks, and errors behave the same. It
+takes no `triggers`, `wrapDB`, or mutation builders and returns no mutation
+constructors, so no mutation can be built without triggers.
+`createEffectAuthFunctions` has no reader variant yet, so Effect-based modules still
+import the configuration that carries the triggers.
+
 ## One shared Effect function foundation
 
 Use `createEffectAuthFunctions` from `cvx-kit/effect` in `convex/functions.ts`

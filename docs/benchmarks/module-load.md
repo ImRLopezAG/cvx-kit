@@ -45,6 +45,87 @@ Direct strict constructors remove intermediate object clones. Private write/comm
 
 Relation pages build only result validators. For ordinary rows without selected relations or field groups, the first page is a fresh graph built from independently restored private recipes; the registry captures its immutable recipe before returning it. Reusing that first graph requires the existing audited Zod version/config/memoizer guard before and after construction. Variant rows, composed relations, field groups and other constructor environments reconstruct it, preserving independent mutable validators across variant branches. Later calls always reconstruct independent public validators. This does not change registration/native ownership checks, projection rules or the public `paginated()` args/result surface. Memoized getters and thunk Proxy semantics remain unchanged.
 
+## Per-request app benchmark
+
+Convex evaluates a function's whole static import graph on every request, and module state never survives to the next request. So what counts is the cost of importing one function module, plus building what a single invocation needs. Recipe caches that only pay off on a second call do not count.
+
+`scripts/bench/app-module-load-entry.ts` is one function module of a representative app (`scripts/bench/app-fixture.ts`):
+
+- 28 table boundaries plus two variant tables.
+- Relations with parent and owner joins and variant-branch edges.
+- Three thunk domain contracts, each with nine commands, two detail queries and three relation-pagination list queries (compact validators with variant selections, relation `pageDto`).
+- `createAuthFunctions` with a trigger registry.
+
+The module registers all 14 operations of one contract through `authMutation`/`authQuery`. The other two contracts are imported but never read. Native table definitions (indexes) sit behind `appSchemaTables`, which only a schema module would import.
+
+Two variants are measured:
+
+- **eager**: today's consumer form, `args: contract.commands.x.input`.
+- **getter**: `get args()` / `get returns()` plus getter-declared contract operations.
+
+`node scripts/bench-app-load.mjs [--runs N] [--source label=root ...] [--check scripts/bench/app-load-budget.json]` bundles the entry like Convex (browser, ESM, `convex,module` conditions) and imports it in fresh `--expose-gc` processes, rotating the starting case each round. It reports these medians:
+
+- `load`: import time.
+- `retainedMB`: retained heap after GC.
+- `invoke`: building one function's pushed validators.
+- The module's own phase timings.
+
+Pushed `exportArgs`/`exportReturns` JSON must be identical across every source and variant, or the run fails. A `--source` root only needs a `src/` tree with `node_modules` resolvable from it. `bun run bench:app-load` checks the candidate against the budget file.
+
+`node scripts/bench-consumer.mjs <convex-dir> <entry.ts ...> [--installed]` measures a consumer's real entries. It redirects `cvx-kit/*` to this checkout's `dist` through the export map, and resolves the dist's own dependencies from the consumer's installed copy, so the consumer's `node_modules` is never modified.
+
+### Baseline (2026-11-11, before the per-request changes)
+
+macOS, Node v26.13.0, source `1d47ecf` (0.1.29 runtime), 15 rounds, JIT enabled.
+
+| Variant | load ms | retained MB | invoke ms | registration ms |
+| --- | ---: | ---: | ---: | ---: |
+| eager | 43.14 | 10.24 | 2.62 | 19.56 |
+| getter | 48.94 | 10.32 | 2.64 | 25.00 |
+
+Accord (`feat/enrollment-intake-v2` checkout, unchanged source), esbuild bundles, 9 runs:
+
+| Entry | cvx-kit | bundle KB | load ms | retained MB |
+| --- | --- | ---: | ---: | ---: |
+| `api/payments` | installed 0.1.29 | 3901 | 163.3 | 29.1 |
+| `api/payments` | local dist (`1d47ecf`) | 3902 | 161.3 | 29.1 |
+| `api/search` | installed 0.1.29 | 2623 | 90.0 | 9.7 |
+| `api/search` | local dist (`1d47ecf`) | 2625 | 94.5 | 9.7 |
+
+With `bun build --target=browser`, the same entries evaluate in 131 ms / 28.2 MB (`api/payments`) and ~76 ms / 9.0 MB (`api/search`). The deployed dev p50 for those functions is ~600 ms and ~280 ms.
+
+### After (2026-11-11)
+
+Same machine and session, 15 rounds, `--source base=<1d47ecf src> --source candidate=.`. The baseline is re-measured in the same run because absolute times drift between sessions.
+
+| Variant | load ms | retained MB | invoke ms | registration ms |
+| --- | ---: | ---: | ---: | ---: |
+| base eager | 37.56 | 10.26 | 2.43 | 17.16 |
+| candidate eager | 32.32 (−14%) | 9.32 (−9%) | 3.42 | 11.55 |
+| base getter | 41.68 | 10.34 | 2.49 | 21.39 |
+| candidate getter | 20.58 (−51%) | 6.37 (−38%) | 9.19 | 0.26 |
+
+- **eager:** the consumer still reads every contract operation at import, so it keeps paying for the pagination schemas it declares. The gain comes from not converting validators at registration and from skipping recipe capture on first builds.
+- **getter:** import builds no operation. Invocation builds the one operation it serves, its validators and its binding. Import plus one invocation drops from 44.2 to 29.8 ms.
+
+Accord, esbuild bundles, 11 runs:
+
+| Entry | Source | installed 0.1.29 | local dist |
+| --- | --- | ---: | ---: |
+| `api/payments` | unchanged | 142.8 ms / 29.1 MB | 140.6 ms / 28.4 MB |
+| `api/search` | unchanged | 84.1 ms / 9.7 MB | 83.2 ms / 9.7 MB |
+| `api/payments` | `get args()` / `get returns()` (rewritten in memory) | 143.9 ms / 29.1 MB | 126.2 ms / 22.7 MB |
+
+Unchanged Accord source barely moves, because every function reads its contract operation at import. In the getter variant, the remaining kit cost is mostly module-scope `paginationOpts` calls outside the contract (`paymentStoragePage`, `ledgerStoragePage`). Each one materializes its table's relation metadata on first use. Table definitions and a module-scope `.tools` read account for the rest. Making relation table materialization cheaper is the next lever.
+
+Tried and reverted: deferring each table boundary's native `defineTable` conversion to first `.table` read. Relation declarations reference nearly every table by field, which forces the conversion while relations evaluate. The deferred path also needs an extra storage preflight so `defineRelations` never evaluates unknown accessors. Accord's payments, search and clients entries measured 137.6/82.5/110.6 ms without it and 139.2/82.4/112.0 ms with it.
+
+### Dependencies reachable from consumer bundles
+
+`effect` is imported only by `cvx-kit/effect`. A module that imports only `cvx-kit/auth`, `zod-table`, `contracts`, `relations` or `errors` does not reach it. xstate, evlog and mime are not cvx-kit dependencies; they come from the consumer's own imports. `cvx-kit` (root) and `cvx-kit/querying` reach `@noble/ciphers` through cursor sealing. The package is `sideEffects: false`, so unused modules drop out, but modules that are reached keep their top-level code.
+
+The budget in `scripts/bench/app-load-budget.json` is set from these numbers with headroom. Its `load` limits are machine-dependent, so re-baseline them on a slower machine. `retainedMB` is stable across runs.
+
 ## Reproduce
 
 Install the checkout's locked dependencies first (`bun install --frozen-lockfile`). Prepare source-only archives outside the checkout; do not use another application's checkout:

@@ -2,6 +2,7 @@ import { Cause, Context, Effect, Exit } from 'effect'
 import type { Scope } from 'effect'
 import { ConvexError, type Value } from 'convex/values'
 import type { ErrorContract, ErrorDefinitions } from '../contracts/errors'
+import { memoize } from '../contracts/lazy'
 import { projectErrorCause } from './errors'
 import { normalizeEffect } from './normalize'
 import type { CallbackRequirements, EffectValue } from './operation'
@@ -109,6 +110,26 @@ export function wrapEffectBuilder(
 			throw new Error('Effect API execution failed', { cause: exit.cause })
 		}
 		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Preserve the original native callable or object registration form.
-		return builder(typeof definition === 'function' ? handler : { ...definition, handler })
+		return builder(typeof definition === 'function' ? handler : withHandler(definition, handler))
 	}
+}
+
+/**
+ * Object-spread equivalent that forwards accessors instead of reading them, so
+ * getter-declared args and returns stay unread until the builder needs them.
+ */
+function withHandler(definition: { handler: Function }, handler: Function) {
+	const copy = { handler }
+	for (const key of Reflect.ownKeys(definition)) {
+		const descriptor = Object.getOwnPropertyDescriptor(definition, key)
+		if (key === 'handler' || !descriptor?.enumerable) continue
+		Object.defineProperty(copy, key, {
+			configurable: true,
+			enumerable: true,
+			...(descriptor.get
+				? { get: memoize(() => descriptor.get!.call(definition)) }
+				: { value: descriptor.value, writable: true }),
+		})
+	}
+	return copy
 }

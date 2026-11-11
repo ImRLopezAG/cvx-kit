@@ -245,3 +245,34 @@ auth.systemAction({
 		return args.text
 	},
 })
+
+// Getter-declared args/returns infer exactly what data properties infer.
+const dataDeclared = zCustomQuery(
+	queryGeneric,
+	NoOp,
+)({
+	args,
+	returns,
+	handler: (_ctx, parsed) => parsed.text,
+})
+const getterDeclared = zCustomQuery(
+	queryGeneric,
+	NoOp,
+)({
+	get args() {
+		return args
+	},
+	get returns() {
+		return returns
+	},
+	handler: (_ctx, parsed) => {
+		exact<
+			Equal<
+				typeof parsed,
+				{ id: GenericId<'tasks'>; text: number; count: number; optional?: string }
+			>
+		>()
+		return parsed.text
+	},
+})
+exact<Equal<typeof getterDeclared, typeof dataDeclared>>()

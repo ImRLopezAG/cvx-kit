@@ -34,5 +34,6 @@ export function registerLazyRegistry<Registry extends object>(
 export function forceRegistry<Registry extends object>(registry: Registry): void {
 	const build = registryBuilders.get(registry)
 	if (!build) throw new Error('Expected a kit Effect registry')
-	build()
+	// Getter-declared operations bind on first access; reading every value validates them here too.
+	void Object.values(build())
 }

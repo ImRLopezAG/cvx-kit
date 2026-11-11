@@ -72,6 +72,26 @@ Guides:
 - [`migration.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration.md) — restructuring an existing raw Convex project into this architecture
 - [`llms.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/llms.md) — optional condensed reference for coding agents
 
+## Per-request import cost
+
+Convex evaluates a function's whole static import graph on every request, and queries and mutations cannot use dynamic `import()`. Whatever a module builds at import is paid on every call. The kit builders do not convert validators at registration. Convex reads them when it exports function metadata at push, and the handler builds its parse state on first call. To keep a module from building schemas for functions it is not serving, declare them lazily:
+
+```ts
+export const listPayments = authQuery({
+	get args() {
+		return financeContract.queries.listPayments.input
+	},
+	get returns() {
+		return financeContract.queries.listPayments.result
+	},
+	handler: (ctx, args) => ctx.queries.finance.exec('listPayments', args),
+})
+```
+
+With `args: contract.queries.x.input`, the property read builds the schema at import. A getter defers it. Declare contract operations as getters too (see the [domain contracts guide](./skills/cvx-kit/references/domain-contracts.md)), so that reading or executing one operation builds and binds only that operation. Keep the trigger registry out of query modules with `createAuthReaders` (see `cvx-kit/auth` below). Validation is identical in every form.
+
+Two more things keep the deferral intact. First, a `paginationOpts(...)` or `pageDto(...)` call at module scope outside a contract still builds at import, so put it behind a getter or inside the operation that uses it. Second, pass Convex's generated builders (`query`, `mutation`, ...) to the kit constructors. A wrapper that spreads or copies the definition reads its getters at registration.
+
 ## Modules
 
 ### `cvx-kit/zod-table`
@@ -391,6 +411,38 @@ Actions re-verify membership live and fail closed; mutations get the trigger
 registry structurally; `include()` bounds every read (default 100 rows).
 `resolveOrganization` derives org and role from your own tables, enabling
 identity providers whose tokens carry no org claims.
+
+Convex evaluates a function's whole static import graph on every request, and
+queries and mutations cannot use dynamic `import()`. Passing `triggers` here
+makes every module that imports these constructors, queries included, load
+every domain the trigger registry imports. Split the constructors:
+
+```ts
+// convex/functions/base.ts — no trigger import
+export const base = {
+	query,
+	action,
+	internalQuery,
+	internalAction,
+	getAuthUser,
+	mapRole,
+	adminRoles,
+}
+// convex/functions/read.ts — never imports the trigger registry
+export const { authQuery, adminQuery, authAction, include } = createAuthReaders<DataModel>(base)
+// convex/functions/write.ts
+export const { authMutation, systemMutation } = createAuthFunctions<DataModel>({
+	...base,
+	mutation,
+	internalMutation,
+	triggers,
+})
+```
+
+Query and action modules import only from `read.ts`. `createAuthReaders`
+shares the implementation, so identity, tenancy, rules, and role gates match;
+it has no mutation constructors. `createEffectAuthFunctions` has no reader
+variant yet.
 
 ### `cvx-kit/effect` — commands and queries
 

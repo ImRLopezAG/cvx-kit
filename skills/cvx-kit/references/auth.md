@@ -125,6 +125,8 @@ graph excludes the triggers and every domain the triggers import.
 tenancy, rules, role gates, membership checks, and errors behave the same. It
 takes no `triggers`, `wrapDB`, or mutation builders and returns no mutation
 constructors, so no mutation can be built without triggers.
+`createEffectAuthFunctions` has no reader variant yet, so Effect-based modules still
+import the configuration that carries the triggers.
 
 ## One shared Effect function foundation
 

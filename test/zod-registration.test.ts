@@ -573,6 +573,27 @@ it('shares repeated public native argument containers through every auth query c
 	}
 })
 
+it('passes a definition-supplied __proto__ option through as an own extra field', async () => {
+	let extra: { admin?: unknown; tag?: unknown } | undefined
+	const builder = kitQuery(queryGeneric, {
+		args: {},
+		input: (_ctx, _args, options) => {
+			// SAFETY: the kit forwards the definition's extra options record unchanged.
+			extra = options as typeof extra
+			return { ctx: {}, args: {} }
+		},
+	})
+	// SAFETY: JSON.parse creates an own `__proto__` key, the shape object rest preserved.
+	const options = JSON.parse('{"__proto__": {"admin": true}, "tag": "x"}') as object
+	// SAFETY: the extra options are untyped on purpose; only their forwarding is under test.
+	const fn = builder({ ...options, handler: () => null } as never)
+	await harness().run((ctx) => runtime(fn)._handler(ctx, {}))
+	expect(Object.getPrototypeOf(extra)).toBe(Object.prototype)
+	expect(Object.hasOwn(extra!, '__proto__')).toBe(true)
+	expect(extra!.admin).toBeUndefined()
+	expect(extra!.tag).toBe('x')
+})
+
 interface MutableArgumentFields {
 	[field: string]: z.ZodType
 }

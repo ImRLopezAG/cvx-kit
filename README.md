@@ -90,6 +90,8 @@ export const listPayments = authQuery({
 
 With `args: contract.queries.x.input`, the property read builds the schema at import. A getter defers it. Declare contract operations as getters too (see the [domain contracts guide](./skills/cvx-kit/references/domain-contracts.md)), so that reading or executing one operation builds and binds only that operation. Keep the trigger registry out of query modules with `createAuthReaders` (see `cvx-kit/auth` below). Validation is identical in every form.
 
+Two more things keep the deferral intact. First, a `paginationOpts(...)` or `pageDto(...)` call at module scope outside a contract still builds at import, so put it behind a getter or inside the operation that uses it. Second, pass Convex's generated builders (`query`, `mutation`, ...) to the kit constructors. A wrapper that spreads or copies the definition reads its getters at registration.
+
 ## Modules
 
 ### `cvx-kit/zod-table`
@@ -439,7 +441,8 @@ export const { authMutation, systemMutation } = createAuthFunctions<DataModel>({
 
 Query and action modules import only from `read.ts`. `createAuthReaders`
 shares the implementation, so identity, tenancy, rules, and role gates match;
-it has no mutation constructors.
+it has no mutation constructors. `createEffectAuthFunctions` has no reader
+variant yet.
 
 ### `cvx-kit/effect` — commands and queries
 

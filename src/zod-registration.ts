@@ -152,7 +152,13 @@ function extraOptions(definition: object): Record<PropertyKey, unknown> {
 	const extra: Record<PropertyKey, unknown> = {}
 	for (const key of Reflect.ownKeys(definition)) {
 		if (reserved.has(key) || !Object.prototype.propertyIsEnumerable.call(definition, key)) continue
-		extra[key] = Reflect.get(definition, key)
+		// Define rather than assign, as object rest does, so a `__proto__` key stays an own property.
+		Object.defineProperty(extra, key, {
+			value: Reflect.get(definition, key),
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		})
 	}
 	return extra
 }

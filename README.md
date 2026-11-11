@@ -72,6 +72,24 @@ Guides:
 - [`migration.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration.md) — restructuring an existing raw Convex project into this architecture
 - [`llms.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/llms.md) — optional condensed reference for coding agents
 
+## Per-request import cost
+
+Convex evaluates a function's whole static import graph on every request, and queries and mutations cannot use dynamic `import()`. Whatever a module builds at import is paid on every call. The kit builders do not convert validators at registration. Convex reads them when it exports function metadata at push, and the handler builds its parse state on first call. To keep a module from building schemas for functions it is not serving, declare them lazily:
+
+```ts
+export const listPayments = authQuery({
+	get args() {
+		return financeContract.queries.listPayments.input
+	},
+	get returns() {
+		return financeContract.queries.listPayments.result
+	},
+	handler: (ctx, args) => ctx.queries.finance.exec('listPayments', args),
+})
+```
+
+With `args: contract.queries.x.input`, the property read builds the schema at import. A getter defers it. Declare contract operations as getters too (see the [domain contracts guide](./skills/cvx-kit/references/domain-contracts.md)), so that reading or executing one operation builds and binds only that operation. Keep the trigger registry out of query modules with `createAuthReaders` (see `cvx-kit/auth` below). Validation is identical in every form.
+
 ## Modules
 
 ### `cvx-kit/zod-table`

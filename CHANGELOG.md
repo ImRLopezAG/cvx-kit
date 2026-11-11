@@ -12,6 +12,20 @@ are this file's matching section.
 
 ## [Unreleased]
 
+### Added
+
+- `createAuthReaders(config)` in `cvx-kit/auth` returns the query and action constructors (with `include` and `authenticatedUser`) from a config that has no triggers, `wrapDB` or mutation builders. It shares `createAuthFunctions`' implementation and offers no mutation constructors. `AuthFunctionsConfig` is now `AuthReadersConfig` plus the mutation-side fields, so one base config feeds both. Build query modules from readers so their import graph excludes the trigger registry.
+- Kit function builders accept `get args()` / `get returns()` and read them only when Convex exports the function's metadata or the function is first called.
+- Domain contracts accept getter-declared operations, and getter-declared `input`/`result`/`replayResult`/`wire`. Each is memoized, and registries bind a getter-declared operation on its first execution with the same checks.
+- `scripts/bench-app-load.mjs` (per-request module-load benchmark with a budget check, `bun run bench:app-load`) and `scripts/bench-consumer.mjs` (measures a consumer's Convex entries against a local dist). See `docs/benchmarks/module-load.md`.
+
+### Changed
+
+- Registering a function no longer converts its args or returns to Convex validators or builds its compact filter boundary. The definition handed to Convex exposes them lazily, and the handler builds its parse state on first call. Validation is unchanged. **Timing:** a zod type Convex cannot represent now fails when `exportArgs`/`exportReturns` run (at push, and on every convex-test call) instead of at import. Non-object zod args and `skipConvexValidation` with custom input args still throw at registration.
+- The first `paginationOpts(...)` call for a selection, and the first plain `pageDto(...)`, use their fresh build instead of capturing and restoring a recipe. A repeated selection captures, and later calls restore. Results are identical across calls.
+- The Effect API adapters (`effectApiBuilder`, `effectZodApiBuilder` and the Effect auth constructors) forward accessors instead of spreading the definition, so getter-declared args stay unread.
+- `effect` is reachable only through `cvx-kit/effect`. xstate, evlog and mime are not cvx-kit dependencies. See `docs/benchmarks/module-load.md`.
+
 ## [0.1.29] - 2026-11-08
 
 ### Added

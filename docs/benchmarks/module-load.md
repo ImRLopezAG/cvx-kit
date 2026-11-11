@@ -94,6 +94,38 @@ Accord (`feat/enrollment-intake-v2` checkout, unchanged source), esbuild bundles
 
 With `bun build --target=browser`, the same entries evaluate in 131 ms / 28.2 MB (`api/payments`) and ~76 ms / 9.0 MB (`api/search`). The deployed dev p50 for those functions is ~600 ms and ~280 ms.
 
+### After (2026-11-11)
+
+Same machine and session, 15 rounds, `--source base=<1d47ecf src> --source candidate=.`. The baseline is re-measured in the same run because absolute times drift between sessions.
+
+| Variant | load ms | retained MB | invoke ms | registration ms |
+| --- | ---: | ---: | ---: | ---: |
+| base eager | 37.56 | 10.26 | 2.43 | 17.16 |
+| candidate eager | 32.32 (−14%) | 9.32 (−9%) | 3.42 | 11.55 |
+| base getter | 41.68 | 10.34 | 2.49 | 21.39 |
+| candidate getter | 20.58 (−51%) | 6.37 (−38%) | 9.19 | 0.26 |
+
+- **eager:** the consumer still reads every contract operation at import, so it keeps paying for the pagination schemas it declares. The gain comes from not converting validators at registration and from skipping recipe capture on first builds.
+- **getter:** import builds no operation. Invocation builds the one operation it serves, its validators and its binding. Import plus one invocation drops from 44.2 to 29.8 ms.
+
+Accord, esbuild bundles, 11 runs:
+
+| Entry | Source | installed 0.1.29 | local dist |
+| --- | --- | ---: | ---: |
+| `api/payments` | unchanged | 142.8 ms / 29.1 MB | 140.6 ms / 28.4 MB |
+| `api/search` | unchanged | 84.1 ms / 9.7 MB | 83.2 ms / 9.7 MB |
+| `api/payments` | `get args()` / `get returns()` (rewritten in memory) | 143.9 ms / 29.1 MB | 126.2 ms / 22.7 MB |
+
+Unchanged Accord source barely moves, because every function reads its contract operation at import. In the getter variant, the remaining kit cost is mostly module-scope `paginationOpts` calls outside the contract (`paymentStoragePage`, `ledgerStoragePage`). Each one materializes its table's relation metadata on first use. Table definitions and a module-scope `.tools` read account for the rest. Making relation table materialization cheaper is the next lever.
+
+Tried and reverted: deferring each table boundary's native `defineTable` conversion to first `.table` read. Relation declarations reference nearly every table by field, which forces the conversion while relations evaluate. The deferred path also needs an extra storage preflight so `defineRelations` never evaluates unknown accessors. Accord's payments, search and clients entries measured 137.6/82.5/110.6 ms without it and 139.2/82.4/112.0 ms with it.
+
+### Dependencies reachable from consumer bundles
+
+`effect` is imported only by `cvx-kit/effect`. A module that imports only `cvx-kit/auth`, `zod-table`, `contracts`, `relations` or `errors` does not reach it. xstate, evlog and mime are not cvx-kit dependencies; they come from the consumer's own imports. `cvx-kit` (root) and `cvx-kit/querying` reach `@noble/ciphers` through cursor sealing. The package is `sideEffects: false`, so unused modules drop out, but modules that are reached keep their top-level code.
+
+The budget in `scripts/bench/app-load-budget.json` is set from these numbers with headroom. Its `load` limits are machine-dependent, so re-baseline them on a slower machine. `retainedMB` is stable across runs.
+
 ## Reproduce
 
 Install the checkout's locked dependencies first (`bun install --frozen-lockfile`). Prepare source-only archives outside the checkout; do not use another application's checkout:

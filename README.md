@@ -392,6 +392,37 @@ registry structurally; `include()` bounds every read (default 100 rows).
 `resolveOrganization` derives org and role from your own tables, enabling
 identity providers whose tokens carry no org claims.
 
+Convex evaluates a function's whole static import graph on every request, and
+queries and mutations cannot use dynamic `import()`. Passing `triggers` here
+makes every module that imports these constructors, queries included, load
+every domain the trigger registry imports. Split the constructors:
+
+```ts
+// convex/functions/base.ts — no trigger import
+export const base = {
+	query,
+	action,
+	internalQuery,
+	internalAction,
+	getAuthUser,
+	mapRole,
+	adminRoles,
+}
+// convex/functions/read.ts — never imports the trigger registry
+export const { authQuery, adminQuery, authAction, include } = createAuthReaders<DataModel>(base)
+// convex/functions/write.ts
+export const { authMutation, systemMutation } = createAuthFunctions<DataModel>({
+	...base,
+	mutation,
+	internalMutation,
+	triggers,
+})
+```
+
+Query and action modules import only from `read.ts`. `createAuthReaders`
+shares the implementation, so identity, tenancy, rules, and role gates match;
+it has no mutation constructors.
+
 ### `cvx-kit/effect` — commands and queries
 
 Use the Effect API for new commands. Install Effect `>=4.0.1 <5`, bind host

@@ -6,16 +6,19 @@ import {
 	mutationGeneric,
 	queryGeneric,
 	defineSchema,
+	defineTable,
 	makeFunctionReference,
 	type GenericTableInfo,
 	type QueryInitializer,
 	type UserIdentity,
 } from 'convex/server'
 import { convexTest } from 'convex-test'
+import { v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
 
 import {
 	createAuthFunctions,
+	createAuthReaders,
 	createInclude,
 	defaultRoleMap,
 	type AuthFunctionsConfig,
@@ -254,5 +257,134 @@ describe('resolved auth identity', () => {
 			t.action(makeFunctionReference<'action', {}, null>('functions:check'), {}),
 		).rejects.toThrow(/FORBIDDEN/)
 		expect(calls).toEqual(['user', 'legacy-identity', 'role', 'membership'])
+	})
+})
+
+const notesSchema = defineSchema({
+	notes: defineTable({ tenant: v.string(), title: v.string() }),
+})
+type NotesModel = import('convex/server').DataModelFromSchemaDefinition<typeof notesSchema>
+type NotesRole = 'reader' | 'writer' | 'admin'
+
+describe('createAuthReaders', () => {
+	const { mutation, internalMutation, ...readerBuilders } = authBuilders
+	function base(verifyMembership?: AuthFunctionsConfig<NotesModel, NotesRole>['verifyMembership']) {
+		return {
+			...readerBuilders,
+			// oxlint-disable-next-line anti-slop/no-unknown-parameters -- The fixture resolves users from the identity alone.
+			getAuthUser: async (_ctx: unknown, identity: UserIdentity) => ({ id: identity.subject }),
+			mapRole: defaultRoleMap,
+			adminRoles: ['admin'],
+			verifyMembership,
+			security: { tenancy: { tables: ['notes'] as const } },
+		} satisfies Parameters<typeof createAuthReaders<NotesModel, NotesRole>>[0]
+	}
+	function constructorsFor(config: ReturnType<typeof base>) {
+		const readers = createAuthReaders<NotesModel, NotesRole>(config)
+		const full = createAuthFunctions<NotesModel, NotesRole>({
+			...config,
+			mutation,
+			internalMutation,
+		})
+		return { readers, full }
+	}
+	function modules(auth: ReturnType<typeof constructorsFor>['readers']) {
+		const list = (ctx: { db: import('convex/server').GenericDatabaseReader<NotesModel> }) =>
+			ctx.db
+				.query('notes')
+				.collect()
+				.then((rows) => rows.map((row) => row.title))
+		return {
+			'./_generated/server.ts': async () => ({}),
+			'./functions.ts': async () => ({
+				who: auth.authQuery({
+					args: {},
+					handler: async (ctx) => ({ user: ctx.user.id, tenant: ctx.tenant, role: ctx.role }),
+				}),
+				list: auth.authQuery({ args: {}, handler: list }),
+				adminList: auth.adminQuery({ args: {}, handler: list }),
+				writerList: auth.roleQuery('writer')({ args: {}, handler: list }),
+				act: auth.authAction({ args: {}, handler: async (ctx) => ctx.role }),
+			}),
+		}
+	}
+	const ref = <Type extends 'query' | 'action'>(_type: Type, name: string) =>
+		makeFunctionReference<Type, {}, unknown>(`functions:${name}`)
+	const identity = (org: string, role: string) => ({ ...resolvedIdentity, org_id: org, role })
+
+	async function harness(auth: ReturnType<typeof constructorsFor>['readers']) {
+		const t = convexTest(notesSchema, modules(auth))
+		await t.run(async (ctx) => {
+			await ctx.db.insert('notes', { tenant: 'org', title: 'mine' })
+			await ctx.db.insert('notes', { tenant: 'other', title: 'theirs' })
+		})
+		return t
+	}
+
+	it('exposes no mutation constructors', () => {
+		const { readers } = constructorsFor(base())
+		for (const key of [
+			'authMutation',
+			'roleMutation',
+			'adminMutation',
+			'serviceMutation',
+			'systemMutation',
+		])
+			expect(readers).not.toHaveProperty(key)
+		expect(Object.keys(readers).sort()).toEqual(
+			[
+				'include',
+				'authenticatedUser',
+				'authQuery',
+				'roleQuery',
+				'adminQuery',
+				'serviceQuery',
+				'systemQuery',
+				'authAction',
+				'roleAction',
+				'adminAction',
+				'systemAction',
+			].sort(),
+		)
+	})
+
+	it.each(['readers', 'full'] as const)(
+		'%s: resolves identity and hides cross-tenant rows from one shared base config',
+		async (kind) => {
+			const t = await harness(constructorsFor(base())[kind])
+			const caller = t.withIdentity(identity('org', 'writer'))
+			expect(await caller.query(ref('query', 'who'), {})).toEqual({
+				user: 'subject',
+				tenant: 'org',
+				role: 'writer',
+			})
+			expect(await caller.query(ref('query', 'list'), {})).toEqual(['mine'])
+			await expect(t.query(ref('query', 'list'), {})).rejects.toThrow(/UNAUTHENTICATED/)
+		},
+	)
+
+	it.each(['readers', 'full'] as const)('%s: gates roles and adminQuery', async (kind) => {
+		const t = await harness(constructorsFor(base())[kind])
+		const writer = t.withIdentity(identity('org', 'writer'))
+		const admin = t.withIdentity(identity('org', 'admin'))
+		await expect(writer.query(ref('query', 'adminList'), {})).rejects.toThrow(/FORBIDDEN/)
+		expect(await admin.query(ref('query', 'adminList'), {})).toEqual(['mine'])
+		expect(await writer.query(ref('query', 'writerList'), {})).toEqual(['mine'])
+		await expect(admin.query(ref('query', 'writerList'), {})).rejects.toThrow(/FORBIDDEN/)
+	})
+
+	it.each(['readers', 'full'] as const)('%s: actions verify membership', async (kind) => {
+		const rejecting = await harness(constructorsFor(base(async () => null))[kind])
+		await expect(
+			rejecting.withIdentity(identity('org', 'writer')).action(ref('action', 'act'), {}),
+		).rejects.toThrow(/FORBIDDEN/)
+		const verified = await harness(
+			constructorsFor(base(async ({ organizationId }) => ({ organizationId, roleSlug: 'admin' })))[
+				kind
+			],
+		)
+		expect(
+			await verified.withIdentity(identity('org', 'writer')).action(ref('action', 'act'), {}),
+		).toBe('admin')
 	})
 })

@@ -92,3 +92,35 @@ describe('registration defers validator conversion', () => {
 		})
 	}
 })
+
+describe('Effect API adapters', () => {
+	beforeEach(() => {
+		conversions.args = 0
+		conversions.returns = 0
+		conversions.fields = 0
+	})
+
+	it('keep getter-declared args and returns unread through registration', async () => {
+		const { effectZodApiBuilder } = await import('../src/modules/effect/api-zod')
+		let reads = 0
+		const query = effectZodApiBuilder(zCustomQuery(queryGeneric, NoOp), {})
+		const fn = query({
+			get args() {
+				reads++
+				return { value: z.string() }
+			},
+			get returns() {
+				reads++
+				return z.string()
+			},
+			handler: (_ctx, { value }) => value,
+		})
+		expect(reads).toBe(0)
+		expect(conversions).toEqual({ args: 0, returns: 0, fields: 0 })
+		expect(JSON.parse(exported(fn).exportArgs())).toEqual({
+			type: 'object',
+			value: { value: { fieldType: { type: 'string' }, optional: false } },
+		})
+		expect(reads).toBe(1)
+	})
+})

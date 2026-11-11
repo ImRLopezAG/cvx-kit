@@ -109,6 +109,26 @@ export function wrapEffectBuilder(
 			throw new Error('Effect API execution failed', { cause: exit.cause })
 		}
 		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Preserve the original native callable or object registration form.
-		return builder(typeof definition === 'function' ? handler : { ...definition, handler })
+		return builder(typeof definition === 'function' ? handler : withHandler(definition, handler))
 	}
+}
+
+/**
+ * Object-spread equivalent that forwards accessors instead of reading them, so
+ * getter-declared args and returns stay unread until the builder needs them.
+ */
+function withHandler(definition: { handler: Function }, handler: Function) {
+	const copy = { handler }
+	for (const key of Reflect.ownKeys(definition)) {
+		const descriptor = Object.getOwnPropertyDescriptor(definition, key)
+		if (key === 'handler' || !descriptor?.enumerable) continue
+		Object.defineProperty(copy, key, {
+			configurable: true,
+			enumerable: true,
+			...(descriptor.get
+				? { get: () => descriptor.get!.call(definition) }
+				: { value: descriptor.value, writable: true }),
+		})
+	}
+	return copy
 }

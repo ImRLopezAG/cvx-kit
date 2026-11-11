@@ -25,6 +25,7 @@ import {
 	zCustomMutation as kitMutation,
 	zCustomAction as kitAction,
 } from '../src/zod-registration'
+import { relationFilterSchema, scalarPredicateFromSchema, type FilterGrammar } from '../src/querying/shared/filters'
 
 const implementations = [
 	{
@@ -94,13 +95,20 @@ for (const impl of implementations) {
 				args: { token: v.string() },
 				input: () => ({ ctx: {}, args: {} }),
 			})
+			const lazy = impl.name === 'kit adapter'
 			expect(() => {
 				// @ts-expect-error invalid input schema probes the registration error ordering
 				return builder({ args: z.string(), returns: z.date(), handler: () => new Date() })
-			}).toThrow('Validator ZodDate is not supported in Convex')
-			expect(() => builder({ returns: z.date(), handler: () => new Date() })).toThrow(
-				'Validator ZodDate is not supported in Convex',
+			}).toThrow(
+				// The kit defers conversion to export, so the registration-time shape check wins.
+				lazy ? 'Unsupported zod type as args validator' : 'Validator ZodDate is not supported in Convex',
 			)
+			const register = () => builder({ returns: z.date(), handler: () => new Date() })
+			if (lazy)
+				expect(() => runtime(register()).exportReturns()).toThrow(
+					'Validator ZodDate is not supported in Convex',
+				)
+			else expect(register).toThrow('Validator ZodDate is not supported in Convex')
 			// Skipping omits return conversion, so the original customization guard wins.
 			expect(() =>
 				builder({ returns: z.date(), skipConvexValidation: true, handler: () => new Date() }),
@@ -422,9 +430,11 @@ for (const impl of implementations) {
 				args: { value: v.string() },
 				input: () => ({ ctx: {}, args: {} }),
 			})
-			expect(() => builder({ args: { value: z.number() }, handler: () => null })).toThrow(
-				'Cannot intersect validators with different kinds: float64 and string',
-			)
+			const register = () => builder({ args: { value: z.number() }, handler: () => null })
+			const intersect = 'Cannot intersect validators with different kinds: float64 and string'
+			if (impl.name === 'kit adapter')
+				expect(() => runtime(register()).exportArgs()).toThrow(intersect)
+			else expect(register).toThrow(intersect)
 			const fn = builder({ args: { value: z.string().optional() }, handler: () => null })
 			expect(JSON.parse(runtime(fn).exportArgs()).value.value.optional).toBe(false)
 			for (const args of [z.string(), mini.string()]) {
@@ -604,3 +614,292 @@ it.each(['object', 'shape'] as const)(
 		expect(Object.isFrozen(check)).toBe(false)
 	},
 )
+
+describe('registration metadata parity', () => {
+	const tokenInput = { args: { token: v.string() }, input: () => ({ ctx: {}, args: {} }) }
+	function compactArgs() {
+		const grammar: FilterGrammar = {
+			fields: { value: scalarPredicateFromSchema(z.string(), true, false).optional() },
+			relations: {},
+		}
+		return { filters: relationFilterSchema(grammar, undefined, { validator: 'compact' }) }
+	}
+	const forms = {
+		plainArgs: () =>
+			kitQuery(queryGeneric, NoOp)({ args: { value: z.string() }, handler: () => null }),
+		zodObjectArgs: () =>
+			kitQuery(
+				queryGeneric,
+				NoOp,
+			)({ args: z.object({ value: z.number().optional() }), handler: () => null }),
+		compactArgs: () => kitQuery(queryGeneric, NoOp)({ args: compactArgs(), handler: () => null }),
+		customInputArgs: () =>
+			kitQuery(queryGeneric, tokenInput)({ args: { value: z.string() }, handler: () => null }),
+		zodObjectReturns: () =>
+			kitQuery(queryGeneric, NoOp)({ returns: z.object({ a: z.string() }), handler: () => ({ a: '' }) }),
+		fieldReturns: () =>
+			kitQuery(
+				queryGeneric,
+				NoOp,
+			)({ args: {}, returns: { a: z.number().nullable() }, handler: () => ({ a: null }) }),
+		skipConvexValidation: () =>
+			kitQuery(
+				queryGeneric,
+				NoOp,
+			)({
+				args: { value: z.string() },
+				returns: z.string(),
+				skipConvexValidation: true,
+				handler: () => '',
+			}),
+	}
+	const exported = (fn: { isConvexFunction: true }) => [
+		runtime(fn).exportArgs(),
+		runtime(fn).exportReturns(),
+	]
+	it('keeps exported args and returns JSON byte-identical for every declaration form', () => {
+		expect(Object.fromEntries(Object.entries(forms).map(([k, make]) => [k, exported(make())])))
+			.toMatchInlineSnapshot(`
+				{
+				  "compactArgs": [
+				    "{"type":"object","value":{"filters":{"fieldType":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true},"fields":{"fieldType":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true}}},"optional":true},"and":{"fieldType":{"type":"array","value":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true},"fields":{"fieldType":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true}}},"optional":true},"and":{"fieldType":{"type":"array","value":{"type":"any"}},"optional":true},"or":{"fieldType":{"type":"array","value":{"type":"any"}},"optional":true},"not":{"fieldType":{"type":"any"},"optional":true}}}},"optional":true},"or":{"fieldType":{"type":"array","value":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true},"fields":{"fieldType":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true}}},"optional":true},"and":{"fieldType":{"type":"array","value":{"type":"any"}},"optional":true},"or":{"fieldType":{"type":"array","value":{"type":"any"}},"optional":true},"not":{"fieldType":{"type":"any"},"optional":true}}}},"optional":true},"not":{"fieldType":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true},"fields":{"fieldType":{"type":"object","value":{"value":{"fieldType":{"type":"union","value":[{"type":"string"},{"type":"object","value":{"eq":{"fieldType":{"type":"string"},"optional":true},"in":{"fieldType":{"type":"array","value":{"type":"string"}},"optional":true},"gt":{"fieldType":{"type":"string"},"optional":true},"gte":{"fieldType":{"type":"string"},"optional":true},"lt":{"fieldType":{"type":"string"},"optional":true},"lte":{"fieldType":{"type":"string"},"optional":true}}}]},"optional":true}}},"optional":true},"and":{"fieldType":{"type":"array","value":{"type":"any"}},"optional":true},"or":{"fieldType":{"type":"array","value":{"type":"any"}},"optional":true},"not":{"fieldType":{"type":"any"},"optional":true}}},"optional":true}}},"optional":false}}}",
+				    "null",
+				  ],
+				  "customInputArgs": [
+				    "{"type":"object","value":{"value":{"fieldType":{"type":"string"},"optional":false},"token":{"fieldType":{"type":"string"},"optional":false}}}",
+				    "null",
+				  ],
+				  "fieldReturns": [
+				    "{"type":"object","value":{}}",
+				    "{"type":"object","value":{"a":{"fieldType":{"type":"union","value":[{"type":"number"},{"type":"null"}]},"optional":false}}}",
+				  ],
+				  "plainArgs": [
+				    "{"type":"object","value":{"value":{"fieldType":{"type":"string"},"optional":false}}}",
+				    "null",
+				  ],
+				  "skipConvexValidation": [
+				    "{"type":"any"}",
+				    "null",
+				  ],
+				  "zodObjectArgs": [
+				    "{"type":"object","value":{"value":{"fieldType":{"type":"number"},"optional":true}}}",
+				    "null",
+				  ],
+				  "zodObjectReturns": [
+				    "{"type":"any"}",
+				    "{"type":"object","value":{"a":{"fieldType":{"type":"string"},"optional":false}}}",
+				  ],
+				}
+			`)
+	})
+
+	it('keeps the same exported JSON when args and returns are declared as getters', () => {
+		const lazy = {
+			plainArgs: () =>
+				kitQuery(
+					queryGeneric,
+					NoOp,
+				)({
+					get args() {
+						return { value: z.string() }
+					},
+					handler: () => null,
+				}),
+			zodObjectArgs: () =>
+				kitQuery(
+					queryGeneric,
+					NoOp,
+				)({
+					get args() {
+						return z.object({ value: z.number().optional() })
+					},
+					handler: () => null,
+				}),
+			compactArgs: () =>
+				kitQuery(
+					queryGeneric,
+					NoOp,
+				)({
+					get args() {
+						return compactArgs()
+					},
+					handler: () => null,
+				}),
+			customInputArgs: () =>
+				kitQuery(
+					queryGeneric,
+					tokenInput,
+				)({
+					get args() {
+						return { value: z.string() }
+					},
+					handler: () => null,
+				}),
+			zodObjectReturns: () =>
+				kitQuery(
+					queryGeneric,
+					NoOp,
+				)({
+					get returns() {
+						return z.object({ a: z.string() })
+					},
+					handler: () => ({ a: '' }),
+				}),
+			fieldReturns: () =>
+				kitQuery(
+					queryGeneric,
+					NoOp,
+				)({
+					get args() {
+						return {}
+					},
+					get returns() {
+						return { a: z.number().nullable() }
+					},
+					handler: () => ({ a: null }),
+				}),
+			skipConvexValidation: () =>
+				kitQuery(
+					queryGeneric,
+					NoOp,
+				)({
+					get args() {
+						return { value: z.string() }
+					},
+					get returns() {
+						return z.string()
+					},
+					skipConvexValidation: true,
+					handler: () => '',
+				}),
+		}
+		for (const [name, make] of Object.entries(lazy))
+			// SAFETY: every getter form is keyed by the data form it mirrors.
+			expect(exported(make()), name).toEqual(exported(forms[name as keyof typeof forms]()))
+	})
+
+	it('does not read getter-declared args or returns at registration', () => {
+		const reads = { args: 0, returns: 0 }
+		const fn = kitQuery(
+			queryGeneric,
+			tokenInput,
+		)({
+			get args() {
+				reads.args++
+				return { value: z.string() }
+			},
+			get returns() {
+				reads.returns++
+				return z.string()
+			},
+			handler: () => '',
+		})
+		expect(reads).toEqual({ args: 0, returns: 0 })
+		runtime(fn).exportArgs()
+		runtime(fn).exportArgs()
+		expect(reads).toEqual({ args: 1, returns: 0 })
+		runtime(fn).exportReturns()
+		expect(reads).toEqual({ args: 1, returns: 1 })
+	})
+
+	it('parses, rejects and strips identically for data and getter declarations', async () => {
+		const countArgs = () => ({ count: z.string().transform(Number) })
+		const out = () => z.object({ count: z.number() })
+		const data = kitQuery(
+			queryGeneric,
+			NoOp,
+		)({ args: countArgs(), returns: out(), handler: (_, a) => ({ ...a, extra: true }) })
+		const lazy = kitQuery(
+			queryGeneric,
+			NoOp,
+		)({
+			get args() {
+				return countArgs()
+			},
+			get returns() {
+				return out()
+			},
+			handler: (_, a) => ({ ...a, extra: true }),
+		})
+		const t = convexTest(schema, { ...modules, './functions.ts': async () => ({ data, lazy }) })
+		for (const name of ['data', 'lazy']) {
+			const ref = makeFunctionReference<'query', { count: string }>(`functions:${name}`)
+			expect(await t.query(ref, { count: '3' })).toEqual({ count: 3 })
+		}
+		const failure = (fn: { isConvexFunction: true }) =>
+			harness()
+				.run((ctx) => runtime(fn)._handler(ctx, { count: 3 }))
+				// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Rejections are compared, not consumed.
+				.catch((error: unknown) => error)
+		const [dataError, lazyError] = await Promise.all([failure(data), failure(lazy)])
+		expect(dataError).toBeInstanceOf(ConvexError)
+		expect(lazyError).toBeInstanceOf(ConvexError)
+		// SAFETY: both rejections were just asserted to be ConvexError instances.
+		expect((lazyError as ConvexError<Value>).data).toEqual((dataError as ConvexError<Value>).data)
+	})
+
+	it('still preflights compact filters before customization for getter args', async () => {
+		const events: string[] = []
+		const fn = kitQuery(queryGeneric, {
+			args: {},
+			input: () => {
+				events.push('input')
+				return { ctx: {}, args: {} }
+			},
+		})({
+			get args() {
+				return compactArgs()
+			},
+			handler: () => {
+				events.push('handler')
+				return null
+			},
+		})
+		// oxlint-disable-next-line anti-slop/no-object-parameters -- Builds an arbitrarily deep filter payload.
+		const nested = (n: number, value: object): object => (n ? { not: nested(n - 1, value) } : value)
+		await expect(
+			harness().run((ctx) => runtime(fn)._handler(ctx, { filters: nested(2, { value: 7 }) })),
+		).rejects.toBeInstanceOf(ConvexError)
+		expect(events).toEqual([])
+	})
+
+	it('surfaces a throwing args getter at export and invocation, never running unvalidated', async () => {
+		let reads = 0
+		const handled: unknown[] = []
+		const fn = kitQuery(
+			queryGeneric,
+			NoOp,
+		)({
+			get args(): { value: z.ZodString } {
+				reads++
+				throw new Error('broken args')
+			},
+			handler: (_, args) => {
+				handled.push(args)
+				return null
+			},
+		})
+		expect(reads).toBe(0)
+		expect(() => runtime(fn).exportArgs()).toThrow('broken args')
+		for (let attempt = 0; attempt < 2; attempt++)
+			await expect(
+				harness().run((ctx) => runtime(fn)._handler(ctx, { value: 'x' })),
+			).rejects.toThrow('broken args')
+		expect(handled).toEqual([])
+		expect(reads).toBe(1)
+	})
+
+	it('rejects nonobject getter args at export instead of registration', () => {
+		const fn = kitQuery(
+			queryGeneric,
+			NoOp,
+		)({
+			// @ts-expect-error runtime rejection of nonobject argument schemas
+			get args() {
+				return z.string()
+			},
+			handler: () => null,
+		})
+		expect(() => runtime(fn).exportArgs()).toThrow('Unsupported zod type as args validator: ZodString')
+	})
+})

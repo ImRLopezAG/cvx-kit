@@ -150,6 +150,7 @@ export function defineAppRelations(tables: AppTables) {
 }
 
 type Section = Record<string, { input: z.ZodType; result: z.ZodType }>
+type OperationBuilder = () => { input: z.ZodType; result: z.ZodType }
 
 /**
  * Accord-shaped domain contract: commands over one entity, a detail query and
@@ -166,7 +167,7 @@ export function defineAppContract(
 	const boundary = tables[domain]
 	const id = z.strictObject({ id: zid(domain) })
 	const ok = z.strictObject({ ok: z.literal(true) })
-	const commandBuilders: Record<string, () => { input: z.ZodType; result: z.ZodType }> = {}
+	const commandBuilders: Record<string, OperationBuilder> = {}
 	for (const verb of [
 		'create',
 		'rename',
@@ -190,7 +191,7 @@ export function defineAppContract(
 			result: verb === 'create' ? id : ok,
 		})
 	// oxlint-disable-next-line anti-slop/no-known-value-widening -- Generated operation names; entries are built lazily.
-	const queryBuilders: Record<string, () => { input: z.ZodType; result: z.ZodType }> = {
+	const queryBuilders: Record<string, OperationBuilder> = {
 		getRecord: () => ({ input: id, result: boundary.publicDto.nullable() }),
 		getPayment: () => ({
 			input: z.strictObject({ id: zid('payments') }),
@@ -230,10 +231,7 @@ export function defineAppContract(
 			result: relations.tables[domain].pageDto({ parent: true }),
 		}),
 	}
-	const section = (
-		builders: Record<string, () => { input: z.ZodType; result: z.ZodType }>,
-		classification?: string,
-	) => {
+	const section = (builders: Record<string, OperationBuilder>, classification?: string) => {
 		const value: Section = {}
 		for (const [key, build] of Object.entries(builders)) {
 			const read = classification ? () => ({ ...build(), classification }) : build

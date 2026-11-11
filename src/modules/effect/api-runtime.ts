@@ -2,6 +2,7 @@ import { Cause, Context, Effect, Exit } from 'effect'
 import type { Scope } from 'effect'
 import { ConvexError, type Value } from 'convex/values'
 import type { ErrorContract, ErrorDefinitions } from '../contracts/errors'
+import { memoize } from '../contracts/lazy'
 import { projectErrorCause } from './errors'
 import { normalizeEffect } from './normalize'
 import type { CallbackRequirements, EffectValue } from './operation'
@@ -126,7 +127,7 @@ function withHandler(definition: { handler: Function }, handler: Function) {
 			configurable: true,
 			enumerable: true,
 			...(descriptor.get
-				? { get: () => descriptor.get!.call(definition) }
+				? { get: memoize(() => descriptor.get!.call(definition)) }
 				: { value: descriptor.value, writable: true }),
 		})
 	}

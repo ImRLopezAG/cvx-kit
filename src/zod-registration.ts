@@ -138,10 +138,11 @@ function declared(definition: object, key: PropertyKey): PropertyDescriptor | un
 /** Present means the destructured value would select the declared branch; accessors always do. */
 function presence(definition: object, key: PropertyKey) {
 	const descriptor = declared(definition, key)
-	if (!descriptor) return { present: false, read: () => undefined }
-	if (!('value' in descriptor)) return { present: true, read: () => Reflect.get(definition, key) }
+	if (!descriptor) return { present: false, data: false, read: () => undefined }
+	if (!('value' in descriptor))
+		return { present: true, data: false, read: () => Reflect.get(definition, key) }
 	const value = descriptor.value
-	return { present: Boolean(value), read: () => value }
+	return { present: Boolean(value), data: true, read: () => value }
 }
 
 const reserved = new Set<PropertyKey>(['args', 'returns', 'handler', 'skipConvexValidation'])
@@ -175,7 +176,8 @@ function customFnBuilder(
 	return function customBuilder(fn: any): any {
 		// Descriptor reads keep getter-declared args/returns unread until Convex or a call needs them.
 		const handler = fn.handler === undefined ? fn : fn.handler
-		const skipConvexValidation = fn.skipConvexValidation === undefined ? false : fn.skipConvexValidation
+		const skipConvexValidation =
+			fn.skipConvexValidation === undefined ? false : fn.skipConvexValidation
 		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Builders accept a bare handler function or a definition object.
 		const extra = typeof fn === 'object' && fn !== null ? extraOptions(fn) : {}
 		const declaredArgs = presence(fn, 'args')
@@ -191,7 +193,7 @@ function customFnBuilder(
 			const returns = returnsSchema()
 			return returns ? zodOutputToConvex(returns) : undefined
 		})
-		const definition = (handle: (ctx: any, args: any) => Promise<any>) => {
+		const nativeDefinition = (handle: (ctx: any, args: any) => Promise<any>) => {
 			// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- The native definition carries opaque validators and the handler.
 			const native: Record<string, unknown> = {}
 			if (declaredReturns.present && !skipConvexValidation)
@@ -201,8 +203,7 @@ function customFnBuilder(
 		}
 
 		if (declaredArgs.present) {
-			const declaredDescriptor = declared(fn, 'args')
-			const dataArgs = Boolean(declaredDescriptor && 'value' in declaredDescriptor)
+			const dataArgs = declaredArgs.data
 			// Data-declared args keep the registration-time shape check.
 			if (dataArgs) argumentFields(declaredArgs.read())
 			const argsState = memoize(() => {
@@ -220,7 +221,7 @@ function customFnBuilder(
 				// One conversion preserves graph sharing across all user argument fields.
 				return addFieldsToValidator(boundary?.validator ?? zodToConvex(argsSchema), inputArgs)
 			})
-			const native = definition(async (ctx: any, allArgs: any) => {
+			const native = nativeDefinition(async (ctx: any, allArgs: any) => {
 				const { argsSchema, argsKeys, boundary } = argsState()
 				const returns = returnsSchema()
 				boundary?.preflight(allArgs)
@@ -259,7 +260,7 @@ function customFnBuilder(
 			)
 		}
 		return builder(
-			definition(async (ctx: any, args: any) => {
+			nativeDefinition(async (ctx: any, args: any) => {
 				const returns = returnsSchema()
 				rawArguments.set(ctx, args)
 				const added = await customInput(ctx, args, extra)

@@ -325,10 +325,7 @@ export type AuthFunctions<DataModel extends GenericDataModel, Role extends strin
 export type AuthReaders<
 	DataModel extends GenericDataModel,
 	Role extends string = DefaultRole,
-> = Omit<
-	AuthFunctions<DataModel, Role>,
-	'authMutation' | 'roleMutation' | 'adminMutation' | 'serviceMutation' | 'systemMutation'
->
+> = Omit<AuthFunctions<DataModel, Role>, `${string}Mutation`>
 
 export type ServiceQuery<
 	DataModel extends GenericDataModel,

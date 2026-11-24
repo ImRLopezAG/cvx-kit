@@ -158,6 +158,52 @@ describe('Effect Action registry', () => {
 		expect(await titles(t)).toEqual([])
 	})
 
+	it('leaves a payload-free trace when the audit write fails without a failure sink', async () => {
+		const traces: string[] = []
+		const original = console.error
+		console.error = (message: string) => {
+			traces.push(message)
+		}
+		try {
+			const foundation = createEffectFoundation({
+				observability: {
+					enabled: false,
+					classifyError: () => ({ outcome: 'failed', errorCode: 'F' }),
+				},
+				writeAudit: () => undefined,
+				writeActionAudit: () => {
+					throw Error('audit store down')
+				},
+			})
+			const actions = foundation.Action({
+				context: () => ({}),
+				operations: ({ action }) => ({
+					'settlement.ping': action({
+						input: z.string(),
+						result: z.string(),
+						handler: (input) => input,
+						audit: () => ({
+							operation: 'settlement.ping',
+							actorId: 'system',
+							aggregate: { type: 'settlement', id: 'secret-value' },
+						}),
+					}),
+				}),
+			})
+			expect(await Effect.runPromise(actions.exec('settlement.ping', 'x', undefined))).toBe('x')
+		} finally {
+			console.error = original
+		}
+		expect(traces.map((trace) => JSON.parse(trace))).toEqual([
+			{
+				event: 'action.audit_write_failed',
+				errorCode: 'ACTION_AUDIT_WRITE_FAILED',
+				operation: 'settlement.ping',
+				classification: 'action',
+			},
+		])
+	})
+
 	it('returns the result when the audit write fails after the side effect', async () => {
 		const h = setup({ writer: 'throws' })
 		const t = convexTest(schema, modules)
@@ -201,7 +247,7 @@ describe('Effect Action registry', () => {
 		expect(h.audits).toEqual([])
 	})
 
-	it('joins the request scope of an enclosing action', async () => {
+	it('keeps a nested action audit even when the enclosing action fails', async () => {
 		const h = setup()
 		const foundation = createEffectFoundation({
 			observability: {
@@ -219,7 +265,10 @@ describe('Effect Action registry', () => {
 				'batch.run': action({
 					input: z.string(),
 					result: z.string(),
-					handler: (title, ctx) => ctx.inner.exec('settlement.post', { title }),
+					handler: (title, ctx) =>
+						ctx.inner
+							.exec('settlement.post', { title })
+							.pipe(Effect.andThen(Effect.die(Error('batch aborted after settlement')))),
 					audit: () => ({
 						operation: 'batch.run',
 						actorId: 'system',
@@ -229,8 +278,12 @@ describe('Effect Action registry', () => {
 			}),
 		})
 		const t = convexTest(schema, modules)
-		await t.action((host) => Effect.runPromise(outer.exec('batch.run', 'c', host)))
-		expect(h.audits.map((entry) => entry.operation)).toEqual(['batch.run'])
+		await expect(
+			t.action((host) => Effect.runPromise(outer.exec('batch.run', 'c', host))),
+		).rejects.toThrow('batch aborted after settlement')
+		// The nested settlement committed through runMutation, so its own entry must survive.
+		expect(await titles(t)).toEqual(['c'])
+		expect(h.audits.map((entry) => entry.operation)).toEqual(['settlement.post'])
 	})
 	it('audits a nested action whose enclosing action declares no audit', async () => {
 		const h = setup()

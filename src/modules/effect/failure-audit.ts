@@ -1,7 +1,8 @@
 import { Cause, Effect, Exit } from 'effect'
 import type { Value } from 'convex/values'
-import type { ErrorContract, ErrorDefinitions } from '../contracts/errors'
+import { isRecord, type ErrorContract, type ErrorDefinitions } from '../contracts/errors'
 import { projectErrorCause } from './errors'
+import { observationFailure } from './normalize'
 import type { ScopeState } from './scope'
 
 type JsonRecord = Readonly<Record<string, Value>>
@@ -38,7 +39,7 @@ export type FailureAuditOptions = Readonly<{
 	input?: (input: unknown, operation: string) => JsonRecord | undefined
 }>
 
-export type FailureReport = Readonly<{
+type FailureReport = Readonly<{
 	kind: FailureAuditEntry['kind']
 	operation: string
 	classification: string
@@ -58,83 +59,97 @@ export function reportFailure(
 	if (!options || Exit.isSuccess(exit)) return Effect.void
 	const cause = exit.cause
 	if (!Cause.hasFails(cause) && !Cause.hasDies(cause)) return Effect.void
-	return Effect.tryPromise({
-		try: async () => {
-			const failure = failureValue(cause)
-			if (failure instanceof Object) {
-				if (report.current.reported.has(failure)) return
-				report.current.reported.add(failure)
-			}
-			let projected = report.contract
-				? projectErrorCause(report.contract, cause)
-				: ({ _tag: 'UnknownFailure', version: 1 } as const)
-			if (projected._tag !== 'DeclaredFailure' && options.errors)
-				projected = projectErrorCause(options.errors, cause)
-			const declaredFailure = projected._tag === 'DeclaredFailure' ? projected : undefined
-			const declared = declaredFailure !== undefined
-			const errorCode = declaredFailure?.code ?? 'UNKNOWN_FAILURE'
-			const details =
-				declaredFailure && options.details
-					? redact(() => options.details!(declaredFailure.details, errorCode, report.operation))
-					: undefined
-			const input = options.input
-				? redact(() => options.input!(report.input, report.operation))
+	return emitQuietly(options, () => {
+		const failure = observationFailure(cause)
+		if (failure instanceof Object) {
+			if (report.current.reported.has(failure)) return undefined
+			report.current.reported.add(failure)
+		}
+		let projected = report.contract
+			? projectErrorCause(report.contract, cause)
+			: ({ _tag: 'UnknownFailure', version: 1 } as const)
+		if (projected._tag !== 'DeclaredFailure' && options.errors)
+			projected = projectErrorCause(options.errors, cause)
+		const declaredFailure = projected._tag === 'DeclaredFailure' ? projected : undefined
+		const errorCode = declaredFailure?.code ?? 'UNKNOWN_FAILURE'
+		const details =
+			declaredFailure && options.details
+				? redact(() => options.details!(declaredFailure.details, errorCode, report.operation))
 				: undefined
-			const entry: FailureAuditEntry = Object.assign(
-				{
-					kind: report.kind,
-					operation: report.operation,
-					classification: report.classification,
-					errorCode,
-					declared,
-					root: report.entered?.scope.root ?? report.operation,
-					depth: report.entered?.scope.depth ?? 0,
-				},
-				details === undefined ? undefined : { details },
-				input === undefined ? undefined : { input },
-			)
-			await options.emit(Object.freeze(entry))
-		},
-		catch: () => undefined,
-	}).pipe(Effect.ignore)
+		const input = options.input
+			? redact(() => options.input!(report.input, report.operation))
+			: undefined
+		return Object.assign(
+			{
+				kind: report.kind,
+				operation: report.operation,
+				classification: report.classification,
+				errorCode,
+				declared: declaredFailure !== undefined,
+				...position(report),
+			},
+			details === undefined ? undefined : { details },
+			input === undefined ? undefined : { input },
+		)
+	})
 }
 
-/** A completed action whose audit write failed keeps its result; the sink records the missing entry. */
 export function reportAuditWriteFailure(
 	options: FailureAuditOptions | undefined,
 	report: Pick<FailureReport, 'operation' | 'classification' | 'entered'>,
 ): Effect.Effect<void> {
-	if (!options) return Effect.void
-	const entry: FailureAuditEntry = {
+	// Without a sink, still leave a payload-free trace that an audited action went unrecorded.
+	if (!options)
+		return Effect.sync(() => {
+			try {
+				console.error(
+					JSON.stringify({
+						event: 'action.audit_write_failed',
+						errorCode: 'ACTION_AUDIT_WRITE_FAILED',
+						operation: report.operation,
+						classification: report.classification,
+					}),
+				)
+			} catch {
+				// The fallback trace is as inert as the sink it replaces.
+			}
+		})
+	return emitQuietly(options, () => ({
 		kind: 'action',
 		operation: report.operation,
 		classification: report.classification,
 		errorCode: 'ACTION_AUDIT_WRITE_FAILED',
 		declared: false,
-		root: report.entered?.scope.root ?? report.operation,
-		depth: report.entered?.scope.depth ?? 0,
-	}
+		...position(report),
+	}))
+}
+
+/** The sink is inert: building or emitting an entry can never change the operation's outcome. */
+function emitQuietly(
+	options: FailureAuditOptions,
+	build: () => FailureAuditEntry | undefined,
+): Effect.Effect<void> {
 	return Effect.tryPromise({
-		try: async () => options.emit(Object.freeze(entry)),
+		try: async () => {
+			const entry = build()
+			if (entry) await options.emit(Object.freeze(entry))
+		},
 		catch: () => undefined,
 	}).pipe(Effect.ignore)
 }
 
-function failureValue(cause: Cause.Cause<unknown>) {
-	const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined
-	if (reason && Cause.isFailReason(reason)) return reason.error
-	if (reason && Cause.isDieReason(reason)) return reason.defect
-	return cause
+function position(report: Pick<FailureReport, 'operation' | 'entered'>) {
+	return {
+		root: report.entered?.scope.root ?? report.operation,
+		depth: report.entered?.scope.depth ?? 0,
+	}
 }
 
-/** Keep a redactor's result only when it is a plain JSON record; a throwing redactor omits the field. */
 function redact(read: () => JsonRecord | undefined): JsonRecord | undefined {
 	try {
 		const value: unknown = read()
-		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Application redactors are untrusted; only a plain record may enter the entry.
-		if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
-		const prototype = Object.getPrototypeOf(value)
-		if (prototype !== Object.prototype && prototype !== null) return undefined
+		// Application redactors are untrusted; only a plain record may enter the entry.
+		if (!isRecord(value)) return undefined
 		// SAFETY: the JSON round trip yields plain JSON values, a subset of Convex values.
 		return JSON.parse(JSON.stringify(value)) as JsonRecord
 	} catch {

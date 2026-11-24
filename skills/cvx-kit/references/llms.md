@@ -309,7 +309,7 @@ and input-only command handlers remain supported. See [optional context injectio
 
 - Nested `exec` calls yielded inside a handler join the caller's request scope.
   By default (`nestedAudit: 'fold'`) a command nested under an auditing operation
-  writes no audit entry; never thread a `nestedAudit` flag through bound
+  writes no audit entry (actions never fold); never thread a `nestedAudit` flag through bound
   contexts. `nestedAudit: 'separate'` keeps per-operation entries. Audit
   callbacks get the entered scope as a third argument. `Effect.runPromise`
   inside a handler opens a new scope, so yield nested executions.

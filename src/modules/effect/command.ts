@@ -1,6 +1,6 @@
 import { memoize, registerLazyRegistry } from '../contracts/lazy'
 /* oxlint-disable anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- Overload implementation storage is erased; public signatures retain concrete values, errors and services. */
-import { Effect, Exit } from 'effect'
+import { Cause, Effect, Exit } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractSchema } from '../contracts/contract'
 import {
@@ -206,7 +206,6 @@ export function createEffectCommand<
 		contract?: Pick<DomainContract, 'errors'>
 		mode?: 'action'
 	}
-	// A contracted registry projects its failures through the contract's errors.
 	const errorContract = internal.contract?.errors
 	const kind = internal.mode ?? 'command'
 	const exec = <Key extends Extract<keyof Operations, string>>(
@@ -314,7 +313,8 @@ export function createEffectCommand<
 										unknown
 									>,
 								audit: (result) =>
-									!audit || auditFolded(configuration.nestedAudit, entered)
+									// Actions commit as they go, so a nested action's effects always need their own entry.
+									!audit || (kind !== 'action' && auditFolded(configuration.nestedAudit, entered))
 										? Effect.succeed(null)
 										: normalizeEffect(() => audit({ command, result }, context, entered?.scope)),
 								writeAudit: (entry) => {
@@ -322,15 +322,16 @@ export function createEffectCommand<
 										// SAFETY: HostCompatible proves this invocation satisfies the configured writer host.
 										return configuration.writeAudit(host as never, entry)
 									})
-									// An action's side effects already happened; a failed audit write must not invite a retry.
 									return kind === 'action'
 										? write.pipe(
-												Effect.catchCause(() =>
-													reportAuditWriteFailure(configuration.auditFailure, {
-														operation,
-														classification,
-														entered,
-													}),
+												Effect.catchCause((cause) =>
+													Cause.hasInterrupts(cause)
+														? Effect.failCause(cause)
+														: reportAuditWriteFailure(configuration.auditFailure, {
+																operation,
+																classification,
+																entered,
+															}),
 												),
 											)
 										: write

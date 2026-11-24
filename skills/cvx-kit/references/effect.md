@@ -365,10 +365,12 @@ operation of a program opens it, and any `exec` yielded inside that operation's
 handler or middleware joins it. Typically this is a bound registry from
 `withContext`. Nothing needs to be added to the bound context.
 
-By default (`nestedAudit: 'fold'`), a command or action nested under an
-operation that declares an audit callback does not run its own audit callback
-and writes no audit entry. The outermost auditing operation's entry stands for
-the request. A nested operation without an auditing ancestor still audits, for
+By default (`nestedAudit: 'fold'`), a command nested under an operation that
+declares an audit callback does not run its own audit callback and writes no
+audit entry. The outermost auditing operation's entry stands for the request;
+a failure rolls the nested writes back with it. Actions never fold: each
+`ctx.runMutation` commits on its own, so an audited nested action keeps its own
+entry even when the enclosing action later fails. A nested operation without an auditing ancestor still audits, for
 example a command executed inside a query or inside an action that declares no
 audit. An ancestor whose audit callback returns `null` has chosen not to audit
 the request.
@@ -570,7 +572,8 @@ first execution, before any handler runs. Each `ctx.runMutation` is its own
 transaction, so a completed action's side effects stand even if its audit write
 then fails. In that case the action still returns its result and reports
 `ACTION_AUDIT_WRITE_FAILED` to `auditFailure`, so callers do not retry work
-that already happened.
+that already happened. Without an `auditFailure` sink, it logs a payload-free
+`action.audit_write_failed` line with `console.error` instead.
 
 Actions have no `prepare`, `replayResult` or `permission` (authorize with a
 guard) and no `expose`. Domain contracts can declare them in an `actions`

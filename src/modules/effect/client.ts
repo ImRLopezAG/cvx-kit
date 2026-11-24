@@ -40,6 +40,7 @@ export {
 export { effectApiBuilder, type EffectApiBuilder } from './api'
 export { effectZodApiBuilder, type EffectZodApiBuilder } from './api-zod'
 export { projectErrorCause } from './errors'
+export { effectErrors, type EffectErrors } from './failures'
 export type { FailureAuditEntry, FailureAuditOptions } from './failure-audit'
 export type { NestedAuditMode, RequestScope } from './scope'
 export {

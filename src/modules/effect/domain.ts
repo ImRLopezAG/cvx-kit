@@ -4,6 +4,8 @@ import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractInput, ContractOutput, ContractSchema } from '../contracts/contract'
 import type { DomainOperationContract, ExactOperationKeys } from '../contracts/domain'
 import { domainHelpers, type DeclaredSchemas } from '../contracts/binding'
+import type { ErrorContract, ErrorDefinitions } from '../contracts/errors'
+import { effectErrors, type EffectErrors } from './failures'
 import {
 	effectOperationFactory,
 	type OperationDefinition,
@@ -185,7 +187,8 @@ export type DomainEffectFactory<
 	Default = never,
 	BaseError = never,
 	BaseRequirements = never,
-> = {
+	Errors = never,
+> = ContractErrorHelpers<Errors> & {
 	[Kind in Command extends true ? 'command' : 'query']: {
 		readonly [Key in keyof Entries]: Helper<
 			Context,
@@ -225,6 +228,7 @@ export function domainEffectFactory<
 >(
 	entries: Entries,
 	command: Command,
+	errors?: object,
 ): DomainEffectFactory<
 	Context,
 	Entries,
@@ -234,8 +238,10 @@ export function domainEffectFactory<
 	CallbackRequirements<Guard>
 > {
 	const helpers = domainHelpers(entries)
+	const factory = { [command ? 'command' : 'query']: helpers }
+	if (errors && isFullErrorContract(errors)) Object.assign(factory, effectErrors(errors))
 	// SAFETY: helper signatures check callbacks; registration pairs drafts with their declarations.
-	return { [command ? 'command' : 'query']: helpers } as DomainEffectFactory<
+	return factory as DomainEffectFactory<
 		Context,
 		Entries,
 		Command,
@@ -255,3 +261,21 @@ export type SharedEffectFactory<Context, Guard> = ReturnType<
 	>
 >
 export type AuditValue = Supported<Audit>
+
+/** A contract that can create its declared errors also gives the factory `fail` and `attempt`. */
+type ContractErrorHelpers<Errors> = [Errors] extends [never]
+	? {}
+	: Errors extends ErrorContract<infer Definitions>
+		? EffectErrors<Definitions>
+		: {}
+
+function isFullErrorContract(
+	errors: object,
+): errors is Pick<ErrorContract<ErrorDefinitions>, 'create' | 'project' | 'decode'> {
+	// SAFETY: only the presence of the three callable members is read here.
+	const candidate = errors as Partial<Record<'create' | 'project' | 'decode', Function>>
+	// Combined contracts project and decode but cannot create errors.
+	return [candidate.create, candidate.project, candidate.decode].every(
+		(member) => member instanceof Function,
+	)
+}

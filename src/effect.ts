@@ -28,6 +28,7 @@ export {
 	type EffectOperationRequirements,
 } from './modules/effect/client'
 export { createEffectFoundation, type EffectFoundationOptions } from './modules/effect/client'
+export { effectErrors, type EffectErrors } from './modules/effect/client'
 export type {
 	FailureAuditEntry,
 	FailureAuditOptions,

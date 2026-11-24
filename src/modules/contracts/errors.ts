@@ -22,6 +22,11 @@ type Details<Definition extends ErrorDefinitions[string]> =
 	Definition extends ErrorDefinitions[string]
 		? { [Field in keyof Definition['details']]: ReturnType<Definition['details'][Field]['parse']> }
 		: never
+/** The parsed detail fields one declared code carries. */
+export type DeclaredErrorDetails<
+	Definitions extends ErrorDefinitions,
+	Key extends Code<Definitions>,
+> = Details<Definitions[Key]>
 
 declare const declaredErrorBrand: unique symbol
 

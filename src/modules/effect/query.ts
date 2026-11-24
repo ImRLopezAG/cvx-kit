@@ -323,7 +323,8 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 				Mode,
 				never,
 				NoInfer<CallbackError<GuardReturned>>,
-				NoInfer<CallbackRequirements<GuardReturned>>
+				NoInfer<CallbackRequirements<GuardReturned>>,
+				Contract['errors']
 			>,
 		) => Operations
 		defaults?: {
@@ -379,7 +380,11 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 	}): unknown {
 		const buildOperations = () => {
 			const definitions = configuration.contract
-				? domainEffectFactory(configuration.contract.queries ?? {}, false)
+				? domainEffectFactory(
+						configuration.contract.queries ?? {},
+						false,
+						configuration.contract.errors,
+					)
 				: effectOperationFactory()
 			return snapshotOperations(
 				configuration.operations(

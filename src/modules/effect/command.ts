@@ -425,7 +425,8 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 					Mode,
 					never,
 					NoInfer<CallbackError<Guard>>,
-					NoInfer<CallbackRequirements<Guard>>
+					NoInfer<CallbackRequirements<Guard>>,
+					Contract['errors']
 				>,
 			) => Operations
 			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
@@ -473,7 +474,8 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 					true,
 					[Returned] extends [never] ? never : (resolution: never, context: never) => Returned,
 					NoInfer<CallbackError<Guard>>,
-					NoInfer<CallbackRequirements<Guard>>
+					NoInfer<CallbackRequirements<Guard>>,
+					Contract['errors']
 				>,
 			) => Operations
 			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
@@ -533,7 +535,11 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 	}): unknown {
 		const buildOperations = () => {
 			const definitions = configuration.contract
-				? domainEffectFactory(configuration.contract.commands ?? {}, true)
+				? domainEffectFactory(
+						configuration.contract.commands ?? {},
+						true,
+						configuration.contract.errors,
+					)
 				: effectOperationFactory()
 			return snapshotOperations(
 				configuration.operations(

@@ -95,7 +95,7 @@ copy that API into new implementations.
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cvx-kit`                       | Non-Effect helpers and component clients; import the optional Effect facade explicitly from `cvx-kit/effect`.                                                                                           |
 | `cvx-kit/zod-table`             | `zodTable`, `tenantTable`, `createModule`, `paginated`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS`                                                                                            |
-| `cvx-kit/effect`                | Recommended command/query API: `createEffectFoundation`, `createEffectAuthFunctions`, `effectApiBuilder`, `effectZodApiBuilder`, `createEffectCrud`, idempotency/workflow adapters and operation tools. |
+| `cvx-kit/effect`                | Recommended command/query/action API: `createEffectFoundation` (`Command`, `Query`, `Action`; `nestedAudit`, `auditFailure`, `writeActionAudit`), `effectErrors` (`fail`/`attempt`), `createEffectAuthFunctions`, `effectApiBuilder`, `effectZodApiBuilder`, `createEffectCrud`, idempotency/workflow adapters and operation tools. |
 | `cvx-kit/auth`                  | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap`                                                                                                         |
 | `cvx-kit/tenancy`               | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD`                                                                                                      |
 | `cvx-kit/crud`                  | Compatibility CRUD factory using the deprecated Promise command facade; use `createEffectCrud` from `cvx-kit/effect` for new domains.                                                                   |
@@ -304,6 +304,29 @@ Optional request context can be added through the existing Effect API adapter's
 and consume `ctx.commands.exec(name, input)` through the application's existing
 function helper names. Keep dependencies local to each feature; explicit execution
 and input-only command handlers remain supported. See [optional context injection](./command-context.md).
+
+## Request scope, failures and actions (Effect)
+
+- Nested `exec` calls yielded inside a handler join the caller's request scope.
+  By default (`nestedAudit: 'fold'`) a command nested under an auditing operation
+  writes no audit entry; never thread a `nestedAudit` flag through bound
+  contexts. `nestedAudit: 'separate'` keeps per-operation entries. Audit
+  callbacks get the entered scope as a third argument. `Effect.runPromise`
+  inside a handler opens a new scope, so yield nested executions.
+- `auditFailure: { emit, errors?, details?, input? }` reports failed operations
+  to a host-free sink: kind, operation, classification, declared `errorCode` or
+  `UNKNOWN_FAILURE`, root and depth. Details and input appear only through
+  redactors. Mutations roll back, and queries/mutations have no `fetch`, so log
+  from `emit`.
+- Raise declared errors with `fail('CODE')` (details optional only when none are
+  declared). Wrap Promise work with `attempt(...)`: declared errors and declared
+  `ConvexError`s become typed failures, and other throws stay defects. Contracted
+  registries get both on the factory; otherwise use `effectErrors(contract)`.
+  A declared error thrown inside `Effect.gen` still projects to its code.
+- `foundation.Action` runs actions with the command lifecycle (no `prepare`,
+  `permission` or `expose`). Audit is optional and written by
+  `writeActionAudit`. Call queries and mutations with `ctx.runQuery`/`ctx.runMutation`
+  and generated references. Contracts may declare an `actions` section.
 
 ## Shared auth and Effect context
 

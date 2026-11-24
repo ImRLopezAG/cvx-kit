@@ -128,8 +128,9 @@ types, but do not transport Effect's server-side error and service channels.
 4. Run the operation's `middleware`, wrapping `defaults.guard(context)`, the
    operation's `guard(context, input)`, and `handler(input, context)`.
 5. Decode the middleware chain's final result, derive `audit({ command, result },
-   context)`, enforce `aggregates`, and call the injected `writeAudit(host, entry)`
-   when the audit is non-null.
+   context, scope)`, enforce `aggregates`, and call the injected `writeAudit(host, entry)`
+   when the audit is non-null. A command nested under an auditing operation skips
+   this step by default; see [request scope and nested audit](./effect.md#request-scope-and-nested-audit).
 6. Await the completion closure from `prepare`, then finish observation.
 
 Effect middleware is a callback returning a value, Promise, or Effect, rather
@@ -146,6 +147,11 @@ supply a `replayResult` output validator to avoid applying the transform twice.
 Use `effectTransactionalIdempotency` for receipt-backed replay;
 [domain integrations](./domain-operations.md) cover idempotency, workflows,
 CRUD, and selected operation tools.
+
+Raise declared errors with the factory's `fail(code, details?)` and wrap Promise
+work in `attempt(...)`; see [raising and recovering declared errors](./effect.md#raising-and-recovering-declared-errors).
+Failed commands reach the Foundation's optional `auditFailure` sink; see
+[failure audit](./effect.md#failure-audit).
 
 Commands that write run inside Convex mutations. Let failures escape the
 mutation so Convex rolls back business, audit, and completion writes. Returning

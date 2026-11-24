@@ -234,7 +234,11 @@ it, it moves to `domain/shared/` — never a sibling import.
 
 ### `domain/<entity>/actions.ts` — external side effects
 
-Action-side logic owns external side effects. Put a provider used by one module
+Action-side logic owns external side effects. Declare the module's actions in one
+`foundation.Action({ context, operations })` registry (optionally contracted), so
+they get schemas, guards, audit and error projection like commands; call queries
+and commands through `ctx.runQuery`/`ctx.runMutation` with generated references.
+Put a provider used by one module
 in that module's `integrations/` or `providers/` directory. Share configured clients
 in `domain/shared/` only when multiple modules need them. Commands and queries
 must not perform network I/O; pure rules receive values instead of context or

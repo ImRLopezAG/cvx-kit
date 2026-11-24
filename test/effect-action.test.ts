@@ -10,7 +10,7 @@ import {
 import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
-import { combineErrorContracts } from '../src/modules/contracts/errors'
+import { combineErrorContracts, defineErrorContract } from '../src/modules/contracts/errors'
 import { defineDomainContract } from '../src/modules/contracts/domain'
 import { effectApiBuilder } from '../src/modules/effect/api'
 import { createEffectFoundation } from '../src/modules/effect/foundation'
@@ -18,11 +18,13 @@ import { effectErrors } from '../src/modules/effect/failures'
 import type { FailureAuditEntry } from '../src/modules/effect/failure-audit'
 import type { AuditEntryInput } from '../src/components/foundation/client'
 import schema from './fixture/schema'
-import { settlementErrors } from './fixture/effectActions'
 
 type Host = GenericActionCtx<DataModelFromSchemaDefinition<typeof schema>>
 const modules = import.meta.glob('./fixture/**/*.ts')
 const record = makeFunctionReference<'mutation', { title: string }, string>('effectActions:record')
+const settlementErrors = defineErrorContract({
+	SETTLED: { message: 'Already settled', details: {} },
+})
 const { attempt, fail } = effectErrors(settlementErrors)
 
 function setup(options: { writer?: 'ok' | 'missing' | 'throws' } = {}) {

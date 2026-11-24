@@ -16,6 +16,11 @@ matchFailure(caught, taskErrors, {
 })
 ```
 
+On the server, an Effect API adapter configured with `errors` sends a declared
+error as its `DeclaredFailure`, whether the handler failed with it or threw it
+inside `Effect.gen`. Any other failure, and any look-alike object the contract did
+not create, reaches the client as `UnknownFailure`.
+
 `decodeFailure` extracts `ConvexError.data` and delegates to the declaration's
 `decode`. A string in `ConvexError.data` is parsed once as JSON, with a 64 KiB
 UTF-8 limit, then checked by the identical strict envelope/detail decoder.

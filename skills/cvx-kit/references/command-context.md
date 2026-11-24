@@ -145,6 +145,12 @@ choosing the registry resolver and binding input.
 
 Nested calls return Effects and compose in the current program. Do not call
 `Effect.runPromise` inside command handlers; the function adapter runs the
-complete program once. Command schema checks, permissions, audit, and completion
-remain active for each nested command. Keep database mutation work in a mutation
+complete program once. Command schema checks, permissions, and completion
+remain active for each nested command. Nested commands join the caller's request
+scope automatically. By default, a command nested under an operation that
+declares an audit callback writes no audit entry of its own, and the outermost
+auditing operation's entry stands for the request. Set
+`createEffectFoundation({ nestedAudit: 'separate' })` to keep one entry per
+nested command. Do not add flags to bound contexts for this. See
+[request scope and nested audit](./effect.md#request-scope-and-nested-audit). Keep database mutation work in a mutation
 boundary so Convex can roll it back if execution or result validation fails.

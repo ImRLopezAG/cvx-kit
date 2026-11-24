@@ -15,6 +15,7 @@ import {
 } from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
 import { enterRequestScope } from './scope'
+import { reportFailure, type FailureAuditOptions } from './failure-audit'
 import {
 	effectOperationFactory,
 	type CallbackError,
@@ -114,6 +115,9 @@ export function createEffectQuery<
 	) => PermissionReturned
 	defaults?: { metadata?: object; guard?: (context: EffectValue<ContextReturned>) => GuardReturned }
 	observability?: ObservabilityOptions | Observability
+	auditFailure?: FailureAuditOptions
+	/** A contracted registry projects its failures through the contract's errors. */
+	contract?: Pick<DomainContract, 'errors'>
 }) {
 	const definitions = effectOperationFactory<
 		EffectValue<ContextReturned>,
@@ -205,7 +209,7 @@ export function createEffectQuery<
 						: yield* core(context)
 					return yield* decodeEffectContract(definition.result, output)
 				})
-				return enterRequestScope(operation, false, () =>
+				return enterRequestScope(operation, false, (entered, current) =>
 					run.pipe(
 						Effect.onExit((exit) =>
 							Effect.sync(() => {
@@ -213,7 +217,19 @@ export function createEffectQuery<
 								else {
 									observation.failed(observationFailure(exit.cause))
 								}
-							}),
+							}).pipe(
+								Effect.andThen(
+									reportFailure(configuration.auditFailure, exit, {
+										kind: 'query',
+										operation,
+										classification: definition.classification ?? 'query',
+										input: parsedInput,
+										contract: configuration.contract?.errors,
+										entered,
+										current,
+									}),
+								),
+							),
 						),
 					),
 				)
@@ -270,6 +286,7 @@ type PolicyHost<Dependencies> = [CallbackHost<Policy<Dependencies>>] extends [ne
 type PolicyReturned<Dependencies> = CallbackReturned<Policy<Dependencies>>
 export type EffectQueryDependencies = {
 	observability: Observability
+	auditFailure?: FailureAuditOptions
 	// oxlint-disable-next-line anti-slop/no-unknown-returns -- Host policy storage is erased; the bound generic dependency retains its concrete E/R.
 	checkPermission?: (host: never, input: { permission: string; operation: string }) => unknown
 }

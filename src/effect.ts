@@ -28,6 +28,12 @@ export {
 	type EffectOperationRequirements,
 } from './modules/effect/client'
 export { createEffectFoundation, type EffectFoundationOptions } from './modules/effect/client'
+export type {
+	FailureAuditEntry,
+	FailureAuditOptions,
+	NestedAuditMode,
+	RequestScope,
+} from './modules/effect/client'
 export {
 	effectTransactionalIdempotency,
 	type EffectIdempotencyPreparation,

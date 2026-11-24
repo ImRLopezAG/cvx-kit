@@ -21,27 +21,29 @@ const CurrentScope = Context.Reference<ScopeState | undefined>('cvx-kit/effect/R
 
 /**
  * Run an operation inside the current request scope, opening one when none exists.
- * `run` receives the state the operation entered (`undefined` for a root); operations
- * yielded inside it see this operation as their parent.
+ * `run` receives the state the operation entered (`undefined` for a root) and the
+ * state it provides to the operations yielded inside it.
  */
 export function enterRequestScope<Value, Error, Requirements>(
 	operation: string,
 	audits: boolean,
-	run: (entered: ScopeState | undefined) => Effect.Effect<Value, Error, Requirements>,
+	run: (
+		entered: ScopeState | undefined,
+		current: ScopeState,
+	) => Effect.Effect<Value, Error, Requirements>,
 ): Effect.Effect<Value, Error, Requirements> {
-	return CurrentScope.use((entered) =>
-		run(entered).pipe(
-			Effect.provideService(CurrentScope, {
-				scope: {
-					root: entered?.scope.root ?? operation,
-					parent: operation,
-					depth: (entered?.scope.depth ?? 0) + 1,
-				},
-				audited: audits || (entered?.audited ?? false),
-				reported: entered?.reported ?? new WeakSet(),
-			}),
-		),
-	)
+	return CurrentScope.use((entered) => {
+		const current: ScopeState = {
+			scope: {
+				root: entered?.scope.root ?? operation,
+				parent: operation,
+				depth: (entered?.scope.depth ?? 0) + 1,
+			},
+			audited: audits || (entered?.audited ?? false),
+			reported: entered?.reported ?? new WeakSet(),
+		}
+		return run(entered, current).pipe(Effect.provideService(CurrentScope, current))
+	})
 }
 
 /** In fold mode an operation under an auditing ancestor leaves the request's audit to that ancestor. */

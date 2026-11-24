@@ -130,13 +130,15 @@ describe('declared safe error contracts', () => {
 		})
 	})
 
-	it('projects a singular declared failure, but rejects the whole composite, defect or interrupt Cause', async () => {
+	it('projects a singular declared failure or thrown declared error, but rejects composite, foreign defect or interrupt Causes', async () => {
 		const error = errors.create('NotFound', { id: '1' })
 		expect(projectErrorCause(errors, Cause.fail(error))).toEqual(errors.project(error))
+		expect(projectErrorCause(errors, Cause.die(error))).toEqual(errors.project(error))
 		for (const cause of [
 			Cause.empty,
 			Cause.fail({ code: 'NotFound' }),
-			Cause.die(error),
+			Cause.die({ _tag: 'DeclaredError', code: 'NotFound', details: { id: '1' } }),
+			Cause.die(Error('private defect')),
 			Cause.interrupt(1),
 			Cause.combine(Cause.fail(error), Cause.die(Error('cleanup secret'))),
 			Cause.combine(Cause.fail(error), Cause.interrupt(1)),

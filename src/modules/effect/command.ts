@@ -20,6 +20,7 @@ import {
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
 import type { Observability } from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
+import { reportFailure, type FailureAuditOptions } from './failure-audit'
 import {
 	auditFolded,
 	enterRequestScope,
@@ -95,6 +96,8 @@ export type EffectCommandDependencies = {
 	writeAudit: (host: never, entry: AuditEntryInput) => Supported<unknown>
 	/** `fold` (default): an operation nested under an auditing operation leaves the audit to it. */
 	nestedAudit?: NestedAuditMode
+	/** Host-free sink for failed operations; see `FailureAuditOptions`. */
+	auditFailure?: FailureAuditOptions
 }
 type HostParameter<Policy> = [Exclude<Policy, undefined>] extends [never]
 	? unknown
@@ -196,6 +199,10 @@ export function createEffectCommand<
 			>(),
 		),
 	)
+	// A contracted registry projects its failures through the contract's errors.
+	// SAFETY: the contracted overloads spread their checked `contract` into this configuration.
+	const errorContract = (configuration as { contract?: Pick<DomainContract, 'errors'> }).contract
+		?.errors
 	const exec = <Key extends Extract<keyof Operations, string>>(
 		operation: Key,
 		input: EffectOperationArgument<Operations[Key]>,
@@ -227,7 +234,7 @@ export function createEffectCommand<
 				})
 				// SAFETY: resolver identity owns its concrete invocation return and host parameter.
 				const resolve = configuration.context as (host: HostOf<Resolve>) => ReturnType<Resolve>
-				const run = (entered: ScopeState | undefined) =>
+				const run = (entered: ScopeState | undefined, current: ScopeState) =>
 					normalizeEffect(() => resolve(host)).pipe(
 						Effect.flatMap((context) => {
 							const lifecycle = executeCommandLifecycle<
@@ -320,7 +327,19 @@ export function createEffectCommand<
 							Effect.sync(() => {
 								if (Exit.isSuccess(exit)) observation.completed()
 								else observation.failed(observationFailure(exit.cause))
-							}),
+							}).pipe(
+								Effect.andThen(
+									reportFailure(configuration.auditFailure, exit, {
+										kind: 'command',
+										operation,
+										classification: definition.classification,
+										input: command,
+										contract: errorContract,
+										entered,
+										current,
+									}),
+								),
+							),
 						),
 					)
 				return enterRequestScope(operation, true, run)

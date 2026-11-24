@@ -12,6 +12,8 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.31] - 2026-11-24
+
 ### Added
 
 - Effect Command and Query executions share a request scope. An `exec` yielded inside another operation's handler or middleware joins its caller's scope automatically, with no flag in the bound context. Audit callbacks, both per-operation and registry-level, receive the scope they entered (`{ root, parent, depth }`, or `undefined` for the outermost operation) as a third argument. An `exec` started through `Effect.runPromise` inside a handler opens a new scope, so yield nested executions instead.

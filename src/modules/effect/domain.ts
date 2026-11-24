@@ -280,7 +280,6 @@ function isFullErrorContract(
 ): errors is Pick<ErrorContract<ErrorDefinitions>, 'create' | 'project' | 'decode'> {
 	// SAFETY: only the presence of the three callable members is read here.
 	const candidate = errors as Partial<Record<'create' | 'project' | 'decode', Function>>
-	// Combined contracts project and decode but cannot create errors.
 	return [candidate.create, candidate.project, candidate.decode].every(
 		(member) => member instanceof Function,
 	)

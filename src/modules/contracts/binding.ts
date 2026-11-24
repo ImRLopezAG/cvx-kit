@@ -115,13 +115,13 @@ export function snapshotOperations(
 			// SAFETY: wire is configuration, while its schema stays an opaque reference.
 			definition.wire = Object.freeze({ ...(definition.wire as object) })
 		}
-		// Commands always audit; an action audits only when it or its registry declares a callback.
 		if (section === 'commands' || section === 'actions') {
 			const override = definition.audit
 			if (override !== undefined && typeof override !== 'function')
 				throw Error(`Invalid audit for ${key}`)
-			if (override === undefined && (audit || section === 'commands')) {
-				if (!audit) throw Error(`Command ${key} requires an audit callback`)
+			if (override === undefined && !audit && section === 'commands')
+				throw Error(`Command ${key} requires an audit callback`)
+			if (override === undefined && audit) {
 				definition.audit = (
 					resolution: { command: unknown; result: unknown },
 					context: unknown,

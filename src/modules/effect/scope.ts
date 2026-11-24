@@ -46,7 +46,6 @@ export function enterRequestScope<Value, Error, Requirements>(
 	})
 }
 
-/** In fold mode an operation under an auditing ancestor leaves the request's audit to that ancestor. */
 export function auditFolded(mode: NestedAuditMode | undefined, entered: ScopeState | undefined) {
 	return (mode ?? 'fold') === 'fold' && entered?.audited === true
 }

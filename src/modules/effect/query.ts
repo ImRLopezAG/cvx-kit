@@ -116,7 +116,6 @@ export function createEffectQuery<
 	defaults?: { metadata?: object; guard?: (context: EffectValue<ContextReturned>) => GuardReturned }
 	observability?: ObservabilityOptions | Observability
 	auditFailure?: FailureAuditOptions
-	/** A contracted registry projects its failures through the contract's errors. */
 	contract?: Pick<DomainContract, 'errors'>
 }) {
 	const definitions = effectOperationFactory<

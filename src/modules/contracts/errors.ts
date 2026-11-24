@@ -267,7 +267,8 @@ export const queryErrors = defineErrorContract({
 	},
 })
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+/** Plain object records only: no arrays, class instances or exotic prototypes. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
 	if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
 	const prototype = Object.getPrototypeOf(value)
 	return prototype === Object.prototype || prototype === null

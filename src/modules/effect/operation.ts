@@ -368,7 +368,6 @@ export function effectOperationFactory<
 	return { operation, command, query }
 }
 
-/** Action registries get only the action helper; commands and queries keep their own factories. */
 export function effectActionFactory<Context, BaseError = never, BaseRequirements = never>() {
 	type Extension = Record<never, never>
 	/** Actions have no transaction to replay and no permission host; guards authorize them. */

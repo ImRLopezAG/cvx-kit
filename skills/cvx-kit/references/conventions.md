@@ -211,7 +211,12 @@ compile. Numeric limits and durations the entity owns also live here.
    the shared Effect API builder executes that Effect at the authenticated boundary.
 4. Private handler helpers at the bottom.
 
-Audit derivation lives here, next to the operation it describes. No reads
+Audit derivation lives here, next to the operation it describes. A command
+nested inside another auditing command joins its request scope and writes no
+entry of its own by default, so audit callbacks never check a context flag.
+Raise declared errors with the factory's `fail('CODE')` and wrap Promise work in
+`attempt(...)`; the domain's `contracts.ts` owns the error contract, and no
+module keeps its own `attempt`/`fail` helpers. No reads
 that belong in `queries.ts`; no pure predicates that belong in `rules.ts`.
 The Promise command facade is deprecated; see `commands-legacy.md` only for
 maintaining existing code. New implementations follow `commands.md`.

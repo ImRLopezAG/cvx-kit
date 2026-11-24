@@ -17,6 +17,155 @@ deprecated. For new command code, use `createEffectFoundation` from
 See [commands.md](./commands.md) for migration steps. Existing consumers remain
 compatible; older release sections below describe their historical APIs.
 
+## Request scope, failure audit, error helpers and actions
+
+These replace four patterns that large apps hand-rolled on top of the Effect
+registries. Each step below can land on its own. The default nested-audit
+behavior changed, so read step 1 before upgrading. The full API is in
+[effect.md](./effect.md#request-scope-and-nested-audit).
+
+### 1. Nested audit — was: a `nestedAudit` flag in every bound context
+
+Before, every parent registry spread a flag into the contexts it bound, and
+every audit callback checked it:
+
+```ts
+// was: domain/sales/commands.ts
+context: (ctx: AuthCtx<'mutation'>) => ({
+  ...ctx,
+  customers: customersCommands.withContext({ ...ctx, nestedAudit: true }),
+}),
+
+// was: domain/sales/customers/commands.ts
+audit: ({ operation, result }, ctx) =>
+  ctx.nestedAudit
+    ? null
+    : { operation: `sales.${operation}`, actorId: ctx.actor.userId, aggregate: { type: 'sales', id: result._id } },
+```
+
+Now nested `exec` calls join the caller's request scope. A command nested under
+an auditing operation skips its own audit callback and write, so delete the flag,
+the `nestedAudit?: boolean` context field and the ternary:
+
+```ts
+context: (ctx: AuthCtx<'mutation'>) => ({ ...ctx, customers: customersCommands.withContext(ctx) }),
+
+audit: ({ operation, result }, ctx) => ({
+  operation: `sales.${operation}`,
+  actorId: ctx.actor.userId,
+  aggregate: { type: 'sales', id: result._id },
+}),
+```
+
+- A command whose ancestors declare no audit (for example one nested in a query)
+  still audits. Actions never fold, because their writes commit independently.
+- To keep one entry per nested operation, set
+  `createEffectFoundation({ nestedAudit: 'separate' })` and correlate with the
+  audit callback's third argument, `scope` (`{ root, parent, depth }`).
+- Replace `Effect.runPromise(otherCommands.exec(...))` inside handlers with a
+  yielded `exec`. A Promise bridge opens a new scope and audits as a root.
+- Drop any lint rule that enforced the flag.
+
+### 2. Errors — was: per-domain `attempt` and a throwing `fail`
+
+```ts
+// was: domain/sales/errors.ts
+export function fail(code): never { throw salesErrors.create(code, {}) }
+export function attempt<A>(run: () => Promise<A>) {
+  return Effect.tryPromise({ try: run, catch: (error) => error })
+}
+
+// was, in a handler
+return yield* Effect.fail(salesErrors.create('NOT_FOUND', {}))
+```
+
+Delete those helpers. Contracted registries whose `errors` comes from
+`defineErrorContract` receive typed `fail` and `attempt` on the factory;
+anywhere else, call `effectErrors(salesErrors)`:
+
+```ts
+operations: ({ command, fail, attempt }) => ({
+  'sales.post': command.handler((input, ctx) =>
+    Effect.gen(function* () {
+      const invoice = yield* attempt(() => ctx.db.get(input.id))
+      if (!invoice) return yield* fail('NOT_FOUND')
+      // ...
+    }),
+  ),
+}),
+```
+
+- `fail('NOT_FOUND')` needs no `{}` when the code declares no details.
+- `attempt` turns a thrown declared error, or a `ConvexError` carrying one of the
+  contract's envelopes (as `ctx.runMutation` rethrows it), into a typed failure
+  that `Effect.catchTag('DeclaredError', ...)` recovers. Other throws stay defects.
+- A declared error thrown inside `Effect.gen` now keeps its code at the API
+  boundary instead of becoming `UnknownFailure`, so a lint rule against throwing
+  helpers inside `Effect.gen` is no longer needed for that reason.
+- A registry whose `errors` is a `combineErrorContracts` result gets no factory
+  helpers; use `effectErrors(memberContract)` for the member you raise from.
+
+### 3. Failure audit — was: nothing recorded failed commands
+
+Add the optional sink to the foundation. A failed mutation rolls back every
+write, so `emit` logs; Convex log streams carry it to external telemetry:
+
+```ts
+export const foundation = createEffectFoundation({
+  observability,
+  writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
+  auditFailure: {
+    emit: (entry) => console.warn(JSON.stringify({ event: 'operation.failed', ...entry })),
+    errors: domainErrors, // the combined contract the API adapter already uses
+  },
+})
+```
+
+- Entries carry kind, operation, classification, declared code (or
+  `UNKNOWN_FAILURE`), root and depth.
+- Add `details` and `input` redactors only for fields that are safe to log.
+- Each failure is reported once per request, by the innermost operation that
+  failed.
+
+### 4. Actions — was: ad-hoc `internalAction` handlers
+
+Move a module's actions into one `foundation.Action` registry and keep the
+Convex function as a thin adapter:
+
+```ts
+// foundation.ts
+writeActionAudit: (ctx, entry) => ctx.runMutation(internal.audit.write, entry),
+
+// domain/ecf/actions.ts
+export const ecfActions = foundation.Action({
+  contract: ecfContract, // declares `actions: { 'ecf.sign': { input, result } }`
+  context: (ctx: ActionCtx) => ({ ctx, provider: dgiiProvider(ctx) }),
+  audit: ({ operation, input }) => ({ operation, actorId: 'system', aggregate: { type: 'ecf', id: input.id } }),
+  operations: ({ action, attempt, fail }) => ({
+    'ecf.sign': action.handler((input, { ctx, provider }) =>
+      Effect.gen(function* () {
+        const signed = yield* attempt(() => provider.sign(input))
+        if (!signed.ok) return yield* fail('ECF_INTEGRATION_FAILED', { code: signed.code, retryable: false })
+        return yield* attempt(() => ctx.runMutation(internal.domain.ecf.internal.storeArtifact, signed.artifact))
+      }),
+    ),
+  }),
+})
+
+// domain/ecf/internal.ts
+export const sign = systemAction({
+  args: signInput,
+  handler: (ctx, args) => ecfActions.exec('ecf.sign', args, ctx),
+})
+```
+
+- `classification` defaults to `'action'`.
+- Actions have no `permission`, `prepare` or `expose`; authorize with a guard.
+- An audited action without `writeActionAudit` fails before its handler runs.
+- A failed audit write after the provider call returns the result and reports
+  `ACTION_AUDIT_WRITE_FAILED`, so callers do not retry a submission that
+  already happened.
+
 ## 0.1.6 — stricter architecture checks
 
 Enable `project-structure`, `root-wiring-only`, `application-orchestration`,

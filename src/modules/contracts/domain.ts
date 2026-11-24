@@ -14,10 +14,12 @@ export type DomainCommandContract = DomainOperationContract & {
 	readonly replayResult?: ContractSchema
 }
 export type DomainQueryContract = DomainOperationContract & { readonly replayResult?: never }
+export type DomainActionContract = DomainOperationContract & { readonly replayResult?: never }
 export type DomainContract = {
 	readonly errors?: Pick<ErrorContract<ErrorDefinitions>, 'project'>
 	readonly commands?: Readonly<Record<string, DomainCommandContract>>
 	readonly queries?: Readonly<Record<string, DomainQueryContract>>
+	readonly actions?: Readonly<Record<string, DomainActionContract>>
 }
 
 type CheckedEntry<Entry extends DomainOperationContract> = {
@@ -46,9 +48,9 @@ type CheckedSection<Section> = {
 		: never
 }
 type CheckedDomain<Definition> = {
-	readonly [Section in Extract<keyof Definition, 'commands' | 'queries'>]: CheckedSection<
-		Definition[Section]
-	>
+	readonly [
+		Section in Extract<keyof Definition, 'commands' | 'queries' | 'actions'>
+	]: CheckedSection<Definition[Section]>
 }
 
 /** Preserve the declaration's literal keys and opaque validator/error-contract identities. */
@@ -126,13 +128,14 @@ function memoizeGetters(
 }
 
 function memoizeOperation(operation: unknown) {
-	if (operation && typeof operation === 'object') memoizeGetters(operation, lazyFields, (value) => value)
+	if (operation && typeof operation === 'object')
+		memoizeGetters(operation, lazyFields, (value) => value)
 	return operation
 }
 
 /** Getter-declared operations and fields build at most once and keep a stable identity. */
 function memoizeAccessors<Definition>(definition: Definition): Definition {
-	for (const name of ['commands', 'queries'] as const) {
+	for (const name of ['commands', 'queries', 'actions'] as const) {
 		// SAFETY: the checked declaration's sections are plain records of operation declarations.
 		const section = (definition as Record<string, unknown> | undefined)?.[name]
 		if (!section || typeof section !== 'object') continue

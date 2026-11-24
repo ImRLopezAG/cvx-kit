@@ -1,6 +1,6 @@
 ---
 name: cvx-kit
-description: Build, migrate, and review Convex applications using cvx-kit table boundaries, authenticated functions, Effect commands and queries, relationships, triggers, and components. Use when the project depends on cvx-kit or the user requests its APIs.
+description: Build, migrate, and review Convex applications using cvx-kit table boundaries, authenticated functions, Effect commands, queries and actions, relationships, triggers, and components. Use when the project depends on cvx-kit or the user requests its APIs.
 ---
 
 # cvx-kit
@@ -28,6 +28,10 @@ Read only the guides needed for the task, resolving paths relative to this skill
 | Authentication, roles, shared Effect context          | [auth](references/auth.md)                                                                               |
 | Tenant isolation and row security                     | [tenancy](references/tenancy.md)                                                                         |
 | Commands, queries, registry wiring, audit             | [commands](references/commands.md), [effect](references/effect.md)                                       |
+| Nested registry audit and the request scope           | [effect](references/effect.md#request-scope-and-nested-audit)                                            |
+| Failure audit (`auditFailure`) and redaction          | [effect](references/effect.md#failure-audit)                                                             |
+| Raising/recovering declared errors (`fail`, `attempt`) | [effect](references/effect.md#raising-and-recovering-declared-errors)                                  |
+| Convex actions (`foundation.Action`, `writeActionAudit`) | [effect](references/effect.md#action-registries), [domain-contracts](references/domain-contracts.md#actions-and-error-helpers) |
 | Error contracts, transported failures and React commands | [client-failures](references/client-failures.md)                                                      |
 | Reactive lists, error boundaries and search continuation | [client-list](references/client-list.md)                                                              |
 | Conservative optimistic list updates                  | [client-optimistic](references/client-optimistic.md)                                                     |
@@ -55,6 +59,17 @@ for every task. Examples use illustrative entities; adapt them to the app.
 - Use `cvx-kit/effect` for new command/query registries. Keep audit and writes in
   the mutation transaction; allow failures to escape for rollback. Return lazy
   Effects through the shared API builders rather than starting nested runners.
+- Compose registries by yielding nested `exec` calls; they join the request
+  scope, and a command nested under an auditing operation writes no duplicate
+  entry. Never thread a `nestedAudit` flag through bound contexts, and never
+  run a nested `exec` through `Effect.runPromise` inside a handler.
+- Raise declared errors with `fail('CODE')` and wrap Promise work with
+  `attempt(...)` from the contracted factory or `effectErrors(contract)`.
+  Do not hand-roll per-domain `attempt`/`fail` helpers or throw ad-hoc errors.
+- Put Convex actions in a `foundation.Action` registry rather than ad-hoc
+  `internalAction` handlers. Authorize with guards, call queries and mutations
+  through `ctx.runQuery`/`ctx.runMutation` with generated references, and
+  configure `writeActionAudit` before declaring an action audit.
 - Declare relations once and configure one global query engine. Apply read
   authorization and eligibility before bounded pagination. Unknown managed
   contexts fail closed; do not add an allow-all fallback.

@@ -27,6 +27,11 @@ export {
 	type EffectOperationRequirements,
 } from './operation'
 export { createEffectFoundation, type EffectFoundationOptions } from './foundation'
+export {
+	ActionAuditWriterError,
+	type EffectActionDependencies,
+	type EffectActionRegistry,
+} from './action'
 export { effectTransactionalIdempotency, type EffectIdempotencyPreparation } from './idempotency'
 export {
 	createEffectCrud,
@@ -40,6 +45,9 @@ export {
 export { effectApiBuilder, type EffectApiBuilder } from './api'
 export { effectZodApiBuilder, type EffectZodApiBuilder } from './api-zod'
 export { projectErrorCause } from './errors'
+export { effectErrors, type EffectErrors } from './failures'
+export type { FailureAuditEntry, FailureAuditOptions } from './failure-audit'
+export type { NestedAuditMode, RequestScope } from './scope'
 export {
 	effectContract,
 	effectSchema,

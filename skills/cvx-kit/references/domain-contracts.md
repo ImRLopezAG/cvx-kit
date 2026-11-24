@@ -154,6 +154,57 @@ topology, and domain/table.ts uses createModule to assemble module maps. The rul
 recognize aliases, namespaces, and the root foundation.ts facade. They do not
 require absent reserved files to be created.
 
+## Actions and error helpers
+
+A contract may also declare an `actions` section. Implement it with
+`createEffectFoundation(...).Action`; its factory offers `action.<name>(...)` and
+`action.handler(...)` like commands, an optional registry-level `audit`, and
+exact-key enforcement. Action declarations take `input`, `result` and an
+optional `classification`.
+
+When the contract's `errors` comes from `defineErrorContract`, Effect Command,
+Query and Action factories also receive `fail` and `attempt` bound to it:
+
+```ts
+import { type FunctionReference, type GenericActionCtx, type GenericDataModel } from 'convex/server'
+
+type SettlementCtx = GenericActionCtx<GenericDataModel>
+// In an app this is a generated reference such as `internal.domain.settlement.post`.
+declare const postSettlement: FunctionReference<'mutation', 'internal', { id: string }, string>
+const settlementErrors = defineErrorContract({
+	SETTLED: { message: 'Already settled', details: {} },
+	PROVIDER_FAILED: { message: 'Provider failed', details: {} },
+})
+const settlementContract = defineDomainContract({
+	errors: settlementErrors,
+	actions: { 'settlement.post': { input: z.string(), result: z.string() } },
+})
+const settlementActions = createEffectFoundation({
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed' as const, errorCode: 'SETTLEMENT_FAILED' }),
+	},
+	writeAudit: () => undefined,
+}).Action({
+	contract: settlementContract,
+	context: (ctx: SettlementCtx) => ctx,
+	operations: ({ action, attempt, fail }) => ({
+		'settlement.post': action.handler((id, ctx) =>
+			attempt(() => ctx.runMutation(postSettlement, { id })).pipe(
+				Effect.catchTag('DeclaredError', (error) =>
+					error.code === 'SETTLED' ? Effect.succeed(id) : fail('PROVIDER_FAILED'),
+				),
+			),
+		),
+	}),
+})
+void settlementActions
+```
+
+A combined contract (`combineErrorContracts`) projects and decodes but cannot
+create errors, so its registries get no `fail`/`attempt`. See
+[Effect registries](./effect.md#raising-and-recovering-declared-errors).
+
 ## Per-request cost: lazy operations
 
 Convex evaluates the whole import graph on every request, and module state never survives to the next one. A thunk defers the declaration, but the first read of any operation still builds all of them. A registry's first `exec` also binds every operation. Declare operations, or their `input`/`result`, as getters so a module builds only what it reads or executes:

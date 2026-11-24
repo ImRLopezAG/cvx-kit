@@ -69,8 +69,8 @@ export function bindDomainImplementation(key: string, declaration: object, imple
 export function snapshotOperations(
 	operations: Readonly<Record<string, object>>,
 	contract: DomainContract | undefined,
-	section: 'commands' | 'queries',
-	audit?: (resolution: never, context: never) => unknown,
+	section: 'commands' | 'queries' | 'actions',
+	audit?: (resolution: never, context: never, scope: never) => unknown,
 ) {
 	if (audit !== undefined && typeof audit !== 'function')
 		throw Error('Invalid registry audit callback')
@@ -115,18 +115,25 @@ export function snapshotOperations(
 			// SAFETY: wire is configuration, while its schema stays an opaque reference.
 			definition.wire = Object.freeze({ ...(definition.wire as object) })
 		}
-		if (section === 'commands') {
+		if (section === 'commands' || section === 'actions') {
 			const override = definition.audit
 			if (override !== undefined && typeof override !== 'function')
 				throw Error(`Invalid audit for ${key}`)
-			if (override === undefined) {
-				if (!audit) throw Error(`Command ${key} requires an audit callback`)
-				definition.audit = (resolution: { command: unknown; result: unknown }, context: unknown) =>
+			if (override === undefined && !audit && section === 'commands')
+				throw Error(`Command ${key} requires an audit callback`)
+			if (override === undefined && audit) {
+				definition.audit = (
+					resolution: { command: unknown; result: unknown },
+					context: unknown,
+					scope: unknown,
+				) =>
 					audit(
 						// SAFETY: this configuration boundary compares opaque fields or restores callback slots checked by the public helpers.
 						{ operation: key, input: resolution.command, result: resolution.result } as never,
 						// SAFETY: this configuration boundary compares opaque fields or restores callback slots checked by the public helpers.
 						context as never,
+						// SAFETY: the registry audit signature declares the scope its executor passes.
+						scope as never,
 					)
 			}
 		}

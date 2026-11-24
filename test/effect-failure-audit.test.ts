@@ -1,0 +1,289 @@
+/* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/require-safety-comment-for-type-assertion -- Failure fixtures deliberately throw untyped values and drive erased hosts. */
+import { Effect, Exit } from 'effect'
+import { convexTest } from 'convex-test'
+import {
+	defineSchema,
+	defineTable,
+	mutationGeneric,
+	type DataModelFromSchemaDefinition,
+	type GenericMutationCtx,
+	type MutationBuilder,
+} from 'convex/server'
+import { ConvexError, v } from 'convex/values'
+import { describe, expect, it } from 'vite-plus/test'
+import { z } from 'zod'
+import { combineErrorContracts, defineErrorContract } from '../src/modules/contracts/errors'
+import { defineDomainContract } from '../src/modules/contracts/domain'
+import { effectApiBuilder } from '../src/modules/effect/api'
+import { projectErrorCause } from '../src/modules/effect/errors'
+import { createEffectFoundation } from '../src/modules/effect/foundation'
+import type { FailureAuditEntry, FailureAuditOptions } from '../src/modules/effect/failure-audit'
+
+const schema = defineSchema({ writes: defineTable({ kind: v.string() }) })
+type Host = GenericMutationCtx<DataModelFromSchemaDefinition<typeof schema>>
+const modules = import.meta.glob('./fixture/**/*.ts')
+const nativeMutation: MutationBuilder<
+	DataModelFromSchemaDefinition<typeof schema>,
+	'public'
+> = mutationGeneric
+
+const notesErrors = defineErrorContract({
+	NOT_FOUND: { message: 'Note not found', details: {} },
+	LOCKED: {
+		message: 'Note locked',
+		details: { owner: { parse: (value: unknown) => z.string().parse(value) } },
+	},
+})
+const tenancyErrors = defineErrorContract({
+	TENANT_MISSING: { message: 'Tenant missing', details: {} },
+})
+type Failure = 'declared' | 'thrown' | 'defect' | 'spoofed' | 'locked'
+
+function setup(options: Partial<FailureAuditOptions> & { emitFails?: boolean } = {}) {
+	const entries: FailureAuditEntry[] = []
+	const foundation = createEffectFoundation({
+		observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'F' }) },
+		writeAudit: () => undefined,
+		auditFailure: {
+			...options,
+			emit: (entry) => {
+				if (options.emitFails) throw Error('sink down')
+				entries.push(entry)
+			},
+		},
+	})
+	const tenancy = foundation.Query({
+		contract: defineDomainContract({
+			errors: tenancyErrors,
+			queries: { 'tenancy.require': { input: z.string(), result: z.string() } },
+		}),
+		context: () => ({}),
+		operations: ({ query }) => ({
+			'tenancy.require': query.handler(() =>
+				Effect.fail(tenancyErrors.create('TENANT_MISSING', {})),
+			),
+		}),
+	})
+	const notes = foundation.Command({
+		contract: defineDomainContract({
+			errors: notesErrors,
+			commands: {
+				'notes.save': {
+					input: z.object({ failure: z.string(), secret: z.string() }),
+					result: z.string(),
+					classification: 'business',
+				},
+				'notes.tenant': {
+					input: z.object({ recover: z.boolean() }),
+					result: z.string(),
+					classification: 'business',
+				},
+			},
+		}),
+		context: (host: Host) => ({ host, tenancy: tenancy.withContext(undefined) }),
+		audit: () => null,
+		operations: ({ command }) => ({
+			'notes.save': command.handler((input, ctx) =>
+				Effect.gen(function* () {
+					yield* Effect.promise(() => ctx.host.db.insert('writes', { kind: 'note' }))
+					const failure = input.failure as Failure
+					if (failure === 'declared') return yield* Effect.fail(notesErrors.create('NOT_FOUND', {}))
+					if (failure === 'locked')
+						return yield* Effect.fail(notesErrors.create('LOCKED', { owner: 'ada@example.com' }))
+					if (failure === 'thrown') throw notesErrors.create('NOT_FOUND', {})
+					if (failure === 'spoofed') throw { _tag: 'DeclaredError', code: 'NOT_FOUND', details: {} }
+					throw Error(`secret ${input.secret}`)
+				}),
+			),
+			'notes.tenant': command.handler((input, ctx) => {
+				const required = ctx.tenancy.exec('tenancy.require', 'x')
+				return input.recover
+					? required.pipe(Effect.catchTag('DeclaredError', () => Effect.succeed('recovered')))
+					: required
+			}),
+		}),
+	})
+	return { notes, entries }
+}
+
+async function runSave(h: ReturnType<typeof setup>, failure: Failure) {
+	const t = convexTest(schema, modules)
+	const exit = await t
+		.mutation((host) =>
+			Effect.runPromiseExit(h.notes.exec('notes.save', { failure, secret: 'hunter2' }, host)).then(
+				(result) => {
+					if (Exit.isFailure(result)) throw result
+					return result
+				},
+			),
+		)
+		.catch((error: unknown) => error)
+	expect(await t.run((ctx) => ctx.db.query('writes').collect())).toEqual([])
+	return exit
+}
+
+describe('failure audit', () => {
+	it('reports a declared failure without details and rolls back the mutation', async () => {
+		const h = setup()
+		await runSave(h, 'declared')
+		expect(h.entries).toEqual([
+			{
+				kind: 'command',
+				operation: 'notes.save',
+				classification: 'business',
+				errorCode: 'NOT_FOUND',
+				declared: true,
+				root: 'notes.save',
+				depth: 0,
+			},
+		])
+	})
+
+	it('includes details and input only through redactors', async () => {
+		const h = setup({
+			details: (_details, code) => (code === 'LOCKED' ? { redacted: true } : undefined),
+			input: (input) => ({ keys: Object.keys(input as object).sort() }),
+		})
+		await runSave(h, 'locked')
+		expect(h.entries).toEqual([
+			expect.objectContaining({
+				errorCode: 'LOCKED',
+				details: { redacted: true },
+				input: { keys: ['failure', 'secret'] },
+			}),
+		])
+		expect(JSON.stringify(h.entries)).not.toContain('ada@example.com')
+		expect(JSON.stringify(h.entries)).not.toContain('hunter2')
+	})
+
+	it('omits fields whose redactor throws or returns a non-record', async () => {
+		const h = setup({
+			details: () => {
+				throw Error('redactor bug')
+			},
+			input: () => ['not', 'a', 'record'] as never,
+		})
+		await runSave(h, 'locked')
+		expect(h.entries).toHaveLength(1)
+		expect(h.entries[0]).not.toHaveProperty('details')
+		expect(h.entries[0]).not.toHaveProperty('input')
+	})
+
+	it('keeps the code of a declared error thrown inside Effect.gen', async () => {
+		const h = setup()
+		await runSave(h, 'thrown')
+		expect(h.entries).toEqual([expect.objectContaining({ errorCode: 'NOT_FOUND', declared: true })])
+	})
+
+	it('reports defects and spoofed errors as unknown without their message', async () => {
+		for (const failure of ['defect', 'spoofed'] as const) {
+			const h = setup()
+			await runSave(h, failure)
+			expect(h.entries).toEqual([
+				expect.objectContaining({ errorCode: 'UNKNOWN_FAILURE', declared: false }),
+			])
+			expect(JSON.stringify(h.entries)).not.toContain('hunter2')
+		}
+	})
+
+	it('preserves the original failure when the sink throws', async () => {
+		const h = setup({ emitFails: true })
+		const exit = await Effect.runPromiseExit(
+			h.notes.exec('notes.save', { failure: 'declared', secret: 's' }, {
+				db: { insert: async () => 'id' },
+			} as never),
+		)
+		if (Exit.isSuccess(exit)) throw Error('expected failure')
+		expect(projectErrorCause(notesErrors, exit.cause)).toMatchObject({ code: 'NOT_FOUND' })
+	})
+
+	it('reports a nested failure once, with the nested contract code, and keeps recovered failures', async () => {
+		for (const recover of [false, true]) {
+			const h = setup()
+			const exit = await Effect.runPromiseExit(
+				h.notes.exec('notes.tenant', { recover }, {} as never),
+			)
+			expect(Exit.isSuccess(exit)).toBe(recover)
+			expect(h.entries).toEqual([
+				expect.objectContaining({
+					kind: 'query',
+					operation: 'tenancy.require',
+					errorCode: 'TENANT_MISSING',
+					root: 'notes.tenant',
+					depth: 1,
+				}),
+			])
+		}
+	})
+
+	it('projects inline registries through the fallback contract', async () => {
+		const entries: FailureAuditEntry[] = []
+		const foundation = createEffectFoundation({
+			observability: {
+				enabled: false,
+				classifyError: () => ({ outcome: 'failed', errorCode: 'F' }),
+			},
+			writeAudit: () => undefined,
+			auditFailure: {
+				errors: combineErrorContracts(tenancyErrors, notesErrors),
+				emit: (entry) => {
+					entries.push(entry)
+				},
+			},
+		})
+		const inline = foundation.Command({
+			context: () => ({}),
+			operations: ({ command }) => ({
+				'inline.fail': command({
+					input: z.number(),
+					result: z.number(),
+					classification: 'business',
+					audit: () => null,
+					handler: () => Effect.fail(notesErrors.create('NOT_FOUND', {})),
+				}),
+			}),
+		})
+		await Effect.runPromiseExit(inline.exec('inline.fail', 1, undefined))
+		expect(entries).toEqual([expect.objectContaining({ errorCode: 'NOT_FOUND', declared: true })])
+	})
+})
+
+// Convex intentionally omits this runtime field from its public registration declarations.
+function invoke<Ctx, Args>(registered: { isConvexFunction: true }, ctx: Ctx, args: Args) {
+	// SAFETY: every argument comes from a Convex builder, which retains its runtime _handler field.
+	return (
+		registered as { isConvexFunction: true; _handler: (ctx: Ctx, args: Args) => Promise<string> }
+	)._handler(ctx, args)
+}
+
+describe('declared defects at the API boundary', () => {
+	it('projects a thrown declared error to its declared failure and spoofs to unknown', async () => {
+		for (const spoofed of [false, true]) {
+			const t = convexTest(schema, modules)
+			const mutation = effectApiBuilder(nativeMutation, { errors: notesErrors })
+			const registered = mutation({
+				handler: () =>
+					Effect.gen(function* () {
+						yield* Effect.void
+						if (spoofed) throw { _tag: 'DeclaredError', code: 'NOT_FOUND', details: {} }
+						throw notesErrors.create('NOT_FOUND', {})
+					}),
+			})
+			const error = await t
+				.mutation((ctx) => invoke(registered, ctx, {}))
+				.catch((rejected: unknown) => rejected)
+			expect(error).toBeInstanceOf(ConvexError)
+			expect((error as ConvexError<string>).data).toEqual(
+				spoofed
+					? { _tag: 'UnknownFailure', version: 1 }
+					: {
+							_tag: 'DeclaredFailure',
+							version: 1,
+							code: 'NOT_FOUND',
+							message: 'Note not found',
+							details: {},
+						},
+			)
+		}
+	})
+})

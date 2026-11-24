@@ -29,6 +29,18 @@ export {
 } from './modules/effect/client'
 export { createEffectFoundation, type EffectFoundationOptions } from './modules/effect/client'
 export {
+	ActionAuditWriterError,
+	type EffectActionDependencies,
+	type EffectActionRegistry,
+} from './modules/effect/client'
+export { effectErrors, type EffectErrors } from './modules/effect/client'
+export type {
+	FailureAuditEntry,
+	FailureAuditOptions,
+	NestedAuditMode,
+	RequestScope,
+} from './modules/effect/client'
+export {
 	effectTransactionalIdempotency,
 	type EffectIdempotencyPreparation,
 } from './modules/effect/client'

@@ -211,7 +211,12 @@ compile. Numeric limits and durations the entity owns also live here.
    the shared Effect API builder executes that Effect at the authenticated boundary.
 4. Private handler helpers at the bottom.
 
-Audit derivation lives here, next to the operation it describes. No reads
+Audit derivation lives here, next to the operation it describes. A command
+nested inside another auditing command joins its request scope and writes no
+entry of its own by default, so audit callbacks never check a context flag.
+Raise declared errors with the factory's `fail('CODE')` and wrap Promise work in
+`attempt(...)`; the domain's `contracts.ts` owns the error contract, and no
+module keeps its own `attempt`/`fail` helpers. No reads
 that belong in `queries.ts`; no pure predicates that belong in `rules.ts`.
 The Promise command facade is deprecated; see `commands-legacy.md` only for
 maintaining existing code. New implementations follow `commands.md`.
@@ -234,7 +239,11 @@ it, it moves to `domain/shared/` — never a sibling import.
 
 ### `domain/<entity>/actions.ts` — external side effects
 
-Action-side logic owns external side effects. Put a provider used by one module
+Action-side logic owns external side effects. Declare the module's actions in one
+`foundation.Action({ context, operations })` registry (optionally contracted), so
+they get schemas, guards, audit and error projection like commands; call queries
+and commands through `ctx.runQuery`/`ctx.runMutation` with generated references.
+Put a provider used by one module
 in that module's `integrations/` or `providers/` directory. Share configured clients
 in `domain/shared/` only when multiple modules need them. Commands and queries
 must not perform network I/O; pure rules receive values instead of context or

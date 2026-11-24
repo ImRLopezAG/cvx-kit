@@ -14,6 +14,8 @@ import {
 	type ObservabilityOptions,
 } from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
+import { enterRequestScope } from './scope'
+import { reportFailure, type FailureAuditOptions } from './failure-audit'
 import {
 	effectOperationFactory,
 	type CallbackError,
@@ -113,6 +115,8 @@ export function createEffectQuery<
 	) => PermissionReturned
 	defaults?: { metadata?: object; guard?: (context: EffectValue<ContextReturned>) => GuardReturned }
 	observability?: ObservabilityOptions | Observability
+	auditFailure?: FailureAuditOptions
+	contract?: Pick<DomainContract, 'errors'>
 }) {
 	const definitions = effectOperationFactory<
 		EffectValue<ContextReturned>,
@@ -204,14 +208,28 @@ export function createEffectQuery<
 						: yield* core(context)
 					return yield* decodeEffectContract(definition.result, output)
 				})
-				return run.pipe(
-					Effect.onExit((exit) =>
-						Effect.sync(() => {
-							if (Exit.isSuccess(exit)) observation.completed()
-							else {
-								observation.failed(observationFailure(exit.cause))
-							}
-						}),
+				return enterRequestScope(operation, false, (entered, current) =>
+					run.pipe(
+						Effect.onExit((exit) =>
+							Effect.sync(() => {
+								if (Exit.isSuccess(exit)) observation.completed()
+								else {
+									observation.failed(observationFailure(exit.cause))
+								}
+							}).pipe(
+								Effect.andThen(
+									reportFailure(configuration.auditFailure, exit, {
+										kind: 'query',
+										operation,
+										classification: definition.classification ?? 'query',
+										input: parsedInput,
+										contract: configuration.contract?.errors,
+										entered,
+										current,
+									}),
+								),
+							),
+						),
 					),
 				)
 			})
@@ -267,6 +285,7 @@ type PolicyHost<Dependencies> = [CallbackHost<Policy<Dependencies>>] extends [ne
 type PolicyReturned<Dependencies> = CallbackReturned<Policy<Dependencies>>
 export type EffectQueryDependencies = {
 	observability: Observability
+	auditFailure?: FailureAuditOptions
 	// oxlint-disable-next-line anti-slop/no-unknown-returns -- Host policy storage is erased; the bound generic dependency retains its concrete E/R.
 	checkPermission?: (host: never, input: { permission: string; operation: string }) => unknown
 }
@@ -303,7 +322,8 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 				Mode,
 				never,
 				NoInfer<CallbackError<GuardReturned>>,
-				NoInfer<CallbackRequirements<GuardReturned>>
+				NoInfer<CallbackRequirements<GuardReturned>>,
+				Contract['errors']
 			>,
 		) => Operations
 		defaults?: {
@@ -359,7 +379,11 @@ export function bindEffectQuery<const Dependencies extends EffectQueryDependenci
 	}): unknown {
 		const buildOperations = () => {
 			const definitions = configuration.contract
-				? domainEffectFactory(configuration.contract.queries ?? {}, false)
+				? domainEffectFactory(
+						configuration.contract.queries ?? {},
+						false,
+						configuration.contract.errors,
+					)
 				: effectOperationFactory()
 			return snapshotOperations(
 				configuration.operations(

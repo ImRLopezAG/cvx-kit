@@ -22,6 +22,11 @@ type Details<Definition extends ErrorDefinitions[string]> =
 	Definition extends ErrorDefinitions[string]
 		? { [Field in keyof Definition['details']]: ReturnType<Definition['details'][Field]['parse']> }
 		: never
+/** The parsed detail fields one declared code carries. */
+export type DeclaredErrorDetails<
+	Definitions extends ErrorDefinitions,
+	Key extends Code<Definitions>,
+> = Details<Definitions[Key]>
 
 declare const declaredErrorBrand: unique symbol
 
@@ -262,7 +267,8 @@ export const queryErrors = defineErrorContract({
 	},
 })
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+/** Plain object records only: no arrays, class instances or exotic prototypes. */
+export function isRecord(value: unknown): value is Record<string, unknown> {
 	if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
 	const prototype = Object.getPrototypeOf(value)
 	return prototype === Object.prototype || prototype === null

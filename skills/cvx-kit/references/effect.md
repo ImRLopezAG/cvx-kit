@@ -358,6 +358,227 @@ operations share that runner and scope; do not run them independently inside
 handlers. Cleanup failure remains an endpoint failure, including when it
 combines with a handler failure.
 
+## Request scope and nested audit
+
+Every Command, Query and Action `exec` runs inside a request scope. The first
+operation of a program opens it, and any `exec` yielded inside that operation's
+handler or middleware joins it. Typically this is a bound registry from
+`withContext`. Nothing needs to be added to the bound context.
+
+By default (`nestedAudit: 'fold'`), a command nested under an operation that
+declares an audit callback does not run its own audit callback and writes no
+audit entry. The outermost auditing operation's entry stands for the request;
+a failure rolls the nested writes back with it. Actions never fold: each
+`ctx.runMutation` commits on its own, so an audited nested action keeps its own
+entry even when the enclosing action later fails. A nested operation without an auditing ancestor still audits, for
+example a command executed inside a query or inside an action that declares no
+audit. An ancestor whose audit callback returns `null` has chosen not to audit
+the request.
+
+```ts
+const scopedFoundation = createEffectFoundation({
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed' as const, errorCode: 'DOCUMENT_OPERATION_FAILED' }),
+	},
+	writeAudit: (_host: Host, _entry: AuditEntryInput) => Effect.void,
+	// Keep one entry per nested operation instead of one per request.
+	nestedAudit: 'separate',
+})
+```
+
+Audit callbacks receive the scope they entered as a third argument:
+`{ root, parent, depth }` for a nested operation and `undefined` for the
+outermost one. In `'separate'` mode, use it to correlate entries:
+
+```ts
+export const scopedCommands = scopedFoundation.Command({
+	context: (host: Host) => host,
+	operations: ({ command }) => ({
+		touch: command({
+			input: keyInput,
+			result: z.string(),
+			classification: 'business',
+			handler: (input) => input.key,
+			audit: ({ result }, host, scope) => ({
+				operation: 'documents.touch',
+				actorId: host.actor,
+				aggregate: { type: 'document', id: result },
+				metadata: { requestRoot: scope?.root ?? 'documents.touch' },
+			}),
+		}),
+	}),
+})
+```
+
+The scope lives in the Effect program. An `exec` that a handler runs through
+`Effect.runPromise` starts a new program, so it opens its own scope and audits
+as a root. Yield nested executions instead.
+
+## Failure audit
+
+A failed mutation rolls back every write it made, including an audit entry
+written in the same transaction. Failure audit therefore goes to a host-free
+sink:
+
+```ts
+import { defineErrorContract } from 'cvx-kit/errors'
+
+const invoiceErrors = defineErrorContract({
+	NOT_FOUND: { message: 'Invoice not found', details: {} },
+	LIMIT_EXCEEDED: { message: 'Invoice limit exceeded', details: { limit: z.number() } },
+})
+const auditedFoundation = createEffectFoundation({
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed' as const, errorCode: 'DOCUMENT_OPERATION_FAILED' }),
+	},
+	writeAudit: (_host: Host, _entry: AuditEntryInput) => Effect.void,
+	auditFailure: {
+		// Inside queries and mutations there is no fetch: log, and let log streams export it.
+		emit: (entry) => console.warn(JSON.stringify({ event: 'operation.failed', ...entry })),
+		// Projects failures the registry's own contract does not recognize.
+		errors: invoiceErrors,
+		// Optional redactors; without them the entry carries neither field.
+		details: (details, code) =>
+			code === 'LIMIT_EXCEEDED' ? z.object({ limit: z.number() }).parse(details) : undefined,
+		input: (_input, operation) => (operation === 'invoices.void' ? { operation } : undefined),
+	},
+})
+```
+
+Each entry carries `kind` (`command`, `query` or `action`), `operation`,
+`classification`, `errorCode`, `declared`, the request `root` and the
+operation's `depth`. `errorCode` is the declared contract code, or
+`UNKNOWN_FAILURE` when neither the registry's contract nor `auditFailure.errors`
+recognizes the failure. Raw input, unredacted details, defect messages and
+stacks never reach the entry. A redactor that throws or returns anything other
+than a plain JSON record leaves its field out.
+
+The innermost operation that fails reports the failure, and enclosing
+operations skip the same failure value. So a nested registry's own code
+survives, and a nested failure that a parent recovers from is still reported.
+Errors thrown by `emit` are ignored; the original failure is unchanged.
+
+## Raising and recovering declared errors
+
+`effectErrors(contract)` binds `fail` and `attempt` to one declared error
+contract. Contracted registries whose `errors` is a `defineErrorContract` result
+also receive both on the operations factory:
+
+```ts
+import { defineDomainContract } from 'cvx-kit/contracts'
+
+const INVOICE_LIMIT = 3
+const invoiceContract = defineDomainContract({
+	errors: invoiceErrors,
+	commands: {
+		'invoices.void': { input: keyInput, result: z.string(), classification: 'business' },
+	},
+})
+export const invoices = auditedFoundation.Command({
+	contract: invoiceContract,
+	context: (host: Host) => ({
+		host,
+		load: async (key: string) => (key === 'missing' ? null : { key, total: 1 }),
+	}),
+	audit: ({ operation, result }, { host }) => ({
+		operation,
+		actorId: host.actor,
+		aggregate: { type: 'invoice', id: result },
+	}),
+	operations: ({ command, fail, attempt }) => ({
+		'invoices.void': command.handler((input, ctx) =>
+			Effect.gen(function* () {
+				const invoice = yield* attempt(() => ctx.load(input.key))
+				if (!invoice) return yield* fail('NOT_FOUND')
+				if (invoice.total > INVOICE_LIMIT)
+					return yield* fail('LIMIT_EXCEEDED', { limit: INVOICE_LIMIT })
+				return invoice.key
+			}),
+		),
+	}),
+})
+```
+
+`fail(code)` omits details only for codes that declare no detail fields.
+`attempt(() => work())` runs sync or async work. A thrown declared error of that
+contract, or a `ConvexError` carrying one of its declared envelopes (as
+`ctx.runMutation` rethrows it), becomes a typed `DeclaredError`, which
+`Effect.catchTag('DeclaredError', ...)` recovers. Every other throw stays a
+defect. Combined contracts cannot create errors, so their registries get no
+factory helpers; call `effectErrors(memberContract)` for the member you raise
+from.
+
+A declared error thrown with `throw errors.create(...)` inside `Effect.gen` is
+still a defect in the Effect types. The API adapter's `errors` projection and
+failure audit nevertheless recognize it, because the contract created it, so
+clients receive its `DeclaredFailure` rather than `UnknownFailure`.
+
+## Action registries
+
+`foundation.Action` runs Convex actions through the command lifecycle: input
+and result schemas, context injection, default and operation guards,
+middleware, observability, failure audit and the request scope. Handlers call
+queries and mutations through `ctx.runQuery`/`ctx.runMutation` with generated
+references:
+
+```ts
+import { actionGeneric, type FunctionReference, type GenericActionCtx } from 'convex/server'
+import { effectErrors } from 'cvx-kit/effect'
+
+type ActionCtx = GenericActionCtx<DataModel>
+// In an app this is a generated reference such as `internal.domain.settlement.post`.
+declare const postSettlement: FunctionReference<'mutation', 'internal', { key: string }, string>
+const { attempt: attemptInvoice } = effectErrors(invoiceErrors)
+
+const actionFoundation = createEffectFoundation({
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed' as const, errorCode: 'DOCUMENT_OPERATION_FAILED' }),
+	},
+	writeAudit: (_host: Host, _entry: AuditEntryInput) => Effect.void,
+	// Typically `ctx.runMutation(internal.audit.write, entry)`.
+	writeActionAudit: (_ctx: ActionCtx, entry: AuditEntryInput) =>
+		Effect.sync(() => console.info(entry.operation)),
+})
+
+export const settlement = actionFoundation.Action({
+	context: (ctx: ActionCtx) => ctx,
+	operations: ({ action }) => ({
+		'settlement.post': action({
+			input: keyInput,
+			result: z.string(),
+			handler: (input, ctx) => attemptInvoice(() => ctx.runMutation(postSettlement, input)),
+			audit: ({ command }) => ({
+				operation: 'settlement.post',
+				actorId: 'system',
+				aggregate: { type: 'settlement', id: command.key },
+			}),
+		}),
+	}),
+})
+
+export const postSettlementAction = effectApiBuilder(actionGeneric, { errors: invoiceErrors })({
+	args: { key: v.string() },
+	handler: (ctx: ActionCtx, args: { key: string }) => settlement.exec('settlement.post', args, ctx),
+})
+```
+
+`classification` defaults to `'action'`, and `audit` is optional per operation
+or per registry. An action that audits needs the `writeActionAudit` Foundation
+option. Without it the registry fails with `ActionAuditWriterError` on its
+first execution, before any handler runs. Each `ctx.runMutation` is its own
+transaction, so a completed action's side effects stand even if its audit write
+then fails. In that case the action still returns its result and reports
+`ACTION_AUDIT_WRITE_FAILED` to `auditFailure`, so callers do not retry work
+that already happened. Without an `auditFailure` sink, it logs a payload-free
+`action.audit_write_failed` line with `console.error` instead.
+
+Actions have no `prepare`, `replayResult` or `permission` (authorize with a
+guard) and no `expose`. Domain contracts can declare them in an `actions`
+section; see [Optional domain contracts](./domain-contracts.md).
+
 ## Convex boundaries and observed support
 
 A domain query is a reusable read operation; its name does not choose the

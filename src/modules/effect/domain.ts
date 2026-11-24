@@ -4,6 +4,8 @@ import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractInput, ContractOutput, ContractSchema } from '../contracts/contract'
 import type { DomainOperationContract, ExactOperationKeys } from '../contracts/domain'
 import { domainHelpers, type DeclaredSchemas } from '../contracts/binding'
+import type { ErrorContract, ErrorDefinitions } from '../contracts/errors'
+import { effectErrors, type EffectErrors } from './failures'
 import {
 	effectOperationFactory,
 	type OperationDefinition,
@@ -13,6 +15,7 @@ import {
 	type CallbackRequirements,
 	type EffectPreparation,
 } from './operation'
+import type { RequestScope } from './scope'
 
 type Supported<A> = A | PromiseLike<A> | Effect.Effect<A, unknown, unknown>
 type Audit = Omit<AuditEntryInput, 'classification'> | null
@@ -30,6 +33,7 @@ type Forbidden = {
 type AuditCallback<Context, Entry extends DomainOperationContract, Value> = (
 	resolution: { command: ContractOutput<Entry['input']>; result: ContractOutput<Entry['result']> },
 	context: Context,
+	scope: RequestScope | undefined,
 ) => Value
 export type SelectedAudit<Definition, Default> = Definition extends { audit: infer Override }
 	? Override
@@ -52,7 +56,7 @@ type Helper<
 	Context,
 	Entry extends DomainOperationContract,
 	Key,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	BaseError,
 	BaseRequirements,
@@ -94,7 +98,9 @@ type Helper<
 			? [Default] extends [never]
 				? { audit: AuditCallback<Context, Entry, AuditReturned> }
 				: {}
-			: { audit?: never; prepare?: never; aggregates?: never }),
+			: Command extends 'action'
+				? { prepare?: never; permission?: never }
+				: { audit?: never; prepare?: never; aggregates?: never }),
 ) => DeclaredSchemas<Entry> &
 	CheckedEffectDefinition<
 		Context,
@@ -105,7 +111,7 @@ type Helper<
 
 type HandlerArguments<
 	Options,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	RequiredAudit,
 > = Command extends true
@@ -117,7 +123,7 @@ type HandlerArguments<
 type HandlerHelper<
 	Context,
 	Entries extends Readonly<Record<string, DomainOperationContract>>,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	BaseError,
 	BaseRequirements,
@@ -158,7 +164,11 @@ type HandlerHelper<
 				>,
 				'handler' | 'input' | 'result' | 'classification' | 'replayResult' | 'wire'
 			> &
-			(Command extends true ? {} : { audit?: never; prepare?: never; aggregates?: never }),
+			(Command extends true
+				? {}
+				: Command extends 'action'
+					? { prepare?: never; permission?: never }
+					: { audit?: never; prepare?: never; aggregates?: never }),
 		Command,
 		Default,
 		{ audit: AuditCallback<Context, { input: Input; result: Result }, AuditReturned> }
@@ -179,12 +189,13 @@ type HandlerHelper<
 export type DomainEffectFactory<
 	Context,
 	Entries extends Readonly<Record<string, DomainOperationContract>>,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default = never,
 	BaseError = never,
 	BaseRequirements = never,
-> = {
-	[Kind in Command extends true ? 'command' : 'query']: {
+	Errors = never,
+> = ContractErrorHelpers<Errors> & {
+	[Kind in Command extends true ? 'command' : Command extends 'action' ? 'action' : 'query']: {
 		readonly [Key in keyof Entries]: Helper<
 			Context,
 			Entries[Key],
@@ -217,12 +228,13 @@ export type DomainEffectImplementations<
 export function domainEffectFactory<
 	Context,
 	Entries extends Readonly<Record<string, DomainOperationContract>>,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	Guard,
 >(
 	entries: Entries,
 	command: Command,
+	errors?: object,
 ): DomainEffectFactory<
 	Context,
 	Entries,
@@ -232,8 +244,10 @@ export function domainEffectFactory<
 	CallbackRequirements<Guard>
 > {
 	const helpers = domainHelpers(entries)
+	const factory = { [command === 'action' ? 'action' : command ? 'command' : 'query']: helpers }
+	if (errors && isFullErrorContract(errors)) Object.assign(factory, effectErrors(errors))
 	// SAFETY: helper signatures check callbacks; registration pairs drafts with their declarations.
-	return { [command ? 'command' : 'query']: helpers } as DomainEffectFactory<
+	return factory as DomainEffectFactory<
 		Context,
 		Entries,
 		Command,
@@ -253,3 +267,20 @@ export type SharedEffectFactory<Context, Guard> = ReturnType<
 	>
 >
 export type AuditValue = Supported<Audit>
+
+/** A contract that can create its declared errors also gives the factory `fail` and `attempt`. */
+type ContractErrorHelpers<Errors> = [Errors] extends [never]
+	? {}
+	: Errors extends ErrorContract<infer Definitions>
+		? EffectErrors<Definitions>
+		: {}
+
+function isFullErrorContract(
+	errors: object,
+): errors is Pick<ErrorContract<ErrorDefinitions>, 'create' | 'project' | 'decode'> {
+	// SAFETY: only the presence of the three callable members is read here.
+	const candidate = errors as Partial<Record<'create' | 'project' | 'decode', Function>>
+	return [candidate.create, candidate.project, candidate.decode].every(
+		(member) => member instanceof Function,
+	)
+}

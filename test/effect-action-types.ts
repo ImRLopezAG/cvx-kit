@@ -1,6 +1,7 @@
 import type { Effect } from 'effect'
 import { z } from 'zod'
 import { createEffectFoundation, type ContractValidationError } from '../src/effect'
+import { defineDomainContract } from '../src/modules/contracts/domain'
 
 const foundation = createEffectFoundation({
 	observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'F' }) },
@@ -52,4 +53,37 @@ foundation.Action({
 	operations: ({ action }) => ({
 		ping: action({ input: z.string(), result: z.string(), handler: (input) => input }),
 	}),
+})
+
+const contract = defineDomainContract({
+	actions: {
+		'provider.send': { input: z.string(), result: z.boolean() },
+		'provider.poll': { input: z.string(), result: z.string() },
+	},
+})
+const contracted = foundation.Action({
+	contract,
+	context: (host: { runMutation: true }) => host,
+	operations: ({ action }) => ({
+		'provider.send': action.handler((input) => input.length > 0),
+		'provider.poll': action['provider.poll']({ handler: (input) => input }),
+	}),
+})
+const sent: Effect.Effect<boolean, ContractValidationError, never> = contracted.exec(
+	'provider.send',
+	'x',
+	{ runMutation: true },
+)
+void sent
+foundation.Action({
+	contract,
+	context: (host: { runMutation: true }) => host,
+	// @ts-expect-error Every declared action must be implemented.
+	operations: ({ action }) => ({ 'provider.send': action.handler(() => true) }),
+})
+defineDomainContract({
+	actions: {
+		// @ts-expect-error Contracts declare schemas only; implementations live in registries.
+		'provider.send': { input: z.string(), result: z.boolean(), handler: () => true },
+	},
 })

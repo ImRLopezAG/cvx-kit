@@ -11,6 +11,7 @@ import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 import { combineErrorContracts } from '../src/modules/contracts/errors'
+import { defineDomainContract } from '../src/modules/contracts/domain'
 import { effectApiBuilder } from '../src/modules/effect/api'
 import { createEffectFoundation } from '../src/modules/effect/foundation'
 import { effectErrors } from '../src/modules/effect/failures'
@@ -251,5 +252,117 @@ describe('Effect Action registry', () => {
 		const t = convexTest(schema, modules)
 		await t.action((host) => Effect.runPromise(outer.exec('batch.forward', 'd', host)))
 		expect(h.audits.map((entry) => entry.operation)).toEqual(['settlement.post'])
+	})
+})
+
+describe('contracted Action registries', () => {
+	function foundationWithAudits() {
+		const audits: AuditEntryInput[] = []
+		const foundation = createEffectFoundation({
+			observability: {
+				enabled: false,
+				classifyError: () => ({ outcome: 'failed', errorCode: 'F' }),
+			},
+			writeAudit: () => undefined,
+			writeActionAudit: (_host: Host, entry: AuditEntryInput) => {
+				audits.push(entry)
+			},
+		})
+		return { foundation, audits }
+	}
+	const settlement = defineDomainContract({
+		errors: settlementErrors,
+		actions: {
+			'settlement.post': { input: z.string(), result: z.string(), classification: 'provider' },
+			'settlement.check': { input: z.string(), result: z.boolean() },
+		},
+	})
+
+	it('runs declared actions with registry-level audit and contract error helpers', async () => {
+		const { foundation, audits } = foundationWithAudits()
+		const seen: unknown[] = []
+		const actions = foundation.Action({
+			contract: settlement,
+			context: (host: Host) => host,
+			audit: ({ operation, input, result }) => {
+				seen.push({ operation, input, result })
+				return { operation, actorId: 'system', aggregate: { type: 'settlement', id: input } }
+			},
+			operations: ({ action, attempt, fail }) => ({
+				'settlement.post': action.handler((title, ctx) =>
+					attempt(() => ctx.runMutation(record, { title })).pipe(
+						Effect.catchTag('DeclaredError', () => fail('SETTLED')),
+					),
+				),
+				'settlement.check': action['settlement.check']({ handler: (title) => title.length > 0 }),
+			}),
+		})
+		const t = convexTest(schema, modules)
+		expect(
+			await t.action((host) => Effect.runPromise(actions.exec('settlement.post', 'e', host))),
+		).toBe('e')
+		expect(seen).toEqual([{ operation: 'settlement.post', input: 'e', result: 'e' }])
+		expect(audits).toEqual([
+			expect.objectContaining({ operation: 'settlement.post', classification: 'provider' }),
+		])
+		const failed = await t.action(async (host) => {
+			const exit = await Effect.runPromiseExit(actions.exec('settlement.post', 'settled', host))
+			return Exit.isFailure(exit)
+		})
+		expect(failed).toBe(true)
+	})
+
+	it('enforces exact operation keys', () => {
+		const { foundation } = foundationWithAudits()
+		const actions = foundation.Action({
+			contract: settlement,
+			context: (host: Host) => host,
+			// SAFETY: deliberately omit a declared operation to reach the runtime key check.
+			operations: (({ action }: { action: { handler: Function } }) => ({
+				'settlement.post': action.handler((title: string) => title),
+			})) as never,
+		})
+		expect(() => Effect.runSync(actions.exec('settlement.post', 'x', {} as Host) as never)).toThrow(
+			'Contract operation keys must match exactly',
+		)
+	})
+
+	it('binds getter-declared actions on first execution', async () => {
+		const { foundation } = foundationWithAudits()
+		let reads = 0
+		const lazy = defineDomainContract({
+			actions: {
+				get 'lazy.ping'() {
+					reads++
+					return { input: z.string(), result: z.string() }
+				},
+			},
+		})
+		const actions = foundation.Action({
+			contract: lazy,
+			context: (host: Host) => host,
+			operations: ({ action }) => ({ 'lazy.ping': action.handler((input) => input) }),
+		})
+		expect(reads).toBe(0)
+		expect(await Effect.runPromise(actions.exec('lazy.ping', 'p', {} as Host))).toBe('p')
+		expect(await Effect.runPromise(actions.exec('lazy.ping', 'q', {} as Host))).toBe('q')
+		expect(reads).toBe(1)
+	})
+
+	it('rejects contract entries that carry implementations', () => {
+		const { foundation } = foundationWithAudits()
+		const actions = foundation.Action({
+			// SAFETY: deliberately bypass the declaration check to reach the runtime binding guard.
+			contract: {
+				actions: { bad: { input: z.string(), result: z.string(), handler: () => 'x' } },
+			} as never,
+			context: (host: Host) => host,
+			operations: (({ action }: { action: { handler: Function } }) => ({
+				bad: action.handler((input: string) => input),
+			})) as never,
+		})
+		expect(() => Effect.runSync(actions.exec('bad' as never, 'x' as never, {} as Host))).toThrow(
+			'cannot contain handler',
+		)
 	})
 })

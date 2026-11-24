@@ -56,7 +56,7 @@ type Helper<
 	Context,
 	Entry extends DomainOperationContract,
 	Key,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	BaseError,
 	BaseRequirements,
@@ -98,7 +98,9 @@ type Helper<
 			? [Default] extends [never]
 				? { audit: AuditCallback<Context, Entry, AuditReturned> }
 				: {}
-			: { audit?: never; prepare?: never; aggregates?: never }),
+			: Command extends 'action'
+				? { prepare?: never; permission?: never }
+				: { audit?: never; prepare?: never; aggregates?: never }),
 ) => DeclaredSchemas<Entry> &
 	CheckedEffectDefinition<
 		Context,
@@ -109,7 +111,7 @@ type Helper<
 
 type HandlerArguments<
 	Options,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	RequiredAudit,
 > = Command extends true
@@ -121,7 +123,7 @@ type HandlerArguments<
 type HandlerHelper<
 	Context,
 	Entries extends Readonly<Record<string, DomainOperationContract>>,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	BaseError,
 	BaseRequirements,
@@ -162,7 +164,11 @@ type HandlerHelper<
 				>,
 				'handler' | 'input' | 'result' | 'classification' | 'replayResult' | 'wire'
 			> &
-			(Command extends true ? {} : { audit?: never; prepare?: never; aggregates?: never }),
+			(Command extends true
+				? {}
+				: Command extends 'action'
+					? { prepare?: never; permission?: never }
+					: { audit?: never; prepare?: never; aggregates?: never }),
 		Command,
 		Default,
 		{ audit: AuditCallback<Context, { input: Input; result: Result }, AuditReturned> }
@@ -183,13 +189,13 @@ type HandlerHelper<
 export type DomainEffectFactory<
 	Context,
 	Entries extends Readonly<Record<string, DomainOperationContract>>,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default = never,
 	BaseError = never,
 	BaseRequirements = never,
 	Errors = never,
 > = ContractErrorHelpers<Errors> & {
-	[Kind in Command extends true ? 'command' : 'query']: {
+	[Kind in Command extends true ? 'command' : Command extends 'action' ? 'action' : 'query']: {
 		readonly [Key in keyof Entries]: Helper<
 			Context,
 			Entries[Key],
@@ -222,7 +228,7 @@ export type DomainEffectImplementations<
 export function domainEffectFactory<
 	Context,
 	Entries extends Readonly<Record<string, DomainOperationContract>>,
-	Command extends boolean,
+	Command extends boolean | 'action',
 	Default,
 	Guard,
 >(
@@ -238,7 +244,7 @@ export function domainEffectFactory<
 	CallbackRequirements<Guard>
 > {
 	const helpers = domainHelpers(entries)
-	const factory = { [command ? 'command' : 'query']: helpers }
+	const factory = { [command === 'action' ? 'action' : command ? 'command' : 'query']: helpers }
 	if (errors && isFullErrorContract(errors)) Object.assign(factory, effectErrors(errors))
 	// SAFETY: helper signatures check callbacks; registration pairs drafts with their declarations.
 	return factory as DomainEffectFactory<

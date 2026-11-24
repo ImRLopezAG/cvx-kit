@@ -3,8 +3,8 @@ import type { Effect } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation observability without entering the Convex component deployment graph.
 import type { Observability } from '../../components/foundation/modules/observability/observability'
-import type { DomainAuditInput, DomainContract } from '../contracts/domain'
-import { snapshotOperations } from '../contracts/binding'
+import type { DomainActionContract, DomainAuditInput, DomainContract } from '../contracts/domain'
+import { snapshotOperations, type BoundOperations } from '../contracts/binding'
 import { memoize, registerLazyRegistry } from '../contracts/lazy'
 import {
 	createEffectCommand,
@@ -14,7 +14,14 @@ import {
 	type Registry,
 	type Resolver,
 } from './command'
-import type { AuditedOperations, AuditValue } from './domain'
+import {
+	domainEffectFactory,
+	type AuditedOperations,
+	type AuditValue,
+	type DomainEffectFactory,
+	type DomainEffectImplementations,
+	type ExactDomainOperations,
+} from './domain'
 import type { FailureAuditOptions } from './failure-audit'
 import {
 	effectActionFactory,
@@ -88,6 +95,53 @@ export function bindEffectAction<const Dependencies extends EffectActionDependen
 ) {
 	function action<
 		Resolve extends Resolver,
+		const Contract extends DomainContract & {
+			actions: Readonly<Record<string, DomainActionContract>>
+		},
+		const Operations extends DomainEffectImplementations<DomainOf<Resolve>, Contract['actions']>,
+		Returned extends AuditValue = never,
+		Guard = never,
+	>(
+		configuration: {
+			contract: Contract &
+				NoInfer<
+					Operations extends ExactDomainOperations<Operations, Contract['actions']> &
+						ValidatedEffectOperations<Operations>
+						? unknown
+						: never
+				>
+			context: Resolve
+			audit?: (
+				resolution: DomainAuditInput<Contract['actions']>,
+				context: DomainOf<Resolve>,
+				scope: RequestScope | undefined,
+			) => Returned
+			operations: (
+				define: DomainEffectFactory<
+					DomainOf<Resolve>,
+					Contract['actions'],
+					'action',
+					never,
+					NoInfer<CallbackError<Guard>>,
+					NoInfer<CallbackRequirements<Guard>>,
+					Contract['errors']
+				>,
+			) => Operations
+			defaults?: { guard?: (context: DomainOf<Resolve>) => Guard }
+		} & ActionCompatible<Resolve, Dependencies>,
+	): EffectActionRegistry<
+		Resolve,
+		[Returned] extends [never]
+			? BoundOperations<Operations, Contract['actions']>
+			: AuditedOperations<
+					BoundOperations<Operations, Contract['actions']>,
+					(resolution: never, context: never) => Returned
+				>,
+		Dependencies,
+		Guard
+	>
+	function action<
+		Resolve extends Resolver,
 		const Operations extends Registry<DomainOf<Resolve>>,
 		Returned extends AuditValue = never,
 		Guard = never,
@@ -122,8 +176,14 @@ export function bindEffectAction<const Dependencies extends EffectActionDependen
 		const buildOperations = () => {
 			const operations = snapshotOperations(
 				configuration.operations(
-					// SAFETY: the overload checks callbacks against this exact helper factory.
-					effectActionFactory() as never,
+					// SAFETY: each overload checks callbacks against this exact inline or contracted helper factory.
+					(configuration.contract
+						? domainEffectFactory(
+								configuration.contract.actions ?? {},
+								'action',
+								configuration.contract.errors,
+							)
+						: effectActionFactory()) as never,
 				),
 				configuration.contract,
 				'actions',

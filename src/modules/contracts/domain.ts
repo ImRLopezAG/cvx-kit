@@ -48,9 +48,9 @@ type CheckedSection<Section> = {
 		: never
 }
 type CheckedDomain<Definition> = {
-	readonly [Section in Extract<keyof Definition, 'commands' | 'queries'>]: CheckedSection<
-		Definition[Section]
-	>
+	readonly [
+		Section in Extract<keyof Definition, 'commands' | 'queries' | 'actions'>
+	]: CheckedSection<Definition[Section]>
 }
 
 /** Preserve the declaration's literal keys and opaque validator/error-contract identities. */
@@ -135,7 +135,7 @@ function memoizeOperation(operation: unknown) {
 
 /** Getter-declared operations and fields build at most once and keep a stable identity. */
 function memoizeAccessors<Definition>(definition: Definition): Definition {
-	for (const name of ['commands', 'queries'] as const) {
+	for (const name of ['commands', 'queries', 'actions'] as const) {
 		// SAFETY: the checked declaration's sections are plain records of operation declarations.
 		const section = (definition as Record<string, unknown> | undefined)?.[name]
 		if (!section || typeof section !== 'object') continue

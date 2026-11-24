@@ -2,6 +2,7 @@ import type { Effect } from 'effect'
 import type { ContractSchema, ContractInput, ContractOutput } from '../contracts/contract'
 import type { ContractDecoderError, ContractDecoderRequirements } from './schema'
 import type { AuditEntryInput } from '../../components/foundation/client'
+import type { RequestScope } from './scope'
 
 /** Ordinary failures are defects; only an explicit Effect supplies a typed error. */
 export type CallbackError<Value> = Value extends (...arguments_: never[]) => infer Returned
@@ -183,6 +184,7 @@ export type OperationDefinition<
 	audit?: (
 		resolution: { command: ContractOutput<Input>; result: ContractOutput<Output> },
 		context: Context,
+		scope: RequestScope | undefined,
 	) => AuditResult
 } & (keyof Extension extends never
 	? {
@@ -306,6 +308,7 @@ export function effectOperationFactory<
 						audit: (
 							resolution: { command: ContractOutput<Input>; result: ContractOutput<Output> },
 							context: Context,
+							scope: RequestScope | undefined,
 						) => AuditResult
 					}
 				: {}),

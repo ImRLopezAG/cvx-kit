@@ -13,6 +13,7 @@ import {
 	type CallbackRequirements,
 	type EffectPreparation,
 } from './operation'
+import type { RequestScope } from './scope'
 
 type Supported<A> = A | PromiseLike<A> | Effect.Effect<A, unknown, unknown>
 type Audit = Omit<AuditEntryInput, 'classification'> | null
@@ -30,6 +31,7 @@ type Forbidden = {
 type AuditCallback<Context, Entry extends DomainOperationContract, Value> = (
 	resolution: { command: ContractOutput<Entry['input']>; result: ContractOutput<Entry['result']> },
 	context: Context,
+	scope: RequestScope | undefined,
 ) => Value
 export type SelectedAudit<Definition, Default> = Definition extends { audit: infer Override }
 	? Override

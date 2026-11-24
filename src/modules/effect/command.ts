@@ -21,6 +21,13 @@ import {
 import type { Observability } from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
 import {
+	auditFolded,
+	enterRequestScope,
+	type NestedAuditMode,
+	type RequestScope,
+	type ScopeState,
+} from './scope'
+import {
 	effectOperationFactory,
 	type CallbackError,
 	type CallbackRequirements,
@@ -86,6 +93,8 @@ export type EffectCommandDependencies = {
 	) => Supported<void>
 	// oxlint-disable-next-line anti-slop/no-unknown-returns -- Audit writer storage; its concrete return/error/services remain in Dependencies.
 	writeAudit: (host: never, entry: AuditEntryInput) => Supported<unknown>
+	/** `fold` (default): an operation nested under an auditing operation leaves the audit to it. */
+	nestedAudit?: NestedAuditMode
 }
 type HostParameter<Policy> = [Exclude<Policy, undefined>] extends [never]
 	? unknown
@@ -155,6 +164,7 @@ type RuntimeOperation<Context, Input, Raw, Result> = {
 	audit: (
 		resolution: { command: Input; result: Result },
 		context: Context,
+		scope: RequestScope | undefined,
 	) => Supported<Omit<AuditEntryInput, 'classification'> | null>
 	middleware?: (input: {
 		operation: string
@@ -217,95 +227,103 @@ export function createEffectCommand<
 				})
 				// SAFETY: resolver identity owns its concrete invocation return and host parameter.
 				const resolve = configuration.context as (host: HostOf<Resolve>) => ReturnType<Resolve>
-				return normalizeEffect(() => resolve(host)).pipe(
-					Effect.flatMap((context) => {
-						const lifecycle = executeCommandLifecycle<
-							EffectExecution,
-							DomainOf<Resolve>,
-							EffectOperationInput<Operations[Key]>,
-							EffectOperationHandlerResult<Operations[Key]>,
-							EffectOperationResult<Operations[Key]>
-						>(effectLifecycle, {
-							operation,
-							classification: definition.classification,
-							context,
-							command,
-							permission:
-								definition.permission === undefined
-									? undefined
-									: () =>
-											normalizeEffect(() => {
-												if (!configuration.checkPermission)
-													throw new CommandPermissionError(operation)
-												// SAFETY: HostCompatible proves this invocation satisfies the configured policy host.
-												return configuration.checkPermission(host as never, {
-													permission: definition.permission!,
-													operation,
-												})
-											}).pipe(Effect.asVoid),
-							prepare: () =>
-								normalizeEffect(() => definition.prepare?.(context, command)).pipe(
-									Effect.map((preparation) => {
-										if (preparation?.kind !== 'execute') return preparation
-										return {
-											kind: 'execute',
-											complete: preparation.complete
-												? (result) =>
-														normalizeEffect(() => preparation.complete!(result)).pipe(Effect.asVoid)
-												: undefined,
-										} satisfies LifecyclePreparation<
-											EffectExecution,
-											EffectOperationResult<Operations[Key]>
-										>
-									}),
-								),
-							// SAFETY: the selected final replay contract owns this result; operation types retain its E/R.
-							decodeReplay: (value) =>
-								decodeEffectContract(
-									definition.replayResult ?? definition.result,
-									value,
-								) as Effect.Effect<EffectOperationResult<Operations[Key]>, unknown, unknown>,
-							middleware: definition.middleware
-								? [
-										(input_) =>
-											normalizeCommandResult(() =>
-												definition.middleware!({ ...input_, input: command }),
+				const run = (entered: ScopeState | undefined) =>
+					normalizeEffect(() => resolve(host)).pipe(
+						Effect.flatMap((context) => {
+							const lifecycle = executeCommandLifecycle<
+								EffectExecution,
+								DomainOf<Resolve>,
+								EffectOperationInput<Operations[Key]>,
+								EffectOperationHandlerResult<Operations[Key]>,
+								EffectOperationResult<Operations[Key]>
+							>(effectLifecycle, {
+								operation,
+								classification: definition.classification,
+								context,
+								command,
+								permission:
+									definition.permission === undefined
+										? undefined
+										: () =>
+												normalizeEffect(() => {
+													if (!configuration.checkPermission)
+														throw new CommandPermissionError(operation)
+													// SAFETY: HostCompatible proves this invocation satisfies the configured policy host.
+													return configuration.checkPermission(host as never, {
+														permission: definition.permission!,
+														operation,
+													})
+												}).pipe(Effect.asVoid),
+								prepare: () =>
+									normalizeEffect(() => definition.prepare?.(context, command)).pipe(
+										Effect.map((preparation) => {
+											if (preparation?.kind !== 'execute') return preparation
+											return {
+												kind: 'execute',
+												complete: preparation.complete
+													? (result) =>
+															normalizeEffect(() => preparation.complete!(result)).pipe(
+																Effect.asVoid,
+															)
+													: undefined,
+											} satisfies LifecyclePreparation<
+												EffectExecution,
+												EffectOperationResult<Operations[Key]>
+											>
+										}),
+									),
+								// SAFETY: the selected final replay contract owns this result; operation types retain its E/R.
+								decodeReplay: (value) =>
+									decodeEffectContract(
+										definition.replayResult ?? definition.result,
+										value,
+									) as Effect.Effect<EffectOperationResult<Operations[Key]>, unknown, unknown>,
+								middleware: definition.middleware
+									? [
+											(input_) =>
+												normalizeCommandResult(() =>
+													definition.middleware!({ ...input_, input: command }),
+												),
+										]
+									: [],
+								defaultGuard: (enriched) =>
+									normalizeEffect(() => configuration.defaults?.guard?.(enriched)).pipe(
+										Effect.asVoid,
+									),
+								guard: (enriched) =>
+									normalizeEffect(() => definition.guard?.(enriched, command)).pipe(Effect.asVoid),
+								run: (enriched) =>
+									normalizeCommandResult(() => definition.handler(command, enriched)),
+								// SAFETY: the selected contract owns the decoded result; the public operation retains decoder E/R.
+								decodeResult: (value) =>
+									decodeEffectContract(definition.result, value) as Effect.Effect<
+										EffectOperationResult<Operations[Key]>,
+										unknown,
+										unknown
+									>,
+								audit: (result) =>
+									auditFolded(configuration.nestedAudit, entered)
+										? Effect.succeed(null)
+										: normalizeEffect(() =>
+												definition.audit({ command, result }, context, entered?.scope),
 											),
-									]
-								: [],
-							defaultGuard: (enriched) =>
-								normalizeEffect(() => configuration.defaults?.guard?.(enriched)).pipe(
-									Effect.asVoid,
-								),
-							guard: (enriched) =>
-								normalizeEffect(() => definition.guard?.(enriched, command)).pipe(Effect.asVoid),
-							run: (enriched) =>
-								normalizeCommandResult(() => definition.handler(command, enriched)),
-							// SAFETY: the selected contract owns the decoded result; the public operation retains decoder E/R.
-							decodeResult: (value) =>
-								decodeEffectContract(definition.result, value) as Effect.Effect<
-									EffectOperationResult<Operations[Key]>,
-									unknown,
-									unknown
-								>,
-							audit: (result) =>
-								normalizeEffect(() => definition.audit({ command, result }, context)),
-							writeAudit: (entry) =>
-								normalizeEffect(() => {
-									// SAFETY: HostCompatible proves this invocation satisfies the configured writer host.
-									return configuration.writeAudit(host as never, entry)
-								}),
-							aggregates: definition.aggregates,
-						})
-						return lifecycle
-					}),
-					Effect.onExit((exit) =>
-						Effect.sync(() => {
-							if (Exit.isSuccess(exit)) observation.completed()
-							else observation.failed(observationFailure(exit.cause))
+								writeAudit: (entry) =>
+									normalizeEffect(() => {
+										// SAFETY: HostCompatible proves this invocation satisfies the configured writer host.
+										return configuration.writeAudit(host as never, entry)
+									}),
+								aggregates: definition.aggregates,
+							})
+							return lifecycle
 						}),
-					),
-				)
+						Effect.onExit((exit) =>
+							Effect.sync(() => {
+								if (Exit.isSuccess(exit)) observation.completed()
+								else observation.failed(observationFailure(exit.cause))
+							}),
+						),
+					)
+				return enterRequestScope(operation, true, run)
 			})
 		})
 		// SAFETY: dispatch selects exactly this operation; callbacks preserve the concrete definition/policy E/R.
@@ -427,6 +445,7 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 			audit: (
 				resolution: DomainAuditInput<Contract['commands']>,
 				context: DomainOf<Resolve>,
+				scope: RequestScope | undefined,
 			) => Returned
 			operations: (
 				define: DomainEffectFactory<
@@ -459,7 +478,11 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 	>(
 		configuration: {
 			context: Resolve
-			audit: (resolution: DomainAuditInput<Operations>, context: DomainOf<Resolve>) => Returned
+			audit: (
+				resolution: DomainAuditInput<Operations>,
+				context: DomainOf<Resolve>,
+				scope: RequestScope | undefined,
+			) => Returned
 			operations: (
 				define: SharedEffectFactory<DomainOf<Resolve>, Guard>,
 			) => Operations & NoInfer<ValidatedEffectOperations<Operations>>
@@ -485,7 +508,7 @@ export function bindEffectCommand<const Dependencies extends EffectCommandDepend
 	function command(configuration: {
 		context: Resolver
 		contract?: DomainContract
-		audit?: (resolution: never, context: never) => AuditValue
+		audit?: (resolution: never, context: never, scope: never) => AuditValue
 		operations: (define: never) => Readonly<Record<string, object>>
 		defaults?: { guard?: (context: never) => unknown }
 	}): unknown {

@@ -56,6 +56,8 @@ function harness() {
 					operation: entry.operation,
 				}),
 			),
+		// These tests prove each nested audit write shares the mutation boundary.
+		nestedAudit: 'separate',
 	})
 	const inner = foundation.Command({
 		context: (ctx: Host) => ctx,

@@ -12,6 +12,14 @@ are this file's matching section.
 
 ## [Unreleased]
 
+### Added
+
+- Effect Command and Query executions share a request scope. An `exec` yielded inside another operation's handler or middleware joins its caller's scope automatically, with no flag in the bound context. Audit callbacks, both per-operation and registry-level, receive the scope they entered (`{ root, parent, depth }`, or `undefined` for the outermost operation) as a third argument. An `exec` started through `Effect.runPromise` inside a handler opens a new scope, so yield nested executions instead.
+
+### Changed
+
+- **Breaking (behavior):** by default (`nestedAudit: 'fold'`), an Effect command nested under an operation that declares an audit callback no longer runs its own audit callback or writes an audit entry. The outermost auditing operation's entry stands for the request. A nested command without an auditing ancestor, such as one inside a query, still audits. Set `createEffectFoundation({ nestedAudit: 'separate' })` to keep one audit entry per nested operation.
+
 ## [0.1.30] - 2026-11-11
 
 ### Added

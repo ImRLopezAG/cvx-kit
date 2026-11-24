@@ -70,7 +70,7 @@ export function snapshotOperations(
 	operations: Readonly<Record<string, object>>,
 	contract: DomainContract | undefined,
 	section: 'commands' | 'queries',
-	audit?: (resolution: never, context: never) => unknown,
+	audit?: (resolution: never, context: never, scope: never) => unknown,
 ) {
 	if (audit !== undefined && typeof audit !== 'function')
 		throw Error('Invalid registry audit callback')
@@ -121,12 +121,18 @@ export function snapshotOperations(
 				throw Error(`Invalid audit for ${key}`)
 			if (override === undefined) {
 				if (!audit) throw Error(`Command ${key} requires an audit callback`)
-				definition.audit = (resolution: { command: unknown; result: unknown }, context: unknown) =>
+				definition.audit = (
+					resolution: { command: unknown; result: unknown },
+					context: unknown,
+					scope: unknown,
+				) =>
 					audit(
 						// SAFETY: this configuration boundary compares opaque fields or restores callback slots checked by the public helpers.
 						{ operation: key, input: resolution.command, result: resolution.result } as never,
 						// SAFETY: this configuration boundary compares opaque fields or restores callback slots checked by the public helpers.
 						context as never,
+						// SAFETY: the registry audit signature declares the scope its executor passes.
+						scope as never,
 					)
 			}
 		}

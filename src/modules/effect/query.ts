@@ -14,6 +14,7 @@ import {
 	type ObservabilityOptions,
 } from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
+import { enterRequestScope } from './scope'
 import {
 	effectOperationFactory,
 	type CallbackError,
@@ -204,14 +205,16 @@ export function createEffectQuery<
 						: yield* core(context)
 					return yield* decodeEffectContract(definition.result, output)
 				})
-				return run.pipe(
-					Effect.onExit((exit) =>
-						Effect.sync(() => {
-							if (Exit.isSuccess(exit)) observation.completed()
-							else {
-								observation.failed(observationFailure(exit.cause))
-							}
-						}),
+				return enterRequestScope(operation, false, () =>
+					run.pipe(
+						Effect.onExit((exit) =>
+							Effect.sync(() => {
+								if (Exit.isSuccess(exit)) observation.completed()
+								else {
+									observation.failed(observationFailure(exit.cause))
+								}
+							}),
+						),
 					),
 				)
 			})

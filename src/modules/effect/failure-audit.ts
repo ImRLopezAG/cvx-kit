@@ -99,6 +99,27 @@ export function reportFailure(
 	}).pipe(Effect.ignore)
 }
 
+/** A completed action whose audit write failed keeps its result; the sink records the missing entry. */
+export function reportAuditWriteFailure(
+	options: FailureAuditOptions | undefined,
+	report: Pick<FailureReport, 'operation' | 'classification' | 'entered'>,
+): Effect.Effect<void> {
+	if (!options) return Effect.void
+	const entry: FailureAuditEntry = {
+		kind: 'action',
+		operation: report.operation,
+		classification: report.classification,
+		errorCode: 'ACTION_AUDIT_WRITE_FAILED',
+		declared: false,
+		root: report.entered?.scope.root ?? report.operation,
+		depth: report.entered?.scope.depth ?? 0,
+	}
+	return Effect.tryPromise({
+		try: async () => options.emit(Object.freeze(entry)),
+		catch: () => undefined,
+	}).pipe(Effect.ignore)
+}
+
 function failureValue(cause: Cause.Cause<unknown>) {
 	const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined
 	if (reason && Cause.isFailReason(reason)) return reason.error

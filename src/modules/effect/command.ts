@@ -20,7 +20,7 @@ import {
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Internal optional adapter shares the Effect-free Foundation lifecycle and types without entering the Convex component deployment graph.
 import type { Observability } from '../../components/foundation/modules/observability/observability'
 import { normalizeEffect, observationFailure } from './normalize'
-import { reportFailure, type FailureAuditOptions } from './failure-audit'
+import { reportAuditWriteFailure, reportFailure, type FailureAuditOptions } from './failure-audit'
 import {
 	auditFolded,
 	enterRequestScope,
@@ -63,9 +63,9 @@ type Supported<Value> = Value | PromiseLike<Value> | Effect.Effect<Value, unknow
 // oxlint-disable-next-line anti-slop/no-unknown-returns -- Internal callback storage; selected definitions retain concrete return contracts.
 type Callback = (...arguments_: never[]) => Supported<unknown>
 // oxlint-disable-next-line anti-slop/no-unknown-returns -- Resolver constraint captures its concrete return in Resolve; it never exposes this storage type at exec.
-type Resolver = (host: never) => Supported<unknown>
-type HostOf<Resolve extends Resolver> = Parameters<Resolve>[0]
-type DomainOf<Resolve extends Resolver> = EffectValue<ReturnType<Resolve>>
+export type Resolver = (host: never) => Supported<unknown>
+export type HostOf<Resolve extends Resolver> = Parameters<Resolve>[0]
+export type DomainOf<Resolve extends Resolver> = EffectValue<ReturnType<Resolve>>
 type Operation = {
 	input: ContractSchema
 	result: ContractSchema
@@ -79,10 +79,11 @@ type Operation = {
 	aggregates?: readonly string[]
 	replayResult?: ContractSchema
 }
-type Registry<Context> = Readonly<
+export type Registry<Context> = Readonly<
 	Record<
 		string,
-		Pick<Operation, 'input' | 'result' | 'classification' | 'handler' | 'audit'> &
+		Pick<Operation, 'input' | 'result' | 'handler'> &
+			Partial<Pick<Operation, 'classification' | 'audit'>> &
 			CheckedEffectOperation<Context>
 	>
 >
@@ -99,7 +100,7 @@ export type EffectCommandDependencies = {
 	/** Host-free sink for failed operations; see `FailureAuditOptions`. */
 	auditFailure?: FailureAuditOptions
 }
-type HostParameter<Policy> = [Exclude<Policy, undefined>] extends [never]
+export type HostParameter<Policy> = [Exclude<Policy, undefined>] extends [never]
 	? unknown
 	: // oxlint-disable-next-line anti-slop/no-unknown-returns -- Conditional parameter-extraction predicate, not an executable callback contract.
 		Exclude<Policy, undefined> extends (...arguments_: infer Arguments) => Supported<unknown>
@@ -154,7 +155,7 @@ const effectLifecycle: LifecycleAlgebra<EffectExecution> = {
 type RuntimeOperation<Context, Input, Raw, Result> = {
 	input: ContractSchema
 	result: ContractSchema
-	classification: string
+	classification?: string
 	permission?: string
 	aggregates?: readonly string[]
 	replayResult?: ContractSchema
@@ -164,7 +165,7 @@ type RuntimeOperation<Context, Input, Raw, Result> = {
 		context: Context,
 		input: Input,
 	) => Supported<EffectPreparation<Result, unknown, unknown>>
-	audit: (
+	audit?: (
 		resolution: { command: Input; result: Result },
 		context: Context,
 		scope: RequestScope | undefined,
@@ -199,10 +200,15 @@ export function createEffectCommand<
 			>(),
 		),
 	)
+	// SAFETY: the contracted overloads spread their checked `contract`, and the action binding its
+	// `mode`, into this configuration.
+	const internal = configuration as {
+		contract?: Pick<DomainContract, 'errors'>
+		mode?: 'action'
+	}
 	// A contracted registry projects its failures through the contract's errors.
-	// SAFETY: the contracted overloads spread their checked `contract` into this configuration.
-	const errorContract = (configuration as { contract?: Pick<DomainContract, 'errors'> }).contract
-		?.errors
+	const errorContract = internal.contract?.errors
+	const kind = internal.mode ?? 'command'
 	const exec = <Key extends Extract<keyof Operations, string>>(
 		operation: Key,
 		input: EffectOperationArgument<Operations[Key]>,
@@ -228,10 +234,9 @@ export function createEffectCommand<
 			return Effect.flatMap(decodeEffectContract(definition.input, input), (decoded) => {
 				// SAFETY: the selected operation's decoder owns this concrete domain input.
 				const command = decoded as EffectOperationInput<Operations[Key]>
-				const observation = configuration.observability.start({
-					operation,
-					classification: definition.classification,
-				})
+				const classification = definition.classification ?? kind
+				const audit = definition.audit
+				const observation = configuration.observability.start({ operation, classification })
 				// SAFETY: resolver identity owns its concrete invocation return and host parameter.
 				const resolve = configuration.context as (host: HostOf<Resolve>) => ReturnType<Resolve>
 				const run = (entered: ScopeState | undefined, current: ScopeState) =>
@@ -245,7 +250,7 @@ export function createEffectCommand<
 								EffectOperationResult<Operations[Key]>
 							>(effectLifecycle, {
 								operation,
-								classification: definition.classification,
+								classification,
 								context,
 								command,
 								permission:
@@ -309,16 +314,27 @@ export function createEffectCommand<
 										unknown
 									>,
 								audit: (result) =>
-									auditFolded(configuration.nestedAudit, entered)
+									!audit || auditFolded(configuration.nestedAudit, entered)
 										? Effect.succeed(null)
-										: normalizeEffect(() =>
-												definition.audit({ command, result }, context, entered?.scope),
-											),
-								writeAudit: (entry) =>
-									normalizeEffect(() => {
+										: normalizeEffect(() => audit({ command, result }, context, entered?.scope)),
+								writeAudit: (entry) => {
+									const write = normalizeEffect(() => {
 										// SAFETY: HostCompatible proves this invocation satisfies the configured writer host.
 										return configuration.writeAudit(host as never, entry)
-									}),
+									})
+									// An action's side effects already happened; a failed audit write must not invite a retry.
+									return kind === 'action'
+										? write.pipe(
+												Effect.catchCause(() =>
+													reportAuditWriteFailure(configuration.auditFailure, {
+														operation,
+														classification,
+														entered,
+													}),
+												),
+											)
+										: write
+								},
 								aggregates: definition.aggregates,
 							})
 							return lifecycle
@@ -330,9 +346,9 @@ export function createEffectCommand<
 							}).pipe(
 								Effect.andThen(
 									reportFailure(configuration.auditFailure, exit, {
-										kind: 'command',
+										kind,
 										operation,
-										classification: definition.classification,
+										classification,
 										input: command,
 										contract: errorContract,
 										entered,
@@ -342,7 +358,7 @@ export function createEffectCommand<
 							),
 						),
 					)
-				return enterRequestScope(operation, true, run)
+				return enterRequestScope(operation, audit !== undefined, run)
 			})
 		})
 		// SAFETY: dispatch selects exactly this operation; callbacks preserve the concrete definition/policy E/R.

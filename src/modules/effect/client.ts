@@ -27,6 +27,11 @@ export {
 	type EffectOperationRequirements,
 } from './operation'
 export { createEffectFoundation, type EffectFoundationOptions } from './foundation'
+export {
+	ActionAuditWriterError,
+	type EffectActionDependencies,
+	type EffectActionRegistry,
+} from './action'
 export { effectTransactionalIdempotency, type EffectIdempotencyPreparation } from './idempotency'
 export {
 	createEffectCrud,

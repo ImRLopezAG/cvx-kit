@@ -69,7 +69,7 @@ export function bindDomainImplementation(key: string, declaration: object, imple
 export function snapshotOperations(
 	operations: Readonly<Record<string, object>>,
 	contract: DomainContract | undefined,
-	section: 'commands' | 'queries',
+	section: 'commands' | 'queries' | 'actions',
 	audit?: (resolution: never, context: never, scope: never) => unknown,
 ) {
 	if (audit !== undefined && typeof audit !== 'function')
@@ -115,11 +115,12 @@ export function snapshotOperations(
 			// SAFETY: wire is configuration, while its schema stays an opaque reference.
 			definition.wire = Object.freeze({ ...(definition.wire as object) })
 		}
-		if (section === 'commands') {
+		// Commands always audit; an action audits only when it or its registry declares a callback.
+		if (section === 'commands' || section === 'actions') {
 			const override = definition.audit
 			if (override !== undefined && typeof override !== 'function')
 				throw Error(`Invalid audit for ${key}`)
-			if (override === undefined) {
+			if (override === undefined && (audit || section === 'commands')) {
 				if (!audit) throw Error(`Command ${key} requires an audit callback`)
 				definition.audit = (
 					resolution: { command: unknown; result: unknown },

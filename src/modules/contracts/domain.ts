@@ -14,10 +14,12 @@ export type DomainCommandContract = DomainOperationContract & {
 	readonly replayResult?: ContractSchema
 }
 export type DomainQueryContract = DomainOperationContract & { readonly replayResult?: never }
+export type DomainActionContract = DomainOperationContract & { readonly replayResult?: never }
 export type DomainContract = {
 	readonly errors?: Pick<ErrorContract<ErrorDefinitions>, 'project'>
 	readonly commands?: Readonly<Record<string, DomainCommandContract>>
 	readonly queries?: Readonly<Record<string, DomainQueryContract>>
+	readonly actions?: Readonly<Record<string, DomainActionContract>>
 }
 
 type CheckedEntry<Entry extends DomainOperationContract> = {
@@ -126,7 +128,8 @@ function memoizeGetters(
 }
 
 function memoizeOperation(operation: unknown) {
-	if (operation && typeof operation === 'object') memoizeGetters(operation, lazyFields, (value) => value)
+	if (operation && typeof operation === 'object')
+		memoizeGetters(operation, lazyFields, (value) => value)
 	return operation
 }
 

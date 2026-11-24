@@ -5,14 +5,18 @@ import {
 } from '../../components/foundation/modules/observability/observability'
 import { bindEffectCommand, type EffectCommandDependencies } from './command'
 import { bindEffectQuery } from './query'
+import { bindEffectAction, type EffectActionDependencies } from './action'
 
 /** Shared host capabilities are bound once; registry resolvers stay invocation-local. */
-export type EffectFoundationOptions = Omit<EffectCommandDependencies, 'observability'> & {
-	observability: ObservabilityOptions
-}
+export type EffectFoundationOptions = Omit<EffectCommandDependencies, 'observability'> &
+	Pick<EffectActionDependencies, 'writeActionAudit'> & {
+		observability: ObservabilityOptions
+	}
 export type EffectFoundation<Options extends EffectFoundationOptions> = {
 	Command: ReturnType<typeof bindEffectCommand<Options & { observability: Observability }>>
 	Query: ReturnType<typeof bindEffectQuery<Options & { observability: Observability }>>
+	/** Contract-typed Convex actions with context injection, guards, middleware and optional audit. */
+	Action: ReturnType<typeof bindEffectAction<Options & { observability: Observability }>>
 	observability: Observability
 }
 
@@ -24,6 +28,7 @@ export function createEffectFoundation<const Options extends EffectFoundationOpt
 	return {
 		Command: bindEffectCommand(dependencies),
 		Query: bindEffectQuery(dependencies),
+		Action: bindEffectAction(dependencies),
 		observability,
 	}
 }

@@ -367,3 +367,53 @@ export function effectOperationFactory<
 	}
 	return { operation, command, query }
 }
+
+/** Action registries get only the action helper; commands and queries keep their own factories. */
+export function effectActionFactory<Context, BaseError = never, BaseRequirements = never>() {
+	type Extension = Record<never, never>
+	/** Actions have no transaction to replay and no permission host; guards authorize them. */
+	function action<
+		const Input extends ContractSchema,
+		const Output extends ContractSchema,
+		Handler extends Supported<ContractInput<Output>>,
+		Guard extends Supported<void> = never,
+		const Aggregates extends readonly string[] = readonly string[],
+		AuditResult extends Supported<Audit<Aggregates> | null> = never,
+		Middleware extends Supported<ContractInput<Output>> = never,
+		const Metadata extends object = Record<never, never>,
+		const Wire extends ContractSchema = ContractSchema,
+		const Definition extends object = object,
+	>(
+		definition: Definition &
+			OperationDefinition<
+				Context,
+				Input,
+				Output,
+				Extension,
+				Aggregates,
+				Handler,
+				Guard,
+				never,
+				AuditResult,
+				Middleware,
+				Metadata,
+				BaseError,
+				BaseRequirements,
+				Wire,
+				never
+			> & {
+				prepare?: never
+				permission?: never
+				replayResult?: never
+			},
+	) {
+		// SAFETY: the marker is type-only proof of the helper's checked callback contract.
+		return definition as CheckedEffectDefinition<
+			Context,
+			typeof definition,
+			BaseError,
+			BaseRequirements
+		>
+	}
+	return { action }
+}

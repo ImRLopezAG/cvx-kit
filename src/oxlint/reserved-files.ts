@@ -154,6 +154,7 @@ function provenance(
 				return 'shapeFactory'
 			if (['cvx-kit', 'cvx-kit/zod-table'].includes(source) && name === 'createModule')
 				return 'assemblyFactory'
+			if (source === 'cvx-kit/zod-table' && name === 'namespace') return 'namespaceFactory'
 			if (
 				source === 'cvx-kit/contracts' &&
 				['defineDomainContract', 'operationContract'].includes(name)
@@ -240,6 +241,19 @@ function provenance(
 			if (callee === 'assemblyFactory') return 'assembly'
 			if (callee === 'contractFactory' || callee === 'validator') return 'contract'
 			if (callee === 'indexFactory') return 'table'
+			if (callee === 'namespaceFactory') {
+				// namespace(name, members) is a topology map when every member is a table
+				// definition or a table boundary (namespace() unwraps boundaries itself).
+				const members = node.arguments[1]
+				if (members?.type !== 'ObjectExpression') return null
+				const values = members.properties.map((property) =>
+					property.type === 'Property' ? evaluate(property.value, active) : null,
+				)
+				return values.length &&
+					values.every((value) => value === 'table' || value === 'topology' || value === 'shape')
+					? 'topology'
+					: null
+			}
 			return null
 		}
 		if (node.type === 'ObjectExpression') {

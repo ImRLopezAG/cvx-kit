@@ -42,11 +42,10 @@ const customTable = createTable({
 	nextActivity: z.string(),
 })
 
-export const tasks = customTable(
-	'tasks',
-	(id) => ({ title: z.string(), ownerId: id('users') }),
-	{ commandFields: ['ref', 'title'], publicFields: ['ref', 'nextActivity', 'title'] },
-)
+export const tasks = customTable('tasks', (id) => ({ title: z.string(), ownerId: id('users') }), {
+	commandFields: ['ref', 'title'],
+	publicFields: ['ref', 'nextActivity', 'title'],
+})
 
 export const projects = customTable('projects', () => ({ name: z.string() }))
 ```
@@ -254,6 +253,30 @@ modules declare the same table — the combinator for `domain/table.ts`:
 ```ts
 export default defineSchema(createModule(<moduleA>Tables, <moduleB>Tables))
 ```
+
+## `namespace` — qualified names without renaming tables
+
+`namespace(name, tables)` tags a module map with a declaration-level
+namespace (like AL's `namespace Microsoft.Inventory;`). Keys stay the real
+table names, so storage, `id('items')`, `ctx.db.query('items')` and generated
+types are unchanged; each table's member name is its PascalCase form and its
+qualified name is `<Namespace>.<Member>`.
+
+```ts
+export const Inventory = namespace('Inventory', {
+	items: items.table.index('by_no', ['tenant', 'no']),
+	itemLedgerEntries, // a boundary is accepted; its tableName must equal the key
+})
+export const domainTables = createModule(Inventory, Sales, legacyTables) // flat map
+export const tableNames = namespaceIndex(Inventory, Sales)
+tableNames.qualifiedName('itemLedgerEntries') // 'Inventory.ItemLedgerEntries' (literal type)
+tableNames.namespaceOf('items') // 'Inventory'
+tablesOf(Inventory) // ['items', 'itemLedgerEntries']
+```
+
+Dotted names (`'Microsoft.Inventory'`) are allowed; each segment is
+PascalCase. `createModule` and `namespaceIndex` throw on a duplicate
+namespace name or a table claimed twice.
 
 ## `zodVariantTable` — discriminated unions
 

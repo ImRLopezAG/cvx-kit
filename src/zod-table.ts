@@ -539,12 +539,22 @@ export function tenantTable<
  * Merges per-module table maps into the application schema map, rejecting
  * duplicate table names across modules — the module-registry combinator for
  * domain/table.ts: `defineSchema(createModule(catalogTables, salesTables))`.
+ * Accepts plain maps and `namespace(...)` maps side by side; namespaces add
+ * no keys, so the result is the same flat `{ tableName: TableDefinition }`.
  */
 export function createModule<const Maps extends readonly Record<string, TableDefinition<any>>[]>(
 	...maps: Maps
-): UnionToIntersection<Maps[number]> {
+): FlatTables<UnionToIntersection<Maps[number]>> {
 	const combined: Record<string, TableDefinition<any>> = {}
+	const namespaceNames = new Set<string>()
 	for (const map of maps) {
+		const meta = namespaceMeta(map)
+		if (meta) {
+			if (namespaceNames.has(meta.name)) {
+				throw new Error(`Namespace "${meta.name}" is declared more than once`)
+			}
+			namespaceNames.add(meta.name)
+		}
 		for (const [tableName, definition] of Object.entries(map)) {
 			if (tableName in combined) {
 				throw new Error(`Table "${tableName}" is declared by more than one module`)
@@ -552,8 +562,194 @@ export function createModule<const Maps extends readonly Record<string, TableDef
 			combined[tableName] = definition
 		}
 	}
-	// SAFETY: every input entry is copied, and duplicate keys are rejected above.
-	return combined as UnionToIntersection<Maps[number]>
+	// SAFETY: every string-keyed input entry is copied, and duplicate keys are rejected above.
+	return combined as FlatTables<UnionToIntersection<Maps[number]>>
+}
+
+type FlatTables<Map> = { [Key in keyof Map as Key extends string ? Key : never]: Map[Key] }
+
+const namespaceKey: unique symbol = Symbol.for('cvx-kit/zod-table/namespace')
+
+/** Declaration-level metadata carried by a `namespace(...)` table map. */
+export type NamespaceInfo<Name extends string, Tables extends string> = {
+	readonly name: Name
+	readonly tables: readonly Tables[]
+}
+
+/**
+ * A table map tagged with a namespace. It is still a plain
+ * `{ tableName: TableDefinition }` map (the tag is a non-enumerable symbol),
+ * so `createModule`/`defineSchema` see exactly the tables they saw before.
+ */
+export type Namespace<
+	Name extends string,
+	Tables extends Record<string, TableDefinition<any>>,
+> = Tables & { readonly [namespaceKey]: NamespaceInfo<Name, keyof Tables & string> }
+
+/** PascalCase member name of a table: `itemLedgerEntries` → `ItemLedgerEntries`. */
+export type MemberName<TableName extends string> = Capitalize<TableName>
+
+/** Fully qualified name: `<Namespace>.<Member>`, e.g. `Inventory.Items`. */
+export type QualifiedName<
+	Name extends string,
+	TableName extends string,
+> = `${Name}.${MemberName<TableName>}`
+
+type NamespaceMember = TableDefinition<any> | { tableName: string; table: TableDefinition<any> }
+type MemberTables<Members extends Record<string, NamespaceMember>> = {
+	[Key in keyof Members]: Members[Key] extends { table: infer Table extends TableDefinition<any> }
+		? Table
+		: Extract<Members[Key], TableDefinition<any>>
+}
+type CheckedMembers<Members extends Record<string, NamespaceMember>> = {
+	[Key in keyof Members]: Members[Key] extends { tableName: infer TableName }
+		? TableName extends Key
+			? Members[Key]
+			: { tableName: Key; table: TableDefinition<any> }
+		: Members[Key]
+}
+type CheckedNamespaceName<Name extends string> = Name extends ''
+	? never
+	: Name extends `${string}..${string}` | `.${string}` | `${string}.`
+		? never
+		: Name
+
+const NAMESPACE_SEGMENT = /^[A-Z][A-Za-z0-9]*$/
+
+/**
+ * Groups tables under a declaration-level namespace, like AL's
+ * `namespace Microsoft.Inventory.Item;`. Keys are the real (stored) table
+ * names, exactly as in an un-namespaced module map; each table's member name
+ * is the PascalCase form of its key (`items` → `Items`) and its qualified
+ * name is `<Namespace>.<Member>` (`Inventory.Items`). Storage, `id('items')`,
+ * `ctx.db.query('items')` and generated types are unchanged.
+ *
+ * A member may be a `TableDefinition` (`items.table.index(...)`) or a table
+ * boundary (`items`); a boundary whose `tableName` differs from its key is a
+ * type error and a runtime error. Dotted names (`Microsoft.Inventory`) are
+ * allowed; each segment must be PascalCase.
+ */
+export function namespace<
+	const Name extends string,
+	const Members extends Record<string, NamespaceMember>,
+>(
+	name: Name & CheckedNamespaceName<Name>,
+	members: Members & CheckedMembers<Members>,
+): Namespace<Name, MemberTables<Members>> {
+	if (!name.split('.').every((segment) => NAMESPACE_SEGMENT.test(segment))) {
+		throw new Error(
+			`Namespace "${name}" must be dot-separated PascalCase segments (e.g. "Microsoft.Inventory")`,
+		)
+	}
+	const tables: Record<string, TableDefinition<any>> = {}
+	for (const [key, member] of Object.entries(members as Record<string, NamespaceMember>)) {
+		if (!/^[a-z][A-Za-z0-9]*$/.test(key)) {
+			throw new Error(`Namespace "${name}" member "${key}" must be a camelCase table name`)
+		}
+		if ('tableName' in member) {
+			if (member.tableName !== key) {
+				throw new Error(
+					`Namespace "${name}" member "${key}" holds table "${member.tableName}"; keys must be the table name`,
+				)
+			}
+			tables[key] = member.table
+		} else {
+			tables[key] = member
+		}
+	}
+	Object.defineProperty(tables, namespaceKey, {
+		value: Object.freeze({ name, tables: Object.freeze(Object.keys(tables)) }),
+		enumerable: false,
+	})
+	// SAFETY: tables holds one TableDefinition per member key plus the symbol tag.
+	return tables as Namespace<Name, MemberTables<Members>>
+}
+
+function namespaceMeta(map: object): NamespaceInfo<string, string> | undefined {
+	return (map as { [namespaceKey]?: NamespaceInfo<string, string> })[namespaceKey]
+}
+
+/** PascalCase member name of a table name. */
+export function memberName<const TableName extends string>(tableName: TableName) {
+	return (tableName.charAt(0).toUpperCase() + tableName.slice(1)) as MemberName<TableName>
+}
+
+/** The namespace name of a `namespace(...)` map. */
+export function namespaceName<Name extends string>(ns: Namespace<Name, any>): Name {
+	return namespaceMeta(ns)!.name as Name
+}
+
+/** The stored table names declared in a namespace, in declaration order. */
+export function tablesOf<Name extends string, Tables extends Record<string, TableDefinition<any>>>(
+	ns: Namespace<Name, Tables>,
+): readonly (keyof Tables & string)[] {
+	return namespaceMeta(ns)!.tables as readonly (keyof Tables & string)[]
+}
+
+type NamespaceEntries<Spaces extends readonly Namespace<string, any>[]> = {
+	[Index in keyof Spaces]: Spaces[Index] extends Namespace<infer Name, infer Tables>
+		? { [TableName in keyof Tables & string]: Name }
+		: never
+}[number]
+type TableNamespaceMap<Spaces extends readonly Namespace<string, any>[]> = UnionToIntersection<
+	NamespaceEntries<Spaces>
+>
+
+/**
+ * Typed, read-only qualified-name lookup over namespaces (no global registry:
+ * build one next to `createModule` and import it where labels are needed).
+ * Rejects duplicate namespace names and tables claimed by two namespaces.
+ */
+export function namespaceIndex<const Spaces extends readonly Namespace<string, any>[]>(
+	...spaces: Spaces
+) {
+	type Map = TableNamespaceMap<Spaces>
+	type TableName = keyof Map & string
+	type NameOf = Spaces[number] extends Namespace<infer Name, any> ? Name : never
+	const byTable = new Map<string, string>()
+	const byName = new Map<string, readonly string[]>()
+	for (const space of spaces) {
+		const meta = namespaceMeta(space)
+		if (!meta) throw new Error('namespaceIndex accepts only namespace(...) maps')
+		if (byName.has(meta.name)) {
+			throw new Error(`Namespace "${meta.name}" is declared more than once`)
+		}
+		byName.set(meta.name, meta.tables)
+		for (const table of meta.tables) {
+			const owner = byTable.get(table)
+			if (owner) {
+				throw new Error(`Table "${table}" is declared by namespaces "${owner}" and "${meta.name}"`)
+			}
+			byTable.set(table, meta.name)
+		}
+	}
+	const owner = (table: string) => {
+		const name = byTable.get(table)
+		if (name === undefined) throw new Error(`Table "${table}" is not in a namespace`)
+		return name
+	}
+	return {
+		qualifiedName<const Table extends TableName>(table: Table) {
+			return `${owner(table)}.${memberName(table)}` as Map[Table] extends infer Name extends string
+				? QualifiedName<Name, Table>
+				: never
+		},
+		namespaceOf<const Table extends TableName>(table: Table) {
+			return owner(table) as Map[Table]
+		},
+		memberName,
+		tablesOf<const Name extends NameOf>(name: Name) {
+			const tables = byName.get(name)
+			if (!tables) throw new Error(`Namespace "${name}" is not indexed`)
+			return tables as readonly {
+				[Table in TableName]: Map[Table] extends Name ? Table : never
+			}[TableName][]
+		},
+		namespaces: [...byName.keys()] as readonly string[] as readonly NameOf[],
+		has(table: string): table is TableName {
+			return byTable.has(table)
+		},
+	}
 }
 
 type UnionToIntersection<Union> = (

@@ -12,6 +12,10 @@ are this file's matching section.
 
 ## [Unreleased]
 
+### Added
+
+- `namespace(name, tables)` in `cvx-kit/zod-table` groups a module map under a declaration-level namespace (`'Inventory'`, or dotted `'Microsoft.Inventory'`). Keys stay the stored table names, so `createModule`, `defineSchema`, ids, queries and generated types are unchanged; namespaced and plain maps mix freely. Members may be `TableDefinition`s or table boundaries, and a boundary under another table's key is a type and runtime error. `namespaceIndex(...namespaces)` returns typed `qualifiedName('items')` (`'Inventory.Items'` as a literal type), `namespaceOf`, `tablesOf` and `has`; `tablesOf(ns)`, `namespaceName(ns)` and `memberName` are standalone. `createModule` and `namespaceIndex` reject duplicate namespace names and tables claimed twice.
+
 ## [0.1.31] - 2026-11-24
 
 ### Added

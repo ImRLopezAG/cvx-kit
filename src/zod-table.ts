@@ -603,10 +603,9 @@ export type NamespacePrefix<Name extends string> = `${DotsToUnderscores<Name>}_`
  * (`Inventory_Items` in `Inventory` → `Items`); any other table name is
  * PascalCased (`itemLedgerEntries` → `ItemLedgerEntries`).
  */
-export type MemberName<
-	TableName extends string,
-	Name extends string = never,
-> = [Name] extends [never]
+export type MemberName<TableName extends string, Name extends string = never> = [Name] extends [
+	never,
+]
 	? Capitalize<TableName>
 	: TableName extends `${NamespacePrefix<Name>}${infer Rest extends string}`
 		? Rest extends ''
@@ -656,7 +655,7 @@ type CheckedNamespaceName<Name extends string> = Name extends ''
 		? never
 		: Name
 
-const NAMESPACE_SEGMENT = /^[A-Z][A-Za-z0-9]*$/
+const NAMESPACE_SEGMENT = /^[A-Za-z][A-Za-z0-9]*$/
 // Convex table names: letters, digits and underscores, not starting with an underscore.
 const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/
 
@@ -676,7 +675,7 @@ const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/
  * A member may be a `TableDefinition` (`items.table.index(...)`) or a table
  * boundary (`items`); a boundary whose `tableName` differs from its key is a
  * type error and a runtime error. Dotted names (`Microsoft.Inventory`) are
- * allowed; each segment must be PascalCase.
+ * allowed; each segment is an identifier (`Microsoft.Inventory`, `sales`).
  */
 export function namespace<
 	const Name extends string,
@@ -689,7 +688,7 @@ export function namespace<
 ): Namespace<Name, MemberTables<Members>> {
 	if (!name.split('.').every((segment) => NAMESPACE_SEGMENT.test(segment))) {
 		throw new Error(
-			`Namespace "${name}" must be dot-separated PascalCase segments (e.g. "Microsoft.Inventory")`,
+			`Namespace "${name}" must be dot-separated identifiers (e.g. "Microsoft.Inventory" or "sales")`,
 		)
 	}
 	const tables: Record<string, TableDefinition<any>> = {}

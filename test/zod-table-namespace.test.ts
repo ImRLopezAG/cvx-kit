@@ -51,7 +51,8 @@ describe('namespace', () => {
 	it('rejects a boundary under another table key and bad names', () => {
 		// @ts-expect-error key mismatch is also a type error
 		expect(() => namespace('Inventory', { goods: items })).toThrow(/holds table "items"/)
-		expect(() => namespace('inventory', { items })).toThrow(/PascalCase/)
+		expect(() => namespace('1nventory', { items })).toThrow(/identifiers/)
+		expect(() => namespace('sales_x', { items })).toThrow(/identifiers/)
 		expect(() => namespace('Inventory', { 'bad-name': items.table })).toThrow(/table name/)
 	})
 
@@ -88,5 +89,24 @@ describe('namespace', () => {
 			/must start with "Inventory_"/,
 		)
 		expect(() => namespace('Inventory', { _items: items.table })).toThrow(/table name/)
+	})
+
+	it('accepts lowercase snake_case namespaces and stored names', () => {
+		const sales = namespace(
+			'sales',
+			{ sales_header: users.table, sales_cust_ledger_entry: users.table },
+			{ prefixed: true },
+		)
+		const ms = namespace('microsoft.inventory', { microsoft_inventory_item: users.table })
+		const names = namespaceIndex(sales, ms)
+		expect(names.qualifiedName('sales_header')).toBe('sales.header')
+		expect(names.qualifiedName('sales_cust_ledger_entry')).toBe('sales.cust_ledger_entry')
+		expect(names.qualifiedName('microsoft_inventory_item')).toBe('microsoft.inventory.item')
+		expect(namespacePrefix('microsoft.inventory')).toBe('microsoft_inventory_')
+		expect(memberName('sales_header', 'sales')).toBe('header')
+		// @ts-expect-error prefix matching is case-sensitive
+		expect(() => namespace('sales', { Sales_header: users.table }, { prefixed: true })).toThrow(
+			/must start with "sales_"/,
+		)
 	})
 })

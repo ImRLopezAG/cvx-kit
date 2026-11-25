@@ -82,6 +82,11 @@ tester.run('physical-reserved-domain-files', rules['reserved-domain-file-anatomy
 			code: "import * as kit from 'cvx-kit/zod-table'; import { tasks } from './schema'; export const tables = kit.namespace('Tasks', { tasks })",
 		},
 		{
+			filename: join(root, 'backend/domain/tasks/table.ts'),
+			options,
+			code: "import { namespace } from 'cvx-kit/zod-table'; import { tasks } from './schema'; export const tables = namespace('sales', { sales_header: tasks.table.index('by_no', ['no']), sales_line: tasks.table }, { prefixed: true })",
+		},
+		{
 			filename: join(root, 'backend/domain/table.ts'),
 			options,
 			code: "import { createModule, namespaceIndex } from 'cvx-kit/zod-table'; import { tables } from './tasks/table'; export const domainTables = createModule(tables); export const names = namespaceIndex(tables)",

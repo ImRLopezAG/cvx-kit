@@ -68,3 +68,34 @@ namespaceName({})
 namespaceIndex({ users: users.table })
 // @ts-expect-error unknown namespace name
 names.tablesOf('Purchase')
+
+const invItems = tenantTable('Inventory_Items', () => ({ no: z.string() }))
+const PrefixedInventory = namespace(
+	'Inventory',
+	{
+		Inventory_Items: invItems.table.index('by_no', ['tenant', 'no']),
+		Inventory_ItemLedgerEntries: tenantTable('Inventory_ItemLedgerEntries', () => ({})),
+	},
+	{ prefixed: true },
+)
+const Fin = namespace('Microsoft.Finance', {
+	Microsoft_Finance_GLEntries: users.table,
+	legacyAccounts: users.table,
+})
+const prefixedNames = namespaceIndex(PrefixedInventory, Fin)
+const stripped = prefixedNames.qualifiedName('Inventory_Items')
+export type Stripped = Assert<Equal<typeof stripped, 'Inventory.Items'>>
+const dotted = prefixedNames.qualifiedName('Microsoft_Finance_GLEntries')
+export type DottedStripped = Assert<Equal<typeof dotted, 'Microsoft.Finance.GLEntries'>>
+const mixed = prefixedNames.qualifiedName('legacyAccounts')
+export type Mixed = Assert<Equal<typeof mixed, 'Microsoft.Finance.LegacyAccounts'>>
+export type PrefixedKeys = Assert<
+	Equal<
+		keyof typeof PrefixedInventory & string,
+		'Inventory_Items' | 'Inventory_ItemLedgerEntries'
+	>
+>
+// @ts-expect-error strict namespaces require the prefix on every key
+namespace('Inventory', { items: items.table }, { prefixed: true })
+// @ts-expect-error a bare prefix is not a member name
+namespace('Inventory', { Inventory_: users.table }, { prefixed: true })

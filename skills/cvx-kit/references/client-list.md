@@ -45,8 +45,12 @@ An earlier capped window retains loaded descendants; a capped tail stops new loa
 Short and denied-empty continuing windows require an explicit user action:
 
 ```tsx
-<button disabled={!list.hasNextPage || list.isFetchingNextPage}
- onClick={() => list.fetchNextPage()}>Load more</button>
+<button
+	disabled={!list.hasNextPage || list.isFetchingNextPage}
+	onClick={() => list.fetchNextPage()}
+>
+	Load more
+</button>
 ```
 
 Changing text, filters, cap, page size, query or `resetIdentity` starts a fresh epoch;

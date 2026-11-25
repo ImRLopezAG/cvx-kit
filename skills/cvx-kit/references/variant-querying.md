@@ -14,42 +14,46 @@ import { z } from 'zod'
 import { zid, zodTable, zodVariantTable } from 'cvx-kit/zod-table'
 
 export const clients = zodTable('clients', () => ({ name: z.string() }), {
-  publicFields: ['name'],
+	publicFields: ['name'],
 })
 export const creditors = zodTable('creditors', () => ({ name: z.string() }), {
-  publicFields: ['name'],
+	publicFields: ['name'],
 })
-export const payments = zodVariantTable('payments', z.discriminatedUnion('type', [
-  z.strictObject({
-    type: z.literal('client_draft'),
-    clientId: zid('clients'),
-    amountCents: z.int().positive(),
-    draftDate: z.int().nonnegative(),
-    external: z.strictObject({ providerId: z.string() }).optional(),
-  }),
-  z.strictObject({
-    type: z.literal('creditor_payment'),
-    clientId: zid('clients'),
-    creditorId: zid('creditors'),
-    amountCents: z.int().positive(),
-    external: z.strictObject({ providerId: z.string() }).optional(),
-  }),
-]), {
-  discriminator: 'type',
-  timestamps: true,
-  variants: {
-    client_draft: {
-      serverFields: ['external'],
-      commandFields: ['clientId', 'amountCents', 'draftDate'],
-      publicFields: ['clientId', 'amountCents', 'draftDate'],
-    },
-    creditor_payment: {
-      serverFields: ['external'],
-      commandFields: ['clientId', 'creditorId', 'amountCents'],
-      publicFields: ['clientId', 'creditorId', 'amountCents'],
-    },
-  },
-})
+export const payments = zodVariantTable(
+	'payments',
+	z.discriminatedUnion('type', [
+		z.strictObject({
+			type: z.literal('client_draft'),
+			clientId: zid('clients'),
+			amountCents: z.int().positive(),
+			draftDate: z.int().nonnegative(),
+			external: z.strictObject({ providerId: z.string() }).optional(),
+		}),
+		z.strictObject({
+			type: z.literal('creditor_payment'),
+			clientId: zid('clients'),
+			creditorId: zid('creditors'),
+			amountCents: z.int().positive(),
+			external: z.strictObject({ providerId: z.string() }).optional(),
+		}),
+	]),
+	{
+		discriminator: 'type',
+		timestamps: true,
+		variants: {
+			client_draft: {
+				serverFields: ['external'],
+				commandFields: ['clientId', 'amountCents', 'draftDate'],
+				publicFields: ['clientId', 'amountCents', 'draftDate'],
+			},
+			creditor_payment: {
+				serverFields: ['external'],
+				commandFields: ['clientId', 'creditorId', 'amountCents'],
+				publicFields: ['clientId', 'creditorId', 'amountCents'],
+			},
+		},
+	},
+)
 ```
 
 ```ts
@@ -57,14 +61,14 @@ export const payments = zodVariantTable('payments', z.discriminatedUnion('type',
 import { clients, creditors, payments } from './schema'
 
 const paymentTable = payments.table
-  .index('by_clientId', ['clientId'])
-  .index('by_type_clientId', ['type', 'clientId'])
-  .index('by_creditorId', ['creditorId'])
+	.index('by_clientId', ['clientId'])
+	.index('by_type_clientId', ['type', 'clientId'])
+	.index('by_creditorId', ['creditorId'])
 
 export const tables = {
-  clients: clients.table,
-  creditors: creditors.table,
-  payments: paymentTable,
+	clients: clients.table,
+	creditors: creditors.table,
+	payments: paymentTable,
 }
 ```
 
@@ -88,28 +92,31 @@ import { defineRelations } from 'cvx-kit/relations'
 import { tables } from './domain/payments/table'
 import { clients, creditors, payments } from './domain/payments/schema'
 
-export const relations = defineRelations({
-  clients,
-  creditors,
-  payments: { ...payments, table: tables.payments },
-}, (r, branch) => ({
-  clients: {
-    payments: r.many.payments({ from: r.clients._id, to: r.payments.clientId }),
-  },
-  payments: {
-    client: r.one.clients({ from: r.payments.clientId, to: r.clients._id }),
-    creditor: r.one.creditors({
-      from: branch('payments', 'creditor_payment').creditorId,
-      to: r.creditors._id,
-    }),
-  },
-  creditors: {
-    payments: r.many.payments({
-      from: r.creditors._id,
-      to: branch('payments', 'creditor_payment').creditorId,
-    }),
-  },
-}))
+export const relations = defineRelations(
+	{
+		clients,
+		creditors,
+		payments: { ...payments, table: tables.payments },
+	},
+	(r, branch) => ({
+		clients: {
+			payments: r.many.payments({ from: r.clients._id, to: r.payments.clientId }),
+		},
+		payments: {
+			client: r.one.clients({ from: r.payments.clientId, to: r.clients._id }),
+			creditor: r.one.creditors({
+				from: branch('payments', 'creditor_payment').creditorId,
+				to: r.creditors._id,
+			}),
+		},
+		creditors: {
+			payments: r.many.payments({
+				from: r.creditors._id,
+				to: branch('payments', 'creditor_payment').creditorId,
+			}),
+		},
+	}),
+)
 ```
 
 Common references require the field to be declared in every branch with a
@@ -139,13 +146,13 @@ export const querying = createQueryEngine({ schema, relations })
 import { relations } from '../../relations'
 
 export const listInput = relations.tables.payments.paginationOpts({
-  type: true,
-  clientId: true,
-  amountCents: true,
-  variants: {
-    client_draft: { draftDate: true },
-    creditor_payment: { creditorId: true },
-  },
+	type: true,
+	clientId: true,
+	amountCents: true,
+	variants: {
+		client_draft: { draftDate: true },
+		creditor_payment: { creditorId: true },
+	},
 })
 export const listResult = relations.tables.payments.pageDto({ client: true, creditor: true })
 ```
@@ -157,10 +164,10 @@ import { querying } from '../querying'
 import { listInput, listResult } from '../domain/payments/contracts'
 
 export const list = authQuery({
-  args: listInput,
-  returns: listResult,
-  handler: (ctx, args) => querying(ctx)
-    .payments.with({ client: true, creditor: true }).paginate(args),
+	args: listInput,
+	returns: listResult,
+	handler: (ctx, args) =>
+		querying(ctx).payments.with({ client: true, creditor: true }).paginate(args),
 })
 ```
 
@@ -178,14 +185,14 @@ remain composed into the inferred branch DTO; no handwritten union is needed.
 
 ```ts
 listInput.parse({
-  numItems: 20,
-  cursor: null,
-  filters: {
-    variant: {
-      tag: 'creditor_payment',
-      filters: { creditorId: selectedCreditorId, amountCents: { gte: 100 } },
-    },
-  },
+	numItems: 20,
+	cursor: null,
+	filters: {
+		variant: {
+			tag: 'creditor_payment',
+			filters: { creditorId: selectedCreditorId, amountCents: { gte: 100 } },
+		},
+	},
 })
 ```
 

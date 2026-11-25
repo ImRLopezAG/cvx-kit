@@ -591,14 +591,40 @@ export type NamespaceTag<Name extends string, Tables extends string> = {
 	readonly [namespaceKey]: NamespaceInfo<Name, Tables>
 }
 
-/** PascalCase member name of a table: `itemLedgerEntries` → `ItemLedgerEntries`. */
-export type MemberName<TableName extends string> = Capitalize<TableName>
+type DotsToUnderscores<Name extends string> = Name extends `${infer Head}.${infer Tail}`
+	? `${Head}_${DotsToUnderscores<Tail>}`
+	: Name
+
+/** Stored-table prefix of a namespace: `Microsoft.Inventory` → `Microsoft_Inventory_`. */
+export type NamespacePrefix<Name extends string> = `${DotsToUnderscores<Name>}_`
+
+/**
+ * Member name of a table. A table stored with its namespace prefix drops it
+ * (`Inventory_Items` in `Inventory` → `Items`); any other table name is
+ * PascalCased (`itemLedgerEntries` → `ItemLedgerEntries`).
+ */
+export type MemberName<
+	TableName extends string,
+	Name extends string = never,
+> = [Name] extends [never]
+	? Capitalize<TableName>
+	: TableName extends `${NamespacePrefix<Name>}${infer Rest extends string}`
+		? Rest extends ''
+			? Capitalize<TableName>
+			: Rest
+		: Capitalize<TableName>
 
 /** Fully qualified name: `<Namespace>.<Member>`, e.g. `Inventory.Items`. */
 export type QualifiedName<
 	Name extends string,
 	TableName extends string,
-> = `${Name}.${MemberName<TableName>}`
+> = `${Name}.${MemberName<TableName, Name>}`
+
+/** Options for `namespace(...)`. */
+export type NamespaceOptions<Prefixed extends boolean = boolean> = {
+	/** Require every key to start with the namespace prefix (`Inventory_`). */
+	prefixed?: Prefixed
+}
 
 type NamespaceMember = TableDefinition<any> | { tableName: string; table: TableDefinition<any> }
 type MemberTables<Members extends Record<string, NamespaceMember>> = {
@@ -606,13 +632,24 @@ type MemberTables<Members extends Record<string, NamespaceMember>> = {
 		? Table
 		: Extract<Members[Key], TableDefinition<any>>
 }
-type CheckedMembers<Members extends Record<string, NamespaceMember>> = {
-	[Key in keyof Members]: Members[Key] extends { tableName: infer TableName }
-		? TableName extends Key
-			? Members[Key]
-			: { tableName: Key; table: TableDefinition<any> }
-		: Members[Key]
+type CheckedMembers<
+	Members extends Record<string, NamespaceMember>,
+	Name extends string,
+	Prefixed extends boolean,
+> = {
+	[Key in keyof Members]: Prefixed extends true
+		? Key extends `${NamespacePrefix<Name>}${infer Rest}`
+			? Rest extends ''
+				? never
+				: CheckedMember<Members[Key], Key>
+			: never
+		: CheckedMember<Members[Key], Key>
 }
+type CheckedMember<Member, Key> = Member extends { tableName: infer TableName }
+	? TableName extends Key
+		? Member
+		: { tableName: Key; table: TableDefinition<any> }
+	: Member
 type CheckedNamespaceName<Name extends string> = Name extends ''
 	? never
 	: Name extends `${string}..${string}` | `.${string}` | `${string}.`
@@ -620,14 +657,21 @@ type CheckedNamespaceName<Name extends string> = Name extends ''
 		: Name
 
 const NAMESPACE_SEGMENT = /^[A-Z][A-Za-z0-9]*$/
+// Convex table names: letters, digits and underscores, not starting with an underscore.
+const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/
 
 /**
  * Groups tables under a declaration-level namespace, like AL's
  * `namespace Microsoft.Inventory.Item;`. Keys are the real (stored) table
- * names, exactly as in an un-namespaced module map; each table's member name
- * is the PascalCase form of its key (`items` → `Items`) and its qualified
- * name is `<Namespace>.<Member>` (`Inventory.Items`). Storage, `id('items')`,
- * `ctx.db.query('items')` and generated types are unchanged.
+ * names, exactly as in an un-namespaced module map. A key stored with the
+ * namespace prefix (`Inventory_Items`, or `Microsoft_Inventory_Items` for
+ * `Microsoft.Inventory`) has the remainder as its member name (`Items`);
+ * any other key is PascalCased (`items` → `Items`). The qualified name is
+ * `<Namespace>.<Member>` (`Inventory.Items`). Storage, ids, queries and
+ * generated types are unchanged.
+ *
+ * `{ prefixed: true }` requires every key to carry the prefix: a key
+ * without it is a type error and a runtime error.
  *
  * A member may be a `TableDefinition` (`items.table.index(...)`) or a table
  * boundary (`items`); a boundary whose `tableName` differs from its key is a
@@ -637,9 +681,11 @@ const NAMESPACE_SEGMENT = /^[A-Z][A-Za-z0-9]*$/
 export function namespace<
 	const Name extends string,
 	const Members extends Record<string, NamespaceMember>,
+	const Prefixed extends boolean = false,
 >(
 	name: Name & CheckedNamespaceName<Name>,
-	members: Members & CheckedMembers<Members>,
+	members: Members & CheckedMembers<Members, Name, Prefixed>,
+	options: NamespaceOptions<Prefixed> = {},
 ): Namespace<Name, MemberTables<Members>> {
 	if (!name.split('.').every((segment) => NAMESPACE_SEGMENT.test(segment))) {
 		throw new Error(
@@ -648,8 +694,15 @@ export function namespace<
 	}
 	const tables: Record<string, TableDefinition<any>> = {}
 	for (const [key, member] of Object.entries(members as Record<string, NamespaceMember>)) {
-		if (!/^[a-z][A-Za-z0-9]*$/.test(key)) {
-			throw new Error(`Namespace "${name}" member "${key}" must be a camelCase table name`)
+		if (!TABLE_NAME.test(key)) {
+			throw new Error(
+				`Namespace "${name}" member "${key}" must be a table name (letters, digits and underscores)`,
+			)
+		}
+		if (options.prefixed && !hasPrefix(key, name)) {
+			throw new Error(
+				`Namespace "${name}" member "${key}" must start with "${namespacePrefix(name)}"`,
+			)
 		}
 		if ('tableName' in member) {
 			if (member.tableName !== key) {
@@ -674,9 +727,29 @@ function namespaceMeta(map: object): NamespaceInfo<string, string> | undefined {
 	return (map as { [namespaceKey]?: NamespaceInfo<string, string> })[namespaceKey]
 }
 
-/** PascalCase member name of a table name. */
-export function memberName<const TableName extends string>(tableName: TableName) {
-	return (tableName.charAt(0).toUpperCase() + tableName.slice(1)) as MemberName<TableName>
+/** Stored-table prefix of a namespace: `Microsoft.Inventory` → `Microsoft_Inventory_`. */
+export function namespacePrefix<const Name extends string>(name: Name) {
+	return `${name.replaceAll('.', '_')}_` as NamespacePrefix<Name>
+}
+
+function hasPrefix(tableName: string, name: string) {
+	const prefix = namespacePrefix(name)
+	return tableName.startsWith(prefix) && tableName.length > prefix.length
+}
+
+/**
+ * Member name of a table name: without the namespace prefix when given and
+ * present (`memberName('Inventory_Items', 'Inventory')` → `Items`), else PascalCased.
+ */
+export function memberName<const TableName extends string, const Name extends string = never>(
+	tableName: TableName,
+	namespaceName?: Name,
+) {
+	const name =
+		namespaceName !== undefined && hasPrefix(tableName, namespaceName)
+			? tableName.slice(namespacePrefix(namespaceName).length)
+			: tableName.charAt(0).toUpperCase() + tableName.slice(1)
+	return name as MemberName<TableName, Name>
 }
 
 /** The namespace name of a `namespace(...)` map. */
@@ -734,7 +807,8 @@ export function namespaceIndex<const Spaces extends readonly NamespaceTag<string
 	}
 	return {
 		qualifiedName<const Table extends TableName>(table: Table) {
-			return `${owner(table)}.${memberName(table)}` as {
+			const name = owner(table)
+			return `${name}.${memberName(table, name)}` as {
 				[Key in Table]: QualifiedName<Map[Key] & string, Key>
 			}[Table]
 		},

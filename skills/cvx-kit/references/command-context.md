@@ -31,77 +31,83 @@ import { createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
 import { z } from 'zod'
 
 const foundation = createEffectFoundation({
-  observability: {
-    enabled: false,
-    classifyError: () => ({ outcome: 'failed', errorCode: 'COMMAND_FAILED' }),
-  },
-  // Standalone demonstration only: production applications provide their audit writer.
-  writeAudit: () => undefined,
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed', errorCode: 'COMMAND_FAILED' }),
+	},
+	// Standalone demonstration only: production applications provide their audit writer.
+	writeAudit: () => undefined,
 })
 
 const notifications = foundation.Command({
-  context: (dependencies: { format: (message: string) => string }) => dependencies,
-  operations: ({ command }) => ({
-    format: command({
-      input: z.string(), result: z.string(), classification: 'business',
-      handler: (message, context) => context.format(message),
-      audit: () => null,
-    }),
-  }),
+	context: (dependencies: { format: (message: string) => string }) => dependencies,
+	operations: ({ command }) => ({
+		format: command({
+			input: z.string(),
+			result: z.string(),
+			classification: 'business',
+			handler: (message, context) => context.format(message),
+			audit: () => null,
+		}),
+	}),
 })
 
 const tasks = foundation.Command({
-  context: (dependencies: {
-    nextNumber: () => number,
-    notifications: ReturnType<typeof notifications.withContext>,
-  }) => dependencies,
-  operations: ({ command }) => ({
-    create: command({
-      input: z.string(), result: z.string(), classification: 'business',
-      handler: (title, context) => context.notifications.exec(
-        'format', `${context.nextNumber()}:${title}`,
-      ),
-      audit: () => null,
-    }),
-  }),
+	context: (dependencies: {
+		nextNumber: () => number
+		notifications: ReturnType<typeof notifications.withContext>
+	}) => dependencies,
+	operations: ({ command }) => ({
+		create: command({
+			input: z.string(),
+			result: z.string(),
+			classification: 'business',
+			handler: (title, context) =>
+				context.notifications.exec('format', `${context.nextNumber()}:${title}`),
+			audit: () => null,
+		}),
+	}),
 })
 
 const baseAuthMutation = zCustomMutation(mutationGeneric, {
-  args: {},
-  input: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity()
-    if (!identity) throw Error('UNAUTHORIZED')
-    return { ctx: { actor: identity.subject }, args: {} }
-  },
+	args: {},
+	input: async (ctx) => {
+		const identity = await ctx.auth.getUserIdentity()
+		if (!identity) throw Error('UNAUTHORIZED')
+		return { ctx: { actor: identity.subject }, args: {} }
+	},
 })
 
 // In a real app, keep this composition in the tasks feature's functions module.
 export const authMutation = effectZodApiBuilder(baseAuthMutation, {
-  context: (ctx) => {
-    const messages = notifications.withContext({
-      format: (message) => `${ctx.actor}:${message}`,
-    })
-    return {
-      tasks: tasks.withContext({ nextNumber: () => 42, notifications: messages }),
-    }
-  },
+	context: (ctx) => {
+		const messages = notifications.withContext({
+			format: (message) => `${ctx.actor}:${message}`,
+		})
+		return {
+			tasks: tasks.withContext({ nextNumber: () => 42, notifications: messages }),
+		}
+	},
 })
 
 export const createTask = authMutation({
-  args: { title: z.string() },
-  returns: z.string(),
-  handler: (ctx, input) => ctx.tasks.exec('create', input.title),
+	args: { title: z.string() },
+	returns: z.string(),
+	handler: (ctx, input) => ctx.tasks.exec('create', input.title),
 })
 
 // An input-only command needs no domain dependencies.
 const echo = foundation.Command({
-  context: () => undefined,
-  operations: ({ command }) => ({
-    echo: command({
-      input: z.string(), result: z.string(), classification: 'business',
-      handler: (input) => input, audit: () => null,
-    }),
-  }),
+	context: () => undefined,
+	operations: ({ command }) => ({
+		echo: command({
+			input: z.string(),
+			result: z.string(),
+			classification: 'business',
+			handler: (input) => input,
+			audit: () => null,
+		}),
+	}),
 })
 export const echoEffect = echo.exec('echo', 'hello', undefined)
 export const boundEchoEffect = echo.withContext(undefined).exec('echo', 'hello')

@@ -650,20 +650,29 @@ candidates; other supported filters run as residual eligibility checks.
 
 ```ts
 const selection = { labels: true } as const
-const result = relations.tables.tasks.pageDto(selection)
- .and(z.object({ paginationMode: z.literal('native-search') }))
-const run = (ctx, input) => querying(ctx).tasks
- .search('search_text', input.text)
- .where({ status: 'open' })
- .include({ finance: 'if-permitted' })
- .with(selection)
- .paginate({ numItems: 25, cursor: input.cursor, scanLimit: 250 })
+const result = relations.tables.tasks
+	.pageDto(selection)
+	.and(z.object({ paginationMode: z.literal('native-search') }))
+const run = (ctx, input) =>
+	querying(ctx)
+		.tasks.search('search_text', input.text)
+		.where({ status: 'open' })
+		.include({ finance: 'if-permitted' })
+		.with(selection)
+		.paginate({ numItems: 25, cursor: input.cursor, scanLimit: 250 })
 
 // Ordinary registered authQuery boundary:
-const search = authQuery({ args, returns: result, handler: async (ctx, input) => {
- try { return await run(ctx, input) }
- catch (error) { throw new ConvexError(queryFailureContract.project(error)) }
-} })
+const search = authQuery({
+	args,
+	returns: result,
+	handler: async (ctx, input) => {
+		try {
+			return await run(ctx, input)
+		} catch (error) {
+			throw new ConvexError(queryFailureContract.project(error))
+		}
+	},
+})
 ```
 
 Import `ConvexError` from `convex/values` and `queryFailureContract` from

@@ -905,6 +905,10 @@ for (const [name, valid, invalid] of [
 				'convex/domain/table.ts',
 				"import { createModule } from 'cvx-kit/zod-table'; import { orderTables } from './orders/table'; export const domainTables = createModule(orderTables)",
 			],
+			[
+				'convex/domain/table.ts',
+				"import { createModule, namespaceIndex } from 'cvx-kit/zod-table'; import { orderTables } from './orders/table'; export const domainTables = createModule(orderTables); export const tableNames = namespaceIndex(orderTables)",
+			],
 			['convex/domain/orders/rules.ts', 'export function canBuy(order) { return order.total > 0 }'],
 			[
 				'convex/domain/orders/queries.ts',
@@ -931,6 +935,10 @@ for (const [name, valid, invalid] of [
 			[
 				'convex/domain/table.ts',
 				"import { createModule } from 'cvx-kit/zod-table'; import { save } from './orders/commands'; export const domainTables = createModule(save())",
+			],
+			[
+				'convex/domain/table.ts',
+				"import { orderTables } from './orders/table'; function namespaceIndex(x) { return x } export const tableNames = namespaceIndex(orderTables)",
 			],
 			['convex/domain/orders/rules.ts', 'export function allowed(ctx) { return ctx.db.get("id") }'],
 			['convex/domain/orders/rules.ts', 'export function allowed() { return Date.now() > 0 }'],

@@ -12,6 +12,13 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.33] - 2026-11-25
+
+### Fixed
+
+- The `reserved-domain-file-anatomy` oxlint rule accepts `namespace(name, { … })` from `cvx-kit/zod-table` as a table topology map in `domain/<module>/table.ts`. The members must all be table definitions, topology maps or table boundaries, so `namespace('X', { foo: 1 })` and a local function named `namespace` are still rejected.
+- The `domain-file-responsibilities` oxlint rule allows `namespaceIndex(...)` from `cvx-kit/zod-table` in `domain/table.ts`, next to `createModule`.
+
 ## [0.1.32] - 2026-11-25
 
 ### Added

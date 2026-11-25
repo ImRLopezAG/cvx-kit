@@ -327,7 +327,10 @@ export const ownershipRules = {
 					sources.CallExpression?.(node)
 					if (assembly) {
 						const ref = imported(context, node.callee)
-						if (ref?.source !== 'cvx-kit/zod-table' || ref.name !== 'createModule') flag(node)
+						const assemblyCall =
+							(ref?.source === 'cvx-kit/zod-table' && ref.name === 'createModule') ||
+							(ref?.source === 'cvx-kit/zod-table' && ref.name === 'namespaceIndex')
+						if (!assemblyCall) flag(node)
 					}
 					const method = node.callee.type === 'MemberExpression' ? propertyName(node.callee) : null
 					if (

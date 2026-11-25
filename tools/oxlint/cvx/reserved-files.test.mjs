@@ -71,8 +71,35 @@ tester.run('physical-reserved-domain-files', rules['reserved-domain-file-anatomy
 			options,
 			code: "import { tasks } from './schema'; export const tables = { tasks: tasks.table.index('by_id', ['id']) }",
 		},
+		{
+			filename: join(root, 'backend/domain/tasks/table.ts'),
+			options,
+			code: "import { namespace } from 'cvx-kit/zod-table'; import { tasks } from './schema'; export const tables = namespace('Tasks', { tasks: tasks.table.index('by_id', ['id']) })",
+		},
+		{
+			filename: join(root, 'backend/domain/tasks/table.ts'),
+			options,
+			code: "import * as kit from 'cvx-kit/zod-table'; import { tasks } from './schema'; export const tables = kit.namespace('Tasks', { tasks })",
+		},
+		{
+			filename: join(root, 'backend/domain/table.ts'),
+			options,
+			code: "import { createModule, namespaceIndex } from 'cvx-kit/zod-table'; import { tables } from './tasks/table'; export const domainTables = createModule(tables); export const names = namespaceIndex(tables)",
+		},
 	],
 	invalid: [
+		{
+			filename: join(root, 'backend/domain/tasks/table.ts'),
+			options,
+			code: "import { namespace } from 'cvx-kit/zod-table'; export const tables = namespace('Tasks', { foo: 1 })",
+			errors: [{ messageId: 'anatomy' }],
+		},
+		{
+			filename: join(root, 'backend/domain/tasks/table.ts'),
+			options,
+			code: "import { tasks } from './schema'; function namespace(_name, tables) { return tables } export const tables = namespace('Tasks', { tasks: tasks.table })",
+			errors: [{ messageId: 'anatomy' }],
+		},
 		{
 			filename: join(root, 'backend/domain/tasks/commands.ts'),
 			options,

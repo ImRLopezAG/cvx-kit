@@ -12,6 +12,8 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.34] - 2026-11-25
+
 ### Added
 
 - `namespace` recognises tables stored with the namespace prefix: `Inventory_Items` in `namespace('Inventory', …)` has the member name `Items` and the qualified name `Inventory.Items` (typed as literals). Dotted namespaces use underscores, so `Microsoft.Inventory` strips `Microsoft_Inventory_`. Keys without the prefix keep the PascalCase member name. `namespace(name, tables, { prefixed: true })` requires the prefix on every key, as a type error and a runtime error. `namespacePrefix(name)` and `memberName(table, namespace?)` expose the same mapping.

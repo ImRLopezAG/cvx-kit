@@ -584,7 +584,12 @@ export type NamespaceInfo<Name extends string, Tables extends string> = {
 export type Namespace<
 	Name extends string,
 	Tables extends Record<string, TableDefinition<any>>,
-> = Tables & { readonly [namespaceKey]: NamespaceInfo<Name, keyof Tables & string> }
+> = Tables & NamespaceTag<Name, keyof Tables & string>
+
+/** The metadata-only shape of a `namespace(...)` map. */
+export type NamespaceTag<Name extends string, Tables extends string> = {
+	readonly [namespaceKey]: NamespaceInfo<Name, Tables>
+}
 
 /** PascalCase member name of a table: `itemLedgerEntries` → `ItemLedgerEntries`. */
 export type MemberName<TableName extends string> = Capitalize<TableName>
@@ -675,37 +680,36 @@ export function memberName<const TableName extends string>(tableName: TableName)
 }
 
 /** The namespace name of a `namespace(...)` map. */
-export function namespaceName<Name extends string>(ns: Namespace<Name, any>): Name {
+export function namespaceName<const Name extends string>(ns: NamespaceTag<Name, string>): Name {
 	return namespaceMeta(ns)!.name as Name
 }
 
 /** The stored table names declared in a namespace, in declaration order. */
-export function tablesOf<Name extends string, Tables extends Record<string, TableDefinition<any>>>(
-	ns: Namespace<Name, Tables>,
-): readonly (keyof Tables & string)[] {
-	return namespaceMeta(ns)!.tables as readonly (keyof Tables & string)[]
+export function tablesOf<const Tables extends string>(
+	ns: NamespaceTag<string, Tables>,
+): readonly Tables[] {
+	return namespaceMeta(ns)!.tables as readonly Tables[]
 }
 
-type NamespaceEntries<Spaces extends readonly Namespace<string, any>[]> = {
-	[Index in keyof Spaces]: Spaces[Index] extends Namespace<infer Name, infer Tables>
-		? { [TableName in keyof Tables & string]: Name }
+type NamespaceEntries<Spaces extends readonly NamespaceTag<string, string>[]> = {
+	[Index in keyof Spaces]: Spaces[Index] extends NamespaceTag<infer Name, infer Tables>
+		? { [TableName in Tables]: Name }
 		: never
 }[number]
-type TableNamespaceMap<Spaces extends readonly Namespace<string, any>[]> = UnionToIntersection<
-	NamespaceEntries<Spaces>
->
+type TableNamespaceMap<Spaces extends readonly NamespaceTag<string, string>[]> =
+	UnionToIntersection<NamespaceEntries<Spaces>>
 
 /**
  * Typed, read-only qualified-name lookup over namespaces (no global registry:
  * build one next to `createModule` and import it where labels are needed).
  * Rejects duplicate namespace names and tables claimed by two namespaces.
  */
-export function namespaceIndex<const Spaces extends readonly Namespace<string, any>[]>(
+export function namespaceIndex<const Spaces extends readonly NamespaceTag<string, string>[]>(
 	...spaces: Spaces
 ) {
 	type Map = TableNamespaceMap<Spaces>
 	type TableName = keyof Map & string
-	type NameOf = Spaces[number] extends Namespace<infer Name, any> ? Name : never
+	type NameOf = Spaces[number] extends NamespaceTag<infer Name, string> ? Name : never
 	const byTable = new Map<string, string>()
 	const byName = new Map<string, readonly string[]>()
 	for (const space of spaces) {
@@ -730,9 +734,9 @@ export function namespaceIndex<const Spaces extends readonly Namespace<string, a
 	}
 	return {
 		qualifiedName<const Table extends TableName>(table: Table) {
-			return `${owner(table)}.${memberName(table)}` as Map[Table] extends infer Name extends string
-				? QualifiedName<Name, Table>
-				: never
+			return `${owner(table)}.${memberName(table)}` as {
+				[Key in Table]: QualifiedName<Map[Key] & string, Key>
+			}[Table]
 		},
 		namespaceOf<const Table extends TableName>(table: Table) {
 			return owner(table) as Map[Table]

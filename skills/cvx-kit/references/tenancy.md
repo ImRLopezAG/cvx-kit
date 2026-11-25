@@ -176,3 +176,7 @@ export const domainTables = createModule(<moduleA>Tables, <moduleB>Tables, <modu
 // convex/schema.ts
 export default defineSchema(domainTables)
 ```
+
+Wrap a module map in `namespace('Inventory', { items: …, itemLedgerEntries: … })`
+to give its tables qualified names (`Inventory.Items`) without renaming the
+stored tables. See [zod-table](zod-table.md#namespace--qualified-names-without-renaming-tables).

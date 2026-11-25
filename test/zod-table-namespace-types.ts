@@ -4,6 +4,7 @@ import {
 	createModule,
 	namespace,
 	namespaceIndex,
+	namespaceName,
 	tablesOf,
 	tenantTable,
 	zodTable,
@@ -53,3 +54,17 @@ namespace('Inventory', { goods: items })
 names.qualifiedName('users')
 // @ts-expect-error empty namespace segment
 namespace('Microsoft..Inventory', { items })
+
+const label = namespaceName(Inventory)
+export type NamespaceLabel = Assert<Equal<typeof label, 'Inventory'>>
+declare const either: 'items' | 'salesOrders'
+const unionQualified = names.qualifiedName(either)
+export type UnionQualified = Assert<
+	Equal<typeof unionQualified, 'Inventory.Items' | 'Microsoft.Sales.SalesOrders'>
+>
+// @ts-expect-error untagged maps are not namespaces
+namespaceName({})
+// @ts-expect-error untagged maps are not namespaces
+namespaceIndex({ users: users.table })
+// @ts-expect-error unknown namespace name
+names.tablesOf('Purchase')

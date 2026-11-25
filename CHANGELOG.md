@@ -12,6 +12,12 @@ are this file's matching section.
 
 ## [Unreleased]
 
+## [0.1.35] - 2026-11-25
+
+### Changed
+
+- `namespace` accepts lowercase namespace segments as well as PascalCase ones. Each dot-separated segment is an identifier starting with a letter (`[A-Za-z][A-Za-z0-9]*`), so `namespace('sales', { sales_header, sales_cust_ledger_entry }, { prefixed: true })` works. `qualifiedName('sales_cust_ledger_entry')` gives `'sales.cust_ledger_entry'`, and `microsoft.inventory` strips `microsoft_inventory_`. Prefix matching stays exact and case-sensitive.
+
 ## [0.1.34] - 2026-11-25
 
 ### Added

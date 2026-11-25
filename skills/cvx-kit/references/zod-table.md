@@ -289,8 +289,11 @@ export const Inventory = namespace(
 )
 ```
 
-Dotted names (`'Microsoft.Inventory'`) are allowed; each segment is
-PascalCase. `createModule` and `namespaceIndex` throw on a duplicate
+Dotted names (`'Microsoft.Inventory'`) are allowed; each segment is an
+identifier starting with a letter, so lowercase Business Central-style
+names work too: `namespace('sales', { sales_header: … }, { prefixed: true })`
+gives `qualifiedName('sales_header') === 'sales.header'`. Prefix matching
+is case-sensitive. `createModule` and `namespaceIndex` throw on a duplicate
 namespace name or a table claimed twice.
 
 ## `zodVariantTable` — discriminated unions

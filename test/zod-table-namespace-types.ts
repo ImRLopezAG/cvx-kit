@@ -90,12 +90,25 @@ export type DottedStripped = Assert<Equal<typeof dotted, 'Microsoft.Finance.GLEn
 const mixed = prefixedNames.qualifiedName('legacyAccounts')
 export type Mixed = Assert<Equal<typeof mixed, 'Microsoft.Finance.LegacyAccounts'>>
 export type PrefixedKeys = Assert<
-	Equal<
-		keyof typeof PrefixedInventory & string,
-		'Inventory_Items' | 'Inventory_ItemLedgerEntries'
-	>
+	Equal<keyof typeof PrefixedInventory & string, 'Inventory_Items' | 'Inventory_ItemLedgerEntries'>
 >
 // @ts-expect-error strict namespaces require the prefix on every key
 namespace('Inventory', { items: items.table }, { prefixed: true })
 // @ts-expect-error a bare prefix is not a member name
 namespace('Inventory', { Inventory_: users.table }, { prefixed: true })
+
+const salesNs = namespace(
+	'sales',
+	{ sales_header: users.table, sales_cust_ledger_entry: users.table },
+	{ prefixed: true },
+)
+const msNs = namespace('microsoft.inventory', { microsoft_inventory_item: users.table })
+const snake = namespaceIndex(salesNs, msNs)
+const header = snake.qualifiedName('sales_header')
+export type SnakeHeader = Assert<Equal<typeof header, 'sales.header'>>
+const cle = snake.qualifiedName('sales_cust_ledger_entry')
+export type SnakeLedger = Assert<Equal<typeof cle, 'sales.cust_ledger_entry'>>
+const msItem = snake.qualifiedName('microsoft_inventory_item')
+export type SnakeDotted = Assert<Equal<typeof msItem, 'microsoft.inventory.item'>>
+// @ts-expect-error prefix matching is case-sensitive
+namespace('sales', { Sales_header: users.table }, { prefixed: true })

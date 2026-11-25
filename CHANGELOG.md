@@ -12,6 +12,14 @@ are this file's matching section.
 
 ## [Unreleased]
 
+### Added
+
+- `namespace` recognises tables stored with the namespace prefix: `Inventory_Items` in `namespace('Inventory', …)` has the member name `Items` and the qualified name `Inventory.Items` (typed as literals). Dotted namespaces use underscores, so `Microsoft.Inventory` strips `Microsoft_Inventory_`. Keys without the prefix keep the PascalCase member name. `namespace(name, tables, { prefixed: true })` requires the prefix on every key, as a type error and a runtime error. `namespacePrefix(name)` and `memberName(table, namespace?)` expose the same mapping.
+
+### Fixed
+
+- `namespace` accepts any Convex table name as a key (letters, digits and underscores, such as `Inventory_Items`). It used to reject keys that were not camelCase.
+
 ## [0.1.33] - 2026-11-25
 
 ### Fixed

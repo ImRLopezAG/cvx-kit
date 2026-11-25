@@ -132,7 +132,7 @@ codebase greppable.
   the full set once (one owner), not per callsite.
 - **Vocabulary tuples**: `UPPER_SNAKE_CASE` exported `as const`; derived type
   `PascalCase` singular (`const <ENTITY>_STATES = [...] as const;
-type <Entity>State = (typeof <ENTITY>_STATES)[number]`).
+  type <Entity>State = (typeof <ENTITY>_STATES)[number]`).
 - **Domain executors**: `execute<Verb><Entity>` (`executeApproveInvoice`) —
   the grep-able seam between adapters and domain.
 - **Internal callback files**: `<purpose>_functions.ts` next to the
@@ -225,7 +225,7 @@ in the domain.
   `<purpose>_functions.ts`. Scheduled and callback writes now run under the
   same trigger regime as user writes.
 - `crons.ts` becomes declarations only, targeting `internal.domain.<entity>.
-<purpose>_functions.*`.
+  <purpose>_functions.*`.
 - `http.ts` becomes routing only: verify the webhook signature, parse the
   payload at the boundary, delegate to a domain action/function.
 

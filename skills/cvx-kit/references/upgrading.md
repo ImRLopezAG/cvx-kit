@@ -70,13 +70,15 @@ audit: ({ operation, result }, ctx) => ({
 
 ```ts
 // was: domain/sales/errors.ts
-export function fail(code): never { throw salesErrors.create(code, {}) }
+export function fail(code): never {
+	throw salesErrors.create(code, {})
+}
 export function attempt<A>(run: () => Promise<A>) {
-  return Effect.tryPromise({ try: run, catch: (error) => error })
+	return Effect.tryPromise({ try: run, catch: (error) => error })
 }
 
 // was, in a handler
-return yield* Effect.fail(salesErrors.create('NOT_FOUND', {}))
+return yield * Effect.fail(salesErrors.create('NOT_FOUND', {}))
 ```
 
 Delete those helpers. Contracted registries whose `errors` comes from
@@ -112,12 +114,12 @@ write, so `emit` logs; Convex log streams carry it to external telemetry:
 
 ```ts
 export const foundation = createEffectFoundation({
-  observability,
-  writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
-  auditFailure: {
-    emit: (entry) => console.warn(JSON.stringify({ event: 'operation.failed', ...entry })),
-    errors: domainErrors, // the combined contract the API adapter already uses
-  },
+	observability,
+	writeAudit: (ctx, entry) => writeAuditEntry(ctx, entry),
+	auditFailure: {
+		emit: (entry) => console.warn(JSON.stringify({ event: 'operation.failed', ...entry })),
+		errors: domainErrors, // the combined contract the API adapter already uses
+	},
 })
 ```
 

@@ -47,11 +47,11 @@ import { z } from 'zod'
 import { zodTable } from 'cvx-kit/zod-table'
 
 export const intents = zodTable('intents', () => ({
-  key: z.string(),
-  payload: z.string(),
+	key: z.string(),
+	payload: z.string(),
 }))
 export const tables = {
-  intents: intents.table.index('by_key', ['key']),
+	intents: intents.table.index('by_key', ['key']),
 }
 ```
 
@@ -80,11 +80,11 @@ application-controlled soft-delete field. See [zod-table](zod-table.md).
 // foundation.ts
 import { createEffectFoundation } from 'cvx-kit/effect'
 export const { Command, Query } = createEffectFoundation({
-  observability: {
-    enabled: false,
-    classifyError: () => ({ outcome: 'failed', errorCode: 'OUTBOX_FAILED' }),
-  },
-  writeAudit: () => undefined,
+	observability: {
+		enabled: false,
+		classifyError: () => ({ outcome: 'failed', errorCode: 'OUTBOX_FAILED' }),
+	},
+	writeAudit: () => undefined,
 })
 ```
 
@@ -95,7 +95,7 @@ required. A no-op writer deliberately records nothing.
 // errors.ts
 import { defineErrorContract } from 'cvx-kit/errors'
 export const outboxErrors = defineErrorContract({
-  INTENT_NOT_FOUND: { message: 'Intent not found', details: {} },
+	INTENT_NOT_FOUND: { message: 'Intent not found', details: {} },
 })
 ```
 
@@ -107,20 +107,20 @@ import { intents } from '../table'
 import { outboxErrors } from '../errors'
 
 export const intentContract = defineDomainContract({
-  errors: outboxErrors,
-  commands: {
-    create: {
-      input: intents.insertSchema,
-      result: intents.schema,
-      classification: 'business',
-    },
-  },
-  queries: {
-    read: {
-      input: z.object({ id: intents.schema.shape._id }),
-      result: intents.schema.nullable(),
-    },
-  },
+	errors: outboxErrors,
+	commands: {
+		create: {
+			input: intents.insertSchema,
+			result: intents.schema,
+			classification: 'business',
+		},
+	},
+	queries: {
+		read: {
+			input: z.object({ id: intents.schema.shape._id }),
+			result: intents.schema.nullable(),
+		},
+	},
 })
 ```
 
@@ -130,11 +130,11 @@ import type { QueryCtx } from '../_generated/server'
 import { Query } from '../foundation'
 import { intentContract } from './contracts'
 export const intentsQueries = Query({
-  contract: intentContract,
-  context: (ctx: QueryCtx) => ctx,
-  operations: ({ query }) => ({
-    read: query.handler(({ id }, ctx) => ctx.db.get(id)),
-  }),
+	contract: intentContract,
+	context: (ctx: QueryCtx) => ctx,
+	operations: ({ query }) => ({
+		read: query.handler(({ id }, ctx) => ctx.db.get(id)),
+	}),
 })
 ```
 
@@ -155,9 +155,7 @@ on timestamp fields to silence this mismatch.
 For a DTO that hides timestamps, derive a projection and actually parse it:
 
 ```ts
-const result = intents.schema
-  .omit({ createdAt: true, updatedAt: true, archivedAt: true })
-  .strip()
+const result = intents.schema.omit({ createdAt: true, updatedAt: true, archivedAt: true }).strip()
 // Return result.parse(row), or let the operation's result decoder strip them.
 ```
 
@@ -175,9 +173,9 @@ import type { DataModel } from './_generated/dataModel'
 export const triggers = createTriggers<DataModel>()
 timestamps(triggers, 'intents')
 triggers.register('intents', async (ctx, change) => {
-  if (change.operation === 'insert') {
-    // Component-local invariant or denormalization; ctx.db is trigger-wrapped.
-  }
+	if (change.operation === 'insert') {
+		// Component-local invariant or denormalization; ctx.db is trigger-wrapped.
+	}
 })
 ```
 
@@ -192,17 +190,16 @@ import { triggers } from './triggers'
 import { outboxErrors } from './errors'
 
 export const componentMutation = effectZodApiBuilder(
-  zCustomMutation(mutation, triggerContext(triggers)),
-  { errors: outboxErrors },
+	zCustomMutation(mutation, triggerContext(triggers)),
+	{ errors: outboxErrors },
 )
 export const componentInternalMutation = effectZodApiBuilder(
-  zCustomMutation(internalMutation, triggerContext(triggers)),
-  { errors: outboxErrors },
+	zCustomMutation(internalMutation, triggerContext(triggers)),
+	{ errors: outboxErrors },
 )
-export const componentQuery = effectZodApiBuilder(
-  zCustomQuery(query, NoOp),
-  { errors: outboxErrors },
-)
+export const componentQuery = effectZodApiBuilder(zCustomQuery(query, NoOp), {
+	errors: outboxErrors,
+})
 ```
 
 Use these builders to export the component's functions, delegating to the local
@@ -253,13 +250,13 @@ import type { GenericDataModel, GenericMutationCtx } from 'convex/server'
 import type { ComponentApi } from './_generated/component'
 
 export function createOutbox(component: ComponentApi) {
-  return {
-    enqueue: (
-      ctx: Pick<GenericMutationCtx<GenericDataModel>, 'runMutation'>,
-      key: string,
-      payload: string,
-    ) => ctx.runMutation(component.functions.create, { key, payload }),
-  }
+	return {
+		enqueue: (
+			ctx: Pick<GenericMutationCtx<GenericDataModel>, 'runMutation'>,
+			key: string,
+			payload: string,
+		) => ctx.runMutation(component.functions.create, { key, payload }),
+	}
 }
 ```
 
@@ -286,15 +283,18 @@ override. Ordinary `components/<name>` needs no additional option.
 
 ```json
 {
-  "cvx/domain-import-boundaries": ["error", {
-    "convexDir": "src",
-    "domainPublicFiles": {
-      "communication": ["helpers/delivery"]
-    }
-  }],
-  "cvx/schema-file-boundaries": ["error", { "convexDir": "src" }],
-  "cvx/no-raw-builders": ["error", { "convexDir": "src" }],
-  "cvx/no-manual-timestamps": ["error", { "convexDir": "src" }]
+	"cvx/domain-import-boundaries": [
+		"error",
+		{
+			"convexDir": "src",
+			"domainPublicFiles": {
+				"communication": ["helpers/delivery"]
+			}
+		}
+	],
+	"cvx/schema-file-boundaries": ["error", { "convexDir": "src" }],
+	"cvx/no-raw-builders": ["error", { "convexDir": "src" }],
+	"cvx/no-manual-timestamps": ["error", { "convexDir": "src" }]
 }
 ```
 
@@ -309,19 +309,19 @@ public API. Components use `component-boundaries`, independently of host layers.
 
 Component-aware rule behavior:
 
-| Rules | Component behavior |
-| --- | --- |
-| `schema-file-boundaries` | Zod/raw tables in schema/table files; kit table indexes in `table.ts`. |
-| `no-raw-builders` | Only component-root `functions.ts` imports raw builders. |
-| `root-facade-ownership` | Component-local `foundation.ts`, `functions.ts`, `triggers.ts`, etc. own infrastructure. |
-| `no-manual-timestamps`, `no-unbounded-reads` | Same protection as app code. |
-| `domain-file-responsibilities` | Pure rules, read-only queries, declarative schemas, external I/O in actions. |
-| `component-boundaries`, `no-component-env` | Isolation and injected configuration still apply. |
-| `domain-import-boundaries` | Host layering does not apply inside a component; component isolation does. |
-| `reserved-domain-file-anatomy` | Still specific to host `domain/` registries; component files may also export API adapters. |
-| `project-structure` and architecture checks | Recognize component roots, local entry files, tests and runtime cycles. |
-| Remaining host root/API rules | Keep their existing app-root and `api/` scope. |
-| Remaining vocabulary, DTO, pagination, reference and export rules | Keep their existing checks; no component exemption. |
+| Rules                                                             | Component behavior                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `schema-file-boundaries`                                          | Zod/raw tables in schema/table files; kit table indexes in `table.ts`.                     |
+| `no-raw-builders`                                                 | Only component-root `functions.ts` imports raw builders.                                   |
+| `root-facade-ownership`                                           | Component-local `foundation.ts`, `functions.ts`, `triggers.ts`, etc. own infrastructure.   |
+| `no-manual-timestamps`, `no-unbounded-reads`                      | Same protection as app code.                                                               |
+| `domain-file-responsibilities`                                    | Pure rules, read-only queries, declarative schemas, external I/O in actions.               |
+| `component-boundaries`, `no-component-env`                        | Isolation and injected configuration still apply.                                          |
+| `domain-import-boundaries`                                        | Host layering does not apply inside a component; component isolation does.                 |
+| `reserved-domain-file-anatomy`                                    | Still specific to host `domain/` registries; component files may also export API adapters. |
+| `project-structure` and architecture checks                       | Recognize component roots, local entry files, tests and runtime cycles.                    |
+| Remaining host root/API rules                                     | Keep their existing app-root and `api/` scope.                                             |
+| Remaining vocabulary, DTO, pagination, reference and export rules | Keep their existing checks; no component exemption.                                        |
 
 These stricter checks can expose existing component timestamp writes, unbounded
 reads and raw builders. Migrate those calls to the local facades and triggers
@@ -343,11 +343,11 @@ The tenant-scoped examples below replace the earlier plain `zodTable` with a
 import { tenantTable } from 'cvx-kit/zod-table'
 
 export const intents = tenantTable('intents', () => ({
-  key: z.string(),
-  payload: z.string(),
+	key: z.string(),
+	payload: z.string(),
 }))
 export const tables = {
-  intents: intents.table.index('by_key', ['key']).index('by_tenant', ['tenant']),
+	intents: intents.table.index('by_key', ['key']).index('by_tenant', ['tenant']),
 }
 ```
 
@@ -370,21 +370,30 @@ type Scope = { actor: string; tenant: string }
 type CursorKeys = NonNullable<QueryEngineOptions<typeof schema>['cursor']>
 
 export function createComponentQuerying(ctx: QueryCtx, scope: Scope, cursor: CursorKeys) {
-  const reader = { db: ctx.db }
-  const engine = createQueryEngine({ schema, relations }, {
-    cursor,
-    policyVersion: 'omni-v1',
-    trustedAdapter: candidate => candidate === reader ? {
-      reader: ctx.db,
-      scope: {
-        mode: 'trusted', principal: scope.actor, tenant: scope.tenant,
-        organization: null, role: null,
-      },
-      rules: createTenantRules<DataModel>(scope.tenant, ['intents']),
-      defaultPolicy: 'deny',
-    } : null,
-  })
-  return engine(reader)
+	const reader = { db: ctx.db }
+	const engine = createQueryEngine(
+		{ schema, relations },
+		{
+			cursor,
+			policyVersion: 'omni-v1',
+			trustedAdapter: (candidate) =>
+				candidate === reader
+					? {
+							reader: ctx.db,
+							scope: {
+								mode: 'trusted',
+								principal: scope.actor,
+								tenant: scope.tenant,
+								organization: null,
+								role: null,
+							},
+							rules: createTenantRules<DataModel>(scope.tenant, ['intents']),
+							defaultPolicy: 'deny',
+						}
+					: null,
+		},
+	)
+	return engine(reader)
 }
 ```
 
@@ -423,11 +432,12 @@ import { createInclude } from 'cvx-kit/auth'
 import { createTenantRules, wrapDatabaseReader } from 'cvx-kit/tenancy'
 const include = createInclude({ maxRows: 100 })
 // Inside a component query, after validating host-supplied scope:
-const db = wrapDatabaseReader({}, ctx.db,
-  createTenantRules<DataModel>(scope.tenant, ['intents']), { defaultPolicy: 'deny' })
+const db = wrapDatabaseReader({}, ctx.db, createTenantRules<DataModel>(scope.tenant, ['intents']), {
+	defaultPolicy: 'deny',
+})
 const rows = await include(db.query('intents'))
-  .matching('by_tenant', q => q.eq('tenant', scope.tenant))
-  .execute(20, rows => rows.map(row => intents.toPublicDto(row)))
+	.matching('by_tenant', (q) => q.eq('tenant', scope.tenant))
+	.execute(20, (rows) => rows.map((row) => intents.toPublicDto(row)))
 ```
 
 `createInclude` supplies bounds, not authorization. Wrap the reader first.
@@ -506,17 +516,21 @@ import { Effect } from 'effect'
 import { decodeFailure } from 'cvx-kit/errors'
 import { outboxErrors } from './errors'
 
-const read = <HostMissingError>(ctx: Pick<GenericQueryCtx<GenericDataModel>, 'runQuery'>,
-  id: string, mapMissing: () => HostMissingError) => Effect.tryPromise({
-  try: () => ctx.runQuery(component.functions.read, { id }),
-  catch: error => {
-    const failure = decodeFailure(error, outboxErrors)
-    if (failure._tag === 'DeclaredFailure' && failure.code === 'INTENT_NOT_FOUND') {
-      return mapMissing()
-    }
-    return error
-  },
-})
+const read = <HostMissingError>(
+	ctx: Pick<GenericQueryCtx<GenericDataModel>, 'runQuery'>,
+	id: string,
+	mapMissing: () => HostMissingError,
+) =>
+	Effect.tryPromise({
+		try: () => ctx.runQuery(component.functions.read, { id }),
+		catch: (error) => {
+			const failure = decodeFailure(error, outboxErrors)
+			if (failure._tag === 'DeclaredFailure' && failure.code === 'INTENT_NOT_FOUND') {
+				return mapMissing()
+			}
+			return error
+		},
+	})
 ```
 
 Here `HostMissingError` is a generic return type parameter of the client method
@@ -580,18 +594,18 @@ host, parent and child test directories do not substitute for them. Pass local
 relation registries to the architecture check's `registries` option to force
 otherwise-deferred registry validation.
 
-| Area | Component support and boundary |
-| --- | --- |
-| Tables, timestamps, tenancy | Local generated model, wrapped writers, explicit host tenant. No direct host-table access. |
-| Querying, relations, include, DTOs | Local tables and policies; explicit query authority and cursor keys. No cross-database relation join. |
-| Foundation, catalogues, contracts, CRUD | Local contexts, permissions, audit and observations; typed failures via Effect. |
-| Client facade | Generated `ComponentApi` plus a typed `client.ts` factory; host auth and explicit error mapping. |
-| Tests and architecture | Registered/nested components, local probes, tests and cycles; package-specific child setup. |
-| Filters, state machines, agent tools | Schema/pure operation helpers work over local contracts. Expose only authorized operations through the host adapter. |
-| Idempotency and workflow protocols | Supply component-local repositories/operations and child mounts; persistence and fencing stay with their owner. Host/component transactions must be composed synchronously where atomicity is required. |
-| Built-in foundation/approvals components | Mount as children when component-owned; `cvx-kit/test` registration helpers accept a nested name. They remain separate databases, not local table facades. |
-| Auth constructors, HTTP, webhooks, env | Host responsibilities for this pattern: authenticate browser/provider requests, verify signatures, read env and pass only required configuration/facts. Components can orchestrate action work through injected callbacks; keep provider SDK adapters in the host to satisfy the portable-component lint rules. They do not inherit host auth or HTTP routes. |
-| React/client hooks | Run in the app against app API references and public contracts, outside the server component database. |
+| Area                                     | Component support and boundary                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tables, timestamps, tenancy              | Local generated model, wrapped writers, explicit host tenant. No direct host-table access.                                                                                                                                                                                                                                                                    |
+| Querying, relations, include, DTOs       | Local tables and policies; explicit query authority and cursor keys. No cross-database relation join.                                                                                                                                                                                                                                                         |
+| Foundation, catalogues, contracts, CRUD  | Local contexts, permissions, audit and observations; typed failures via Effect.                                                                                                                                                                                                                                                                               |
+| Client facade                            | Generated `ComponentApi` plus a typed `client.ts` factory; host auth and explicit error mapping.                                                                                                                                                                                                                                                              |
+| Tests and architecture                   | Registered/nested components, local probes, tests and cycles; package-specific child setup.                                                                                                                                                                                                                                                                   |
+| Filters, state machines, agent tools     | Schema/pure operation helpers work over local contracts. Expose only authorized operations through the host adapter.                                                                                                                                                                                                                                          |
+| Idempotency and workflow protocols       | Supply component-local repositories/operations and child mounts; persistence and fencing stay with their owner. Host/component transactions must be composed synchronously where atomicity is required.                                                                                                                                                       |
+| Built-in foundation/approvals components | Mount as children when component-owned; `cvx-kit/test` registration helpers accept a nested name. They remain separate databases, not local table facades.                                                                                                                                                                                                    |
+| Auth constructors, HTTP, webhooks, env   | Host responsibilities for this pattern: authenticate browser/provider requests, verify signatures, read env and pass only required configuration/facts. Components can orchestrate action work through injected callbacks; keep provider SDK adapters in the host to satisfy the portable-component lint rules. They do not inherit host auth or HTTP routes. |
+| React/client hooks                       | Run in the app against app API references and public contracts, outside the server component database.                                                                                                                                                                                                                                                        |
 
 For Accord's omni migration, keep agents, channels, conversations, runs,
 knowledge, procedures and workflow-definition tables local to omni; keep app

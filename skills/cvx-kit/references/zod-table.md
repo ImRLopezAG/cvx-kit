@@ -274,6 +274,21 @@ tableNames.namespaceOf('items') // 'Inventory'
 tablesOf(Inventory) // ['items', 'itemLedgerEntries']
 ```
 
+Tables stored with the namespace prefix, so the namespace shows in the
+Convex dashboard, drop it from their member name. `Inventory_Items` in
+`Inventory` is `Inventory.Items`, and `Microsoft_Inventory_Items` in
+`Microsoft.Inventory` is `Microsoft.Inventory.Items`. Pass
+`{ prefixed: true }` to require the prefix on every key; a key without it
+is a type error and a runtime error:
+
+```ts
+export const Inventory = namespace(
+	'Inventory',
+	{ Inventory_Items: items.table }, // items = tenantTable('Inventory_Items', …)
+	{ prefixed: true },
+)
+```
+
 Dotted names (`'Microsoft.Inventory'`) are allowed; each segment is
 PascalCase. `createModule` and `namespaceIndex` throw on a duplicate
 namespace name or a table claimed twice.

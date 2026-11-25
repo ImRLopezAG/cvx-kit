@@ -14,7 +14,7 @@ it's violated). Conventions that live only in documentation decay.
 - **Index naming**: `by_<field>_and_<field>...`, camelCase field names in
   declaration order, nested paths flattened with `_`
   (`by_assignedToUserId_and_state_status` for `['assignedToUserId',
-'state.status']`). A reader should reconstruct the index definition from its
+  'state.status']`). A reader should reconstruct the index definition from its
   name.
 - Every read goes through `ctx.include(...)` with an explicit limit ≤ 100.
   If a query can't be served by an index, that's a schema problem, not a

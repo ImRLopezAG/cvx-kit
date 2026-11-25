@@ -6,6 +6,7 @@ import {
 	namespace,
 	namespaceIndex,
 	namespaceName,
+	namespacePrefix,
 	tablesOf,
 	zodTable,
 } from '../src/zod-table'
@@ -51,7 +52,7 @@ describe('namespace', () => {
 		// @ts-expect-error key mismatch is also a type error
 		expect(() => namespace('Inventory', { goods: items })).toThrow(/holds table "items"/)
 		expect(() => namespace('inventory', { items })).toThrow(/PascalCase/)
-		expect(() => namespace('Inventory', { Items: items.table })).toThrow(/camelCase/)
+		expect(() => namespace('Inventory', { 'bad-name': items.table })).toThrow(/table name/)
 	})
 
 	it('rejects duplicate tables and namespaces', () => {
@@ -63,5 +64,29 @@ describe('namespace', () => {
 			/Namespace "Inventory" is declared more than once/,
 		)
 		expect(() => namespaceIndex(Inventory, Again)).toThrow(/declared more than once/)
+	})
+
+	it('strips the namespace prefix from stored table names', () => {
+		const stored = zodTable('Inventory_Items', () => ({ no: z.string() }))
+		const Inv = namespace('Inventory', { Inventory_Items: stored, legacyBins: users.table })
+		const Fin = namespace('Microsoft.Finance', { Microsoft_Finance_GLEntries: users.table })
+		const names = namespaceIndex(Inv, Fin)
+		expect(names.qualifiedName('Inventory_Items')).toBe('Inventory.Items')
+		expect(names.qualifiedName('legacyBins')).toBe('Inventory.LegacyBins')
+		expect(names.qualifiedName('Microsoft_Finance_GLEntries')).toBe('Microsoft.Finance.GLEntries')
+		expect(namespacePrefix('Microsoft.Finance')).toBe('Microsoft_Finance_')
+		expect(memberName('Inventory_', 'Inventory')).toBe('Inventory_')
+		expect(createModule(Inv)).toEqual({ Inventory_Items: stored.table, legacyBins: users.table })
+	})
+
+	it('enforces prefixes in strict mode', () => {
+		expect(
+			namespace('Inventory', { Inventory_Items: items.table }, { prefixed: true }),
+		).toHaveProperty('Inventory_Items')
+		// @ts-expect-error missing prefix is also a type error
+		expect(() => namespace('Inventory', { items: items.table }, { prefixed: true })).toThrow(
+			/must start with "Inventory_"/,
+		)
+		expect(() => namespace('Inventory', { _items: items.table })).toThrow(/table name/)
 	})
 })

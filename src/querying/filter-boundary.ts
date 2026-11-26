@@ -102,13 +102,24 @@ export function compactNativeFilter(schema: z.core.$ZodType): GenericValidator |
  * stay on the ordinary converter and never acquire a compact guard. */
 interface ArgumentBoundary {
 	validator: Extract<GenericValidator, { kind: 'object' }>
+	/** `reject` receives raw issues with full paths and must throw; defaults to the legacy payload. */
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the parser boundary for raw registered arguments.
-	preflight(value: unknown): void
+	preflight(value: unknown, reject?: FilterReject): void
+}
+/** Throws for rejected filter input. Issues are raw provider issues; sanitize before emitting. */
+export type FilterReject = (issues: readonly object[]) => never
+
+/** The helper-compatible payload: `ConvexError({ ZodError: [...] })`. */
+export function legacyFilterReject(issues: readonly object[]): never {
+	throw new ConvexError({
+		// SAFETY: serialized issues are the existing helper-compatible Convex Value error payload.
+		ZodError: JSON.parse(JSON.stringify(issues)) as Value[],
+	})
 }
 export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoundary {
 	const full = zodToConvex(schema)
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Guards parse untrusted registered values before customization.
-	type Guard = (value: unknown, path: string[]) => void
+	type Guard = (value: unknown, path: string[], reject: FilterReject) => void
 	interface Pair {
 		validator: GenericValidator
 		guard?: Guard
@@ -123,20 +134,12 @@ export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoun
 		if (projected && metadata) {
 			result = {
 				validator: projected,
-				guard: (value, path) => {
+				guard: (value, path, reject) => {
 					const parsed = metadata.semantic.safeParse(value)
 					if (!parsed.success)
-						throw new ConvexError({
-							// SAFETY: serialized issues are the existing helper-compatible Convex Value error payload.
-							ZodError: JSON.parse(
-								JSON.stringify(
-									parsed.error.issues.map((issue) => ({
-										...issue,
-										path: [...path, ...issue.path],
-									})),
-								),
-							) as Value[],
-						})
+						reject(
+							parsed.error.issues.map((issue) => ({ ...issue, path: [...path, ...issue.path] })),
+						)
 				},
 			}
 		} else if (node instanceof z.core.$ZodOptional) {
@@ -144,8 +147,8 @@ export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoun
 			if (child.guard)
 				result = {
 					validator: v.optional(child.validator),
-					guard: (value, path) => {
-						if (value !== undefined) child.guard!(value, path)
+					guard: (value, path, reject) => {
+						if (value !== undefined) child.guard!(value, path, reject)
 					},
 				}
 		} else if (node instanceof z.core.$ZodObject && native.kind === 'object') {
@@ -157,19 +160,20 @@ export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoun
 					validator: v.object(
 						Object.fromEntries(children.map(([key, child]) => [key, child.validator])),
 					),
-					guard: (value, path) => {
-						if (value === null || Object(value) !== value || Array.isArray(value)) layoutError(path)
+					guard: (value, path, reject) => {
+						if (value === null || Object(value) !== value || Array.isArray(value))
+							layoutError(path, reject)
 						// SAFETY: the boxing check above excludes primitive argument containers.
 						const object = value as object
 						const prototype = Object.getPrototypeOf(object)
-						if (prototype !== Object.prototype && prototype !== null) layoutError(path)
+						if (prototype !== Object.prototype && prototype !== null) layoutError(path, reject)
 						for (const [key, child] of children)
 							if (child.guard) {
 								const descriptor = Object.getOwnPropertyDescriptor(object, key)
 								if (descriptor && (!('value' in descriptor) || !descriptor.enumerable))
-									layoutError([...path, key])
-								if (!descriptor && key in object) layoutError([...path, key])
-								child.guard(descriptor?.value, [...path, key])
+									layoutError([...path, key], reject)
+								if (!descriptor && key in object) layoutError([...path, key], reject)
+								child.guard(descriptor?.value, [...path, key], reject)
 							}
 					},
 				}
@@ -181,18 +185,16 @@ export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoun
 	if (pair.validator.kind !== 'object') throw new Error('Expected object argument boundary')
 	return {
 		validator: pair.validator,
-		preflight(value) {
-			pair.guard?.(value, [])
+		preflight(value, reject = legacyFilterReject) {
+			pair.guard?.(value, [], reject)
 		},
 	}
 }
 
-function layoutError(path: string[]): never {
-	throw new ConvexError({
-		ZodError: [
-			{ code: 'custom', path, message: 'Unsupported filter layout or depth/node budget exceeded' },
-		],
-	})
+function layoutError(path: string[], reject: FilterReject): never {
+	return reject([
+		{ code: 'custom', path, message: 'Unsupported filter layout or depth/node budget exceeded' },
+	])
 }
 
 function knownNative(validator: GenericValidator): boolean {

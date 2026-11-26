@@ -72,6 +72,40 @@ undeclared input fields and rejecting invalid declared details. Their code and
 detail types stay correlated. `toConvexError` uses the browser-safe `convex/values`
 peer and round-trips through `decodeFailure`; React is not required.
 
+### Argument validation failures
+
+By default a rejected zod argument schema (or compact pagination filter) throws the
+helper-compatible `ConvexError({ ZodError: [...] })`, which no declared contract
+decodes. Opt in per constructor family with `argumentFailure`:
+
+```ts
+const auth = createAuthFunctions({ ...config, argumentFailure: 'declared' })
+```
+
+- `'legacy'` (default): payload unchanged.
+- `'declared'`: throws `argumentErrors.toConvexError('INVALID_ARGUMENTS', { issues })`.
+  The envelope carries no `ZodError` key, because declared decoding is exact-keyed.
+- `(failure) => thrown`: receives `{ source: 'arguments' | 'filter', issues }` and
+  returns the value to throw, e.g. `appErrors.toConvexError('INVALID_INPUT', {})`.
+
+Issues are an allowlist of `{ path, code, message }`, capped by `ARGUMENT_ISSUE_LIMITS`
+(20 issues, 32 path segments, 256-char messages, 32 KB in total). The kit never adds the
+rejected value. Messages and path segments are the schema's own, as in the legacy payload,
+so do not interpolate the input into a custom schema message.
+
+```ts
+import { argumentErrors, combineErrorContracts, matchFailure } from 'cvx-kit/errors'
+
+const failures = combineErrorContracts(appErrors, argumentErrors)
+const message = matchFailure(caught, failures, {
+	INVALID_ARGUMENTS: ({ details }) => details.issues[0]?.message ?? 'Invalid input',
+	_: (failure) => (failure._tag === 'DeclaredFailure' ? failure.message : 'Something went wrong'),
+})
+```
+
+Effect command/query `input` decoding is separate: a `ContractValidationError`
+projects as `UnknownFailure` unless the app maps it.
+
 ### Serialized data evidence
 
 In installed Convex 1.48.0, `server/impl/registration_impl.ts` routes native

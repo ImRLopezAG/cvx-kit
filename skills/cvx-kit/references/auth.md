@@ -542,6 +542,11 @@ All rejections go through the injected `ErrorFactory` (default: throws
 errors: { throw: (input) => { throw App.errors.from(input) } }
 ```
 
+Argument validation failures are separate from `errors`. `argumentFailure`
+(`'legacy'` default, `'declared'`, or `(failure) => thrown`) selects what every
+constructor throws when zod args or a compact filter reject the input; see
+`client-failures.md` (Argument validation failures).
+
 ## Rules of thumb
 
 1. Build constructors once in `convex/functions.ts`; import them everywhere

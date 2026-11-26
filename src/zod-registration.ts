@@ -19,8 +19,18 @@ import { ConvexError, type PropertyValidators, type Value } from 'convex/values'
 import * as z from 'zod/v4'
 import * as zCore from 'zod/v4/core'
 import { zodToConvex } from './zod-convex'
-import { compactArgumentBoundary } from './querying/filter-boundary'
+import {
+	compactArgumentBoundary,
+	legacyFilterReject,
+	type FilterReject,
+} from './querying/filter-boundary'
 import { memoize } from './modules/contracts/lazy'
+import {
+	argumentErrors,
+	sanitizeArgumentIssues,
+	type ArgumentFailure,
+	type ArgumentFailurePolicy,
+} from './modules/contracts/errors'
 
 export function zCustomQuery<
 	CustomArgsValidator extends PropertyValidators,
@@ -41,7 +51,7 @@ export function zCustomQuery<
 ) {
 	// SAFETY: the private adapter preserves helper registration semantics; this is
 	// the same generic boundary assertion used by the public helper wrappers.
-	return customFnBuilder(query, customization) as CustomBuilder<
+	return customFnBuilder(query, customization, legacyRejecter) as CustomBuilder<
 		'query',
 		CustomArgsValidator,
 		CustomCtx,
@@ -71,7 +81,7 @@ export function zCustomMutation<
 ) {
 	// SAFETY: the private adapter preserves helper registration semantics; this is
 	// the same generic boundary assertion used by the public helper wrappers.
-	return customFnBuilder(mutation, customization) as CustomBuilder<
+	return customFnBuilder(mutation, customization, legacyRejecter) as CustomBuilder<
 		'mutation',
 		CustomArgsValidator,
 		CustomCtx,
@@ -101,7 +111,7 @@ export function zCustomAction<
 ) {
 	// SAFETY: the private adapter preserves helper registration semantics; this is
 	// the same generic boundary assertion used by the public helper wrappers.
-	return customFnBuilder(action, customization) as CustomBuilder<
+	return customFnBuilder(action, customization, legacyRejecter) as CustomBuilder<
 		'action',
 		CustomArgsValidator,
 		CustomCtx,
@@ -110,6 +120,37 @@ export function zCustomAction<
 		Visibility,
 		ExtraArgs
 	>
+}
+
+/** The zCustom* builders, with signatures identical to the module-level exports. */
+export type CustomFunctionBuilders = Readonly<{
+	zCustomQuery: typeof zCustomQuery
+	zCustomMutation: typeof zCustomMutation
+	zCustomAction: typeof zCustomAction
+}>
+
+/** Registration options beyond the convex-helpers customization. */
+export type CustomFunctionOptions = Readonly<{
+	/** How rejected arguments are thrown; defaults to `'legacy'` (`ConvexError({ ZodError })`). */
+	argumentFailure?: ArgumentFailurePolicy
+}>
+
+/**
+ * The zCustom* builders bound to registration options, e.g. an argument failure policy.
+ * Signatures are identical to the module-level builders.
+ */
+export function zCustomFunctions(options?: CustomFunctionOptions): CustomFunctionBuilders {
+	const reject = argumentRejecter(options?.argumentFailure)
+	if (reject === legacyRejecter) return { zCustomQuery, zCustomMutation, zCustomAction }
+	// SAFETY: identical helper boundary assertions as the module-level builders, with a bound rejecter.
+	return {
+		zCustomQuery: ((query: any, customization: any) =>
+			customFnBuilder(query, customization, reject)) as typeof zCustomQuery,
+		zCustomMutation: ((mutation: any, customization: any) =>
+			customFnBuilder(mutation, customization, reject)) as typeof zCustomMutation,
+		zCustomAction: ((action: any, customization: any) =>
+			customFnBuilder(action, customization, reject)) as typeof zCustomAction,
+	}
 }
 
 /** Raw (unparsed) function arguments, keyed by the native ctx of one invocation. */
@@ -174,6 +215,7 @@ function argumentFields(args: any) {
 function customFnBuilder(
 	builder: (args: any) => any,
 	customization: Customization<any, any, any, any, any>,
+	reject: ArgumentRejecter,
 ) {
 	// Looking forward to when input / args / ... are optional
 	const customInput: Customization<any, any, any, any, any>['input'] =
@@ -231,17 +273,12 @@ function customFnBuilder(
 			const native = nativeDefinition(async (ctx: any, allArgs: any) => {
 				const { argsSchema, argsKeys, boundary } = argsState()
 				const returns = returnsSchema()
-				boundary?.preflight(allArgs)
+				boundary?.preflight(allArgs, reject.filter)
 				rawArguments.set(ctx, allArgs)
 				const added = await customInput(ctx, pick(allArgs, Object.keys(inputArgs)), extra)
 				const rawArgs = pick(allArgs, argsKeys)
 				const parsed = await argsSchema.safeParseAsync(rawArgs)
-				if (!parsed.success) {
-					throw new ConvexError({
-						// SAFETY: serialized Zod issues are the helper's existing Convex Value[] error payload.
-						ZodError: JSON.parse(JSON.stringify(parsed.error.issues, null, 2)) as Value[],
-					})
-				}
+				if (!parsed.success) reject.schema(parsed.error.issues)
 				const args = parsed.data
 				const finalCtx = { ...ctx, ...added.ctx }
 				const finalArgs = { ...args, ...added.args }
@@ -284,4 +321,35 @@ function customFnBuilder(
 			}),
 		)
 	}
+}
+
+type ArgumentRejecter = Readonly<{
+	schema: (issues: readonly object[]) => never
+	filter: FilterReject
+}>
+
+function legacySchemaReject(issues: readonly object[]): never {
+	throw new ConvexError({
+		// SAFETY: serialized Zod issues are the helper's existing Convex Value[] error payload.
+		ZodError: JSON.parse(JSON.stringify(issues, null, 2)) as Value[],
+	})
+}
+
+const legacyRejecter: ArgumentRejecter = { schema: legacySchemaReject, filter: legacyFilterReject }
+
+/** Resolved once per builder family; the success path never touches it. */
+function argumentRejecter(policy: ArgumentFailurePolicy | undefined): ArgumentRejecter {
+	if (policy === undefined || policy === 'legacy') return legacyRejecter
+	// oxlint-disable-next-line anti-slop/no-unknown-returns -- The app hook returns an arbitrary throwable.
+	const toThrown: (failure: ArgumentFailure) => unknown =
+		policy === 'declared'
+			? (failure) =>
+					argumentErrors.toConvexError('INVALID_ARGUMENTS', { issues: [...failure.issues] })
+			: policy
+	const rejecter =
+		(source: ArgumentFailure['source']) =>
+		(issues: readonly object[]): never => {
+			throw toThrown(Object.freeze({ source, issues: sanitizeArgumentIssues(issues) }))
+		}
+	return { schema: rejecter('arguments'), filter: rejecter('filter') }
 }

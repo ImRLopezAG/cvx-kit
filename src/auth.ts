@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { rawFunctionArgs, zCustomAction, zCustomMutation, zCustomQuery } from './zod-registration'
+import { rawFunctionArgs, zCustomFunctions } from './zod-registration'
+import type { ArgumentFailurePolicy } from './modules/contracts/errors'
 import type { CustomBuilder } from 'convex-helpers/server/zod4'
 import type {
 	ActionBuilder,
@@ -168,6 +169,12 @@ export type AuthReadersConfig<DataModel extends GenericDataModel, Role extends s
 	errors?: ErrorFactory
 	/** Upper bound for include() reads. */
 	maxIncludedQueryRows?: number
+	/**
+	 * How argument validation failures are thrown by every constructor. `'legacy'`
+	 * (default) keeps `ConvexError({ ZodError })`; `'declared'` throws `argumentErrors`
+	 * `INVALID_ARGUMENTS`; a function returns the value to throw.
+	 */
+	argumentFailure?: ArgumentFailurePolicy
 	/**
 	 * Row-level security: tenant isolation (from a table registry) and
 	 * role-level rules, applied structurally inside every auth*, role*,
@@ -432,6 +439,7 @@ export function createAuthFunctions<
 	const Role extends string = DefaultRole,
 >(config: AuthFunctionsConfig<DataModel, Role>): AuthFunctions<DataModel, Role> {
 	const core = createAuthCore(config)
+	const { zCustomMutation } = core.builders
 	const { include, secureWriter, servicePrincipal, requireRole } = core
 	const triggers = config.triggers
 	const wrapDB = triggers
@@ -509,6 +517,8 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 	config: AuthReadersConfig<DataModel, Role>,
 ) {
 	const errors = config.errors ?? defaultErrors
+	const builders = zCustomFunctions({ argumentFailure: config.argumentFailure })
+	const { zCustomQuery, zCustomAction } = builders
 	const include = createInclude({
 		errors,
 		maxRows: config.maxIncludedQueryRows,
@@ -784,7 +794,15 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 			input: async (ctx) => ({ ctx, args: {} }),
 		}),
 	}
-	return { readers, include, authenticatedUser, secureWriter, servicePrincipal, requireRole }
+	return {
+		readers,
+		include,
+		authenticatedUser,
+		secureWriter,
+		servicePrincipal,
+		requireRole,
+		builders,
+	}
 }
 
 /** The minimum a host factory must return; the rest of the bundle is the host's contract. */

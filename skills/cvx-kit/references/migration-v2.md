@@ -485,4 +485,4 @@ No data migration is expected: the stored shape and indexes are unchanged. If `n
 
 ## Measured results
 
-The benchmark record is `docs/benchmarks/validators.md` in the repository. On one consumer app's finance-contract schema graph (350 schemas), declaring the schemas on import fell from 23.05 ms with classic Zod to 4.24 ms with `k` (81.6% lower), and retained heap from 10.55 MB to 1.43 MB.
+The benchmark record is `docs/benchmarks/validators.md` in the repository. On one consumer app's finance-contract schema graph (350 schemas), declaring the schemas on import fell from 23.12 ms with classic Zod to 4.64 ms with `k` (79.9% lower), and retained heap from 10.56 MB to 1.61 MB. On the representative benchmark app a function module's bundle fell from 815.8 KB to 218.1 KB and its load time from 27.42 ms to 7.89 ms.

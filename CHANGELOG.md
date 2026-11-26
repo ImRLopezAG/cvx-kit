@@ -53,7 +53,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 
 ### Performance
 
-- Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On one consumer app's schema graph, declaring the schemas on import fell from 23.05 ms to 4.24 ms and retained heap from 10.55 MB to 1.43 MB. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
+- Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On the representative benchmark app (about 30 tables, relations, contracts and auth), a function module's bundle fell from 815.8 KB to 218.1 KB, its load time from 27.42 ms to 7.89 ms and its retained heap from 9.36 MB to 2.12 MB. On one consumer app's schema graph, declaring the schemas on import fell from 23.12 ms to 4.64 ms. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
 
 ## [0.1.35] - 2026-11-25
 

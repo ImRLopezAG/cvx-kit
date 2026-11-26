@@ -1,6 +1,16 @@
 import { z } from 'zod'
 import { rawFunctionArgs, zCustomAction, zCustomMutation, zCustomQuery } from './zod-registration'
 import type { CustomBuilder } from 'convex-helpers/server/zod4'
+import {
+	kCustomAction,
+	kCustomMutation,
+	kCustomQuery,
+	rawFunctionArgs as kRawFunctionArgs,
+	type KCustomBuilder,
+} from './registration'
+import { k } from './k/index'
+import { memoize } from './modules/contracts/lazy'
+import type { JSONValue } from 'convex/values'
 import type {
 	ActionBuilder,
 	DefaultFunctionArgs,
@@ -355,6 +365,117 @@ export type ServiceMutation<
 	object
 >
 
+/**
+ * cvx-kit 2 constructors: the same contexts as AuthFunctions, registered through `k` schemas and
+ * native validators (src/registration.ts). Renamed to AuthFunctions when v1 is removed.
+ */
+export type KAuthFunctions<DataModel extends GenericDataModel, Role extends string = DefaultRole> = {
+	include: Include
+	authenticatedUser: (ctx: AnyAuthContext<DataModel>) => Promise<AuthBundle<Role>>
+	authQuery: KCustomBuilder<
+		'query',
+		{},
+		GenericQueryCtx<DataModel> & AuthBundle<Role> & { include: Include },
+		{},
+		GenericQueryCtx<DataModel>,
+		'public',
+		object
+	>
+	authMutation: KCustomBuilder<
+		'mutation',
+		{},
+		GenericMutationCtx<DataModel> & AuthBundle<Role> & { include: Include },
+		{},
+		GenericMutationCtx<DataModel>,
+		'public',
+		object
+	>
+	authAction: KCustomBuilder<
+		'action',
+		{},
+		GenericActionCtx<DataModel> & AuthBundle<Role>,
+		{},
+		GenericActionCtx<DataModel>,
+		'public',
+		object
+	>
+	roleQuery: (...allowed: readonly Role[]) => KAuthFunctions<DataModel, Role>['authQuery']
+	roleMutation: (...allowed: readonly Role[]) => KAuthFunctions<DataModel, Role>['authMutation']
+	roleAction: (...allowed: readonly Role[]) => KAuthFunctions<DataModel, Role>['authAction']
+	adminQuery: KAuthFunctions<DataModel, Role>['authQuery']
+	adminMutation: KAuthFunctions<DataModel, Role>['authMutation']
+	adminAction: KAuthFunctions<DataModel, Role>['authAction']
+	serviceQuery: <Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+	) => KServiceQuery<DataModel, Role, Extra>
+	serviceMutation: <Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+	) => KServiceMutation<DataModel, Role, Extra>
+	systemQuery: KCustomBuilder<
+		'query',
+		{},
+		GenericQueryCtx<DataModel> & { include: Include },
+		{},
+		GenericQueryCtx<DataModel>,
+		'internal',
+		object
+	>
+	systemMutation: KCustomBuilder<
+		'mutation',
+		{},
+		GenericMutationCtx<DataModel> & { include: Include },
+		{},
+		GenericMutationCtx<DataModel>,
+		'internal',
+		object
+	>
+	systemAction: KCustomBuilder<
+		'action',
+		{},
+		GenericActionCtx<DataModel>,
+		{},
+		GenericActionCtx<DataModel>,
+		'internal',
+		object
+	>
+}
+
+/** cvx-kit 2 read-only constructors. Renamed to AuthReaders when v1 is removed. */
+export type KAuthReaders<
+	DataModel extends GenericDataModel,
+	Role extends string = DefaultRole,
+> = Omit<KAuthFunctions<DataModel, Role>, `${string}Mutation`>
+
+/** Renamed to ServiceQuery when v1 is removed. */
+export type KServiceQuery<
+	DataModel extends GenericDataModel,
+	Role extends string,
+	Extra extends Record<string, unknown> = {},
+> = KCustomBuilder<
+	'query',
+	{},
+	GenericQueryCtx<DataModel> & AuthBundle<Role> & Extra & { include: Include },
+	{},
+	GenericQueryCtx<DataModel>,
+	'internal',
+	object
+>
+
+/** Renamed to ServiceMutation when v1 is removed. */
+export type KServiceMutation<
+	DataModel extends GenericDataModel,
+	Role extends string,
+	Extra extends Record<string, unknown> = {},
+> = KCustomBuilder<
+	'mutation',
+	{},
+	GenericMutationCtx<DataModel> & AuthBundle<Role> & Extra & { include: Include },
+	{},
+	GenericMutationCtx<DataModel>,
+	'internal',
+	object
+>
+
 /** Builds an include() that selects the first matching indexed query and bounds the read. */
 export function createInclude(options?: { errors?: ErrorFactory; maxRows?: number }): Include {
 	const errors = options?.errors ?? defaultErrors
@@ -431,20 +552,8 @@ export function createAuthFunctions<
 	DataModel extends GenericDataModel,
 	const Role extends string = DefaultRole,
 >(config: AuthFunctionsConfig<DataModel, Role>): AuthFunctions<DataModel, Role> {
-	const core = createAuthCore(config)
-	const { include, secureWriter, servicePrincipal, requireRole } = core
-	const triggers = config.triggers
-	const wrapDB = triggers
-		? (ctx: GenericMutationCtx<DataModel>) => triggers.wrapDB(ctx)
-		: (config.wrapDB ?? ((ctx) => ctx))
-
-	async function mutationInput(ctx: GenericMutationCtx<DataModel>) {
-		const bundle = await core.authenticatedUser(ctx)
-		return {
-			ctx: { ...secureWriter(wrapDB(ctx), bundle), include, ...bundle },
-			args: {},
-		}
-	}
+	const core = createAuthCore(config, zodDecoding)
+	const inputs = createMutationInputs(config, core)
 
 	/** Internal mutation running as the host-derived service principal: triggers, then rules. */
 	function serviceMutation<Extra extends Record<string, unknown> = {}>(
@@ -452,40 +561,27 @@ export function createAuthFunctions<
 	): ServiceMutation<DataModel, Role, Extra> {
 		return zCustomMutation(config.internalMutation, {
 			args: {},
-			input: async (ctx) => {
-				const bundle = await servicePrincipal(principal, ctx)
-				return {
-					ctx: { ...secureWriter(wrapDB(ctx), bundle), ...bundle, include },
-					args: {},
-				}
-			},
+			input: inputs.serviceMutationInput(principal),
 		})
 	}
 
 	/** Mutation constructor allowing only the given roles. */
 	function roleMutation(...allowed: readonly Role[]) {
-		return zCustomMutation(config.mutation, {
-			args: {},
-			input: async (ctx) => {
-				const authenticated = await mutationInput(ctx)
-				requireRole(authenticated.ctx.actor.role, allowed)
-				return authenticated
-			},
-		})
+		return zCustomMutation(config.mutation, { args: {}, input: inputs.roleMutationInput(allowed) })
 	}
 
 	return {
-		...core.readers,
+		...zodReaders(config, core),
 		roleMutation,
 		authMutation: zCustomMutation(config.mutation, {
 			args: {},
-			input: mutationInput,
+			input: inputs.mutationInput,
 		}),
 		adminMutation: roleMutation(...config.adminRoles),
 		serviceMutation,
 		systemMutation: zCustomMutation(config.internalMutation, {
 			args: {},
-			input: async (ctx) => ({ ctx: { ...wrapDB(ctx), include }, args: {} }),
+			input: inputs.systemMutationInput,
 		}),
 	}
 }
@@ -501,12 +597,206 @@ export function createAuthReaders<
 	DataModel extends GenericDataModel,
 	const Role extends string = DefaultRole,
 >(config: AuthReadersConfig<DataModel, Role>): AuthReaders<DataModel, Role> {
-	return createAuthCore(config).readers
+	return zodReaders(config, createAuthCore(config, zodDecoding))
 }
 
-/** Shared implementation behind createAuthFunctions and createAuthReaders. */
+/**
+ * cvx-kit 2 counterpart of createAuthFunctions: the same policy and options, with functions declared
+ * through `k` schemas or native validators. Renamed to createAuthFunctions when v1 is removed.
+ */
+export function createKAuthFunctions<
+	DataModel extends GenericDataModel,
+	const Role extends string = DefaultRole,
+>(config: AuthFunctionsConfig<DataModel, Role>): KAuthFunctions<DataModel, Role> {
+	const core = createAuthCore(config, kDecoding)
+	const inputs = createMutationInputs(config, core)
+
+	function serviceMutation<Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+	): KServiceMutation<DataModel, Role, Extra> {
+		return kCustomMutation(config.internalMutation, {
+			args: {},
+			input: inputs.serviceMutationInput(principal),
+		})
+	}
+
+	function roleMutation(...allowed: readonly Role[]) {
+		return kCustomMutation(config.mutation, { args: {}, input: inputs.roleMutationInput(allowed) })
+	}
+
+	return {
+		...kReaders(config, core),
+		roleMutation,
+		authMutation: kCustomMutation(config.mutation, { args: {}, input: inputs.mutationInput }),
+		adminMutation: roleMutation(...config.adminRoles),
+		serviceMutation,
+		systemMutation: kCustomMutation(config.internalMutation, {
+			args: {},
+			input: inputs.systemMutationInput,
+		}),
+	}
+}
+
+/** cvx-kit 2 counterpart of createAuthReaders. Renamed to createAuthReaders when v1 is removed. */
+export function createKAuthReaders<
+	DataModel extends GenericDataModel,
+	const Role extends string = DefaultRole,
+>(config: AuthReadersConfig<DataModel, Role>): KAuthReaders<DataModel, Role> {
+	return kReaders(config, createAuthCore(config, kDecoding))
+}
+
+/** The organization authority an identity's claims carry. */
+type ClaimedOrganization = { organizationId: string | undefined; role: string | undefined }
+
+/**
+ * How the core decodes undecoded inputs: identity claims, a host-built service principal, and the raw
+ * args of the invocation (registration-specific).
+ */
+type AuthDecoding = {
+	claims: (identity: UserIdentity) => ClaimedOrganization
+	isPrincipal: (bundle: AuthBundle<string>) => boolean
+	rawArgs: typeof rawFunctionArgs
+}
+
+type AuthCore<DataModel extends GenericDataModel, Role extends string> = ReturnType<
+	typeof createAuthCore<DataModel, Role>
+>
+
+/** v1 assembly of the read-only constructors. */
+function zodReaders<DataModel extends GenericDataModel, Role extends string>(
+	config: AuthReadersConfig<DataModel, Role>,
+	core: AuthCore<DataModel, Role>,
+): AuthReaders<DataModel, Role> {
+	/** Internal query running as the host-derived service principal, rules applied. */
+	function serviceQuery<Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+	): ServiceQuery<DataModel, Role, Extra> {
+		return zCustomQuery(config.internalQuery, {
+			args: {},
+			input: core.serviceQueryInput(principal),
+		})
+	}
+
+	/** Query constructor allowing only the given roles. */
+	function roleQuery(...allowed: readonly Role[]) {
+		return zCustomQuery(config.query, { args: {}, input: core.roleQueryInput(allowed) })
+	}
+
+	/** Action constructor allowing only the given roles (post live verification). */
+	function roleAction(...allowed: readonly Role[]) {
+		return zCustomAction(config.action, { args: {}, input: core.roleActionInput(allowed) })
+	}
+
+	return {
+		include: core.include,
+		authenticatedUser: core.authenticatedUser,
+		roleQuery,
+		roleAction,
+		authQuery: zCustomQuery(config.query, { args: {}, input: core.queryInput }),
+		authAction: zCustomAction(config.action, {
+			args: {},
+			input: core.actionInput,
+		}),
+		adminQuery: roleQuery(...config.adminRoles),
+		adminAction: roleAction(...config.adminRoles),
+		serviceQuery,
+		systemQuery: zCustomQuery(config.internalQuery, { args: {}, input: core.systemQueryInput }),
+		systemAction: zCustomAction(config.internalAction, {
+			args: {},
+			input: core.systemActionInput,
+		}),
+	}
+}
+
+/** cvx-kit 2 assembly of the read-only constructors. */
+function kReaders<DataModel extends GenericDataModel, Role extends string>(
+	config: AuthReadersConfig<DataModel, Role>,
+	core: AuthCore<DataModel, Role>,
+): KAuthReaders<DataModel, Role> {
+	function serviceQuery<Extra extends Record<string, unknown> = {}>(
+		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+	): KServiceQuery<DataModel, Role, Extra> {
+		return kCustomQuery(config.internalQuery, {
+			args: {},
+			input: core.serviceQueryInput(principal),
+		})
+	}
+
+	function roleQuery(...allowed: readonly Role[]) {
+		return kCustomQuery(config.query, { args: {}, input: core.roleQueryInput(allowed) })
+	}
+
+	function roleAction(...allowed: readonly Role[]) {
+		return kCustomAction(config.action, { args: {}, input: core.roleActionInput(allowed) })
+	}
+
+	return {
+		include: core.include,
+		authenticatedUser: core.authenticatedUser,
+		roleQuery,
+		roleAction,
+		authQuery: kCustomQuery(config.query, { args: {}, input: core.queryInput }),
+		authAction: kCustomAction(config.action, { args: {}, input: core.actionInput }),
+		adminQuery: roleQuery(...config.adminRoles),
+		adminAction: roleAction(...config.adminRoles),
+		serviceQuery,
+		systemQuery: kCustomQuery(config.internalQuery, { args: {}, input: core.systemQueryInput }),
+		systemAction: kCustomAction(config.internalAction, {
+			args: {},
+			input: core.systemActionInput,
+		}),
+	}
+}
+
+/** The mutation customizations shared by createAuthFunctions and createKAuthFunctions. */
+function createMutationInputs<DataModel extends GenericDataModel, Role extends string>(
+	config: AuthFunctionsConfig<DataModel, Role>,
+	core: AuthCore<DataModel, Role>,
+) {
+	const { include, secureWriter, servicePrincipal, requireRole } = core
+	const triggers = config.triggers
+	const wrapDB = triggers
+		? (ctx: GenericMutationCtx<DataModel>) => triggers.wrapDB(ctx)
+		: (config.wrapDB ?? ((ctx) => ctx))
+
+	async function mutationInput(ctx: GenericMutationCtx<DataModel>) {
+		const bundle = await core.authenticatedUser(ctx)
+		return {
+			ctx: { ...secureWriter(wrapDB(ctx), bundle), include, ...bundle },
+			args: {},
+		}
+	}
+
+	return {
+		mutationInput,
+		serviceMutationInput:
+			<Extra extends Record<string, unknown>>(
+				principal: ServicePrincipal<GenericMutationCtx<DataModel>, Role, Extra>,
+			) =>
+			async (ctx: GenericMutationCtx<DataModel>) => {
+				const bundle = await servicePrincipal(principal, ctx)
+				return {
+					ctx: { ...secureWriter(wrapDB(ctx), bundle), ...bundle, include },
+					args: {},
+				}
+			},
+		roleMutationInput:
+			(allowed: readonly Role[]) => async (ctx: GenericMutationCtx<DataModel>) => {
+				const authenticated = await mutationInput(ctx)
+				requireRole(authenticated.ctx.actor.role, allowed)
+				return authenticated
+			},
+		systemMutationInput: async (ctx: GenericMutationCtx<DataModel>) => ({
+			ctx: { ...wrapDB(ctx), include },
+			args: {},
+		}),
+	}
+}
+
+/** Shared implementation behind the v1 and v2 constructors: everything but the registration builders. */
 function createAuthCore<DataModel extends GenericDataModel, Role extends string>(
 	config: AuthReadersConfig<DataModel, Role>,
+	decoding: AuthDecoding,
 ) {
 	const errors = config.errors ?? defaultErrors
 	const include = createInclude({
@@ -533,11 +823,10 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 			organizationId = resolved.organizationId
 			organizationRole = resolved.roleSlug
 		} else {
-			const claims = organizationClaims.parse(identity)
-			const claimedOrganizationId = claims.organization?.organizationId ?? claims.org_id
-			if (!claimedOrganizationId) return errors.throw({ code: 'UNAUTHENTICATED' })
-			organizationId = claimedOrganizationId
-			organizationRole = claims.organization?.role ?? claims.role
+			const claims = decoding.claims(identity)
+			if (!claims.organizationId) return errors.throw({ code: 'UNAUTHENTICATED' })
+			organizationId = claims.organizationId
+			organizationRole = claims.role
 		}
 		const role = config.mapRole(organizationRole)
 		if (!role) return errors.throw({ code: 'FORBIDDEN' })
@@ -690,8 +979,8 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 		Ctx extends GenericQueryCtx<DataModel> | GenericMutationCtx<DataModel>,
 		Extra extends Record<string, unknown>,
 	>(principal: ServicePrincipal<Ctx, Role, Extra>, ctx: Ctx) {
-		const bundle = await principal(ctx, rawFunctionArgs(ctx))
-		if (!servicePrincipalContract.safeParse(bundle).success) {
+		const bundle = await principal(ctx, decoding.rawArgs(ctx))
+		if (!decoding.isPrincipal(bundle)) {
 			throw new Error('A service principal must be an AuthBundle with user.id and tenant')
 		}
 		// Extras are spread onto the secured ctx; a host field named like a native
@@ -705,102 +994,116 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 		return bundle
 	}
 
-	/** Internal query running as the host-derived service principal, rules applied. */
-	function serviceQuery<Extra extends Record<string, unknown> = {}>(
-		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
-	): ServiceQuery<DataModel, Role, Extra> {
-		return zCustomQuery(config.internalQuery, {
-			args: {},
-			input: async (ctx) => {
+	return {
+		include,
+		authenticatedUser,
+		secureWriter,
+		servicePrincipal,
+		requireRole,
+		queryInput,
+		actionInput,
+		serviceQueryInput:
+			<Extra extends Record<string, unknown>>(
+				principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
+			) =>
+			async (ctx: GenericQueryCtx<DataModel>) => {
 				const bundle = await servicePrincipal(principal, ctx)
 				return {
 					ctx: { ...secureReader(ctx, bundle, 'trusted'), ...bundle, include },
 					args: {},
 				}
 			},
-		})
-	}
-
-	/** Query constructor allowing only the given roles. */
-	function roleQuery(...allowed: readonly Role[]) {
-		return zCustomQuery(config.query, {
-			args: {},
-			input: async (ctx) => {
-				const authenticated = await queryInput(ctx)
-				requireRole(authenticated.ctx.actor.role, allowed)
-				return authenticated
+		roleQueryInput: (allowed: readonly Role[]) => async (ctx: GenericQueryCtx<DataModel>) => {
+			const authenticated = await queryInput(ctx)
+			requireRole(authenticated.ctx.actor.role, allowed)
+			return authenticated
+		},
+		roleActionInput: (allowed: readonly Role[]) => async (ctx: GenericActionCtx<DataModel>) => {
+			const authenticated = await actionInput(ctx)
+			requireRole(authenticated.ctx.actor.role, allowed)
+			return authenticated
+		},
+		systemQueryInput: async (ctx: GenericQueryCtx<DataModel>) => ({
+			ctx: {
+				...ctx,
+				include,
+				db: registerQueryReader(ctx.db, ctx.db, {
+					scope: {
+						mode: 'system',
+						principal: null,
+						organization: null,
+						tenant: null,
+						role: null,
+					},
+					rules: {},
+					defaultPolicy: 'allow',
+				}),
 			},
-		})
-	}
-
-	/** Action constructor allowing only the given roles (post live verification). */
-	function roleAction(...allowed: readonly Role[]) {
-		return zCustomAction(config.action, {
 			args: {},
-			input: async (ctx) => {
-				const authenticated = await actionInput(ctx)
-				requireRole(authenticated.ctx.actor.role, allowed)
-				return authenticated
-			},
-		})
-	}
-
-	const readers: AuthReaders<DataModel, Role> = {
-		include,
-		authenticatedUser,
-		roleQuery,
-		roleAction,
-		authQuery: zCustomQuery(config.query, { args: {}, input: queryInput }),
-		authAction: zCustomAction(config.action, {
-			args: {},
-			input: actionInput,
 		}),
-		adminQuery: roleQuery(...config.adminRoles),
-		adminAction: roleAction(...config.adminRoles),
-		serviceQuery,
-		systemQuery: zCustomQuery(config.internalQuery, {
-			args: {},
-			input: async (ctx) => ({
-				ctx: {
-					...ctx,
-					include,
-					db: registerQueryReader(ctx.db, ctx.db, {
-						scope: {
-							mode: 'system',
-							principal: null,
-							organization: null,
-							tenant: null,
-							role: null,
-						},
-						rules: {},
-						defaultPolicy: 'allow',
-					}),
-				},
-				args: {},
-			}),
-		}),
-		systemAction: zCustomAction(config.internalAction, {
-			args: {},
-			input: async (ctx) => ({ ctx, args: {} }),
-		}),
+		systemActionInput: async (ctx: GenericActionCtx<DataModel>) => ({ ctx, args: {} }),
 	}
-	return { readers, include, authenticatedUser, secureWriter, servicePrincipal, requireRole }
 }
 
 /** The minimum a host factory must return; the rest of the bundle is the host's contract. */
-const servicePrincipalContract = z.object({
-	user: z.object({ id: z.string() }),
-	tenant: z.string(),
-})
+const servicePrincipalContract = memoize(() =>
+	z.object({
+		user: z.object({ id: z.string() }),
+		tenant: z.string(),
+	}),
+)
 
-const organizationClaims = z.object({
-	organization: z
-		.object({
-			organizationId: z.string().optional().catch(undefined),
-			role: z.string().optional().catch(undefined),
-		})
-		.optional()
-		.catch(undefined),
-	org_id: z.string().optional().catch(undefined),
-	role: z.string().optional().catch(undefined),
-})
+const organizationClaims = memoize(() =>
+	z.object({
+		organization: z
+			.object({
+				organizationId: z.string().optional().catch(undefined),
+				role: z.string().optional().catch(undefined),
+			})
+			.optional()
+			.catch(undefined),
+		org_id: z.string().optional().catch(undefined),
+		role: z.string().optional().catch(undefined),
+	}),
+)
+
+/** v1 decoding: Zod schemas, built on first use. */
+const zodDecoding: AuthDecoding = {
+	claims: (identity) => {
+		const claims = organizationClaims().parse(identity)
+		return {
+			organizationId: claims.organization?.organizationId ?? claims.org_id,
+			role: claims.organization?.role ?? claims.role,
+		}
+	},
+	isPrincipal: (bundle) => servicePrincipalContract().safeParse(bundle).success,
+	rawArgs: rawFunctionArgs,
+}
+
+/** The v2 principal contract; unknown keys pass, as the v1 Zod object did. */
+const kPrincipalContract = memoize(() =>
+	k.object({ user: k.object({ id: k.string() }).strip(), tenant: k.string() }).strip(),
+)
+
+/** v2 decoding: no Zod. Each claim falls back to undefined when malformed, as v1's `.catch` did. */
+const kDecoding: AuthDecoding = {
+	claims: (identity) => {
+		const organization = claimRecord(identity.organization)
+		return {
+			organizationId: claimString(organization?.organizationId) ?? claimString(identity.org_id),
+			role: claimString(organization?.role) ?? claimString(identity.role),
+		}
+	},
+	isPrincipal: (bundle) => kPrincipalContract().safeParse(bundle).success,
+	rawArgs: kRawFunctionArgs,
+}
+
+/* oxlint-disable anti-slop/no-runtime-typeof -- Identity claims are undecoded JSON narrowed by representation. */
+function claimString(value: JSONValue | undefined): string | undefined {
+	return typeof value === 'string' ? value : undefined
+}
+
+function claimRecord(value: JSONValue | undefined): { [key: string]: JSONValue } | undefined {
+	return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : undefined
+}
+/* oxlint-enable anti-slop/no-runtime-typeof */

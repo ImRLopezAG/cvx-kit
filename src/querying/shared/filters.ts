@@ -60,6 +60,16 @@ export function compactFilterMetadata(schema: KType): FilterBoundaryMetadata | u
 	return record && compactFilters.get(record)
 }
 
+/** Only library-owned field getters may stay deferred when a compact grammar is captured. */
+const deferredPredicates = new WeakSet<() => KType>()
+
+export function deferFilterField(fields: FieldSchemas, name: string, build: () => KType): void {
+	let schema: KType | undefined
+	const get = () => (schema ??= build())
+	deferredPredicates.add(get)
+	Object.defineProperty(fields, name, { enumerable: true, get })
+}
+
 export function relationFilterSchema(
 	grammar: FilterGrammar,
 	cache: FilterNodeCache = new WeakMap(),
@@ -552,7 +562,19 @@ function captureGrammar(
 ): FilterGrammar {
 	const cached = seen.get(source)
 	if (cached) return cached
-	const result: FilterGrammar = { fields: Object.freeze({ ...source.fields }), relations: {} }
+	const fields: FieldSchemas = {}
+	for (const key of Object.keys(source.fields)) {
+		const descriptor = Object.getOwnPropertyDescriptor(source.fields, key)!
+		// Caller-owned getters still snapshot now; only our immutable lazy predicates defer reads.
+		Object.defineProperty(
+			fields,
+			key,
+			descriptor.get && deferredPredicates.has(descriptor.get)
+				? descriptor
+				: { enumerable: true, value: source.fields[key] },
+		)
+	}
+	const result: FilterGrammar = { fields: Object.freeze(fields), relations: {} }
 	seen.set(source, result)
 	result.relations = Object.freeze(
 		Object.fromEntries(

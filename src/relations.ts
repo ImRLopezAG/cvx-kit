@@ -23,6 +23,7 @@ import {
 import type { FilterContract, SharedFilters } from './querying/shared/contract'
 import {
 	lazyRelationFilterSchema,
+	deferFilterField,
 	unionOf,
 	type PaginationValidatorOptions,
 } from './querying/shared/filters'
@@ -2047,6 +2048,14 @@ function serializeLeg(leg: Leg): unknown[] {
 			? [leg.table, leg.field, leg.guard ?? null, memberRefs.get(leg)]
 			: [leg.table, leg.field, leg.guard ?? null]
 }
+/** Validate selected scalar kinds now, in the same order the predicate compiler visits them. */
+function assertFilterScalar(validator: GenericValidator): void {
+	if (validator.kind === 'union') {
+		for (const member of validator.members) assertFilterScalar(member)
+	} else if (!scalarValidator(validator))
+		throw new Error(`Unsupported scalar filter kind "${validator.kind}"`)
+}
+
 function filterGrammar(
 	registry: RegistryMetadata,
 	table: string,
@@ -2073,9 +2082,10 @@ function filterGrammar(
 		}
 		const validator = (tag === undefined ? data.fields : data.branches!.options[tag].fields)[key]
 		const edge = registry.declarations[table]?.[key]
-		if (mask === true && validator)
-			fields[key] = schemaOf(scalarPredicateSchema(validator)).optional()
-		else if (mask !== true && edge && depth < 4)
+		if (mask === true && validator) {
+			assertFilterScalar(validator)
+			deferFilterField(fields, key, () => schemaOf(scalarPredicateSchema(validator)).optional())
+		} else if (mask !== true && edge && depth < 4)
 			relations[key] = {
 				cardinality: edge.cardinality,
 				target: filterGrammar(registry, edge.target, mask, depth + 1),

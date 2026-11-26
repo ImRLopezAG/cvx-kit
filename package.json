@@ -25,7 +25,10 @@
 		"LICENSE"
 	],
 	"type": "module",
-	"sideEffects": false,
+	"sideEffects": [
+		"./dist/zod.mjs",
+		"./src/zod.ts"
+	],
 	"exports": {
 		"./package.json": "./package.json",
 		".": {
@@ -99,6 +102,22 @@
 		"./k": {
 			"types": "./dist/k.d.mts",
 			"import": "./dist/k.mjs"
+		},
+		"./table": {
+			"types": "./dist/table.d.mts",
+			"import": "./dist/table.mjs"
+		},
+		"./registration": {
+			"types": "./dist/registration.d.mts",
+			"import": "./dist/registration.mjs"
+		},
+		"./json-schema": {
+			"types": "./dist/json-schema.d.mts",
+			"import": "./dist/json-schema.mjs"
+		},
+		"./zod": {
+			"types": "./dist/zod.d.mts",
+			"import": "./dist/zod.mjs"
 		},
 		"./test": "./src/test.ts",
 		"./components/foundation": {
@@ -210,6 +229,9 @@
 		"zod": "^4.5.4"
 	},
 	"peerDependenciesMeta": {
+		"zod": {
+			"optional": true
+		},
 		"effect": {
 			"optional": true
 		},

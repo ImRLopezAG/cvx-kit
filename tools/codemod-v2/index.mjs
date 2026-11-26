@@ -18,8 +18,16 @@
 // as `k`, imports and parses; the second rewrites with that knowledge, so a
 // type helper on an imported schema and a schema parsed in another file are
 // judged by the whole run, not one file.
-import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, matchesGlob, relative, resolve } from 'node:path'
+import {
+	existsSync,
+	lstatSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	statSync,
+	writeFileSync,
+} from 'node:fs'
+import { dirname, join, matchesGlob, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildReport, formatSummary } from './report.mjs'
 import { transformSource } from './transform.mjs'
@@ -37,6 +45,14 @@ Without --write it is a dry run and writes nothing but the optional report.
   --native-number-bounds  emit bare k.int() / k.number() (see below)
   --ignore <glob…>        skip matching paths
   --help                  print this help
+
+Paths must be files or directories; the codemod does not expand globs (let the shell expand an
+unquoted one, or pass the directory and --ignore what to skip). A symlink whose real path is
+outside the given paths is skipped and listed in the report (outsideRoots), so --write never
+edits a file outside them.
+
+Exit codes: 0 when every file parsed (skipped sites are listed, not failures); 1 when a file
+failed to parse (the report is still written; see its "error" files) or the arguments are invalid.
 
 Number bounds: Zod's z.int() and .int() refuse integers outside the safe range and z.number()
 refuses NaN and infinities; native Convex v.number() accepts them. By default the codemod keeps
@@ -101,8 +117,23 @@ export function parseArguments(argv) {
 	return options
 }
 
-export function collectFiles(options, cwd = process.cwd()) {
+/**
+ * The files to scan. A symlinked file or directory is followed only when its real path is inside one
+ * of the given paths; others are skipped and pushed to `outside` (run-relative), so `--write` never
+ * reaches a file outside them. Each real directory is visited once, so a link cycle cannot loop.
+ */
+export function collectFiles(options, cwd = process.cwd(), outside = []) {
 	const files = []
+	const roots = options.paths.map((path) => {
+		const absolute = resolve(cwd, path)
+		if (!existsSync(absolute))
+			throw new Error(
+				`Path not found: ${path}. Paths must be files or directories${/[*?[\]{}]/.test(path) ? '; the codemod does not expand globs (pass the directory, or leave the glob unquoted for the shell to expand)' : ''}`,
+			)
+		return realpathSync(absolute)
+	})
+	const inside = (real) => roots.some((root) => real === root || real.startsWith(root + sep))
+	const seen = new Set()
 	const ignored = (path) => {
 		const local = relative(cwd, path)
 		return options.ignore.some((glob) => matchesGlob(local, glob) || matchesGlob(path, glob))
@@ -113,7 +144,14 @@ export function collectFiles(options, cwd = process.cwd()) {
 		options.extensions.some((ext) => path.endsWith(`.${ext}`))
 	const visit = (path) => {
 		if (ignored(path)) return
+		const real = realpathSync(path)
+		if (lstatSync(path).isSymbolicLink() && !inside(real)) {
+			outside.push(relative(cwd, path))
+			return
+		}
 		if (statSync(path).isDirectory()) {
+			if (seen.has(real)) return
+			seen.add(real)
 			for (const entry of readdirSync(path, { withFileTypes: true })) {
 				if (entry.isDirectory() && SKIPPED_DIRECTORIES.has(entry.name)) continue
 				visit(join(path, entry.name))
@@ -126,7 +164,8 @@ export function collectFiles(options, cwd = process.cwd()) {
 
 export function run(argv, cwd = process.cwd()) {
 	const options = parseArguments(argv)
-	const files = collectFiles(options, cwd).map((file) => ({
+	const outside = []
+	const files = collectFiles(options, cwd, outside).map((file) => ({
 		file,
 		path: relative(cwd, file),
 		source: readFileSync(file, 'utf8'),
@@ -144,10 +183,14 @@ export function run(argv, cwd = process.cwd()) {
 		if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
 		results.push(outcome)
 	}
-	const report = buildReport(results)
+	const report = { ...buildReport(results), outsideRoots: outside }
 	if (options.report)
 		writeFileSync(resolve(cwd, options.report), `${JSON.stringify(report, null, '\t')}\n`)
-	return { report, summary: formatSummary(report, options.write) }
+	let summary = formatSummary(report, options.write)
+	if (outside.length > 0)
+		summary += `\nskipped symlinks outside the given paths: ${outside.length}\n${outside.map((path) => `  ${path}`).join('\n')}`
+	// A file that failed to parse fails the run, after the report is written.
+	return { report, summary, exitCode: report.summary.error > 0 ? 1 : 0 }
 }
 
 const RESOLVED_EXTENSIONS = ['', '.ts', '.tsx', '.mts', '/index.ts', '/index.tsx', '/index.mts']
@@ -208,7 +251,11 @@ if (isMain()) {
 	try {
 		const argv = process.argv.slice(2)
 		if (argv.includes('--help') || argv.includes('-h')) console.log(HELP)
-		else console.log(run(argv).summary)
+		else {
+			const outcome = run(argv)
+			console.log(outcome.summary)
+			process.exitCode = outcome.exitCode
+		}
 	} catch (error) {
 		console.error(error.message)
 		process.exit(1)

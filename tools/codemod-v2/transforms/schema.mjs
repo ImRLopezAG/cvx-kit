@@ -235,6 +235,15 @@ export function processZodChain(ctx, unit, id) {
 		addSkip(ctx, unit, span(next), 'k-shadowed')
 		return
 	}
+	if (first.name === 'partialRecord') {
+		// Zod's partialRecord with a string key is a plain record; `k.partialRecord` takes finite keys only.
+		const keys = recordKeyKind(ctx, steps[next].node.arguments[0])
+		if (keys === 'string') target = 'record'
+		else if (keys !== 'literals') {
+			addSkip(ctx, unit, span(next), 'partial-record-key')
+			return
+		}
+	}
 	addEdit(unit, id, 'k', true)
 	if (factory !== first) {
 		addEdit(unit, { start: first.node.property.start, end: factory.node.property.end }, target)
@@ -245,12 +254,38 @@ export function processZodChain(ctx, unit, id) {
 			end: steps[next].node.end,
 			strict: first.name === 'strictObject' || setsStrictness(steps, next + 1),
 			derived: false,
+			policy: null,
 		})
 	}
 	if (first.name === 'number' || first.name === 'int') {
 		numberBounds(ctx, unit, steps, next, first, span(next))
 	}
-	processSteps(ctx, unit, steps, next + 1, outer)
+	processSteps(ctx, unit, steps, next + 1, outer, null)
+}
+
+/**
+ * The kind of a record key argument: `'string'` for `z.string()` (no chained steps), `'literals'`
+ * for `z.enum([...])`, `z.literal('…')` or a `z.union([...])` of those, else null (unproven).
+ */
+function recordKeyKind(ctx, argument) {
+	const node = argument ? unwrap(argument) : null
+	if (!node) return null
+	const { root, steps } = chainOf(node)
+	if (root.type !== 'Identifier' || !ctx.zodNamespaces.has(root.name)) return null
+	const factory = steps[0]
+	if (factory?.kind !== 'member' || steps[1]?.kind !== 'call' || steps.length !== 2) return null
+	const args = steps[1].node.arguments
+	if (factory.name === 'string') return 'string'
+	if (factory.name === 'enum') return args[0]?.type === 'ArrayExpression' ? 'literals' : null
+	if (factory.name === 'literal')
+		return args[0]?.type === 'Literal' && args[0].value === String(args[0].value)
+			? 'literals'
+			: null
+	if (factory.name === 'union' && args[0]?.type === 'ArrayExpression')
+		return args[0].elements.every((element) => recordKeyKind(ctx, element) === 'literals')
+			? 'literals'
+			: null
+	return null
 }
 
 /**
@@ -266,8 +301,7 @@ function numberBounds(ctx, unit, steps, next, factory, site) {
 		const step = steps[index]
 		if (step.kind !== 'member' || steps[index + 1]?.kind !== 'call') break
 		names.add(step.name)
-		if (step.name === 'int' && intStep === null && steps[index + 1].node.arguments.length === 0)
-			intStep = step
+		if (step.name === 'int' && intStep === null) intStep = step
 	}
 	const integer = factory.name === 'int' || intStep !== null
 	if (ctx.options.nativeNumberBounds) {
@@ -278,7 +312,11 @@ function numberBounds(ctx, unit, steps, next, factory, site) {
 	}
 	if (integer) {
 		if (names.has('safe')) return
-		if (intStep !== null) {
+		const intCall = intStep === null ? null : steps[steps.indexOf(intStep) + 1].node
+		if (intCall !== null && intCall.arguments.length > 0) {
+			// `z.number().int(options)` → `k.number().int(options).safe()`: the options keep their message.
+			addEdit(unit, { start: intCall.end, end: intCall.end }, '.safe()')
+		} else if (intStep !== null) {
 			// `z.number().int()` → `k.int().safe()`: the int factory, with `.int()` restated as `.safe()`.
 			addEdit(unit, factory.node.property, 'int')
 			addEdit(unit, intStep.node.property, 'safe')
@@ -308,11 +346,11 @@ export function processBoundChain(ctx, unit, id, table) {
 	if (method?.kind !== 'member' || steps[from + 1]?.kind !== 'call') return false
 	unit.contexts.push(outer)
 	if (TERMINAL_METHODS.has(method.name)) {
-		processSteps(ctx, unit, steps, from, outer)
+		processSteps(ctx, unit, steps, from, outer, null)
 		return false
 	}
 	unit.boundSchema = true
-	processSteps(ctx, unit, steps, from, outer)
+	processSteps(ctx, unit, steps, from, outer, table ? false : ctx.numberBindings.has(id.name))
 	return true
 }
 
@@ -334,7 +372,46 @@ export function carriesObjectChecks(ctx, chain, end = chain.steps.length) {
 	return root.type === 'Identifier' && ctx.refinedBindings.has(root.name)
 }
 
-function processSteps(ctx, unit, steps, from, outer) {
+/**
+ * Zod's unknown-key policy of the object a chain builds before step `end`: `'strip'` (`z.object`),
+ * `'strict'`, `'loose'`, `'k'` for a schema that is already `k` (its derivations keep its policy), or
+ * null when it cannot be proven. Zod's `pick`, `omit`, `extend`, `partial` and `required` keep the
+ * receiver's policy, as `k`'s do.
+ */
+export function zodPolicy(ctx, chain, end = chain.steps.length) {
+	const { root, steps } = chain
+	for (let index = end - 1; index >= 0; index--) {
+		const step = steps[index]
+		if (step.kind !== 'member') continue
+		if (step.name === 'strict') return 'strict'
+		if (step.name === 'strip') return 'strip'
+		if (step.name === 'loose' || step.name === 'passthrough') return 'loose'
+	}
+	if (root.type !== 'Identifier') return null
+	if (ctx.zodNamespaces.has(root.name)) {
+		const factory = steps[0]?.kind === 'member' ? steps[0].name : null
+		if (factory === 'object') return 'strip'
+		if (factory === 'strictObject') return 'strict'
+		if (factory === 'looseObject') return 'loose'
+		return null
+	}
+	if (root.name === 'k' && ctx.hasK) return 'k'
+	if (ctx.tableBindings.has(root.name)) return 'k'
+	return ctx.bindingPolicies.get(root.name) ?? null
+}
+
+/** Whether a chain passes through a `.safe()` at or after step `from`. */
+function hasSafe(steps, from) {
+	for (let index = from; index < steps.length; index++)
+		if (steps[index].kind === 'member' && steps[index].name === 'safe') return true
+	return false
+}
+
+/**
+ * `number` is null for a chain whose number bounds `numberBounds` already handled (a Zod factory
+ * chain), else whether the chain's root binding is proven to be a Zod number.
+ */
+function processSteps(ctx, unit, steps, from, outer, number) {
 	const chain = chainOf(outer)
 	let index = from
 	while (index < steps.length) {
@@ -394,12 +471,21 @@ function processSteps(ctx, unit, steps, from, outer) {
 		} else if (OPTIONS_ARGUMENT.has(step.name)) {
 			checkOptions(ctx, unit, call.arguments[OPTIONS_ARGUMENT.get(step.name)])
 		}
+		if (step.name === 'int' && number !== null && !hasSafe(steps, index + 2)) {
+			// Zod's `.int()` stops at the safe-integer range; `k`'s does not.
+			if (number && !ctx.options.nativeNumberBounds) {
+				addEdit(unit, { start: call.end, end: call.end }, '.safe()')
+				addInfo(ctx, unit, site, 'int-safe-preserved')
+			} else if (number) addInfo(ctx, unit, site, 'int-no-longer-safe')
+			else addSkip(ctx, unit, site, 'unproven-int')
+		}
 		if (OBJECT_STEPS.has(step.name)) {
 			unit.objectSites.push({
 				site,
 				end: call.end,
 				strict: setsStrictness(steps, index + 2),
 				derived: true,
+				policy: zodPolicy(ctx, chain, index),
 			})
 		}
 		index += 2

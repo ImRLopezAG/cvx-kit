@@ -24,7 +24,8 @@ import type {
 
 /**
  * A strict object. `pick`, `omit`, `extend`, `partial` and `required` build a new object root over the
- * same field schema instances; with object-level checks they throw unless told to drop or keep them.
+ * same field schema instances, keeping the receiver's unknown-key policy (`strip()`, `loose()`) as
+ * Zod 4 does; with object-level checks they throw unless told to drop or keep them.
  */
 export class KObject<F extends KFields> extends KSchema<
 	KAnyDiffers<F> extends true ? KObjectOutput<F> : ObjectType<KNativeFields<F>>,
@@ -52,7 +53,7 @@ export class KObject<F extends KFields> extends KSchema<
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
 		for (const key of names) setOwn(out, key, fields[key])
-		return object(retyped<Pick<F, K>>(out))
+		return withPolicy(this, object(retyped<Pick<F, K>>(out)))
 	}
 
 	omit<K extends keyof F & string>(...keys: K[]): KObject<Omit<F, K>>
@@ -62,7 +63,7 @@ export class KObject<F extends KFields> extends KSchema<
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
 		for (const key in fields) if (!dropped.has(key)) setOwn(out, key, fields[key])
-		return object(retyped<Omit<F, K>>(out))
+		return withPolicy(this, object(retyped<Omit<F, K>>(out)))
 	}
 
 	/** Add or replace fields; a key present in both takes the new schema. */
@@ -71,8 +72,9 @@ export class KObject<F extends KFields> extends KSchema<
 		options?: KExtendOptions,
 	): KObject<Flat<Omit<F, keyof E> & E>> {
 		const kept = derivedChecks(this, 'extend', options)
-		let out: KObject<Flat<Omit<F, keyof E> & E>> = object(
-			retyped<Flat<Omit<F, keyof E> & E>>({ ...fieldsOf(this), ...fields }),
+		let out: KObject<Flat<Omit<F, keyof E> & E>> = withPolicy(
+			this,
+			object(retyped<Flat<Omit<F, keyof E> & E>>({ ...fieldsOf(this), ...fields })),
 		)
 		if (options !== undefined && 'keepChecks' in options)
 			for (const record of kept) out = out.link(record.op, record.arg, record.message)
@@ -88,7 +90,7 @@ export class KObject<F extends KFields> extends KSchema<
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
 		for (const key in fields) setOwn(out, key, optionalOf(fields[key]))
-		return object(retyped<{ [K in keyof F]: KOptional<F[K]> }>(out))
+		return withPolicy(this, object(retyped<{ [K in keyof F]: KOptional<F[K]> }>(out)))
 	}
 
 	/**
@@ -107,7 +109,7 @@ export class KObject<F extends KFields> extends KSchema<
 		const out: Record<string, KType> = {}
 		for (const key in fields)
 			setOwn(out, key, chosen === null || chosen.has(key) ? requiredOf(fields[key]) : fields[key])
-		return object(out)
+		return withPolicy(this, object(out))
 	}
 
 	/** A `k.enum` of the field names, in declaration order. */
@@ -313,6 +315,15 @@ function requiredOf(field: KType): KType {
 		// SAFETY: an optional record's predecessor is the schema it wraps.
 		current = current.prev as KType
 	return current
+}
+
+/** The derived object with the receiver's unknown-key policy: the nearest `strip` or `loose` record. */
+function withPolicy<O extends KObject<any>>(receiver: KNode, derived: O): O {
+	for (let current: KNode | null = receiver; current !== null; current = current.prev) {
+		if (current.op === 'strip') return derived.strip()
+		if (current.op === 'loose') return derived.loose()
+	}
+	return derived
 }
 
 function fieldsOf<F extends KFields>(node: KObject<F>): F {

@@ -161,9 +161,11 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 | `.required('a', …)`          | the named fields (every field when none are named) lose their top `optional()`, the inverse of `partial()`; defaults stay |
 | `.keyof()`                   | a `k.enum` of the field names                                                                                             |
 
+The derived objects keep the receiver's `.strip()` or `.loose()`, as in Zod 4.
+
 ### Open objects
 
-`.loose()` (or `k.looseObject(fields)`) is Zod's `looseObject`/`.passthrough()`: parse validates the declared fields and keeps every other own enumerable key in the output unchanged. When no field changes, the output is the input object itself. It is hardened like `.strip()`: a class instance is read from its own enumerable properties into a fresh plain object, inherited keys are never read, and keys such as `__proto__` are written as own data properties. Its output type names the declared fields only, so `pick`/`omit` typing is unchanged; derived objects (`pick`, `extend`, …) are strict again.
+`.loose()` (or `k.looseObject(fields)`) is Zod's `looseObject`/`.passthrough()`: parse validates the declared fields and keeps every other own enumerable key in the output unchanged. When no field changes, the output is the input object itself. It is hardened like `.strip()`: a class instance is read from its own enumerable properties into a fresh plain object, inherited keys are never read, and keys such as `__proto__` are written as own data properties. Its output type names the declared fields only, so `pick`/`omit` typing is unchanged. Derived objects (`pick`, `omit`, `extend`, `partial`, `required`) keep the receiver's unknown-key policy, as Zod 4's do: a loose object's `pick` is loose, a stripping object's is stripping, a strict object's is strict.
 
 Convex has no open object validator, so the native validator of a loose object is the same closed `v.object` as v1's conversion of `z.looseObject`/`.passthrough()` (convex-helpers `zodToConvex` converted every `ZodObject` to `v.object(shape)`). Convex therefore still rejects unknown keys in function args, returns and documents: `.loose()` is for `parse`/`safeParse` of provider payloads (webhooks, SDK responses). To accept unknown keys at a function boundary, take the payload as `k.any()` or `k.jsonObject()` and parse it with the loose schema in the handler.
 

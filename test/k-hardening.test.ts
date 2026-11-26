@@ -345,3 +345,38 @@ describe('enum derivations and discriminator values', () => {
 		).toThrow(/more than one option/)
 	})
 })
+
+describe('derived objects keep the unknown-key policy, as Zod 4', () => {
+	const input = { a: 'a', b: 'b', extra: 1 }
+	const loose = k.looseObject({ a: k.string(), b: k.string() })
+	const strip = k.object({ a: k.string(), b: k.string() }).strip()
+	const strict = k.object({ a: k.string(), b: k.string() })
+
+	it('loose stays loose', () => {
+		for (const derived of [
+			loose.pick('a', 'b'),
+			loose.omit('b').extend({ b: k.string() }),
+			loose.partial(),
+			loose.partial().required(),
+		])
+			expect(derived.parse(input)).toEqual(input)
+	})
+
+	it('strip stays strip', () => {
+		expect(strip.pick('a').parse(input)).toEqual({ a: 'a' })
+		expect(strip.partial().required().parse(input)).toEqual({ a: 'a', b: 'b' })
+	})
+
+	it('strict stays strict, and the native validator stays closed', () => {
+		expect(strict.pick('a').safeParse(input).success).toBe(false)
+		expect(loose.pick('a').validator.kind).toBe('object')
+		expect(Object.keys(loose.pick('a').validator.fields)).toEqual(['a'])
+	})
+
+	it('keepChecks keeps the policy and the checks', () => {
+		const refined = loose.refine((value) => value.a !== 'x')
+		const extended = refined.extend({ c: k.string().optional() }, { keepChecks: true })
+		expect(extended.parse(input)).toEqual(input)
+		expect(extended.safeParse({ ...input, a: 'x' }).success).toBe(false)
+	})
+})

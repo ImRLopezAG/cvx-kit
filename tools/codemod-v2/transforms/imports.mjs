@@ -94,7 +94,10 @@ function collectKitImport(ctx, decl, module) {
 		const local = spec.local.name
 		if (local === 'k') {
 			if (K_MODULES.has(module) && spec.type === 'ImportSpecifier' && importedName(spec) === 'k') {
-				ctx.hasK = true
+				// A type-only import is no runtime binding: rewritten code needs it promoted to a value import.
+				if (decl.importKind === 'type' || spec.importKind === 'type')
+					ctx.kTypeImport = { decl, spec }
+				else ctx.hasK = true
 			} else ctx.kConflict = spec
 		}
 		if (
@@ -170,6 +173,10 @@ export function planImports(ctx, isLeft, needsK) {
 		byDecl.get(binding.decl).push(binding)
 	}
 	let addK = needsK && !ctx.hasK
+	if (addK && ctx.kTypeImport !== null) {
+		edits.push(promoteK(ctx, ctx.kTypeImport))
+		addK = false
+	}
 	const planned = []
 	const movedBy = new Map()
 	for (const [decl, bindings] of byDecl) {
@@ -286,6 +293,18 @@ function removal(ctx, decl) {
 
 function replacement(ctx, decl, lines) {
 	return { start: decl.start, end: decl.end, text: lines.join('\n') }
+}
+
+/** Turn the kit's type-only `k` import into a value import, keeping the other type-only names. */
+function promoteK(ctx, { decl, spec }) {
+	if (decl.importKind !== 'type') return { start: spec.start, end: spec.imported.start, text: '' }
+	const source = ctx.source.slice(decl.source.start, decl.source.end)
+	const end = semicolon(ctx, decl)
+	const others = decl.specifiers.filter((other) => other !== spec)
+	const value = `import { ${ctx.source.slice(spec.start, spec.end)} } from ${source}${end}`
+	if (others.length === 0) return replacement(ctx, decl, [value])
+	const names = others.map((other) => ctx.source.slice(other.start, other.end)).join(', ')
+	return replacement(ctx, decl, [`import type { ${names} } from ${source}${end}`, value])
 }
 
 function kImport(ctx, anchor) {

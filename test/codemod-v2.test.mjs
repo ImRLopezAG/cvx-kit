@@ -1,8 +1,9 @@
 // @vitest-environment node
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import {
 	cpSync,
 	existsSync,
+	symlinkSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
@@ -80,7 +81,10 @@ describe('codemod-v2 fixtures', () => {
 
 	it('counts z.object sites as informational object-now-strict', () => {
 		const outcome = transformSource('strict.ts', fixture('strict-object', 'input.ts'))
-		expect(outcome.info.map((site) => site.code)).toEqual(['int-safe-preserved', 'object-now-strict'])
+		expect(outcome.info.map((site) => site.code)).toEqual([
+			'int-safe-preserved',
+			'object-now-strict',
+		])
 		expect(outcome.status).toBe('rewritten')
 	})
 })
@@ -108,13 +112,14 @@ describe('codemod-v2 number bounds', () => {
 		expect(outcome.output).toContain('\tfloor: k.number().finite().min(0),')
 		expect(outcome.output).toContain('\trate: k.number().finite(),')
 		expect(outcome.output).toContain('\tsafe: k.int().safe(),')
-		expect(outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'))
-			.toEqual([
-				'int-safe-preserved',
-				'int-safe-preserved',
-				'number-finite-preserved',
-				'number-finite-preserved',
-			])
+		expect(
+			outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'),
+		).toEqual([
+			'int-safe-preserved',
+			'int-safe-preserved',
+			'number-finite-preserved',
+			'number-finite-preserved',
+		])
 		expect(outcome.status).toBe('rewritten')
 		expect(transformSource('payment.ts', outcome.output).output).toBe(outcome.output)
 	})
@@ -125,13 +130,14 @@ describe('codemod-v2 number bounds', () => {
 		expect(outcome.output).toContain('\tunits: k.number().int(),')
 		expect(outcome.output).toContain('\tbefore: k.number(),')
 		expect(outcome.output).toContain('\tfloor: k.number().min(0),')
-		expect(outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'))
-			.toEqual([
-				'int-no-longer-safe',
-				'int-no-longer-safe',
-				'number-now-accepts-nan',
-				'number-now-accepts-nan',
-			])
+		expect(
+			outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'),
+		).toEqual([
+			'int-no-longer-safe',
+			'int-no-longer-safe',
+			'number-now-accepts-nan',
+			'number-now-accepts-nan',
+		])
 	})
 
 	it('accepts the flag on the command line and documents it in --help', () => {
@@ -198,17 +204,15 @@ describe('codemod-v2 CLI', () => {
 		withTempTree(tree, (root) => {
 			const before = readFileSync(join(root, 'src/strict.ts'), 'utf8')
 			const reportFile = join(root, 'report.json')
-			const printed = execFileSync(
-				'node',
-				[join(process.cwd(), CLI), 'src', '--report', reportFile],
-				{
-					cwd: root,
-					encoding: 'utf8',
-				},
-			)
+			const printed = spawnSync('node', [join(process.cwd(), CLI), 'src', '--report', reportFile], {
+				cwd: root,
+				encoding: 'utf8',
+			})
+			// The broken file fails the run (exit 1) after the report is written.
+			expect(printed.status).toBe(1)
+			expect(printed.stdout).toContain('dry run')
+			expect(printed.stdout).not.toContain('strict.ts')
 			expect(readFileSync(join(root, 'src/strict.ts'), 'utf8')).toBe(before)
-			expect(printed).toContain('dry run')
-			expect(printed).not.toContain('strict.ts')
 			const report = JSON.parse(readFileSync(reportFile, 'utf8'))
 			expect(report.summary).toEqual({
 				scanned: 4,
@@ -351,6 +355,47 @@ describe('codemod-v2 cross-file knowledge', () => {
 					"import { k } from 'cvx-kit'\nexport const Payload = k.object({ id: k.string() }).strip()\nexport const Args = k.object({ id: k.string() })\n",
 				)
 				expect(report.info).toEqual({ 'object-now-strict': 1, 'object-parsed-stripped': 1 })
+			},
+		)
+	})
+
+	it('exits 0 when every file parses', () => {
+		withTempTree({ [join(FIXTURES, 'strict-object/input.ts')]: 'ok/strict.ts' }, (root) => {
+			expect(run(['ok'], root).exitCode).toBe(0)
+			const printed = spawnSync('node', [join(process.cwd(), CLI), 'ok'], { cwd: root })
+			expect(printed.status).toBe(0)
+		})
+	})
+
+	it('--help documents exit codes, globs and symlinks', () => {
+		expect(HELP).toContain('Exit codes: 0 when every file parsed')
+		expect(HELP).toContain('does not expand globs')
+		expect(HELP).toContain('outsideRoots')
+	})
+
+	it('a quoted glob gets a clear message', () => {
+		withTempTree({}, (root) => {
+			expect(() => run(['src/**/*.ts'], root)).toThrow(/does not expand globs/)
+			expect(() => run(['missing'], root)).toThrow(/Path not found: missing/)
+		})
+	})
+
+	it('--write never follows a symlink outside the given paths', () => {
+		withTempTree(
+			{
+				[join(FIXTURES, 'strict-object/input.ts')]: 'outside/target.ts',
+				[join(FIXTURES, 'mixed-file/input.ts')]: 'src/inner/mixed.ts',
+			},
+			(root) => {
+				const outsideBefore = readFileSync(join(root, 'outside/target.ts'), 'utf8')
+				symlinkSync(join(root, 'outside/target.ts'), join(root, 'src/link.ts'))
+				symlinkSync(join(root, 'outside'), join(root, 'src/linkdir'))
+				symlinkSync(join(root, 'src/inner'), join(root, 'src/alias'))
+				symlinkSync(join(root, 'src'), join(root, 'src/inner/loop'))
+				const { report } = run(['src', '--write', '--ignore', 'src/broken.ts'], root)
+				expect(readFileSync(join(root, 'outside/target.ts'), 'utf8')).toBe(outsideBefore)
+				expect(report.outsideRoots.sort()).toEqual(['src/link.ts', 'src/linkdir'])
+				expect(report.files.filter((file) => file.path.endsWith('mixed.ts'))).toHaveLength(1)
 			},
 		)
 	})

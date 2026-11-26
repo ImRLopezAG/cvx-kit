@@ -25,6 +25,7 @@ import {
 	isSchemaExpression,
 	processBoundChain,
 	processZodChain,
+	zodPolicy,
 } from './transforms/schema.mjs'
 import { getterEdits } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
@@ -112,12 +113,15 @@ function createContext(path, source, program, options) {
 		kitRootDecl: null,
 		hasK: false,
 		kConflict: null,
+		kTypeImport: null,
 		v2Tables: new Set(),
 		imported: new Map(),
 		moduleDecls: new Map(),
 		parsedNames: new Set(),
 		schemaBindings: new Set(),
 		refinedBindings: new Set(),
+		numberBindings: new Set(),
+		bindingPolicies: new Map(),
 		tableBindings: new Set(),
 		tableFactories: new Set(),
 		objectConsts: new Set(),
@@ -291,6 +295,21 @@ function summarize(
 	})
 }
 
+/** A chain rooted at `z.number()`/`z.int()` (or a binding of one) whose steps keep it a number. */
+function isZodNumber(ctx, chain) {
+	const { root, steps } = chain
+	if (root.type !== 'Identifier') return false
+	const numeric = ctx.zodNamespaces.has(root.name)
+		? steps[0]?.kind === 'member' && (steps[0].name === 'number' || steps[0].name === 'int')
+		: ctx.numberBindings.has(root.name)
+	return (
+		numeric &&
+		!steps.some(
+			(step) => step.kind === 'member' && (step.name === 'transform' || step.name === 'pipe'),
+		)
+	)
+}
+
 /** Top-level `const` bindings the codemod can prove are schemas, tables or table factories. */
 function classifyBindings(ctx, units) {
 	for (let pass = 0; pass < 2; pass++) {
@@ -309,6 +328,10 @@ function classifyBindings(ctx, units) {
 				else if (isSchemaExpression(ctx, init)) {
 					ctx.schemaBindings.add(name)
 					if (carriesObjectChecks(ctx, chainOf(init))) ctx.refinedBindings.add(name)
+					const chain = chainOf(init)
+					const policy = zodPolicy(ctx, chain)
+					if (policy !== null) ctx.bindingPolicies.set(name, policy)
+					if (isZodNumber(ctx, chain)) ctx.numberBindings.add(name)
 				}
 			}
 		}

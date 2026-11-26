@@ -50,6 +50,12 @@ export function classifyObjects(ctx, units, isLeft) {
 				continue
 			}
 			if (object.strict) continue
+			// A derived object keeps its source's policy in Zod and in `k`: only a source that strips in
+			// Zod (`z.object`) needs `.strip()` restated; a loose or strict source is already right.
+			if (object.derived && object.policy !== 'strip') {
+				if (object.policy === null) addInfo(ctx, unit, object.site, 'derived-policy-unproven')
+				continue
+			}
 			if (ctx.options.stripParsed) {
 				addEdit(unit, { start: object.end, end: object.end }, '.strip()')
 				addInfo(ctx, unit, object.site, 'object-parsed-stripped')

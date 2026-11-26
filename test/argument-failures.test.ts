@@ -190,6 +190,46 @@ describe('argument failure policy', () => {
 		expect(events).toEqual([])
 	})
 
+	it('skipped Convex validation still follows the policy, after customization', async () => {
+		const events: string[] = []
+		const input = () => {
+			events.push('input')
+			return { ctx: {}, args: {} }
+		}
+		const fn = kCustomFunctions({ argumentFailure: 'declared' }).kCustomQuery(queryGeneric, {
+			args: {},
+			input,
+		})({ args, skipConvexValidation: true, handler: () => null })
+		const error = await rejection(fn, { title: 'x' })
+		expect(failureOf(error, errors, 'INVALID_ARGUMENTS')?.code).toBe('INVALID_ARGUMENTS')
+		// Customization (authentication) runs first in this mode, so a caller it rejects learns nothing about the arguments.
+		expect(events).toEqual(['input'])
+	})
+
+	it('passes application errors from checks and customization through unchanged', async () => {
+		const thrown = appErrors.toConvexError('NOT_FOUND', {})
+		const builders = kCustomFunctions({ argumentFailure: 'declared' })
+		const fromCheck = builders.kCustomQuery(
+			queryGeneric,
+			NoOp,
+		)({
+			args: {
+				title: k.string().refine(() => {
+					throw thrown
+				}),
+			},
+			handler: () => null,
+		})
+		const fromInput = builders.kCustomQuery(queryGeneric, {
+			args: {},
+			input: () => {
+				throw thrown
+			},
+		})({ args, handler: () => null })
+		expect(await rejection(fromCheck, { title: 'abc' })).toBe(thrown)
+		expect(await rejection(fromInput, { title: 'abc' })).toBe(thrown)
+	})
+
 	it('auth constructors thread argumentFailure', async () => {
 		const readers = createAuthReaders<GenericDataModel, 'reader'>({
 			query: queryGeneric,

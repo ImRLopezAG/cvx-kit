@@ -45,11 +45,11 @@ writeFileSync(
 	),
 )
 // No project installs zod: the v2 core and its client entries do not need it.
-for (const [label, convex, helpers, react, reactTypes] of [
-	['current', '1.51.0', '0.1.137', '19.3.1', '19.3.3'],
+for (const [label, convex, helpers, react, reactTypes, reactDomTypes] of [
+	['current', '1.51.0', '0.1.137', '19.3.1', '19.3.3', '19.3.0'],
 	// Convex 1.46 declarations use React.JSX. Runtime React 18.0.0 is supported,
 	// but @types/react 18.0.0 predates that namespace; use compatible React 18 declarations.
-	['minimum', '1.46.0', '0.1.130', '18.0.0', '18.3.0'],
+	['minimum', '1.46.0', '0.1.130', '18.0.0', '18.3.0', '18.3.0'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -68,7 +68,7 @@ for (const [label, convex, helpers, react, reactTypes] of [
 				react,
 				'react-dom': react,
 				'@types/react': reactTypes,
-				'@types/react-dom': reactTypes,
+				'@types/react-dom': reactDomTypes,
 				'@types/scheduler': '0.16.8',
 				effect: '4.0.2',
 			},

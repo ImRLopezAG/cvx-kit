@@ -16,6 +16,7 @@ import {
 	union,
 } from './kinds'
 import { isoDate, isoDateTime, timestamp } from './dates'
+import { NEVER } from './issues'
 import { jsonObject } from './loose'
 import { looseObject, object, partialRecord, record } from './object'
 import type { KType } from './types'
@@ -44,6 +45,7 @@ export const k = {
 	isoDate,
 	isoDateTime,
 	timestamp,
+	NEVER,
 }
 
 export declare namespace k {

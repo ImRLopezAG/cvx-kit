@@ -121,7 +121,7 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.overwrite(fn)`                                | all                         | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                                                                                   |
 | `.refine(fn, message?)`                         | all                         | `fn(value)` must return `true`; `message` is a string or `{ message, path }` (`error` is accepted as a string alias of `message`); a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
 | `.check((value, ctx) => …)`                     | all                         | adds any number of issues with `ctx.addIssue({ message, path?, code? })`                                                                                                                                                       |
-| `.transform(fn)`                                | all                         | a type-changing step; see [Transforms](#transforms)                                                                                                                                                                            |
+| `.transform(fn)`                                | all                         | a type-changing step; `fn(value, context)` may call `context.addIssue(...)`; see [Transforms](#transforms)                                                                                                                     |
 | `.pipe(schema)`                                 | all                         | parse this schema's output with `schema`; a transform kind                                                                                                                                                                     |
 | `.describe(text)`                               | all                         | a description for JSON Schema and tooling; `.description` reads it                                                                                                                                                             |
 | `.unwrap()`                                     | optional, nullable, default | the schema below the wrapper; `.removeDefault()` is the same on a default                                                                                                                                                      |
@@ -243,6 +243,19 @@ const fields = { title: k.string().trim() } // allowed in a table
 ```
 
 There is no `coerce` or `preprocess`. Parse the raw value with a transform on an input-position schema instead.
+
+A transform that can fail reports why through its second parameter, the same context `check` receives: `context.addIssue({ message, path?, code? })`, with `path` relative to the transformed value and `code` defaulting to `custom`. When it adds at least one issue the parse fails with those issues (at the value's location) and the return value is ignored; return `k.NEVER` (typed `never`, like Zod's `z.NEVER`) to say there is no value. Returning `k.NEVER` without adding an issue fails with `Invalid input`. A transform that throws still throws. The context is created only for a callback that declares a second parameter, so one-parameter transforms (including `Number` or `parseInt`) are called exactly as before.
+
+```ts
+const tags = k.string().transform((text, context): string[] => {
+	const list: unknown = JSON.parse(text)
+	if (!Array.isArray(list)) {
+		context.addIssue({ message: 'Expected a JSON list' })
+		return k.NEVER
+	}
+	return list.map(String)
+})
+```
 
 ## Fallbacks
 

@@ -4,6 +4,7 @@ import { isFieldName } from './names'
 import { KConversionFailure, isIsoDate, isIsoDateTime, isTimestamp, maxTimestamp } from './formats'
 import {
 	KValidationError,
+	NEVER,
 	type KIssue,
 	type KIssueCode,
 	type KIssueInput,
@@ -278,7 +279,7 @@ function walk(
 			return walk(node.prev, value, context, full, 'loose')
 		case 'transform': {
 			const input = walk(node.prev, value, context, full, strip)
-			return input === FAIL ? FAIL : callbackResult(callbackOf(node)(input), context, 'transform')
+			return input === FAIL ? FAIL : transformed(node, input, context)
 		}
 		case 'pipe': {
 			const input = walk(node.prev, value, context, full, strip)
@@ -743,10 +744,31 @@ function walkDiscriminated(
 	return walk(option, value, context, full, false)
 }
 
+/**
+ * Runs a transform. A callback that declares a second parameter gets a context whose `addIssue` fails
+ * the parse (its return value is then discarded); one-parameter callbacks are called exactly as before,
+ * with no context allocated and no extra argument they might misread (`parseInt`'s radix).
+ */
+function transformed(node: KNode, input: unknown, context: WalkContext): unknown {
+	const map = callbackOf(node)
+	if (map.length < 2) return callbackResult(map(input), context, 'transform')
+	const before = context.issues.length
+	const output = map(input, new CheckContext(context))
+	if (context.issues.length > before) {
+		settled(output)
+		return FAIL
+	}
+	return callbackResult(output, context, 'transform')
+}
+
 /** A transform or overwrite is synchronous; a promise or a conversion failure becomes an issue. */
 function callbackResult(output: unknown, context: WalkContext, kind: string): unknown {
 	if (output instanceof KConversionFailure) {
 		context.add('invalid_value', output.message, undefined)
+		return FAIL
+	}
+	if (output === NEVER) {
+		context.add('custom', 'Invalid input', undefined)
 		return FAIL
 	}
 	if (!isThenable(settled(output))) return output

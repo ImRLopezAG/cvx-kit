@@ -194,6 +194,14 @@ export function processZodChain(ctx, unit, id) {
 	const siteEnd = (index) =>
 		steps[index]?.kind === 'call' ? steps[index].node : steps[index - 1].node
 	const span = (index) => ({ start: id.start, end: siteEnd(index).end })
+	if (first.name === 'NEVER' && steps.length === 1) {
+		// `z.NEVER` in a transform whose issues map directly becomes `k.NEVER`; otherwise the transform
+		// step reports `transform-issue` for the whole callback.
+		const callback = enclosingTransform(id, ctx.parents)
+		if (callback === null) addSkip(ctx, unit, outer, 'unknown-factory')
+		else if (transformIssuesMap(callback)) addEdit(unit, id, 'k', true)
+		return
+	}
 	if (first.name.startsWith('Zod')) {
 		addSkip(ctx, unit, first.node, 'zod-type')
 		return
@@ -373,6 +381,8 @@ function processSteps(ctx, unit, steps, from, outer) {
 			maskStep(ctx, unit, call, site)
 		} else if (step.name === 'catch' && readsZodCatchContext(call)) {
 			addSkip(ctx, unit, site, 'catch')
+		} else if (step.name === 'transform' && !transformIssuesMap(call.arguments[0])) {
+			addSkip(ctx, unit, site, 'transform-issue')
 		} else if (step.name === 'check' && isZodCheck(call)) {
 			addSkip(ctx, unit, site, 'zod-check')
 		} else if (REPORTED_METHODS.has(step.name)) {
@@ -521,6 +531,73 @@ function readsZodCatchContext(call) {
 			zodForm = true
 	})
 	return zodForm
+}
+
+/**
+ * Whether a transform callback's use of Zod's context maps directly onto `k`'s: every use of the
+ * second parameter is `ctx.addIssue({ code: 'custom', message, path? })` with an inline object. A
+ * callback without a second parameter (or a callback passed by reference) maps trivially.
+ */
+function transformIssuesMap(callback) {
+	if (
+		!callback ||
+		(callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression')
+	)
+		return true
+	if (callback.params.length < 2) return true
+	const param = callback.params[1]
+	if (param.type !== 'Identifier') return false
+	let direct = 0
+	let uses = 0
+	walk(callback.body, (node) => {
+		if (node.type === 'Identifier' && node.name === param.name) uses += 1
+		if (
+			node.type === 'CallExpression' &&
+			node.callee.type === 'MemberExpression' &&
+			!node.callee.computed &&
+			node.callee.object.type === 'Identifier' &&
+			node.callee.object.name === param.name &&
+			node.callee.property.name === 'addIssue' &&
+			node.arguments.length === 1 &&
+			isDirectIssue(node.arguments[0])
+		)
+			direct += 1
+	})
+	return uses === direct
+}
+
+function isDirectIssue(issue) {
+	if (issue.type !== 'ObjectExpression') return false
+	let custom = false
+	for (const property of issue.properties) {
+		if (property.type !== 'Property' || property.computed || property.key.type !== 'Identifier')
+			return false
+		const name = property.key.name
+		if (name === 'code') {
+			if (property.value.type !== 'Literal' || property.value.value !== 'custom') return false
+			custom = true
+		} else if (name !== 'message' && name !== 'path') return false
+	}
+	return custom
+}
+
+/** The callback of the nearest enclosing `.transform(callback)`, or null. */
+function enclosingTransform(node, parents) {
+	for (let current = parents.get(node); current; current = parents.get(current)) {
+		if (current.type !== 'ArrowFunctionExpression' && current.type !== 'FunctionExpression')
+			continue
+		const call = parents.get(current)
+		if (
+			call?.type === 'CallExpression' &&
+			call.arguments[0] === current &&
+			call.callee.type === 'MemberExpression' &&
+			!call.callee.computed &&
+			call.callee.property.name === 'transform'
+		)
+			return current
+		return null
+	}
+	return null
 }
 
 /** `.pick({ a: true })` → `.pick('a')`; string arguments are already the v2 form. */

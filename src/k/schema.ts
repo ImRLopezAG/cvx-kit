@@ -110,8 +110,12 @@ export abstract class KSchema<
 		return this.link('overwrite', normalise, undefined)
 	}
 
-	/** A type-changing step. Produces a distinct kind that table fields and return shapes reject. */
-	transform<O>(map: (value: Out) => O): KTransform<this, O> {
+	/**
+	 * A type-changing step. Produces a distinct kind that table fields and return shapes reject. A
+	 * callback that declares a second parameter may call `context.addIssue(...)`: the parse then fails
+	 * with those issues and the return value is ignored (return `k.NEVER`).
+	 */
+	transform<O>(map: (value: Out, context: KCheckContext) => O): KTransform<this, O> {
 		return new KTransform(this, 'transform', map, undefined)
 	}
 

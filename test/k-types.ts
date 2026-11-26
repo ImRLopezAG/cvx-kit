@@ -332,3 +332,18 @@ const looseAssertions: [
 	Assert<Equal<k.input<typeof plainJsonObject>, Record<string, JSONValue>>>,
 ] = [true, true, true, true]
 void looseAssertions
+
+// A transform's second parameter adds issues; the output stays the callback's return type.
+const listFromText = k.string().transform((text, context): string[] => {
+	if (text === '') {
+		context.addIssue({ message: 'empty', path: [0], code: 'custom' })
+		return k.NEVER
+	}
+	return text.split(',')
+})
+const transformIssueAssertions: [
+	Assert<Equal<k.output<typeof listFromText>, string[]>>,
+	Assert<Equal<k.input<typeof listFromText>, string>>,
+	Assert<Equal<typeof k.NEVER, never>>,
+] = [true, true, true]
+void transformIssueAssertions

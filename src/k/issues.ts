@@ -22,6 +22,14 @@ export type KIssueInput = {
 	readonly code?: KIssueCode
 }
 
+/**
+ * `k.NEVER`, Zod's `z.NEVER`: what a transform returns after `context.addIssue(...)` when it has no
+ * value. Typed `never`, so it fits any output type. Returned without an issue, the parse fails with
+ * `Invalid input`.
+ */
+// SAFETY: a sentinel the walker recognises by identity; it is never handed out as a parsed value.
+export const NEVER: never = Object.freeze({ k: 'never' }) as never
+
 export type KValidationData = { code: 'VALIDATION'; issues: KIssue[] }
 
 export type KSafeParseResult<T> =

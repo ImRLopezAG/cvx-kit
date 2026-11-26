@@ -24,13 +24,21 @@ import type {
 	QueryBuilder,
 	ValidatorTypeToReturnType,
 } from 'convex/server'
-import { v, type GenericValidator, type Infer, type ObjectType, type PropertyValidators, type VObject } from 'convex/values'
+import {
+	v,
+	type GenericValidator,
+	type Infer,
+	type ObjectType,
+	type PropertyValidators,
+	type VObject,
+} from 'convex/values'
 import { KValidationError, type KIssue } from './k/issues'
 import { KObject, object } from './k/object'
 import { containsTransform, hasDeclaredBehaviour, runDeclared } from './k/parse'
 import { KSchema } from './k/schema'
 import type { KFields, KNode, KType, OutputNativeOf } from './k/types'
 import { memoize } from './modules/contracts/lazy'
+import { compactArgumentBoundary } from './querying/filter-boundary'
 
 /** One declared argument: a `k` schema or a native Convex validator. */
 export type KArgField = KType | GenericValidator
@@ -332,16 +340,19 @@ type ArgsState = {
 }
 
 /**
- * Seam for the compact filter boundary (U23): it may replace the exported args validator and preflight
- * raw args before customization. Args it projects must then run the full walker (KTD3). Unset until U23.
+ * The compact filter boundary (U23): it replaces the exported args validator with one whose compact
+ * filters are projected, and preflights raw args before customization. A projected filter is seen by
+ * Convex as `any` below depth 1, so the preflight runs the full structural walker on it (KTD3).
  */
 type FilterBoundary = {
 	readonly validator: ObjectValidator
 	preflight(args: DefaultFunctionArgs): void
 }
 
-function filterBoundary(_declared: DeclaredArgs): FilterBoundary | undefined {
-	return undefined
+function filterBoundary(declared: DeclaredArgs): FilterBoundary | undefined {
+	if (declared.native) return undefined
+	const fields = declared.schema ? declared.schema.shape : kFieldsOf(declared.fields ?? {}).kFields
+	return compactArgumentBoundary(fields, () => nativeArgs(declared))
 }
 
 function rootOp(schema: KNode): string {
@@ -443,7 +454,8 @@ function fullRun(declared: DeclaredArgs): ArgsRun {
 		}
 		for (const [key, field] of Object.entries(fields)) {
 			if (field instanceof KSchema || Object.hasOwn(args, key)) continue
-			if (!validate(nativeOf(field), undefined)) issues.push(structuralIssue([key], nativeOf(field)))
+			if (!validate(nativeOf(field), undefined))
+				issues.push(structuralIssue([key], nativeOf(field)))
 		}
 		const parsed = schema.safeParse(kValues)
 		if (!parsed.success) issues.push(...parsed.issues)

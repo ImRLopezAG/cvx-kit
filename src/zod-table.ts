@@ -1,4 +1,4 @@
-import { pageResult } from './querying/shared/page'
+import { pageResult } from './querying/v1-zod-filters'
 import { memoize } from './modules/contracts/lazy'
 import type { PaginationValidatorOptions } from './querying/shared/filters'
 import { convexToZod, zid, type ConvexValidatorFromZod, type Zid } from 'convex-helpers/server/zod4'
@@ -18,7 +18,7 @@ import {
 	type ScalarPaginationSchema,
 	type ScalarSelection,
 	type ExactScalarSelection,
-} from './querying/filters'
+} from './querying/v1-zod-filters'
 
 // Use this entry point when deriving validators from kit-owned schemas so
 // the producer and converter consult the same convex-helpers ID registry.

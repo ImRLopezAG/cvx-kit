@@ -3,8 +3,13 @@
  * (storage, insert, update, command, public DTO, tool input). Nothing is derived at declaration: each
  * boundary, and the native `defineTable(...)` result, is built when it is first read and then reused.
  */
-import { defineTable, type GenericDocument, type TableDefinition } from 'convex/server'
-import type { GenericId, Validator, Value } from 'convex/values'
+import {
+	defineTable,
+	type GenericDocument,
+	type PaginationResult,
+	type TableDefinition,
+} from 'convex/server'
+import type { GenericId, GenericValidator, Validator, Value } from 'convex/values'
 import {
 	k,
 	KValidationError,
@@ -21,6 +26,15 @@ import {
 } from './k'
 import { containsTransform } from './k/parse'
 import type { KDiscriminated } from './k/types'
+import {
+	convexPaginationOptions,
+	paginationSchemaOf,
+	type ExactScalarSelection,
+	type ScalarPaginationSchema,
+	type ScalarSelection,
+} from './querying/filters'
+import type { PaginationValidatorOptions } from './querying/shared/filters'
+import { pageResult } from './querying/shared/page'
 
 export {
 	createModule,
@@ -169,6 +183,44 @@ export interface KTableBoundary<
 	update<const K extends FieldKey<Omit<F, S>>>(
 		...omit: K[]
 	): KObject<Omit<KPartialFields<Omit<F, S>>, K>>
+	/**
+	 * Pagination options with bounded scalar filters over the selected document fields (stored,
+	 * timestamp and system fields). `{ validator: 'compact' }` exports a smaller native validator; the
+	 * kit then validates the filter fully itself. Each call builds a new boundary lazily.
+	 */
+	paginationOpts<
+		const Selection extends ScalarSelection<F & KTimestampFields & KSystemFields<Table>>,
+	>(
+		selection: ExactScalarSelection<F & KTimestampFields & KSystemFields<Table>, Selection>,
+		options?: PaginationValidatorOptions,
+	): ScalarPaginationSchema<F & KTimestampFields & KSystemFields<Table>, Selection>
+}
+
+/** Completeness of the requested page, independently of global isDone exhaustion. */
+export type PageCompleteness =
+	| 'complete'
+	| 'row-budget'
+	| 'byte-budget'
+	| 'native-limit'
+	| 'result-cap'
+
+export type EnginePaginationResult<Row> = PaginationResult<Row> & {
+	paginationMode?: 'native-search'
+	completeness?: PageCompleteness
+}
+
+/**
+ * Cursor-pagination boundary schemas for a page of `dto`: `args.paginationOpts` is Convex's own
+ * `paginationOptsValidator`, `result` the page shape. The result is not strict on parse (Convex may
+ * attach engine fields such as splitCursor and pageStatus); the page items are validated by `dto`.
+ * Under row-level security, pages may be SHORTER than numItems when rules reject rows mid-page;
+ * cursors remain correct. Nothing is built until a validator is read.
+ */
+export function paginated<Dto extends KType>(dto: Dto) {
+	return {
+		args: { paginationOpts: convexPaginationOptions() },
+		result: pageResult(dto),
+	}
 }
 
 /** The function `createTable(shared)` returns: `kTable` with the shared fields ahead of the table's own. */
@@ -588,6 +640,17 @@ class TableRecord {
 		if (!extended) return (this.#publicWithId ??= this.publicDto.extend({ _id: this.#idField() }))
 		const fields = { ...this.publicDto.shape, ...extension }
 		return k.object(includeId ? { ...fields, _id: this.#idField() } : fields)
+	}
+
+	readonly paginationOpts = (
+		selection: Readonly<Record<string, true>>,
+		options?: PaginationValidatorOptions,
+	): RuntimeObject => {
+		const documentFields: KFields = this.schema.shape
+		const validators: Record<string, GenericValidator> = {}
+		for (const key of Object.keys(selection))
+			if (Object.hasOwn(documentFields, key)) validators[key] = documentFields[key].validator
+		return paginationSchemaOf(validators, selection, options)
 	}
 
 	readonly toPublicDto = (row: StoredRow, options?: boolean | RuntimeDtoOptions): ProjectedRow => {

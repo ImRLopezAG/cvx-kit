@@ -15,12 +15,7 @@ import type {
 	GroupSelection,
 	ExactGroupSelection,
 } from './relations'
-import {
-	createPlanner,
-	digest,
-	type QueryInput,
-	type StoredConstraint,
-} from './querying/planner'
+import { createPlanner, digest, type QueryInput, type StoredConstraint } from './querying/planner'
 import { executeQuery, type ExecutionRequest } from './querying/execution'
 import {
 	relationshipExecutor,
@@ -32,13 +27,15 @@ import {
 } from './querying/relationships'
 import {
 	createCursorCodec,
-	createScopedCursorCodec,
-	type ScopedCursorOptions,
-	type ScopedCursorCodec,
 	createEnvironmentCursorCodec,
 	type CursorCodecConfig,
 	type CursorBinding,
 } from './querying/cursors'
+import {
+	createScopedCursorCodec,
+	type ScopedCursorOptions,
+	type ScopedCursorCodec,
+} from './querying/v1-zod-cursors'
 import {
 	createManagedSecurity,
 	type ManagedSecurityConfig,
@@ -56,7 +53,7 @@ export { SearchError } from './querying/search'
 export type { SearchPaginationResult } from './querying/search'
 export { queryFailureContract } from './querying/failures'
 export { CursorError } from './querying/cursors'
-export type { ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
+export type { ScopedCursorOptions, ScopedCursorCodec } from './querying/v1-zod-cursors'
 
 const emptyGroups: ResolvedGroups = { fieldGroups: {}, relations: {} }
 
@@ -495,14 +492,7 @@ export function createQueryEngine<
 					planner.select(table, selection)
 					assertRelationshipDepth(selection, route?.path.length ?? 0)
 					const searchPlan = search
-						? planSearch(
-								planner,
-								table,
-								search.index,
-								search.text,
-								input,
-								constraints,
-							)
+						? planSearch(planner, table, search.index, search.text, input, constraints)
 						: undefined
 					const plan =
 						searchPlan?.plan ??
@@ -595,11 +585,17 @@ export function createQueryEngine<
 						...groupBinding,
 						scope: { ...request.scope },
 					}
-					if (searchPlan) serverFilters.search = {
-						mode: 'search', text: searchPlan.text,
-						index: {...searchPlan.metadata, filterFields: [...searchPlan.metadata.filterFields]},
-						equalities: searchPlan.equalities, scanLimit: searchPlan.scanLimit ?? null,
-					}
+					if (searchPlan)
+						serverFilters.search = {
+							mode: 'search',
+							text: searchPlan.text,
+							index: {
+								...searchPlan.metadata,
+								filterFields: [...searchPlan.metadata.filterFields],
+							},
+							equalities: searchPlan.equalities,
+							scanLimit: searchPlan.scanLimit ?? null,
+						}
 					const binding: CursorBinding = {
 						table: route?.table ?? table,
 						index: searchPlan?.metadata.name ?? plan.index?.name ?? 'by_creation_time',

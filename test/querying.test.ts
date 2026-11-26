@@ -22,7 +22,8 @@ import {
 	cursor,
 	scope,
 } from './fixture-querying/scalar'
-import type { FilterScalar, ScalarFilters, ScalarSelection } from '../src/querying/filters'
+import type { FilterScalar } from '../src/querying/filters'
+import type { ScalarFilters, ScalarSelection } from '../src/querying/v1-zod-filters'
 import { z } from 'zod'
 import type { DM } from './fixture-querying/scalar'
 import type { DataModelFromSchemaDefinition, DocumentByName } from 'convex/server'

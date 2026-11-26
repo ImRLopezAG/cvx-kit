@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { expect, test, vi } from 'vite-plus/test'
 import { z } from 'zod'
 import type { GenericValidator, ValidatorJSON } from 'convex/values'
-import { compactArgumentBoundary } from '../src/querying/filter-boundary'
+import { compactArgumentBoundary } from '../src/querying/v1-zod-filter-boundary'
 import { defineRelations } from '../src/relations'
 import { zodToConvex } from '../src/zod-convex'
 import { zid, zodTable, zodVariantTable } from '../src/zod-table'
@@ -125,7 +125,11 @@ function observe(schema: z.ZodType, inputs: readonly unknown[]) {
 
 type Case = readonly [string, (registry: Registry) => z.ZodType, readonly unknown[]]
 const cases: Case[] = [
-	['paginationOpts scalar', (r) => r.tables.items.paginationOpts({ title: true, count: true }), optionInputs],
+	[
+		'paginationOpts scalar',
+		(r) => r.tables.items.paginationOpts({ title: true, count: true }),
+		optionInputs,
+	],
 	[
 		'paginationOpts relation join',
 		(r) => r.tables.items.paginationOpts({ title: true, target: { name: true } }),
@@ -142,14 +146,22 @@ const cases: Case[] = [
 	],
 	[
 		'paginationOpts compact',
-		(r) => r.tables.items.paginationOpts({ title: true, target: { name: true } }, { validator: 'compact' }),
+		(r) =>
+			r.tables.items.paginationOpts(
+				{ title: true, target: { name: true } },
+				{ validator: 'compact' },
+			),
 		optionInputs,
 	],
 	['pageDto scalar', (r) => r.tables.items.pageDto({}), pageInputs],
 	['pageDto relation join', (r) => r.tables.items.pageDto({ target: true }), pageInputs],
 	['pageDto variant', (r) => r.tables.source.pageDto({}), pageInputs],
 	['pageDto variant relation', (r) => r.tables.source.pageDto({ target: true }), pageInputs],
-	['pageDto field groups', (r) => r.tables.items.pageDto({}, { fieldGroups: { private: 'required' } }), pageInputs],
+	[
+		'pageDto field groups',
+		(r) => r.tables.items.pageDto({}, { fieldGroups: { private: 'required' } }),
+		pageInputs,
+	],
 ]
 
 test.each(cases)('%s: calls 1, 2 and 3 validate identically', (_, build, inputs) => {

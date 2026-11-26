@@ -1,5 +1,5 @@
 import { v, type GenericId } from 'convex/values'
-import { defineFilterContract, type SharedFilters } from '../src/filters'
+import { defineFilterContract, type SharedFilters } from '../src/querying/v1-zod-contract'
 import { zodTable } from '../src/zod-table'
 import { defineRelations } from '../src/relations-public'
 const fields = {

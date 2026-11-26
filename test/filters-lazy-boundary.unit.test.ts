@@ -5,7 +5,7 @@ import {
 	relationFilterSchema,
 	scalarPredicateFromSchema,
 	type FilterGrammar,
-} from '../src/querying/shared/filters'
+} from '../src/querying/v1-zod-shared-filters'
 
 /**
  * people -team(one)-> teams -members(many)-> people, plus a variant table whose

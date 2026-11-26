@@ -19,7 +19,7 @@ import { ConvexError, type PropertyValidators, type Value } from 'convex/values'
 import * as z from 'zod/v4'
 import * as zCore from 'zod/v4/core'
 import { zodToConvex } from './zod-convex'
-import { compactArgumentBoundary } from './querying/filter-boundary'
+import { compactArgumentBoundary } from './querying/v1-zod-filter-boundary'
 import { memoize } from './modules/contracts/lazy'
 
 export function zCustomQuery<

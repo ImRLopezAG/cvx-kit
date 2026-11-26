@@ -1,4 +1,4 @@
-import { sharedNativeValidator } from './querying/shared/contract'
+import { sharedNativeValidator } from './querying/v1-zod-contract'
 import {
 	zodToConvex as helperZodToConvex,
 	type ConvexValidatorFromZod,

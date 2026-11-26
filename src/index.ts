@@ -97,6 +97,6 @@ export {
 	type RelationTables,
 	type RelationDeclarations,
 } from './relations'
-export type { ServerFilter, ScalarFilters, ScalarSelection } from './querying/filters'
+export type { ServerFilter, ScalarFilters, ScalarSelection } from './querying/v1-zod-filters'
 export { createQueryEngine, type QueryEngineConfig } from './querying'
 export { k } from './k'

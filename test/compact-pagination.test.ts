@@ -13,7 +13,7 @@ import {
 	paginationGrammar,
 	normalizeFilters,
 	type FilterGrammar,
-} from '../src/querying/shared/filters'
+} from '../src/querying/v1-zod-shared-filters'
 
 const stages = [
 	's0',
@@ -152,7 +152,7 @@ describe('compact pagination grammar association', () => {
 	})
 })
 
-import { compactNativeFilter } from '../src/querying/filter-boundary'
+import { compactNativeFilter } from '../src/querying/v1-zod-filter-boundary'
 
 describe('compact native projection', () => {
 	test('retains exact common predicates and IDs while compacting only deep nodes', async () => {

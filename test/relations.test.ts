@@ -13,7 +13,7 @@ import {
 	type RelationDeclarations,
 	type RelationRegistry,
 } from '../src/relations'
-import { compileFilters } from '../src/querying/filters'
+import { compileFilters } from '../src/querying/v1-zod-filters'
 import { zodTable, zodToConvex } from '../src/zod-table'
 
 function fixture() {

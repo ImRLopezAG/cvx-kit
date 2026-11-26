@@ -14,7 +14,13 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
  * v2 core entries that must never pull Zod into a Convex function bundle. Append each new v2 entry
  * (src/table.ts, src/registration.ts, ...) here; v1 entries still import Zod until the cutover.
  */
-const coreEntries = ['src/k.ts', 'src/json-schema.ts', 'src/table.ts', 'src/registration.ts']
+const coreEntries = [
+	'src/k.ts',
+	'src/json-schema.ts',
+	'src/table.ts',
+	'src/registration.ts',
+	'src/filters.ts',
+]
 const zodInputs = [/node_modules\/zod\//, /node_modules\/convex-helpers\/server\/zod4/]
 
 /** Bundle a module that re-exports `entries` like Convex does, and return the input bytes by path. */
@@ -75,5 +81,19 @@ describe('v2 bundles', () => {
 		const inputs = await bundleInputs('k-only', ['src/k.ts'])
 		expect(bytesMatching(inputs, [/src\/json-schema\.ts$/])).toBe(0)
 		expect(bytesMatching(inputs, [/src\/k\//])).toBeGreaterThan(0)
+	})
+
+	it('keep server code and Zod out of the browser-safe cvx-kit/filters entry', async () => {
+		const inputs = await bundleInputs('filters', ['src/filters.ts'])
+		expect(bytesMatching(inputs, zodInputs)).toBe(0)
+		const server = [
+			/node_modules\/convex\/dist\/esm\/server\//,
+			/node_modules\/convex-helpers\//,
+			/node_modules\/@noble\//,
+			/src\/querying\/(?!shared\/)/,
+			/src\/(table|registration|zod[^/]*)\.ts$/,
+		]
+		expect(inputs.filter(({ input }) => server.some((pattern) => pattern.test(input)))).toEqual([])
+		expect(bytesMatching(inputs, [/src\/querying\/shared\/contract\.ts$/])).toBeGreaterThan(0)
 	})
 })

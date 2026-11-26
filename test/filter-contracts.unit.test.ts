@@ -1,6 +1,6 @@
 import { expect, test } from 'vite-plus/test'
 import { v } from 'convex/values'
-import { defineFilterContract } from '../src/filters'
+import { defineFilterContract } from '../src/querying/v1-zod-contract'
 
 test('one pure declaration supplies bounded scalar filters', () => {
 	const contract = defineFilterContract({

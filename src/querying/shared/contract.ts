@@ -1,8 +1,6 @@
-import { z } from 'zod'
 import {
 	convexToJson,
 	jsonToConvex,
-	v,
 	type GenericId,
 	type JSONValue,
 	type ValidatorJSON,
@@ -10,55 +8,48 @@ import {
 	type Value,
 } from 'convex/values'
 import {
+	k,
+	type KBoolean,
+	type KId,
+	type KInt64,
+	type KLiteral,
+	type KNull,
+	type KNumber,
+	type KOptional,
+	type KSchema,
+	type KString,
+	type KType,
+} from '../../k'
+import {
 	boundedFilterSchema,
 	normalizeFilters,
 	scalarPredicateFromSchema,
+	unionOf,
 	type FilterTree,
+	type KFilterSchema,
 } from './filters'
 import { evaluateFilter } from './evaluate'
 
-// Metadata only: no parser callbacks or server state cross this boundary.
-const nativeSchemas = new WeakMap<z.core.$ZodType, GenericValidator>()
-// Zod preserves a custom predicate through clone/describe/meta/refine. Associate
-// ID metadata with that private predicate too, so those derivations stay native IDs.
-const nativeIdPredicates = new WeakMap<z.core.$ZodCustom['_zod']['def']['fn'], GenericValidator>()
-export function sharedNativeValidator(schema: z.core.$ZodType): GenericValidator | undefined {
-	const validator =
-		nativeSchemas.get(schema) ??
-		(schema instanceof z.core.$ZodCustom ? nativeIdPredicates.get(schema._zod.def.fn) : undefined)
-	return validator ? cloneNative(validator) : undefined
-}
 type RequiredSharedField<V extends GenericValidator> = V extends { kind: 'string' }
-	? z.ZodString
+	? KString
 	: V extends { kind: 'float64' }
-		? z.ZodNumber
+		? KNumber
 		: V extends { kind: 'int64' }
-			? z.ZodBigInt
+			? KInt64
 			: V extends { kind: 'boolean' }
-				? z.ZodBoolean
+				? KBoolean
 				: V extends { kind: 'null' }
-					? z.ZodNull
+					? KNull
 					: V extends { kind: 'literal'; value: infer L extends string | number | bigint | boolean }
-						? z.ZodLiteral<L>
-						: V extends { kind: 'id' }
-							? z.ZodCustom<Extract<V['type'], GenericId<string>>, string>
-							: V extends { kind: 'union'; members: [] }
-								? z.ZodUnion<[]>
-								: V extends {
-											kind: 'union'
-											members: [
-												infer A extends GenericValidator,
-												...infer R extends GenericValidator[],
-											]
-									  }
-									? z.ZodUnion<readonly [SharedField<A>, ...{ [K in keyof R]: SharedField<R[K]> }]>
-									: V extends { kind: 'union'; members: (infer E extends GenericValidator)[] }
-										? [GenericValidator] extends [E]
-											? z.ZodUnion<readonly z.core.SomeType[]>
-											: z.ZodUnion<readonly SharedField<E>[]>
-										: never
+						? KLiteral<L>
+						: V extends { kind: 'id'; type: infer I }
+							? KId<Extract<I, GenericId<string>> extends GenericId<infer T> ? T : string>
+							: V extends { kind: 'union' }
+								? KSchema<Exclude<V['type'], undefined>>
+								: never
+/** The `k` schema a shared filter contract generates for one native scalar validator. */
 export type SharedField<V extends GenericValidator> = V extends { isOptional: 'optional' }
-	? z.ZodOptional<RequiredSharedField<V>>
+	? KOptional<RequiredSharedField<V>>
 	: RequiredSharedField<V>
 type FieldSchemas<F extends Record<string, GenericValidator>> = {
 	[K in keyof F]: SharedField<F[K]>
@@ -115,7 +106,7 @@ export interface FilterDescriptor {
 export interface FilterContract<F extends Record<string, GenericValidator>> {
 	readonly fields: FieldSchemas<F>
 	readonly native: Readonly<Record<string, { json: ValidatorJSON; optional: boolean }>>
-	readonly schema: z.ZodType<SharedFilters<F>, SharedFilters<F, 'input'>>
+	readonly schema: KFilterSchema<SharedFilters<F>, SharedFilters<F, 'input'>>
 	describe(): readonly FilterDescriptor[]
 	evaluate(
 		filters: SharedFilters<F, 'input'>,
@@ -136,29 +127,26 @@ export interface FilterContract<F extends Record<string, GenericValidator>> {
 export function defineFilterContract<const F extends Record<string, GenericValidator>>(
 	input: F,
 ): FilterContract<F> {
-	type Schemas = Record<string, z.ZodType>
-	const fields: Schemas = {},
-		predicates: Record<string, z.ZodType> = {}
+	const fields: Record<string, KType> = {},
+		predicates: Record<string, KType> = {}
 	const native: Record<string, { json: ValidatorJSON; optional: boolean }> = {}
 	const descriptors: FilterDescriptor[] = []
 	for (const [field, validator] of Object.entries(input)) {
 		if (['__proto__', 'constructor', 'prototype'].includes(field))
 			throw new Error('Unsupported filter field')
 		const scalar = scalarSchema(validator)
-		fields[field] = validator.isOptional === 'optional' ? scalar.optional() : scalar
+		fields[field] = validator.isOptional === 'optional' ? schemaOf(scalar).optional() : scalar
 		const operators = ['eq', 'in']
 		if (ordered(validator)) operators.push('gt', 'gte', 'lt', 'lte')
 		if (validator.isOptional === 'optional') operators.push('exists')
-		predicates[field] = scalarPredicateFromSchema(
-			scalar,
-			ordered(validator),
-			validator.isOptional === 'optional',
+		predicates[field] = schemaOf(
+			scalarPredicateFromSchema(scalar, ordered(validator), validator.isOptional === 'optional'),
 		).optional()
 		native[field] = { json: nativeJson(validator), optional: validator.isOptional === 'optional' }
 		descriptors.push(describe(field, validator, operators))
 	}
 	// SAFETY: every selected native scalar generates precisely the mapped predicate grammar.
-	const schema = boundedFilterSchema(predicates) as z.ZodType<
+	const schema = boundedFilterSchema(predicates) as KFilterSchema<
 		SharedFilters<F>,
 		SharedFilters<F, 'input'>
 	>
@@ -205,53 +193,44 @@ export function defineFilterContract<const F extends Record<string, GenericValid
 		searchParam: Object.freeze({ encode, decode }),
 	})
 }
-function scalarSchema(validator: GenericValidator): z.ZodType {
-	let result: z.ZodType
+/** Signed 64-bit range, which Convex's int64 enforces on write and v1's contract checked on parse. */
+const INT64_MIN = -(1n << 63n)
+const INT64_MAX = (1n << 63n) - 1n
+
+/** Read the native declaration once: later edits to the caller's validators cannot reach the contract. */
+function scalarSchema(validator: GenericValidator): KType {
 	switch (validator.kind) {
 		case 'string':
-			result = z.string()
-			break
+			return k.string()
 		case 'float64':
-			result = z.number()
-			break
+			return k.number().refine(Number.isFinite, 'Invalid input: expected a finite number')
 		case 'int64':
-			result = z
-				.bigint()
-				.min(-(1n << 63n))
-				.max((1n << 63n) - 1n)
-			break
+			return k
+				.int64()
+				.refine(
+					(value) => value >= INT64_MIN && value <= INT64_MAX,
+					'Expected a signed 64-bit integer',
+				)
 		case 'boolean':
-			result = z.boolean()
-			break
+			return k.boolean()
 		case 'null':
-			result = z.null()
-			break
+			return k.null()
 		case 'literal':
-			result = z.literal(validator.value)
-			break
+			return k.literal(validator.value)
 		case 'id':
-			result = z.custom<string>((value) => z.string().safeParse(value).success)
-			break
+			return k.id(validator.tableName)
 		case 'union':
-			result = z.union(validator.members.map(scalarSchema))
-			break
+			return unionOf(validator.members.map(scalarSchema))
 		default:
 			throw new Error(
 				`Unsupported shared scalar kind "${validator.kind}"; relations and variants require a server contract`,
 			)
 	}
-	// Capture immutable scalar metadata. Binding and conversion never consult mutable callers.
-	const native = cloneNative(validator, false)
-	nativeSchemas.set(result, native)
-	if (validator.kind === 'id' && result instanceof z.core.$ZodCustom)
-		nativeIdPredicates.set(result._zod.def.fn, native)
-	return result
 }
 function ordered(validator: GenericValidator): boolean {
 	return (
 		['string', 'float64', 'int64'].includes(validator.kind) ||
-		(validator.kind === 'literal' &&
-			z.union([z.string(), z.number(), z.bigint()]).safeParse(validator.value).success) ||
+		(validator.kind === 'literal' && orderedLiteral(validator.value)) ||
 		(validator.kind === 'union' && validator.members.every(ordered))
 	)
 }
@@ -323,39 +302,6 @@ function nativeJson(validator: GenericValidator): ValidatorJSON {
 	// SAFETY: native scalar validators expose json at runtime, stripped from declarations.
 	return (validator as GenericValidator & { json: ValidatorJSON }).json
 }
-function cloneNative(validator: GenericValidator, optional = true): GenericValidator {
-	let result: GenericValidator
-	switch (validator.kind) {
-		case 'id':
-			result = v.id(validator.tableName)
-			break
-		case 'string':
-			result = v.string()
-			break
-		case 'float64':
-			result = v.float64()
-			break
-		case 'int64':
-			result = v.int64()
-			break
-		case 'null':
-			result = v.null()
-			break
-		case 'boolean':
-			result = v.boolean()
-			break
-		case 'literal':
-			result = v.literal(validator.value)
-			break
-		case 'union':
-			result = v.union(...validator.members.map((member) => cloneNative(member)))
-			break
-		default:
-			throw new Error('Unsupported shared scalar')
-	}
-	return optional && validator.isOptional === 'optional' ? v.optional(result) : result
-}
-
 function freezeMetadata<T>(value: T): T {
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Traverse only JSON containers or owned metadata; no domain narrowing occurs.
 	if (value && typeof value === 'object') {
@@ -392,4 +338,15 @@ function withinUrlSize(value: FilterTree): boolean {
 		}
 	}
 	return true
+}
+
+// oxlint-disable-next-line anti-slop/no-runtime-typeof -- A native literal value is classified by representation.
+function orderedLiteral(value: string | number | bigint | boolean): boolean {
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Booleans are the only literals without an order.
+	return typeof value !== 'boolean'
+}
+
+function schemaOf(schema: KType): KSchema<any, any, any, any, any> {
+	// SAFETY: every KType at runtime is a KSchema record created by a k factory.
+	return schema as KSchema<any, any, any, any, any>
 }

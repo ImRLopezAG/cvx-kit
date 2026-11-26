@@ -1,4 +1,4 @@
-import type { FilterContract, SharedFilters } from './filters'
+import type { FilterContract, SharedFilters } from './querying/v1-zod-contract'
 import { z } from 'zod'
 import {
 	captureDto,
@@ -19,7 +19,7 @@ import {
 	type JSONValue,
 } from 'convex/values'
 import type { EnginePaginationResult } from './zod-table'
-import { pageResult } from './querying/shared/page'
+import { pageResult } from './querying/v1-zod-filters'
 import {
 	nativePagination,
 	relationFilterSchema,
@@ -29,8 +29,8 @@ import {
 	type PaginationOptionsSchema,
 	type ScalarSelection,
 	type ScalarPredicate,
-} from './querying/filters'
-import { lazyRelationFilterSchema } from './querying/shared/filters'
+} from './querying/v1-zod-filters'
+import { lazyRelationFilterSchema } from './querying/v1-zod-shared-filters'
 
 export type PaginationFiltersInput<Schema extends z.ZodType> =
 	z.input<Schema> extends { filters?: infer Filters } ? Exclude<Filters, undefined> : never

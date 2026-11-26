@@ -20,7 +20,7 @@ import {
 	relationFilterSchema,
 	scalarPredicateFromSchema,
 	type FilterGrammar,
-} from '../src/querying/shared/filters'
+} from '../src/querying/v1-zod-shared-filters'
 import { zodToConvex } from '../src/zod-convex'
 
 const grammar: FilterGrammar = {

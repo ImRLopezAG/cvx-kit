@@ -25,7 +25,11 @@ import {
 	zCustomMutation as kitMutation,
 	zCustomAction as kitAction,
 } from '../src/zod-registration'
-import { relationFilterSchema, scalarPredicateFromSchema, type FilterGrammar } from '../src/querying/shared/filters'
+import {
+	relationFilterSchema,
+	scalarPredicateFromSchema,
+	type FilterGrammar,
+} from '../src/querying/v1-zod-shared-filters'
 
 const implementations = [
 	{
@@ -101,7 +105,9 @@ for (const impl of implementations) {
 				return builder({ args: z.string(), returns: z.date(), handler: () => new Date() })
 			}).toThrow(
 				// The kit defers conversion to export, so the registration-time shape check wins.
-				lazy ? 'Unsupported zod type as args validator' : 'Validator ZodDate is not supported in Convex',
+				lazy
+					? 'Unsupported zod type as args validator'
+					: 'Validator ZodDate is not supported in Convex',
 			)
 			const register = () => builder({ returns: z.date(), handler: () => new Date() })
 			if (lazy)
@@ -684,7 +690,10 @@ describe('registration metadata parity', () => {
 		customInputArgs: () =>
 			kitQuery(queryGeneric, tokenInput)({ args: { value: z.string() }, handler: () => null }),
 		zodObjectReturns: () =>
-			kitQuery(queryGeneric, NoOp)({ returns: z.object({ a: z.string() }), handler: () => ({ a: '' }) }),
+			kitQuery(
+				queryGeneric,
+				NoOp,
+			)({ returns: z.object({ a: z.string() }), handler: () => ({ a: '' }) }),
 		fieldReturns: () =>
 			kitQuery(
 				queryGeneric,
@@ -948,6 +957,8 @@ describe('registration metadata parity', () => {
 			},
 			handler: () => null,
 		})
-		expect(() => runtime(fn).exportArgs()).toThrow('Unsupported zod type as args validator: ZodString')
+		expect(() => runtime(fn).exportArgs()).toThrow(
+			'Unsupported zod type as args validator: ZodString',
+		)
 	})
 })

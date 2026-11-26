@@ -7,7 +7,8 @@ import {
 	getRelationMetadata,
 	type RelationRegistryIdentity,
 } from '../relations'
-import { parseFilterPlan, type FilterAst, type IndexCondition } from './filters'
+import type { FilterAst, IndexCondition } from './filters'
+import { parseFilterPlan } from './v1-zod-filters'
 
 interface SelectionTree {
 	[name: string]: true | SelectionTree

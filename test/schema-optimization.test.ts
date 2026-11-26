@@ -1,7 +1,7 @@
 import { expect, test } from 'vite-plus/test'
 import { defineSchema } from 'convex/server'
 import { z } from 'zod'
-import { compileFilters } from '../src/querying/filters'
+import { compileFilters } from '../src/querying/v1-zod-filters'
 import { createPlanner } from '../src/querying/planner'
 import { defineRelations, getRelationExecutor } from '../src/relations'
 import { zodTable, zodVariantTable } from '../src/zod-table'

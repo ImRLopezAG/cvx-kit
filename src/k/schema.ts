@@ -119,15 +119,12 @@ export abstract class KSchema<
 		return new KPipe(this, 'pipe', target, undefined)
 	}
 
-	/**
-	 * Zod's `.catch`: when this schema reports issues, parse succeeds with `fallback` instead (a function
-	 * receives `{ issues, input }`). The fallback is not validated. Natively the input side is `v.any()`,
-	 * so the kit checks the whole value itself at a function boundary; table fields and return shapes
-	 * reject it, like `transform`.
-	 */
+	/** Zod's `.catch`. */
 	catch(fallback: Out | ((context: KCatchContext) => Out)): KCatch<this> {
 		// SAFETY: a fallback is this schema's output, a Convex value, or a callback producing one.
-		return new KCatch(this, 'catch', fallback as KArg, undefined)
+		const record: KNode = new KTransform(this, 'catch', fallback as KArg, undefined)
+		// SAFETY: KCatch declares types only; KTransform lends the runtime class, as behaviour keys on the op.
+		return record as KCatch<this>
 	}
 
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
@@ -335,12 +332,8 @@ export class KPipe<I extends KType, P extends KType> extends KSchema<
 	declare readonly _oo: OutputNativeOf<P>
 }
 
-/**
- * A schema with a fallback. The input side is `v.any()` (optional when the wrapped schema is), as the
- * fallback accepts any input; the input type stays the wrapped schema's, as in Zod 4. The output side
- * is the wrapped schema's.
- */
-export class KCatch<I extends KType> extends KSchema<
+// A schema with a fallback: natively `v.any()` on input, the wrapped schema on output.
+export declare class KCatch<I extends KType> extends KSchema<
 	I['_output'],
 	VAny<I['validator']['type']>,
 	true,
@@ -351,11 +344,6 @@ export class KCatch<I extends KType> extends KSchema<
 > {
 	declare readonly _or: KOutputRequired<I>
 	declare readonly _oo: OutputNativeOf<I>
-
-	/** The schema below the fallback, as Zod's `removeCatch()`. */
-	unwrap(): I {
-		return this.wrapped<I>('catch')
-	}
 }
 
 type NullableOf<V extends KRequiredValidator> = VUnion<V['type'] | null, [V, VNull<null>]>

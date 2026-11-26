@@ -24,10 +24,7 @@ import type {
 
 /**
  * A strict object. `pick`, `omit`, `extend`, `partial` and `required` build a new object root over the
- * same field schema instances, so retained fields keep their checks, defaults and normalisers. An
- * object-level `refine`, `check` or `overwrite` may read fields the new object lacks or makes optional,
- * so on a receiver that has one these methods throw unless the last argument opts in:
- * `{ dropChecks: true }` drops them, and `extend(fields, { keepChecks: true })` re-attaches them.
+ * same field schema instances; with object-level checks they throw unless told to drop or keep them.
  */
 export class KObject<F extends KFields> extends KSchema<
 	KAnyDiffers<F> extends true ? KObjectOutput<F> : ObjectType<KNativeFields<F>>,
@@ -68,10 +65,7 @@ export class KObject<F extends KFields> extends KSchema<
 		return object(retyped<Omit<F, K>>(out))
 	}
 
-	/**
-	 * Add or replace fields; a key present in both takes the new schema. `{ keepChecks: true }` runs the
-	 * receiver's object-level checks against the extended value, in their declared order.
-	 */
+	/** Add or replace fields; a key present in both takes the new schema. */
 	extend<E extends KFields>(
 		fields: E,
 		options?: KExtendOptions,
@@ -127,11 +121,7 @@ export class KObject<F extends KFields> extends KSchema<
 		return this.link('strip', undefined, undefined)
 	}
 
-	/**
-	 * Parse keeps unknown own enumerable keys in the output unchanged, as Zod's `looseObject`. The native
-	 * validator stays the closed object (v1's conversion of a loose object), so Convex still rejects
-	 * unknown keys in args, returns and documents; the output type names the declared fields only.
-	 */
+	/** Keep unknown keys on parse. */
 	loose(): this {
 		return this.link('loose', undefined, undefined)
 	}
@@ -172,7 +162,6 @@ export function object<F extends KFields>(fields: F): KObject<F> {
 	return new KObject<F>(null, 'object', fields, undefined)
 }
 
-/** `z.looseObject`: `k.object(fields).loose()`. */
 export function looseObject<F extends KFields>(fields: F): KObject<F> {
 	return object(fields).loose()
 }
@@ -289,38 +278,26 @@ function checkedKeys(keys: readonly string[], factory: string): readonly string[
 	return keys
 }
 
-/** The keys of a mask call, after checking the receiver's object-level checks against its options. */
 function maskKeys(node: KNode, method: string, args: readonly (string | KDeriveOptions)[]): string[] {
-	const keys: string[] = []
-	let options: KDeriveOptions | undefined
-	for (const arg of args) {
-		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a mask call's trailing argument may be its options object.
-		if (typeof arg === 'string') keys.push(arg)
-		else options = arg
-	}
+	const last = args[args.length - 1]
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a mask call's trailing argument may be its options object.
+	const options = typeof last === 'object' ? last : undefined
 	derivedChecks(node, method, options)
-	return keys
+	// SAFETY: every argument before the trailing options object is a key.
+	return (options === undefined ? args : args.slice(0, -1)) as string[]
 }
 
-/**
- * The object-level checks of a receiver, oldest first. A derivation that would lose them throws at
- * declaration unless its options opt in, so cross-field validation is never dropped silently.
- */
-function derivedChecks(
-	node: KNode,
-	method: string,
-	options: KExtendOptions | undefined,
-): readonly KNode[] {
+// The receiver's object-level checks, oldest first; throws when they would be lost silently.
+function derivedChecks(node: KNode, method: string, options: KExtendOptions | undefined): KNode[] {
 	const checks: KNode[] = []
 	for (let current = node; current.prev !== null; current = current.prev)
 		if (current.op === 'refine' || current.op === 'check' || current.op === 'overwrite')
 			checks.unshift(current)
-	if (checks.length === 0 || options !== undefined) return checks
-	const count = checks.length === 1 ? '1 object-level check' : `${checks.length} object-level checks`
-	const keep = method === 'extend' ? ", or pass { keepChecks: true } to run them on the extended object" : ''
-	throw new Error(
-		`k.object().${method}() would drop ${count} (refine, check or overwrite on the object): pass { dropChecks: true } to drop ${checks.length === 1 ? 'it' : 'them'}${keep}`,
-	)
+	if (checks.length > 0 && options === undefined)
+		throw new Error(
+			`k: ${method}() would drop ${checks.length} object-level check(s); pass { dropChecks: true }${method === 'extend' ? ' or { keepChecks: true }' : ''}`,
+		)
+	return checks
 }
 
 /** The field map built by pick, omit, extend or partial, under the type its method states. */

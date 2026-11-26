@@ -254,8 +254,7 @@ const catchAssertions: [
 	Assert<Equal<k.input<typeof caughtRole>, 'admin' | 'member'>>,
 	Assert<Equal<k.output<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
 	Assert<Equal<k.input<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
-	Assert<Equal<ReturnType<typeof caughtRole.unwrap>['_output'], 'admin' | 'member'>>,
-] = [true, true, true, true, true]
+] = [true, true, true, true]
 void catchAssertions
 // @ts-expect-error the fallback is the schema's output.
 k.string().catch(1)

@@ -8,17 +8,17 @@ const range = k
 describe('derived objects and object-level checks', () => {
 	it('throws on every derivation that would drop object-level checks', () => {
 		expect(() => range.pick('from')).toThrow(
-			'k.object().pick() would drop 1 object-level check (refine, check or overwrite on the object): pass { dropChecks: true } to drop it',
+			'k: pick() would drop 1 object-level check(s); pass { dropChecks: true }',
 		)
 		expect(() => range.omit('note')).toThrow('omit() would drop 1 object-level check')
 		expect(() => range.partial()).toThrow('partial() would drop 1 object-level check')
 		expect(() => range.required()).toThrow('required() would drop 1 object-level check')
 		expect(() => range.required('note')).toThrow('required() would drop')
 		expect(() => range.extend({})).toThrow(
-			'extend() would drop 1 object-level check (refine, check or overwrite on the object): pass { dropChecks: true } to drop it, or pass { keepChecks: true } to run them on the extended object',
+			'extend() would drop 1 object-level check(s); pass { dropChecks: true } or { keepChecks: true }',
 		)
 		const twice = range.check(() => {})
-		expect(() => twice.pick('to')).toThrow('would drop 2 object-level checks')
+		expect(() => twice.pick('to')).toThrow('would drop 2 object-level check(s)')
 	})
 
 	it('drops the checks with { dropChecks: true }', () => {

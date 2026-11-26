@@ -91,7 +91,7 @@ describe('k.jsonObject()', () => {
 					path: ['a', '$ref'],
 					code: 'invalid_format',
 					message:
-						"Invalid object key: Convex object keys are printable ASCII, at most 1024 characters, and do not start with '$'",
+						'Invalid object key: not a Convex field name',
 				},
 			],
 		})

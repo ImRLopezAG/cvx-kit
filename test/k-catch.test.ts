@@ -118,6 +118,5 @@ describe('k .catch()', () => {
 		})
 		expect(() => toZod(schema)).toThrow('toZod: .catch() is not carried')
 		expect(await schema['~standard'].validate({ n: 'x' })).toEqual({ value: { n: 1 } })
-		expect(k.string().catch('a').unwrap().parse('b')).toBe('b')
 	})
 })

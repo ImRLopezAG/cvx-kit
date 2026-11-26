@@ -208,7 +208,7 @@ What to do: where code relied on stripping (parsing a superset of fields, for ex
 
 ### Derived objects refuse to drop object-level checks
 
-`pick`, `omit`, `extend` (also `extend({})`), `partial` and `required` build a new object over the same field schemas; field checks are kept. On an object with a `refine`, `check` or `overwrite` declared on the object itself, they throw at declaration instead of silently dropping it: `k.object().extend() would drop 1 object-level check …`. Zod kept refinements through `extend` in some versions and dropped them in others, and Zod 4 throws on `.pick`/`.omit` of a refined object.
+`pick`, `omit`, `extend` (also `extend({})`), `partial` and `required` build a new object over the same field schemas; field checks are kept. On an object with a `refine`, `check` or `overwrite` declared on the object itself, they throw at declaration instead of silently dropping it: `k: extend() would drop 1 object-level check(s); pass { dropChecks: true } or { keepChecks: true }`. Zod kept refinements through `extend` in some versions and dropped them in others, and Zod 4 throws on `.pick`/`.omit` of a refined object.
 
 What to do: at each site, pass `{ dropChecks: true }` as the last argument to drop the checks (`schema.pick('a', 'b', { dropChecks: true })`), or on `extend`, `{ keepChecks: true }` to run them on the extended object. The codemod reports each mask or extend call on a refined object it can see as `derive-drops-checks`.
 

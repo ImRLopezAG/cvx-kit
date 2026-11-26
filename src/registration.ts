@@ -540,7 +540,7 @@ function asArgs(value: unknown): DefaultFunctionArgs {
 function nativeReturns(returns: unknown): GenericValidator {
 	if (returns instanceof KSchema) {
 		if (containsTransform(returns))
-			throw new Error('A returns schema cannot transform or catch: the kit does not run return transforms or fallbacks')
+			throw new Error('A returns schema cannot transform or catch: the kit does not run return transforms')
 		return returns.outputValidator
 	}
 	if (isNative(returns)) return returns

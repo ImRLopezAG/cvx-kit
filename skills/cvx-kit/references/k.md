@@ -170,7 +170,7 @@ Convex has no open object validator, so the native validator of a loose object i
 
 `k.jsonObject()` is any plain object of JSON values, for values that are not a Convex record, such as workflow step outputs carrying `_id`/`_creationTime`. It rejects arrays, `null`, class instances and non-JSON values (`undefined`, `NaN`, bigints, `ArrayBuffer`s). Its native validator is `v.any()`, because no typed validator accepts such an object: `v.record` refuses keys starting with `_` or `$`. Convex validates nothing about it, so the kit checks the whole value at a function boundary.
 
-Keys follow Convex's rule for object values, at any depth: at most 1024 characters, printable ASCII, and no leading `$`. That is `validateObjectField` in `convex/src/values/value.ts`, which Convex's client runs on every object value it serialises (`convexToJson`, `jsonToConvex`), so an argument or return value with a `$` key cannot cross the wire at all. A key that breaks it fails with `Invalid object key: Convex object keys … do not start with '$'` at that key. A leading `_` passes that rule, so `_`-prefixed keys work in arguments and return values. In stored documents, Convex reserves top-level `_` fields for system fields; whether the backend accepts `_`-prefixed keys nested in a `v.any()` field is enforced server-side and cannot be checked from the `convex` package, so test a write on your deployment before storing such keys.
+Keys follow Convex's rule for object values, at any depth: at most 1024 characters, printable ASCII, and no leading `$`. That is `validateObjectField` in `convex/src/values/value.ts`, which Convex's client runs on every object value it serialises (`convexToJson`, `jsonToConvex`), so an argument or return value with a `$` key cannot cross the wire at all. A key that breaks it fails with `Invalid object key: Convex refuses '$'-prefixed, …` at that key. The kit also refuses an empty key, which Convex's value rule allows. A leading `_` passes that rule, so `_`-prefixed keys work in arguments and return values. In stored documents, Convex reserves top-level `_` fields for system fields; whether the backend accepts `_`-prefixed keys nested in a `v.any()` field is enforced server-side and cannot be checked from the `convex` package, so test a write on your deployment before storing such keys.
 
 ```ts
 const stripeEvent = k.looseObject({ id: k.string(), type: k.string() })
@@ -201,7 +201,7 @@ k.object({ _tag: k.string() }).parse(new NotFound()) // throws: expected a plain
 
 ```ts
 const range = k.object({ from: k.int(), to: k.int() }).refine((r) => r.from <= r.to)
-range.extend({}) // throws: extend() would drop 1 object-level check
+range.extend({}) // throws: extend() would drop 1 object-level check(s)
 range.extend({ note: k.string() }, { keepChecks: true }) // still checks from <= to
 range.pick('from', { dropChecks: true }) // no check
 ```
@@ -249,10 +249,10 @@ role.parse('owner') // 'member'
 const level = k.int().min(0).catch(({ input }) => (typeof input === 'string' ? input.length : 0))
 ```
 
-- Types: output and input are the wrapped schema's, as in Zod 4. `.unwrap()` returns the wrapped schema.
+- Types: output and input are the wrapped schema's, as in Zod 4. There is no `.unwrap()`; keep a reference to the wrapped schema.
 - Native validators: the input side is `v.any()` (`v.optional(v.any())` when the wrapped schema is optional), because the fallback accepts any input; the output side is the wrapped schema's. Convex therefore validates nothing about the value, and at a function boundary the kit runs the wrapped schema's full structural check on it, not only declared checks.
 - Allowed in args and `parse`. Rejected on table fields and in `returns`, like `transform`: the stored or returned shape would become `v.any()`. v1 converted `ZodCatch` to the wrapped validator (convex-helpers `zodToConvex`), so Convex rejected a bad argument before the fallback could apply; in 2.0 the fallback applies.
-- `toJsonSchema` emits `{}` on the input side and the wrapped schema with `{ io: 'output' }`. `toZod` throws on a schema holding `catch` (`.catch() is not carried`): `z.catch` would add about 10 KB of Zod core to every bundle of the interop entry. Convert `.unwrap()` and add `z.catch` yourself.
+- `toJsonSchema` emits `{}` on the input side and the wrapped schema with `{ io: 'output' }`. `toZod` throws on a schema holding `catch` (`.catch() is not carried`): `z.catch` would add about 10 KB of Zod core to every bundle of the interop entry. Convert the wrapped schema and add `z.catch` yourself.
 
 ## Dates
 

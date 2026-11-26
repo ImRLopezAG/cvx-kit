@@ -28,8 +28,7 @@ export function compileNative(node: KNode): GenericValidator {
 		if (root.op === 'optional' || root.op === 'partial' || root.op === 'default') optional = true
 		else if (root.op === 'nullable') nullable = true
 		else if (root.op === 'catch') {
-			// A fallback accepts any input; it is optional when the schema it wraps is.
-			if (root.prev.validator.isOptional === 'optional') optional = true
+			optional ||= root.prev.validator.isOptional === 'optional'
 			caught = true
 			break
 		}

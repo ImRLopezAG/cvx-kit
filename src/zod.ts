@@ -99,7 +99,7 @@ function convert(node: KNode): Mini {
 			case 'catch':
 				// z.catch adds about 10 KB of zod/mini core to every bundle importing this entry.
 				throw new Error(
-					'toZod: .catch() is not carried; convert the schema below the fallback (.unwrap()) and add z.catch yourself',
+					'toZod: .catch() is not carried; convert the wrapped schema and add z.catch yourself',
 				)
 			case 'default':
 				if (!transformed && !(partialAt >= 0 && index > partialAt)) out = withDefault(out, record)

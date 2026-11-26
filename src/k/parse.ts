@@ -1,5 +1,6 @@
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- This module is the decoding boundary: it receives undecoded values, narrows them by representation and hands them back as the schema's output, which the typed callers in schema.ts name. */
 import { membersOf } from './compile'
+import { isFieldName } from './names'
 import { KConversionFailure, isIsoDate, isIsoDateTime, isTimestamp, maxTimestamp } from './formats'
 import {
 	KValidationError,
@@ -81,10 +82,7 @@ export function hasDeclaredBehaviour(schema: KNode): boolean {
 	return planOf(schema).declared
 }
 
-/**
- * Whether a transform, pipe or catch sits anywhere in the schema's tree; table fields and return shapes
- * reject it (a catch's input side is `v.any()`, so it would change the stored shape).
- */
+/** Whether a transform, pipe or catch sits anywhere in the tree; table fields and returns reject it. */
 export function containsTransform(schema: KNode): boolean {
 	return planOf(schema).transform
 }
@@ -282,33 +280,20 @@ function walk(
 			const input = walk(node.prev, value, context, full, strip)
 			return input === FAIL ? FAIL : walk(argSchema(node), input, context, true, false)
 		}
-		case 'catch':
-			return walkCatch(node, node.prev, value, context, strip)
+		case 'catch': {
+			// Convex validated only `v.any()`, so the wrapped schema runs in full.
+			const issues = context.issues
+			context.issues = []
+			const output = walk(node.prev, value, context, true, strip)
+			const caught = context.issues
+			context.issues = issues
+			if (output !== FAIL && caught.length === 0) return output
+			if (typeof node.arg !== 'function') return node.arg
+			return callbackResult(callbackOf(node)({ issues: caught, input: value }), context, 'catch')
+		}
 		default:
 			return walkRun(node, value, context, full, strip)
 	}
-}
-
-/**
- * A fallback: Convex validated only `v.any()` for this value, so the wrapped schema always runs in
- * full. Its issues are discarded and the fallback (not validated) takes the value's place.
- */
-function walkCatch(
-	node: KNode,
-	inner: KNode,
-	value: unknown,
-	context: WalkContext,
-	strip: Keys,
-): unknown {
-	const issues = context.issues
-	context.issues = []
-	const output = walk(inner, value, context, true, strip)
-	const caught = context.issues
-	context.issues = issues
-	if (output !== FAIL && caught.length === 0) return output
-	const fallback = node.arg
-	if (typeof fallback !== 'function') return fallback
-	return callbackResult(callbackOf(node)({ issues: caught, input: value }), context, 'catch')
 }
 
 function walkRun(
@@ -514,56 +499,37 @@ function walkRoot(
 			if (isJson(value)) return value
 			context.add('invalid_type', 'Expected a JSON value', undefined)
 			return FAIL
-		case 'jsonObject':
-			return walkJsonObject(value, context)
+		case 'jsonObject': {
+			if (!isPlainObject(value)) return invalidType(context, 'object', value)
+			const before = context.issues.length
+			checkJson(value, context)
+			return context.issues.length === before ? value : FAIL
+		}
 		default:
 			return full ? walkLeaf(root, value, context) : value
 	}
 }
 
-/**
- * `k.jsonObject()`: Convex validated only `v.any()`, so the whole value is checked here. Keys follow
- * Convex's rule for object values at any depth (`validateObjectField` in convex/src/values/value.ts:
- * at most 1024 characters, no leading '$', printable ASCII); a leading '_' is allowed.
- */
-function walkJsonObject(value: unknown, context: WalkContext): unknown {
-	if (!isPlainObject(value)) return invalidType(context, 'object', value)
-	const before = context.issues.length
-	checkJsonValue(value, context)
-	return context.issues.length === before ? value : FAIL
-}
-
-function checkJsonValue(value: unknown, context: WalkContext): void {
-	if (Array.isArray(value)) {
-		for (let index = 0; index < value.length; index++) {
-			context.path.push(index)
-			checkJsonValue(value[index], context)
-			context.path.pop()
-		}
-		return
-	}
-	if (!isPlainObject(value)) {
+/** `k.jsonObject()` values in full; keys follow `validateObjectField` (convex/src/values/value.ts). */
+function checkJson(value: unknown, context: WalkContext): void {
+	const array = Array.isArray(value)
+	if (!array && !isPlainObject(value)) {
 		if (!isJson(value)) context.add('invalid_type', 'Expected a JSON value', undefined)
 		return
 	}
-	for (const key of Object.keys(value)) {
-		context.path.push(key)
-		if (isValueKey(key)) checkJsonValue(value[key], context)
-		else context.add('invalid_format', valueKeyMessage, undefined)
+	// SAFETY: a plain object or an array, checked above.
+	const entries = value as Record<string, unknown>
+	for (const key of Object.keys(entries)) {
+		context.path.push(array ? Number(key) : key)
+		if (array || isFieldName(key)) checkJson(entries[key], context)
+		else
+			context.add(
+				'invalid_format',
+				"Invalid object key: not a Convex field name",
+				undefined,
+			)
 		context.path.pop()
 	}
-}
-
-const valueKeyMessage =
-	"Invalid object key: Convex object keys are printable ASCII, at most 1024 characters, and do not start with '$'"
-
-function isValueKey(key: string): boolean {
-	if (key.length > 1024 || key[0] === '$') return false
-	for (let index = 0; index < key.length; index++) {
-		const code = key.charCodeAt(index)
-		if (code < 32 || code >= 127) return false
-	}
-	return true
 }
 
 function walkTimestamp(value: unknown, context: WalkContext, full: boolean): unknown {
@@ -671,12 +637,10 @@ function walkObject(
 		if (out !== undefined && output !== undefined) setOwn(out, key, output)
 	}
 	let stripped = false
-	let kept = false
 	if (full) {
 		for (const key of Object.keys(value)) {
-			if (Object.hasOwn(fields, key)) continue
-			if (strip === 'loose') kept = true
-			else if (strip) stripped = true
+			if (Object.hasOwn(fields, key) || strip === 'loose') continue
+			if (strip) stripped = true
 			else {
 				failed = true
 				context.add('unrecognized_key', `Unrecognized key: ${JSON.stringify(key)}`, [key])
@@ -688,8 +652,7 @@ function walkObject(
 		out = {}
 		copyKnown(out, value, fields, null)
 	}
-	// A loose object returns the input itself unless a field changed; then unknown keys are copied over.
-	if (kept && out !== undefined)
+	if (strip === 'loose' && out !== undefined)
 		for (const key of Object.keys(value)) if (!Object.hasOwn(fields, key)) setOwn(out, key, value[key])
 	return out ?? value
 }

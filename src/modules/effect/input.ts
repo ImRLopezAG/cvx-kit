@@ -1,6 +1,6 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- Input decoding and cause inspection receive untrusted values. */
-import { Cause, Effect, Schema } from 'effect'
-import type { SchemaIssue } from 'effect'
+import { Cause, Effect } from 'effect'
+import type { Schema, SchemaIssue } from 'effect'
 import { KValidationError } from '../../k/issues'
 import type { ContractOutput, ContractSchema } from '../contracts/contract'
 import {
@@ -39,7 +39,7 @@ export function decodeOperationInput<S extends ContractSchema>(
 			if (
 				!(failure instanceof KValidationError) &&
 				!(failure instanceof ContractValidationError) &&
-				!Schema.isSchemaError(failure)
+				!isSchemaError(failure)
 			)
 				return Effect.failCause(cause)
 
@@ -82,6 +82,18 @@ export function decodeOperationInput<S extends ContractSchema>(
 			)
 		}),
 	)
+}
+
+/**
+ * Effect's own `Schema.isSchemaError` check, done locally: importing `Schema` as a value would keep
+ * `effect/Schema` (about 220 KB with `SchemaAST`) in every command and query bundle.
+ */
+const SCHEMA_ERROR_TYPE_ID = '~effect/Schema/SchemaError'
+function isSchemaError(value: unknown): value is Schema.SchemaError {
+	// SchemaError is a class instance; a primitive or a plain value without the stamp is not one.
+	if (!(value instanceof Object) || !(SCHEMA_ERROR_TYPE_ID in value)) return false
+	const stamped: { readonly [SCHEMA_ERROR_TYPE_ID]?: unknown } = value
+	return stamped[SCHEMA_ERROR_TYPE_ID] === SCHEMA_ERROR_TYPE_ID
 }
 
 function validationIssues(

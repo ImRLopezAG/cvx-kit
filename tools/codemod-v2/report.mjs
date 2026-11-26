@@ -44,7 +44,9 @@ export function formatSummary(report, write) {
 	const lines = [
 		`cvx-kit v2 codemod (${write ? 'write' : 'dry run, nothing written'})`,
 		`files: ${summary.scanned} scanned, ${STATUSES.map((status) => `${summary[status]} ${status}`).join(', ')}`,
-		`declarations: ${declarations.rewritten} rewritten, ${declarations.left} left as Zod (mechanical share ${(report.mechanicalShare * 100).toFixed(1)}%)`,
+		declarations.rewritten + declarations.left === 0
+			? 'declarations: none found'
+			: `declarations: ${declarations.rewritten} rewritten, ${declarations.left} left as Zod (mechanical share ${(report.mechanicalShare * 100).toFixed(1)}%)`,
 	]
 	const totals = Object.entries(report.totals)
 	if (totals.length > 0) {

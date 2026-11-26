@@ -1,3 +1,4 @@
+import { v } from 'convex/values'
 import type {
 	GenericId,
 	JSONValue,
@@ -187,6 +188,16 @@ const nullRoot = new KNull(null, 'null', undefined, undefined)
 const bytesRoot = new KBytes(null, 'bytes', undefined, undefined)
 const anyRoot = new KAny(null, 'any', undefined, undefined)
 const jsonRoot = new KJson(null, 'json', undefined, undefined)
+
+// Scalar roots wrap one native value. Containers and parameterised leaves stay lazy.
+stringRoot.native = v.string()
+numberRoot.native = v.number()
+intRoot.native = numberRoot.native
+int64Root.native = v.int64()
+booleanRoot.native = v.boolean()
+nullRoot.native = v.null()
+bytesRoot.native = v.bytes()
+anyRoot.native = v.any()
 
 /**
  * Argument-less factories return one shared root: records are immutable, so sharing is safe. Factories

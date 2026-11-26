@@ -33,8 +33,8 @@ vi.mock('convex-helpers/validators', async (importOriginal) => {
 const { kCustomAction, kCustomMutation, kCustomQuery } = await import('../src/registration')
 const { k } = await import('../src/k')
 
-// `k.string()` and other leaf factories share one immutable root; `.min(1)` makes each declaration its
-// own record, so every count below belongs to the function under test.
+// Scalar natives are prebuilt; a union keeps each declaration's container conversion lazy, so every
+// count below belongs to the function under test.
 
 function exported(fn: { isConvexFunction: true }) {
 	// SAFETY: native builders attach these export thunks at runtime; the public type strips them.
@@ -61,14 +61,14 @@ describe('registration defers validator conversion', () => {
 			let reads = 0
 			const functions = [
 				builder({
-					args: { value: k.string().min(1) },
+					args: { value: k.union([k.string().min(1), k.literal('fallback')]) },
 					returns: k.object({ ok: k.boolean() }),
 					handler: () => ({ ok: true }),
 				}),
 				builder({
 					get args() {
 						reads++
-						return { value: k.string().min(1) }
+						return { value: k.union([k.string().min(1), k.literal('fallback')]) }
 					},
 					get returns() {
 						reads++

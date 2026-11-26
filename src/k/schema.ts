@@ -146,7 +146,11 @@ export abstract class KSchema<
 			arg: KArg,
 			message: KMessage,
 		) => this
-		return new Next(this, op, arg, message)
+		const next = new Next(this, op, arg, message)
+		// link only records checks, normalisers and descriptions: its native shape is unchanged.
+		// Private filter boundaries use an any root with a lazy native accessor. Do not force it here.
+		if (this.op !== 'any') next.native = this.native
+		return next
 	}
 
 	protected wrapped<W>(op: KOp): W {

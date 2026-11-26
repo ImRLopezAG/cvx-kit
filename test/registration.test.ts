@@ -287,7 +287,7 @@ describe('export to Convex', () => {
 		expect(() => runtime(fn).exportReturns()).toThrow('A returns schema cannot transform')
 	})
 
-	it('builds no native validator until exportArgs or exportReturns is read', async () => {
+	it('reuses scalar natives and builds no container validator until export', async () => {
 		const name = k.string().trim()
 		const count = k.number().default(1)
 		const returns = k.object({ ok: k.boolean() })
@@ -297,13 +297,13 @@ describe('export to Convex', () => {
 		// Calls do not build validators either.
 		await call(fn, { name: ' a ' })
 		await call(objectFn, { id: 'x' })
+		expect(name.native).toBe(k.string().validator)
 		expect([
-			name.native,
 			count.native,
 			returns.native,
 			returns.outputNative,
 			object.native,
-		]).toEqual([undefined, undefined, undefined, undefined, undefined])
+		]).toEqual([undefined, undefined, undefined, undefined])
 		runtime(fn).exportArgs()
 		expect(name.native).toBeDefined()
 		expect(count.native).toBeDefined()

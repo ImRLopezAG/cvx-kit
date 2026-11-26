@@ -73,7 +73,7 @@ describe('k chain conveniences', () => {
 		expect(length.refine((value) => value > 1).safeParse('a').success).toBe(false)
 	})
 
-	it('records every convenience as one record without compiling anything', () => {
+	it('records every convenience as one record and reuses the scalar native', () => {
 		const schema = k
 			.string()
 			.trim()
@@ -88,7 +88,7 @@ describe('k chain conveniences', () => {
 		}
 		expect(records).toEqual(['regex', 'length', 'lower', 'trim', 'string'])
 		expect(schema.plan).toBeUndefined()
-		expect(schema.native).toBeUndefined()
+		expect(schema.native).toBe(k.string().validator)
 	})
 
 	it('applies a default to the output of a transform directly', () => {

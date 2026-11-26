@@ -542,9 +542,7 @@ function nativeReturns(returns: unknown): GenericValidator {
 		const path = transformPath(returns)
 		if (path !== undefined)
 			throw new Error(
-				`A returns schema cannot transform: the kit does not run return transforms, and ${path === '' ? 'the schema itself' : `field '${path}'`} uses transform or pipe. ` +
-					'Declare returns with the stored or output shape instead: a separate k.object of the output types, ' +
-					"or the input object without that field (`schema.omit('field').extend({ field: k.<output type>() })`).",
+				`A returns schema cannot transform: the kit does not run return transforms (${path ? `field '${path}'` : 'the schema'} uses transform or pipe). Declare returns with the output type, e.g. schema.omit('field').extend({ field: k.string() })`,
 			)
 		return returns.outputValidator
 	}

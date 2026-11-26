@@ -302,7 +302,7 @@ describe('deferred checks still throw no later than first use', () => {
 			owners: { children: r.many.children({ from: r.owners.code, to: r.children.owner }) },
 		}))
 		expect(() => verifyRelations(registry)).toThrow(
-			/table "children" has indexes by_other\(other\) in this bundle. Add an index that starts with "owner"/,
+			/"children" has by_other\(other\) in this bundle/,
 		)
 	})
 

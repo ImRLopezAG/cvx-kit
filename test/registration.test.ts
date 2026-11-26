@@ -285,7 +285,7 @@ describe('export to Convex', () => {
 	it('rejects a transforming returns schema at export', () => {
 		const fn = query({ returns: k.string().transform(Number), handler: () => 1 })
 		expect(() => runtime(fn).exportReturns()).toThrow('A returns schema cannot transform')
-		expect(() => runtime(fn).exportReturns()).toThrow('the schema itself uses transform or pipe')
+		expect(() => runtime(fn).exportReturns()).toThrow('(the schema uses transform or pipe)')
 	})
 
 	it('names the transforming field of a returns schema reused from args', () => {
@@ -299,7 +299,7 @@ describe('export to Convex', () => {
 			returns: shared,
 			handler: () => ({ name: 'n', tags: [], either: 1 }),
 		})
-		expect(() => runtime(fn).exportReturns()).toThrow("field 'tags[].slug' uses transform or pipe")
+		expect(() => runtime(fn).exportReturns()).toThrow("(field 'tags[].slug' uses transform or pipe)")
 		const other = query({ returns: shared.omit('tags'), handler: () => ({ name: 'n', either: 1 }) })
 		expect(() => runtime(other).exportReturns()).toThrow("field 'either|1.at'")
 		const fixed = query({

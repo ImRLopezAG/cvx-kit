@@ -89,43 +89,34 @@ export function containsTransform(schema: KNode): boolean {
 
 /**
  * The path of the first transform or pipe in the schema's tree, for error messages: `''` for the
- * schema itself, `'a.b'` for a field, `'items[]'` for an array element, `'[value]'` for a record value
- * and `'|1'` for a union member. Undefined when the tree holds none.
+ * schema itself, `'a.b'` for a field, `'items[]'` for an array element, `'m[value]'` for a record
+ * value and `'u|1'` for a union member. Undefined when the tree holds none.
  */
 export function transformPath(schema: KNode): string | undefined {
+	return pathBelow(schema)?.replace(/^\./, '')
+}
+
+function pathBelow(schema: KNode): string | undefined {
 	if (!planOf(schema).transform) return undefined
 	let root = schema
-	while (root.prev !== null) {
+	for (; root.prev !== null; root = root.prev)
 		if (root.op === 'transform' || root.op === 'pipe') return ''
-		root = root.prev
+	const op = root.op
+	const steps: [string, KNode][] =
+		op === 'object'
+			? Object.entries(fieldsOf(root)).map(([key, field]) => [`.${key}`, field])
+			: op === 'array'
+				? [['[]', argSchema(root)]]
+				: op === 'record'
+					? [['[value]', recordOf(root)[1]]]
+					: op === 'union' || op === 'discriminatedUnion'
+						? membersOf(root).map((member, index) => [`|${index}`, member])
+						: []
+	for (const [step, child] of steps) {
+		const path = pathBelow(child)
+		if (path !== undefined) return step + path
 	}
-	const below = (child: KNode, step: string, join: string) => {
-		const path = transformPath(child)
-		return path === undefined ? undefined : path === '' ? step : `${step}${join}${path}`
-	}
-	switch (root.op) {
-		case 'object':
-			for (const [key, field] of Object.entries(fieldsOf(root))) {
-				const path = transformPath(field)
-				if (path !== undefined) return path === '' || path.startsWith('[') || path.startsWith('|') ? key + path : `${key}.${path}`
-			}
-			return undefined
-		case 'array':
-			return below(argSchema(root), '[]', '.')
-		case 'record':
-			return below(recordOf(root)[1], '[value]', '.')
-		case 'union':
-		case 'discriminatedUnion': {
-			const members = membersOf(root)
-			for (let index = 0; index < members.length; index++) {
-				const path = below(members[index], `|${index}`, '.')
-				if (path !== undefined) return path
-			}
-			return undefined
-		}
-		default:
-			return undefined
-	}
+	return undefined
 }
 
 const FAIL: unique symbol = Symbol('k.fail')

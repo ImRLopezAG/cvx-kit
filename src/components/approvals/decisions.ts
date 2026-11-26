@@ -1,5 +1,4 @@
 import { WorkflowManager, type WorkflowId } from '@convex-dev/workflow'
-import { zodToConvex } from 'convex-helpers/server/zod4'
 import { v } from 'convex/values'
 
 import { components, internal } from './_generated/api'
@@ -24,9 +23,9 @@ import { approvalDecisionEventName, evaluateDecisionOutcome } from './workflow_s
 export const decide = mutation({
 	args: {
 		runId: v.id('approvalRuns'),
-		decision: zodToConvex(approvalDecision),
-		reason: v.optional(zodToConvex(approvalReason)),
-		actor: zodToConvex(approvalActor),
+		decision: approvalDecision.validator,
+		reason: v.optional(approvalReason.validator),
+		actor: approvalActor.validator,
 		compatibilityKey: v.string(),
 	},
 	returns: v.object({
@@ -123,8 +122,8 @@ export const list = query({
 		v.object({
 			stepKey: v.string(),
 			actorRef: v.string(),
-			decision: zodToConvex(approvalDecision),
-			reason: v.optional(zodToConvex(approvalReason)),
+			decision: approvalDecision.validator,
+			reason: v.optional(approvalReason.validator),
 			decidedAt: v.number(),
 		}),
 	),
@@ -137,8 +136,8 @@ export const listForWorkflow = internalQuery({
 		v.object({
 			stepKey: v.string(),
 			actorRef: v.string(),
-			decision: zodToConvex(approvalDecision),
-			reason: v.optional(zodToConvex(approvalReason)),
+			decision: approvalDecision.validator,
+			reason: v.optional(approvalReason.validator),
 			decidedAt: v.number(),
 		}),
 	),
@@ -302,8 +301,8 @@ async function finishDecision(
 			outcome: v.union(v.literal(APPROVAL_DECISIONS[0]), v.literal(APPROVAL_DECISIONS[1])),
 			terminalEvidence: v.object({
 				actorRef: v.string(),
-				decision: zodToConvex(approvalDecision),
-				reason: v.optional(zodToConvex(approvalReason)),
+				decision: approvalDecision.validator,
+				reason: v.optional(approvalReason.validator),
 				decidedAt: v.number(),
 			}),
 		}),

@@ -1,0 +1,3484 @@
+{
+	"approvalCallbackArgs": {
+		"type": "object",
+		"value": {
+			"decision": {
+				"fieldType": {
+					"type": "object",
+					"value": {
+						"evidence": {
+							"fieldType": {
+								"type": "array",
+								"value": {
+									"type": "object",
+									"value": {
+										"actorRef": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										},
+										"decidedAt": {
+											"fieldType": {
+												"type": "number"
+											},
+											"optional": false
+										},
+										"decision": {
+											"fieldType": {
+												"type": "union",
+												"value": [
+													{
+														"type": "literal",
+														"value": "approved"
+													},
+													{
+														"type": "literal",
+														"value": "rejected"
+													}
+												]
+											},
+											"optional": false
+										},
+										"reason": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": true
+										},
+										"stepKey": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										}
+									}
+								}
+							},
+							"optional": false
+						},
+						"outcome": {
+							"fieldType": {
+								"type": "union",
+								"value": [
+									{
+										"type": "union",
+										"value": [
+											{
+												"type": "literal",
+												"value": "approved"
+											},
+											{
+												"type": "literal",
+												"value": "rejected"
+											}
+										]
+									},
+									{
+										"type": "literal",
+										"value": "expired"
+									}
+								]
+							},
+							"optional": false
+						},
+						"stepKey": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						},
+						"terminalEvidence": {
+							"fieldType": {
+								"type": "object",
+								"value": {
+									"actorRef": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": false
+									},
+									"decidedAt": {
+										"fieldType": {
+											"type": "number"
+										},
+										"optional": false
+									},
+									"decision": {
+										"fieldType": {
+											"type": "union",
+											"value": [
+												{
+													"type": "literal",
+													"value": "approved"
+												},
+												{
+													"type": "literal",
+													"value": "rejected"
+												}
+											]
+										},
+										"optional": false
+									},
+									"reason": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": true
+									}
+								}
+							},
+							"optional": true
+						}
+					}
+				},
+				"optional": true
+			},
+			"metadata": {
+				"fieldType": {
+					"keys": {
+						"type": "string"
+					},
+					"type": "record",
+					"values": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					}
+				},
+				"optional": true
+			},
+			"resourceRef": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			},
+			"resourceType": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			},
+			"runId": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			},
+			"scopeRef": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			}
+		}
+	},
+	"functions": {
+		"approvals/audit:cleanup": {
+			"args": {
+				"type": "object",
+				"value": {
+					"batchSize": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": false
+					},
+					"olderThanDays": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "number"
+			}
+		},
+		"approvals/audit:history": {
+			"args": {
+				"type": "object",
+				"value": {
+					"limit": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": true
+					},
+					"resourceRef": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"resourceType": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "array",
+				"value": {
+					"type": "object",
+					"value": {
+						"action": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						},
+						"actorRef": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": true
+						},
+						"correlationKey": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						},
+						"transition": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						}
+					}
+				}
+			}
+		},
+		"approvals/decisions:decide": {
+			"args": {
+				"type": "object",
+				"value": {
+					"actor": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"actorRef": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"capabilities": {
+									"fieldType": {
+										"type": "array",
+										"value": {
+											"type": "string"
+										}
+									},
+									"optional": false
+								},
+								"metadata": {
+									"fieldType": {
+										"keys": {
+											"type": "string"
+										},
+										"type": "record",
+										"values": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										}
+									},
+									"optional": true
+								}
+							}
+						},
+						"optional": false
+					},
+					"compatibilityKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"decision": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "approved"
+								},
+								{
+									"type": "literal",
+									"value": "rejected"
+								}
+							]
+						},
+						"optional": false
+					},
+					"reason": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					},
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "object",
+				"value": {
+					"state": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "pending"
+								},
+								{
+									"type": "literal",
+									"value": "approved"
+								},
+								{
+									"type": "literal",
+									"value": "rejected"
+								},
+								{
+									"type": "literal",
+									"value": "expired"
+								},
+								{
+									"type": "literal",
+									"value": "canceled"
+								}
+							]
+						},
+						"optional": false
+					}
+				}
+			}
+		},
+		"approvals/decisions:enter": {
+			"args": {
+				"type": "object",
+				"value": {
+					"expiresAfterMs": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": true
+					},
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					},
+					"stepKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"workflowId": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "object",
+				"value": {
+					"expiresAt": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": true
+					},
+					"state": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "pending"
+								},
+								{
+									"type": "literal",
+									"value": "approved"
+								},
+								{
+									"type": "literal",
+									"value": "rejected"
+								},
+								{
+									"type": "literal",
+									"value": "expired"
+								},
+								{
+									"type": "literal",
+									"value": "canceled"
+								}
+							]
+						},
+						"optional": false
+					}
+				}
+			}
+		},
+		"approvals/decisions:expire": {
+			"args": {
+				"type": "object",
+				"value": {
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					},
+					"stepKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "object",
+				"value": {
+					"state": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "missing"
+								},
+								{
+									"type": "literal",
+									"value": "pending"
+								},
+								{
+									"type": "literal",
+									"value": "approved"
+								},
+								{
+									"type": "literal",
+									"value": "rejected"
+								},
+								{
+									"type": "literal",
+									"value": "expired"
+								},
+								{
+									"type": "literal",
+									"value": "canceled"
+								}
+							]
+						},
+						"optional": false
+					}
+				}
+			}
+		},
+		"approvals/decisions:list": {
+			"args": {
+				"type": "object",
+				"value": {
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "array",
+				"value": {
+					"type": "object",
+					"value": {
+						"actorRef": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						},
+						"decidedAt": {
+							"fieldType": {
+								"type": "number"
+							},
+							"optional": false
+						},
+						"decision": {
+							"fieldType": {
+								"type": "union",
+								"value": [
+									{
+										"type": "literal",
+										"value": "approved"
+									},
+									{
+										"type": "literal",
+										"value": "rejected"
+									}
+								]
+							},
+							"optional": false
+						},
+						"reason": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": true
+						},
+						"stepKey": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						}
+					}
+				}
+			}
+		},
+		"approvals/decisions:listForWorkflow": {
+			"args": {
+				"type": "object",
+				"value": {
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					},
+					"stepKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "array",
+				"value": {
+					"type": "object",
+					"value": {
+						"actorRef": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						},
+						"decidedAt": {
+							"fieldType": {
+								"type": "number"
+							},
+							"optional": false
+						},
+						"decision": {
+							"fieldType": {
+								"type": "union",
+								"value": [
+									{
+										"type": "literal",
+										"value": "approved"
+									},
+									{
+										"type": "literal",
+										"value": "rejected"
+									}
+								]
+							},
+							"optional": false
+						},
+						"reason": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": true
+						},
+						"stepKey": {
+							"fieldType": {
+								"type": "string"
+							},
+							"optional": false
+						}
+					}
+				}
+			}
+		},
+		"approvals/health:check": {
+			"args": {
+				"type": "object",
+				"value": {}
+			},
+			"returns": {
+				"type": "object",
+				"value": {
+					"requiredIndexes": {
+						"fieldType": {
+							"type": "array",
+							"value": {
+								"type": "string"
+							}
+						},
+						"optional": false
+					},
+					"schemaVersion": {
+						"fieldType": {
+							"type": "literal",
+							"value": 1
+						},
+						"optional": false
+					},
+					"status": {
+						"fieldType": {
+							"type": "literal",
+							"value": "ready"
+						},
+						"optional": false
+					}
+				}
+			}
+		},
+		"approvals/requests:cancel": {
+			"args": {
+				"type": "object",
+				"value": {
+					"actor": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"actorRef": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"capabilities": {
+									"fieldType": {
+										"type": "array",
+										"value": {
+											"type": "string"
+										}
+									},
+									"optional": false
+								},
+								"metadata": {
+									"fieldType": {
+										"keys": {
+											"type": "string"
+										},
+										"type": "record",
+										"values": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										}
+									},
+									"optional": true
+								}
+							}
+						},
+						"optional": false
+					},
+					"compatibilityKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "object",
+				"value": {
+					"state": {
+						"fieldType": {
+							"type": "literal",
+							"value": "canceled"
+						},
+						"optional": false
+					}
+				}
+			}
+		},
+		"approvals/requests:getForWorkflow": {
+			"args": {
+				"type": "object",
+				"value": {
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "union",
+				"value": [
+					{
+						"type": "null"
+					},
+					{
+						"type": "object",
+						"value": {
+							"_creationTime": {
+								"fieldType": {
+									"type": "number"
+								},
+								"optional": false
+							},
+							"_id": {
+								"fieldType": {
+									"tableName": "approvalRuns",
+									"type": "id"
+								},
+								"optional": false
+							},
+							"createdAt": {
+								"fieldType": {
+									"type": "number"
+								},
+								"optional": false
+							},
+							"currentStepKey": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": true
+							},
+							"executionFailedStepKey": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": true
+							},
+							"expiresAt": {
+								"fieldType": {
+									"type": "number"
+								},
+								"optional": true
+							},
+							"metadata": {
+								"fieldType": {
+									"keys": {
+										"type": "string"
+									},
+									"type": "record",
+									"values": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": false
+									}
+								},
+								"optional": true
+							},
+							"requester": {
+								"fieldType": {
+									"type": "object",
+									"value": {
+										"actorRef": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										},
+										"capabilities": {
+											"fieldType": {
+												"type": "array",
+												"value": {
+													"type": "string"
+												}
+											},
+											"optional": false
+										},
+										"metadata": {
+											"fieldType": {
+												"keys": {
+													"type": "string"
+												},
+												"type": "record",
+												"values": {
+													"fieldType": {
+														"type": "string"
+													},
+													"optional": false
+												}
+											},
+											"optional": true
+										}
+									}
+								},
+								"optional": false
+							},
+							"resourceRef": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": false
+							},
+							"resourceType": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": false
+							},
+							"scopeRef": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": false
+							},
+							"state": {
+								"fieldType": {
+									"type": "union",
+									"value": [
+										{
+											"type": "literal",
+											"value": "pending"
+										},
+										{
+											"type": "literal",
+											"value": "approved"
+										},
+										{
+											"type": "literal",
+											"value": "rejected"
+										},
+										{
+											"type": "literal",
+											"value": "expired"
+										},
+										{
+											"type": "literal",
+											"value": "canceled"
+										}
+									]
+								},
+								"optional": false
+							},
+							"terminalAt": {
+								"fieldType": {
+									"type": "number"
+								},
+								"optional": true
+							},
+							"updatedAt": {
+								"fieldType": {
+									"type": "number"
+								},
+								"optional": false
+							},
+							"workflow": {
+								"fieldType": {
+									"type": "object",
+									"value": {
+										"compatibilityKey": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										},
+										"name": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										},
+										"schemaVersion": {
+											"fieldType": {
+												"type": "literal",
+												"value": 1
+											},
+											"optional": false
+										},
+										"steps": {
+											"fieldType": {
+												"type": "array",
+												"value": {
+													"type": "union",
+													"value": [
+														{
+															"type": "union",
+															"value": [
+																{
+																	"type": "object",
+																	"value": {
+																		"callback": {
+																			"fieldType": {
+																				"type": "object",
+																				"value": {
+																					"handle": {
+																						"fieldType": {
+																							"type": "string"
+																						},
+																						"optional": false
+																					},
+																					"kind": {
+																						"fieldType": {
+																							"type": "literal",
+																							"value": "mutation"
+																						},
+																						"optional": false
+																					},
+																					"retry": {
+																						"fieldType": {
+																							"type": "boolean"
+																						},
+																						"optional": false
+																					}
+																				}
+																			},
+																			"optional": false
+																		},
+																		"key": {
+																			"fieldType": {
+																				"type": "string"
+																			},
+																			"optional": false
+																		},
+																		"kind": {
+																			"fieldType": {
+																				"type": "literal",
+																				"value": "mutation"
+																			},
+																			"optional": false
+																		}
+																	}
+																},
+																{
+																	"type": "object",
+																	"value": {
+																		"callback": {
+																			"fieldType": {
+																				"type": "object",
+																				"value": {
+																					"handle": {
+																						"fieldType": {
+																							"type": "string"
+																						},
+																						"optional": false
+																					},
+																					"kind": {
+																						"fieldType": {
+																							"type": "literal",
+																							"value": "action"
+																						},
+																						"optional": false
+																					},
+																					"retry": {
+																						"fieldType": {
+																							"type": "boolean"
+																						},
+																						"optional": false
+																					}
+																				}
+																			},
+																			"optional": false
+																		},
+																		"key": {
+																			"fieldType": {
+																				"type": "string"
+																			},
+																			"optional": false
+																		},
+																		"kind": {
+																			"fieldType": {
+																				"type": "literal",
+																				"value": "action"
+																			},
+																			"optional": false
+																		}
+																	}
+																}
+															]
+														},
+														{
+															"type": "object",
+															"value": {
+																"callback": {
+																	"fieldType": {
+																		"type": "object",
+																		"value": {
+																			"handle": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "action"
+																				},
+																				"optional": false
+																			},
+																			"retry": {
+																				"fieldType": {
+																					"type": "boolean"
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	"optional": false
+																},
+																"key": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"kind": {
+																	"fieldType": {
+																		"type": "literal",
+																		"value": "notify"
+																	},
+																	"optional": false
+																}
+															}
+														},
+														{
+															"type": "object",
+															"value": {
+																"decisions": {
+																	"fieldType": {
+																		"type": "array",
+																		"value": {
+																			"type": "union",
+																			"value": [
+																				{
+																					"type": "literal",
+																					"value": "approved"
+																				},
+																				{
+																					"type": "literal",
+																					"value": "rejected"
+																				}
+																			]
+																		}
+																	},
+																	"optional": false
+																},
+																"expiresAfterMs": {
+																	"fieldType": {
+																		"type": "number"
+																	},
+																	"optional": true
+																},
+																"key": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"kind": {
+																	"fieldType": {
+																		"type": "literal",
+																		"value": "decision"
+																	},
+																	"optional": false
+																},
+																"makerChecker": {
+																	"fieldType": {
+																		"type": "boolean"
+																	},
+																	"optional": false
+																},
+																"quorum": {
+																	"fieldType": {
+																		"type": "object",
+																		"value": {
+																			"approvals": {
+																				"fieldType": {
+																					"type": "number"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "union",
+																					"value": [
+																						{
+																							"type": "literal",
+																							"value": "count"
+																						}
+																					]
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	"optional": false
+																}
+															}
+														},
+														{
+															"type": "object",
+															"value": {
+																"approvedStepKey": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"key": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"kind": {
+																	"fieldType": {
+																		"type": "literal",
+																		"value": "branch"
+																	},
+																	"optional": false
+																},
+																"rejectedStepKey": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																}
+															}
+														}
+													]
+												}
+											},
+											"optional": false
+										}
+									}
+								},
+								"optional": false
+							},
+							"workflowId": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": true
+							}
+						}
+					}
+				]
+			}
+		},
+		"approvals/requests:list": {
+			"args": {
+				"type": "object",
+				"value": {
+					"paginationOpts": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"cursor": {
+									"fieldType": {
+										"type": "union",
+										"value": [
+											{
+												"type": "string"
+											},
+											{
+												"type": "null"
+											}
+										]
+									},
+									"optional": false
+								},
+								"endCursor": {
+									"fieldType": {
+										"type": "union",
+										"value": [
+											{
+												"type": "string"
+											},
+											{
+												"type": "null"
+											}
+										]
+									},
+									"optional": true
+								},
+								"id": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": true
+								},
+								"maximumBytesRead": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": true
+								},
+								"maximumRowsRead": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": true
+								},
+								"numItems": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": false
+								}
+							}
+						},
+						"optional": false
+					},
+					"scopeRef": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"state": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "pending"
+								},
+								{
+									"type": "literal",
+									"value": "approved"
+								},
+								{
+									"type": "literal",
+									"value": "rejected"
+								},
+								{
+									"type": "literal",
+									"value": "expired"
+								},
+								{
+									"type": "literal",
+									"value": "canceled"
+								}
+							]
+						},
+						"optional": true
+					}
+				}
+			},
+			"returns": {
+				"type": "object",
+				"value": {
+					"continueCursor": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"isDone": {
+						"fieldType": {
+							"type": "boolean"
+						},
+						"optional": false
+					},
+					"page": {
+						"fieldType": {
+							"type": "array",
+							"value": {
+								"type": "object",
+								"value": {
+									"_creationTime": {
+										"fieldType": {
+											"type": "number"
+										},
+										"optional": false
+									},
+									"_id": {
+										"fieldType": {
+											"tableName": "approvalRuns",
+											"type": "id"
+										},
+										"optional": false
+									},
+									"createdAt": {
+										"fieldType": {
+											"type": "number"
+										},
+										"optional": false
+									},
+									"currentStepKey": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": true
+									},
+									"executionFailedStepKey": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": true
+									},
+									"expiresAt": {
+										"fieldType": {
+											"type": "number"
+										},
+										"optional": true
+									},
+									"metadata": {
+										"fieldType": {
+											"keys": {
+												"type": "string"
+											},
+											"type": "record",
+											"values": {
+												"fieldType": {
+													"type": "string"
+												},
+												"optional": false
+											}
+										},
+										"optional": true
+									},
+									"requester": {
+										"fieldType": {
+											"type": "object",
+											"value": {
+												"actorRef": {
+													"fieldType": {
+														"type": "string"
+													},
+													"optional": false
+												},
+												"capabilities": {
+													"fieldType": {
+														"type": "array",
+														"value": {
+															"type": "string"
+														}
+													},
+													"optional": false
+												},
+												"metadata": {
+													"fieldType": {
+														"keys": {
+															"type": "string"
+														},
+														"type": "record",
+														"values": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														}
+													},
+													"optional": true
+												}
+											}
+										},
+										"optional": false
+									},
+									"resourceRef": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": false
+									},
+									"resourceType": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": false
+									},
+									"scopeRef": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": false
+									},
+									"state": {
+										"fieldType": {
+											"type": "union",
+											"value": [
+												{
+													"type": "literal",
+													"value": "pending"
+												},
+												{
+													"type": "literal",
+													"value": "approved"
+												},
+												{
+													"type": "literal",
+													"value": "rejected"
+												},
+												{
+													"type": "literal",
+													"value": "expired"
+												},
+												{
+													"type": "literal",
+													"value": "canceled"
+												}
+											]
+										},
+										"optional": false
+									},
+									"terminalAt": {
+										"fieldType": {
+											"type": "number"
+										},
+										"optional": true
+									},
+									"updatedAt": {
+										"fieldType": {
+											"type": "number"
+										},
+										"optional": false
+									},
+									"workflow": {
+										"fieldType": {
+											"type": "object",
+											"value": {
+												"compatibilityKey": {
+													"fieldType": {
+														"type": "string"
+													},
+													"optional": false
+												},
+												"name": {
+													"fieldType": {
+														"type": "string"
+													},
+													"optional": false
+												},
+												"schemaVersion": {
+													"fieldType": {
+														"type": "literal",
+														"value": 1
+													},
+													"optional": false
+												},
+												"steps": {
+													"fieldType": {
+														"type": "array",
+														"value": {
+															"type": "union",
+															"value": [
+																{
+																	"type": "union",
+																	"value": [
+																		{
+																			"type": "object",
+																			"value": {
+																				"callback": {
+																					"fieldType": {
+																						"type": "object",
+																						"value": {
+																							"handle": {
+																								"fieldType": {
+																									"type": "string"
+																								},
+																								"optional": false
+																							},
+																							"kind": {
+																								"fieldType": {
+																									"type": "literal",
+																									"value": "mutation"
+																								},
+																								"optional": false
+																							},
+																							"retry": {
+																								"fieldType": {
+																									"type": "boolean"
+																								},
+																								"optional": false
+																							}
+																						}
+																					},
+																					"optional": false
+																				},
+																				"key": {
+																					"fieldType": {
+																						"type": "string"
+																					},
+																					"optional": false
+																				},
+																				"kind": {
+																					"fieldType": {
+																						"type": "literal",
+																						"value": "mutation"
+																					},
+																					"optional": false
+																				}
+																			}
+																		},
+																		{
+																			"type": "object",
+																			"value": {
+																				"callback": {
+																					"fieldType": {
+																						"type": "object",
+																						"value": {
+																							"handle": {
+																								"fieldType": {
+																									"type": "string"
+																								},
+																								"optional": false
+																							},
+																							"kind": {
+																								"fieldType": {
+																									"type": "literal",
+																									"value": "action"
+																								},
+																								"optional": false
+																							},
+																							"retry": {
+																								"fieldType": {
+																									"type": "boolean"
+																								},
+																								"optional": false
+																							}
+																						}
+																					},
+																					"optional": false
+																				},
+																				"key": {
+																					"fieldType": {
+																						"type": "string"
+																					},
+																					"optional": false
+																				},
+																				"kind": {
+																					"fieldType": {
+																						"type": "literal",
+																						"value": "action"
+																					},
+																					"optional": false
+																				}
+																			}
+																		}
+																	]
+																},
+																{
+																	"type": "object",
+																	"value": {
+																		"callback": {
+																			"fieldType": {
+																				"type": "object",
+																				"value": {
+																					"handle": {
+																						"fieldType": {
+																							"type": "string"
+																						},
+																						"optional": false
+																					},
+																					"kind": {
+																						"fieldType": {
+																							"type": "literal",
+																							"value": "action"
+																						},
+																						"optional": false
+																					},
+																					"retry": {
+																						"fieldType": {
+																							"type": "boolean"
+																						},
+																						"optional": false
+																					}
+																				}
+																			},
+																			"optional": false
+																		},
+																		"key": {
+																			"fieldType": {
+																				"type": "string"
+																			},
+																			"optional": false
+																		},
+																		"kind": {
+																			"fieldType": {
+																				"type": "literal",
+																				"value": "notify"
+																			},
+																			"optional": false
+																		}
+																	}
+																},
+																{
+																	"type": "object",
+																	"value": {
+																		"decisions": {
+																			"fieldType": {
+																				"type": "array",
+																				"value": {
+																					"type": "union",
+																					"value": [
+																						{
+																							"type": "literal",
+																							"value": "approved"
+																						},
+																						{
+																							"type": "literal",
+																							"value": "rejected"
+																						}
+																					]
+																				}
+																			},
+																			"optional": false
+																		},
+																		"expiresAfterMs": {
+																			"fieldType": {
+																				"type": "number"
+																			},
+																			"optional": true
+																		},
+																		"key": {
+																			"fieldType": {
+																				"type": "string"
+																			},
+																			"optional": false
+																		},
+																		"kind": {
+																			"fieldType": {
+																				"type": "literal",
+																				"value": "decision"
+																			},
+																			"optional": false
+																		},
+																		"makerChecker": {
+																			"fieldType": {
+																				"type": "boolean"
+																			},
+																			"optional": false
+																		},
+																		"quorum": {
+																			"fieldType": {
+																				"type": "object",
+																				"value": {
+																					"approvals": {
+																						"fieldType": {
+																							"type": "number"
+																						},
+																						"optional": false
+																					},
+																					"kind": {
+																						"fieldType": {
+																							"type": "union",
+																							"value": [
+																								{
+																									"type": "literal",
+																									"value": "count"
+																								}
+																							]
+																						},
+																						"optional": false
+																					}
+																				}
+																			},
+																			"optional": false
+																		}
+																	}
+																},
+																{
+																	"type": "object",
+																	"value": {
+																		"approvedStepKey": {
+																			"fieldType": {
+																				"type": "string"
+																			},
+																			"optional": false
+																		},
+																		"key": {
+																			"fieldType": {
+																				"type": "string"
+																			},
+																			"optional": false
+																		},
+																		"kind": {
+																			"fieldType": {
+																				"type": "literal",
+																				"value": "branch"
+																			},
+																			"optional": false
+																		},
+																		"rejectedStepKey": {
+																			"fieldType": {
+																				"type": "string"
+																			},
+																			"optional": false
+																		}
+																	}
+																}
+															]
+														}
+													},
+													"optional": false
+												}
+											}
+										},
+										"optional": false
+									},
+									"workflowId": {
+										"fieldType": {
+											"type": "string"
+										},
+										"optional": true
+									}
+								}
+							}
+						},
+						"optional": false
+					},
+					"pageStatus": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "SplitRecommended"
+								},
+								{
+									"type": "literal",
+									"value": "SplitRequired"
+								},
+								{
+									"type": "null"
+								}
+							]
+						},
+						"optional": true
+					},
+					"splitCursor": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "string"
+								},
+								{
+									"type": "null"
+								}
+							]
+						},
+						"optional": true
+					}
+				}
+			}
+		},
+		"approvals/requests:recordExecutionTerminal": {
+			"args": {
+				"type": "object",
+				"value": {
+					"failedStepKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					},
+					"outcome": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "completed"
+								},
+								{
+									"type": "literal",
+									"value": "failed"
+								}
+							]
+						},
+						"optional": false
+					},
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "null"
+			}
+		},
+		"approvals/requests:restart": {
+			"args": {
+				"type": "object",
+				"value": {
+					"compatibilityKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "null"
+			}
+		},
+		"approvals/requests:start": {
+			"args": {
+				"type": "object",
+				"value": {
+					"metadata": {
+						"fieldType": {
+							"keys": {
+								"type": "string"
+							},
+							"type": "record",
+							"values": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": false
+							}
+						},
+						"optional": true
+					},
+					"requester": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"actorRef": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"capabilities": {
+									"fieldType": {
+										"type": "array",
+										"value": {
+											"type": "string"
+										}
+									},
+									"optional": false
+								},
+								"metadata": {
+									"fieldType": {
+										"keys": {
+											"type": "string"
+										},
+										"type": "record",
+										"values": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										}
+									},
+									"optional": true
+								}
+							}
+						},
+						"optional": false
+					},
+					"resourceRef": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"resourceType": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"scopeRef": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"workflow": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"compatibilityKey": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"name": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"schemaVersion": {
+									"fieldType": {
+										"type": "literal",
+										"value": 1
+									},
+									"optional": false
+								},
+								"steps": {
+									"fieldType": {
+										"type": "array",
+										"value": {
+											"type": "union",
+											"value": [
+												{
+													"type": "union",
+													"value": [
+														{
+															"type": "object",
+															"value": {
+																"callback": {
+																	"fieldType": {
+																		"type": "object",
+																		"value": {
+																			"handle": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "mutation"
+																				},
+																				"optional": false
+																			},
+																			"retry": {
+																				"fieldType": {
+																					"type": "boolean"
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	"optional": false
+																},
+																"key": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"kind": {
+																	"fieldType": {
+																		"type": "literal",
+																		"value": "mutation"
+																	},
+																	"optional": false
+																}
+															}
+														},
+														{
+															"type": "object",
+															"value": {
+																"callback": {
+																	"fieldType": {
+																		"type": "object",
+																		"value": {
+																			"handle": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "action"
+																				},
+																				"optional": false
+																			},
+																			"retry": {
+																				"fieldType": {
+																					"type": "boolean"
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	"optional": false
+																},
+																"key": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"kind": {
+																	"fieldType": {
+																		"type": "literal",
+																		"value": "action"
+																	},
+																	"optional": false
+																}
+															}
+														}
+													]
+												},
+												{
+													"type": "object",
+													"value": {
+														"callback": {
+															"fieldType": {
+																"type": "object",
+																"value": {
+																	"handle": {
+																		"fieldType": {
+																			"type": "string"
+																		},
+																		"optional": false
+																	},
+																	"kind": {
+																		"fieldType": {
+																			"type": "literal",
+																			"value": "action"
+																		},
+																		"optional": false
+																	},
+																	"retry": {
+																		"fieldType": {
+																			"type": "boolean"
+																		},
+																		"optional": false
+																	}
+																}
+															},
+															"optional": false
+														},
+														"key": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"kind": {
+															"fieldType": {
+																"type": "literal",
+																"value": "notify"
+															},
+															"optional": false
+														}
+													}
+												},
+												{
+													"type": "object",
+													"value": {
+														"decisions": {
+															"fieldType": {
+																"type": "array",
+																"value": {
+																	"type": "union",
+																	"value": [
+																		{
+																			"type": "literal",
+																			"value": "approved"
+																		},
+																		{
+																			"type": "literal",
+																			"value": "rejected"
+																		}
+																	]
+																}
+															},
+															"optional": false
+														},
+														"expiresAfterMs": {
+															"fieldType": {
+																"type": "number"
+															},
+															"optional": true
+														},
+														"key": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"kind": {
+															"fieldType": {
+																"type": "literal",
+																"value": "decision"
+															},
+															"optional": false
+														},
+														"makerChecker": {
+															"fieldType": {
+																"type": "boolean"
+															},
+															"optional": false
+														},
+														"quorum": {
+															"fieldType": {
+																"type": "object",
+																"value": {
+																	"approvals": {
+																		"fieldType": {
+																			"type": "number"
+																		},
+																		"optional": false
+																	},
+																	"kind": {
+																		"fieldType": {
+																			"type": "union",
+																			"value": [
+																				{
+																					"type": "literal",
+																					"value": "count"
+																				}
+																			]
+																		},
+																		"optional": false
+																	}
+																}
+															},
+															"optional": false
+														}
+													}
+												},
+												{
+													"type": "object",
+													"value": {
+														"approvedStepKey": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"key": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"kind": {
+															"fieldType": {
+																"type": "literal",
+																"value": "branch"
+															},
+															"optional": false
+														},
+														"rejectedStepKey": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														}
+													}
+												}
+											]
+										}
+									},
+									"optional": false
+								}
+							}
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "object",
+				"value": {
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			}
+		},
+		"approvals/requests:status": {
+			"args": {
+				"type": "object",
+				"value": {
+					"compatibilityKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": {
+				"type": "union",
+				"value": [
+					{
+						"type": "null"
+					},
+					{
+						"type": "object",
+						"value": {
+							"execution": {
+								"fieldType": {
+									"type": "union",
+									"value": [
+										{
+											"type": "null"
+										},
+										{
+											"type": "union",
+											"value": [
+												{
+													"type": "object",
+													"value": {
+														"type": {
+															"fieldType": {
+																"type": "literal",
+																"value": "inProgress"
+															},
+															"optional": false
+														}
+													}
+												},
+												{
+													"type": "object",
+													"value": {
+														"type": {
+															"fieldType": {
+																"type": "literal",
+																"value": "completed"
+															},
+															"optional": false
+														}
+													}
+												},
+												{
+													"type": "object",
+													"value": {
+														"type": {
+															"fieldType": {
+																"type": "literal",
+																"value": "canceled"
+															},
+															"optional": false
+														}
+													}
+												},
+												{
+													"type": "object",
+													"value": {
+														"error": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"type": {
+															"fieldType": {
+																"type": "literal",
+																"value": "failed"
+															},
+															"optional": false
+														}
+													}
+												}
+											]
+										}
+									]
+								},
+								"optional": false
+							},
+							"run": {
+								"fieldType": {
+									"type": "object",
+									"value": {
+										"_creationTime": {
+											"fieldType": {
+												"type": "number"
+											},
+											"optional": false
+										},
+										"_id": {
+											"fieldType": {
+												"tableName": "approvalRuns",
+												"type": "id"
+											},
+											"optional": false
+										},
+										"createdAt": {
+											"fieldType": {
+												"type": "number"
+											},
+											"optional": false
+										},
+										"currentStepKey": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": true
+										},
+										"executionFailedStepKey": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": true
+										},
+										"expiresAt": {
+											"fieldType": {
+												"type": "number"
+											},
+											"optional": true
+										},
+										"metadata": {
+											"fieldType": {
+												"keys": {
+													"type": "string"
+												},
+												"type": "record",
+												"values": {
+													"fieldType": {
+														"type": "string"
+													},
+													"optional": false
+												}
+											},
+											"optional": true
+										},
+										"requester": {
+											"fieldType": {
+												"type": "object",
+												"value": {
+													"actorRef": {
+														"fieldType": {
+															"type": "string"
+														},
+														"optional": false
+													},
+													"capabilities": {
+														"fieldType": {
+															"type": "array",
+															"value": {
+																"type": "string"
+															}
+														},
+														"optional": false
+													},
+													"metadata": {
+														"fieldType": {
+															"keys": {
+																"type": "string"
+															},
+															"type": "record",
+															"values": {
+																"fieldType": {
+																	"type": "string"
+																},
+																"optional": false
+															}
+														},
+														"optional": true
+													}
+												}
+											},
+											"optional": false
+										},
+										"resourceRef": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										},
+										"resourceType": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										},
+										"scopeRef": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										},
+										"state": {
+											"fieldType": {
+												"type": "union",
+												"value": [
+													{
+														"type": "literal",
+														"value": "pending"
+													},
+													{
+														"type": "literal",
+														"value": "approved"
+													},
+													{
+														"type": "literal",
+														"value": "rejected"
+													},
+													{
+														"type": "literal",
+														"value": "expired"
+													},
+													{
+														"type": "literal",
+														"value": "canceled"
+													}
+												]
+											},
+											"optional": false
+										},
+										"terminalAt": {
+											"fieldType": {
+												"type": "number"
+											},
+											"optional": true
+										},
+										"updatedAt": {
+											"fieldType": {
+												"type": "number"
+											},
+											"optional": false
+										},
+										"workflow": {
+											"fieldType": {
+												"type": "object",
+												"value": {
+													"compatibilityKey": {
+														"fieldType": {
+															"type": "string"
+														},
+														"optional": false
+													},
+													"name": {
+														"fieldType": {
+															"type": "string"
+														},
+														"optional": false
+													},
+													"schemaVersion": {
+														"fieldType": {
+															"type": "literal",
+															"value": 1
+														},
+														"optional": false
+													},
+													"steps": {
+														"fieldType": {
+															"type": "array",
+															"value": {
+																"type": "union",
+																"value": [
+																	{
+																		"type": "union",
+																		"value": [
+																			{
+																				"type": "object",
+																				"value": {
+																					"callback": {
+																						"fieldType": {
+																							"type": "object",
+																							"value": {
+																								"handle": {
+																									"fieldType": {
+																										"type": "string"
+																									},
+																									"optional": false
+																								},
+																								"kind": {
+																									"fieldType": {
+																										"type": "literal",
+																										"value": "mutation"
+																									},
+																									"optional": false
+																								},
+																								"retry": {
+																									"fieldType": {
+																										"type": "boolean"
+																									},
+																									"optional": false
+																								}
+																							}
+																						},
+																						"optional": false
+																					},
+																					"key": {
+																						"fieldType": {
+																							"type": "string"
+																						},
+																						"optional": false
+																					},
+																					"kind": {
+																						"fieldType": {
+																							"type": "literal",
+																							"value": "mutation"
+																						},
+																						"optional": false
+																					}
+																				}
+																			},
+																			{
+																				"type": "object",
+																				"value": {
+																					"callback": {
+																						"fieldType": {
+																							"type": "object",
+																							"value": {
+																								"handle": {
+																									"fieldType": {
+																										"type": "string"
+																									},
+																									"optional": false
+																								},
+																								"kind": {
+																									"fieldType": {
+																										"type": "literal",
+																										"value": "action"
+																									},
+																									"optional": false
+																								},
+																								"retry": {
+																									"fieldType": {
+																										"type": "boolean"
+																									},
+																									"optional": false
+																								}
+																							}
+																						},
+																						"optional": false
+																					},
+																					"key": {
+																						"fieldType": {
+																							"type": "string"
+																						},
+																						"optional": false
+																					},
+																					"kind": {
+																						"fieldType": {
+																							"type": "literal",
+																							"value": "action"
+																						},
+																						"optional": false
+																					}
+																				}
+																			}
+																		]
+																	},
+																	{
+																		"type": "object",
+																		"value": {
+																			"callback": {
+																				"fieldType": {
+																					"type": "object",
+																					"value": {
+																						"handle": {
+																							"fieldType": {
+																								"type": "string"
+																							},
+																							"optional": false
+																						},
+																						"kind": {
+																							"fieldType": {
+																								"type": "literal",
+																								"value": "action"
+																							},
+																							"optional": false
+																						},
+																						"retry": {
+																							"fieldType": {
+																								"type": "boolean"
+																							},
+																							"optional": false
+																						}
+																					}
+																				},
+																				"optional": false
+																			},
+																			"key": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "notify"
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	{
+																		"type": "object",
+																		"value": {
+																			"decisions": {
+																				"fieldType": {
+																					"type": "array",
+																					"value": {
+																						"type": "union",
+																						"value": [
+																							{
+																								"type": "literal",
+																								"value": "approved"
+																							},
+																							{
+																								"type": "literal",
+																								"value": "rejected"
+																							}
+																						]
+																					}
+																				},
+																				"optional": false
+																			},
+																			"expiresAfterMs": {
+																				"fieldType": {
+																					"type": "number"
+																				},
+																				"optional": true
+																			},
+																			"key": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "decision"
+																				},
+																				"optional": false
+																			},
+																			"makerChecker": {
+																				"fieldType": {
+																					"type": "boolean"
+																				},
+																				"optional": false
+																			},
+																			"quorum": {
+																				"fieldType": {
+																					"type": "object",
+																					"value": {
+																						"approvals": {
+																							"fieldType": {
+																								"type": "number"
+																							},
+																							"optional": false
+																						},
+																						"kind": {
+																							"fieldType": {
+																								"type": "union",
+																								"value": [
+																									{
+																										"type": "literal",
+																										"value": "count"
+																									}
+																								]
+																							},
+																							"optional": false
+																						}
+																					}
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	{
+																		"type": "object",
+																		"value": {
+																			"approvedStepKey": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"key": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "branch"
+																				},
+																				"optional": false
+																			},
+																			"rejectedStepKey": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			}
+																		}
+																	}
+																]
+															}
+														},
+														"optional": false
+													}
+												}
+											},
+											"optional": false
+										},
+										"workflowId": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": true
+										}
+									}
+								},
+								"optional": false
+							}
+						}
+					}
+				]
+			}
+		},
+		"approvals/workflow:run": {
+			"args": {
+				"type": "object",
+				"value": {
+					"args": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"runId": {
+									"fieldType": {
+										"tableName": "approvalRuns",
+										"type": "id"
+									},
+									"optional": false
+								}
+							}
+						},
+						"optional": true
+					},
+					"context": {
+						"fieldType": {
+							"type": "any"
+						},
+						"optional": true
+					},
+					"docs": {
+						"fieldType": {
+							"type": "literal",
+							"value": "To call a workflow directly, nest its arguments: { args: { ...yourWorkflowArgs } }"
+						},
+						"optional": true
+					},
+					"generationNumber": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": true
+					},
+					"onComplete": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					},
+					"startAsync": {
+						"fieldType": {
+							"type": "boolean"
+						},
+						"optional": true
+					},
+					"workflowId": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					}
+				}
+			},
+			"returns": {
+				"type": "union",
+				"value": [
+					{
+						"type": "string"
+					},
+					{
+						"type": "object",
+						"value": {
+							"kind": {
+								"fieldType": {
+									"type": "literal",
+									"value": "complete"
+								},
+								"optional": false
+							},
+							"runResult": {
+								"fieldType": {
+									"type": "union",
+									"value": [
+										{
+											"type": "object",
+											"value": {
+												"kind": {
+													"fieldType": {
+														"type": "literal",
+														"value": "success"
+													},
+													"optional": false
+												},
+												"returnValue": {
+													"fieldType": {
+														"type": "null"
+													},
+													"optional": false
+												}
+											}
+										},
+										{
+											"type": "object",
+											"value": {
+												"error": {
+													"fieldType": {
+														"type": "string"
+													},
+													"optional": false
+												},
+												"kind": {
+													"fieldType": {
+														"type": "literal",
+														"value": "failed"
+													},
+													"optional": false
+												}
+											}
+										},
+										{
+											"type": "object",
+											"value": {
+												"kind": {
+													"fieldType": {
+														"type": "literal",
+														"value": "canceled"
+													},
+													"optional": false
+												}
+											}
+										}
+									]
+								},
+								"optional": false
+							}
+						}
+					}
+				]
+			}
+		},
+		"foundation/functions:status": {
+			"args": {
+				"type": "object",
+				"value": {}
+			},
+			"returns": {
+				"type": "literal",
+				"value": "ready"
+			}
+		}
+	},
+	"tables": {
+		"approvals/approvalDecisions": {
+			"documentType": {
+				"type": "object",
+				"value": {
+					"actor": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"actorRef": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"capabilities": {
+									"fieldType": {
+										"type": "array",
+										"value": {
+											"type": "string"
+										}
+									},
+									"optional": false
+								},
+								"metadata": {
+									"fieldType": {
+										"keys": {
+											"type": "string"
+										},
+										"type": "record",
+										"values": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										}
+									},
+									"optional": true
+								}
+							}
+						},
+						"optional": false
+					},
+					"decidedAt": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": false
+					},
+					"decision": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "approved"
+								},
+								{
+									"type": "literal",
+									"value": "rejected"
+								}
+							]
+						},
+						"optional": false
+					},
+					"reason": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					},
+					"runId": {
+						"fieldType": {
+							"tableName": "approvalRuns",
+							"type": "id"
+						},
+						"optional": false
+					},
+					"stepKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					}
+				}
+			},
+			"indexes": [
+				{
+					"fields": ["runId", "stepKey", "actor.actorRef"],
+					"indexDescriptor": "by_runId_and_stepKey_and_actor_actorRef"
+				},
+				{
+					"fields": ["runId", "stepKey", "decidedAt"],
+					"indexDescriptor": "by_runId_and_stepKey_and_decidedAt"
+				},
+				{
+					"fields": ["runId", "decidedAt"],
+					"indexDescriptor": "by_runId_and_decidedAt"
+				}
+			],
+			"searchIndexes": [],
+			"stagedDbIndexes": [],
+			"stagedDocumentType": "$undefined",
+			"stagedSearchIndexes": [],
+			"stagedVectorIndexes": [],
+			"vectorIndexes": []
+		},
+		"approvals/approvalRuns": {
+			"documentType": {
+				"type": "object",
+				"value": {
+					"createdAt": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": false
+					},
+					"currentStepKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					},
+					"executionFailedStepKey": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					},
+					"expiresAt": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": true
+					},
+					"metadata": {
+						"fieldType": {
+							"keys": {
+								"type": "string"
+							},
+							"type": "record",
+							"values": {
+								"fieldType": {
+									"type": "string"
+								},
+								"optional": false
+							}
+						},
+						"optional": true
+					},
+					"requester": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"actorRef": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"capabilities": {
+									"fieldType": {
+										"type": "array",
+										"value": {
+											"type": "string"
+										}
+									},
+									"optional": false
+								},
+								"metadata": {
+									"fieldType": {
+										"keys": {
+											"type": "string"
+										},
+										"type": "record",
+										"values": {
+											"fieldType": {
+												"type": "string"
+											},
+											"optional": false
+										}
+									},
+									"optional": true
+								}
+							}
+						},
+						"optional": false
+					},
+					"resourceRef": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"resourceType": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"scopeRef": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": false
+					},
+					"state": {
+						"fieldType": {
+							"type": "union",
+							"value": [
+								{
+									"type": "literal",
+									"value": "pending"
+								},
+								{
+									"type": "literal",
+									"value": "approved"
+								},
+								{
+									"type": "literal",
+									"value": "rejected"
+								},
+								{
+									"type": "literal",
+									"value": "expired"
+								},
+								{
+									"type": "literal",
+									"value": "canceled"
+								}
+							]
+						},
+						"optional": false
+					},
+					"terminalAt": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": true
+					},
+					"updatedAt": {
+						"fieldType": {
+							"type": "number"
+						},
+						"optional": false
+					},
+					"workflow": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"compatibilityKey": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"name": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								},
+								"schemaVersion": {
+									"fieldType": {
+										"type": "literal",
+										"value": 1
+									},
+									"optional": false
+								},
+								"steps": {
+									"fieldType": {
+										"type": "array",
+										"value": {
+											"type": "union",
+											"value": [
+												{
+													"type": "union",
+													"value": [
+														{
+															"type": "object",
+															"value": {
+																"callback": {
+																	"fieldType": {
+																		"type": "object",
+																		"value": {
+																			"handle": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "mutation"
+																				},
+																				"optional": false
+																			},
+																			"retry": {
+																				"fieldType": {
+																					"type": "boolean"
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	"optional": false
+																},
+																"key": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"kind": {
+																	"fieldType": {
+																		"type": "literal",
+																		"value": "mutation"
+																	},
+																	"optional": false
+																}
+															}
+														},
+														{
+															"type": "object",
+															"value": {
+																"callback": {
+																	"fieldType": {
+																		"type": "object",
+																		"value": {
+																			"handle": {
+																				"fieldType": {
+																					"type": "string"
+																				},
+																				"optional": false
+																			},
+																			"kind": {
+																				"fieldType": {
+																					"type": "literal",
+																					"value": "action"
+																				},
+																				"optional": false
+																			},
+																			"retry": {
+																				"fieldType": {
+																					"type": "boolean"
+																				},
+																				"optional": false
+																			}
+																		}
+																	},
+																	"optional": false
+																},
+																"key": {
+																	"fieldType": {
+																		"type": "string"
+																	},
+																	"optional": false
+																},
+																"kind": {
+																	"fieldType": {
+																		"type": "literal",
+																		"value": "action"
+																	},
+																	"optional": false
+																}
+															}
+														}
+													]
+												},
+												{
+													"type": "object",
+													"value": {
+														"callback": {
+															"fieldType": {
+																"type": "object",
+																"value": {
+																	"handle": {
+																		"fieldType": {
+																			"type": "string"
+																		},
+																		"optional": false
+																	},
+																	"kind": {
+																		"fieldType": {
+																			"type": "literal",
+																			"value": "action"
+																		},
+																		"optional": false
+																	},
+																	"retry": {
+																		"fieldType": {
+																			"type": "boolean"
+																		},
+																		"optional": false
+																	}
+																}
+															},
+															"optional": false
+														},
+														"key": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"kind": {
+															"fieldType": {
+																"type": "literal",
+																"value": "notify"
+															},
+															"optional": false
+														}
+													}
+												},
+												{
+													"type": "object",
+													"value": {
+														"decisions": {
+															"fieldType": {
+																"type": "array",
+																"value": {
+																	"type": "union",
+																	"value": [
+																		{
+																			"type": "literal",
+																			"value": "approved"
+																		},
+																		{
+																			"type": "literal",
+																			"value": "rejected"
+																		}
+																	]
+																}
+															},
+															"optional": false
+														},
+														"expiresAfterMs": {
+															"fieldType": {
+																"type": "number"
+															},
+															"optional": true
+														},
+														"key": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"kind": {
+															"fieldType": {
+																"type": "literal",
+																"value": "decision"
+															},
+															"optional": false
+														},
+														"makerChecker": {
+															"fieldType": {
+																"type": "boolean"
+															},
+															"optional": false
+														},
+														"quorum": {
+															"fieldType": {
+																"type": "object",
+																"value": {
+																	"approvals": {
+																		"fieldType": {
+																			"type": "number"
+																		},
+																		"optional": false
+																	},
+																	"kind": {
+																		"fieldType": {
+																			"type": "union",
+																			"value": [
+																				{
+																					"type": "literal",
+																					"value": "count"
+																				}
+																			]
+																		},
+																		"optional": false
+																	}
+																}
+															},
+															"optional": false
+														}
+													}
+												},
+												{
+													"type": "object",
+													"value": {
+														"approvedStepKey": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"key": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														},
+														"kind": {
+															"fieldType": {
+																"type": "literal",
+																"value": "branch"
+															},
+															"optional": false
+														},
+														"rejectedStepKey": {
+															"fieldType": {
+																"type": "string"
+															},
+															"optional": false
+														}
+													}
+												}
+											]
+										}
+									},
+									"optional": false
+								}
+							}
+						},
+						"optional": false
+					},
+					"workflowId": {
+						"fieldType": {
+							"type": "string"
+						},
+						"optional": true
+					}
+				}
+			},
+			"indexes": [
+				{
+					"fields": ["resourceType", "resourceRef"],
+					"indexDescriptor": "by_resourceType_and_resourceRef"
+				},
+				{
+					"fields": ["scopeRef", "state"],
+					"indexDescriptor": "by_scopeRef_and_state"
+				},
+				{
+					"fields": ["state", "expiresAt"],
+					"indexDescriptor": "by_state_and_expiresAt"
+				}
+			],
+			"searchIndexes": [],
+			"stagedDbIndexes": [],
+			"stagedDocumentType": "$undefined",
+			"stagedSearchIndexes": [],
+			"stagedVectorIndexes": [],
+			"vectorIndexes": []
+		}
+	}
+}

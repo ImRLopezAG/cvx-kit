@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../../../../../k'
 
 import { Command } from '../command'
 
@@ -9,11 +9,11 @@ describe('Foundation Command', () => {
 		const command = new Command({
 			operations: {
 				create: {
-					command: z.object({ name: z.string() }).transform((value) => {
+					command: k.object({ name: k.string() }).transform((value) => {
 						order.push('parse-input')
 						return value
 					}),
-					result: z.object({ id: z.string() }).transform((value) => {
+					result: k.object({ id: k.string() }).transform((value) => {
 						order.push('parse-output')
 						return value
 					}),
@@ -42,7 +42,7 @@ describe('Foundation Command', () => {
 		let ran = false
 		const command = new Command({
 			operations: {
-				create: { command: z.object({ name: z.string() }), result: z.string() },
+				create: { command: k.object({ name: k.string() }), result: k.string() },
 			},
 			execute: (execution) => execution.run(),
 		})
@@ -65,8 +65,8 @@ describe('Foundation Command', () => {
 		const command = new Command({
 			operations: {
 				create: {
-					command: z.object({ name: z.string() }),
-					result: z.object({ id: z.string() }),
+					command: k.object({ name: k.string() }),
+					result: k.object({ id: k.string() }),
 				},
 			},
 			execute: (execution) => execution.run(),
@@ -84,14 +84,14 @@ describe('Foundation Command', () => {
 		const command = new Command({
 			operations: {
 				create: {
-					command: z.object({ operation: z.string() }),
-					result: z.string(),
+					command: k.object({ operation: k.string() }),
+					result: k.string(),
 				},
 			},
 			execute: (execution) => execution.run(),
 		})
 		const execute = command.exec({
-			dispatcher: z.object({ operation: z.string() }),
+			dispatcher: k.object({ operation: k.string() }),
 			// @ts-expect-error Exercise an unregistered selector result from an untyped caller.
 			select: (input) => input.operation,
 			handler: (_context, input) => input.operation,

@@ -1,4 +1,3 @@
-import { z } from 'zod'
 import { AuditLog, type AuditEventInput } from 'convex-audit-log'
 import { v } from 'convex/values'
 
@@ -10,6 +9,7 @@ import {
 	MAX_APPROVAL_AUDIT_RETENTION_DAYS,
 	MIN_APPROVAL_AUDIT_RETENTION_DAYS,
 } from './constants'
+import { approvalAuditEventProjection, approvalOptionalString } from './validators'
 
 export type ApprovalAuditTransition = Readonly<{
 	action: string
@@ -119,17 +119,12 @@ function boundedInteger(value: number, minimum: number, maximum: number, name: s
 	return value
 }
 
-const auditEventProjection = z.object({
-	action: z.string(),
-	actorId: z.string().optional().catch(undefined),
-	metadata: z.object({ correlationKey: z.string(), transition: z.string() }),
-})
-
 function auditProjection(
 	event: Awaited<ReturnType<typeof approvalAudit.queryByResource>>[number],
 ): ApprovalAuditProjection | null {
-	const parsed = auditEventProjection.safeParse(event)
+	const parsed = approvalAuditEventProjection.safeParse(event)
 	if (!parsed.success) return null
 	const { action, actorId, metadata } = parsed.data
-	return { action, actorRef: actorId, ...metadata }
+	const actorRef = approvalOptionalString.safeParse(actorId)
+	return { action, actorRef: actorRef.success ? actorRef.data : undefined, ...metadata }
 }

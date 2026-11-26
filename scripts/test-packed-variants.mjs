@@ -42,7 +42,7 @@ function run(command, args, cwd, label, env = process.env) {
 run('bun', ['pm', 'pack', '--ignore-scripts', '--destination', proof], root, 'pack')
 for (const [label, installer, helpers, zod] of [
 	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
-	['minimum', installerOverride ?? 'npm', '0.1.127', '4.6.7'],
+	['minimum', installerOverride ?? 'npm', '0.1.130', '4.6.7'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)

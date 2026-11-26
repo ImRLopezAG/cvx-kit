@@ -127,7 +127,7 @@ writeFileSync(
 )
 for (const [label, convex, helpers, zod, convexTest] of [
 	['current', '1.51.0', '0.1.137', '4.6.7', '0.0.75'],
-	['minimum', '1.46.0', '0.1.127', '4.6.7', '0.0.65'],
+	['minimum', '1.46.0', '0.1.130', '4.6.7', '0.0.65'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)

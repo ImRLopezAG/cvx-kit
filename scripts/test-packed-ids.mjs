@@ -31,7 +31,7 @@ try {
 				type: 'module',
 				dependencies: {
 					'cvx-kit': `file:${join(temporary, `cvx-kit-${manifest.version}.tgz`)}`,
-					'convex-helpers': '0.1.127',
+					'convex-helpers': '0.1.130',
 					convex: manifest.devDependencies.convex,
 					zod: manifest.devDependencies.zod,
 				},
@@ -148,7 +148,7 @@ it('registers concrete and generic backends from the packed package', () => {
 			fixture,
 		)
 		console.log(
-			`${installer}: packed IDs, table/tool types, registration, and command lifecycle pass with host convex-helpers 0.1.127`,
+			`${installer}: packed IDs, table/tool types, registration, and command lifecycle pass with host convex-helpers 0.1.130`,
 		)
 	}
 } finally {

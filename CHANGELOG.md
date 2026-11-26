@@ -17,6 +17,7 @@ are this file's matching section.
 ### Breaking
 
 - The `zod` peer range is now `^4.6.7` (was `^4.5.4`). Upgrade zod before installing this release.
+- The `convex-helpers` peer range is now `>=0.1.130 <0.2.0` (was `>=0.1.127`). Earlier helper releases do not type-check against zod 4.6.7 without `skipLibCheck`.
 
 ### Added
 
@@ -31,7 +32,7 @@ are this file's matching section.
 - Effect command registries no longer read `contract.errors` at registration, so a thunk-declared domain contract is not forced at import.
 - A paginated call without filters no longer builds the private filter grammar. Relation pages reuse child plans, scope digests and predicate classification across rows within one invocation; read counts, policy calls, error order and cursor bytes are unchanged. Cursor binding data is prepared once per pagination operation.
 - The native recipe fast path for pagination DTOs now recognises zod 4.6.7. It was silently disabled on that version.
-- Dependencies: convex 1.51.0, convex-helpers 0.1.137, convex-test 0.0.75, effect 4.1.6, zod 4.6.7, `@convex-dev/workflow` 0.5.0, vite-plus 1.8.0, oxlint 1.95.0, oxc-parser 0.160.0, jsdom 31.0.1, React 19.3.1. The `convex`, `convex-helpers`, `effect` and `react` peer ranges are unchanged.
+- Dependencies: convex 1.51.0, convex-helpers 0.1.137, convex-test 0.0.75, effect 4.1.6, zod 4.6.7, `@convex-dev/workflow` 0.5.0, vite-plus 1.8.0, oxlint 1.95.0, oxc-parser 0.160.0, jsdom 31.0.1, React 19.3.1. The `convex`, `effect` and `react` peer ranges are unchanged.
 
 ### Notes
 

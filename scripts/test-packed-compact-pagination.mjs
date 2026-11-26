@@ -64,7 +64,7 @@ const env = {
 	CI: '1',
 }
 const versions =
-	tuple === 'current' ? ['1.51.0', '0.1.137', '4.6.7'] : ['1.46.0', '0.1.127', '4.6.7']
+	tuple === 'current' ? ['1.51.0', '0.1.137', '4.6.7'] : ['1.46.0', '0.1.130', '4.6.7']
 const hash = (b) => createHash('sha256').update(b).digest('hex')
 const json = (name, value) => writeFileSync(join(evidence, name), JSON.stringify(value, null, 2))
 const measurements = {},

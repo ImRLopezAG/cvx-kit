@@ -85,6 +85,49 @@ describe('codemod-v2 fixtures', () => {
 	})
 })
 
+describe('codemod-v2 function getters', () => {
+	const source = [
+		"import { z } from 'zod'",
+		"import { authQuery } from './auth'",
+		'',
+		'export const get = authQuery({',
+		'\targs: z.strictObject({ id: z.string() }),',
+		'\treturns: shared.result,',
+		'\thandler: async () => null,',
+		'})',
+		'',
+	].join('\n')
+
+	it('turns a non-reference args value into a getter and keeps cheap references', () => {
+		const { output } = transformSource('fn.ts', source)
+		expect(output).toContain('\tget args() { return k.object({ id: k.string() }) },')
+		expect(output).toContain('\treturns: shared.result,')
+	})
+
+	it('keeps data properties with getters: false', () => {
+		const { output } = transformSource('fn.ts', source, { getters: false })
+		expect(output).toContain('\targs: k.object({ id: k.string() }),')
+		expect(output).not.toContain('get args()')
+	})
+
+	it('leaves values that read this, await or yield, and objects without a handler', () => {
+		const input = [
+			"import { z } from 'zod'",
+			'',
+			'export const a = authQuery({ args: this.args(), handler: () => null })',
+			'export const b = authQuery({ args: await load(), handler: () => null })',
+			'export const c = configure({ args: z.string() })',
+			'export const d = authQuery({ get args() { return z.string() }, handler: () => null })',
+			'',
+		].join('\n')
+		const { output } = transformSource('fn.ts', input)
+		expect(output).toContain('{ args: this.args(), handler')
+		expect(output).toContain('{ args: await load(), handler')
+		expect(output).toContain('configure({ args: k.string() })')
+		expect(output).toContain('{ get args() { return k.string() }, handler')
+	})
+})
+
 describe('codemod-v2 CLI', () => {
 	const tree = {
 		[join(FIXTURES, 'strict-object/input.ts')]: 'src/strict.ts',
@@ -147,6 +190,15 @@ describe('codemod-v2 CLI', () => {
 		withTempTree({ [join(FIXTURES, 'strict-object/input.ts')]: 'src/schema.mts' }, (root) => {
 			expect(run(['src', '--ext', 'ts'], root).report.summary.scanned).toBe(1)
 			expect(run(['src', '--ext', 'mts'], root).report.summary.rewritten).toBe(1)
+		})
+	})
+
+	it('--no-getters keeps function args as data properties', () => {
+		withTempTree({ [join(FIXTURES, 'function-getters/input.ts')]: 'src/fn.ts' }, (root) => {
+			run(['src/fn.ts', '--write', '--no-getters'], root)
+			const output = readFileSync(join(root, 'src/fn.ts'), 'utf8')
+			expect(output).not.toContain('get args()')
+			expect(output).toContain('args: relations.tables.notes.paginationOpts({ title: true }),')
 		})
 	})
 

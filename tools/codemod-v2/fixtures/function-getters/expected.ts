@@ -1,0 +1,25 @@
+import { k } from 'cvx-kit'
+import { authQuery } from './auth'
+import { relations } from './relations'
+
+export const NoteArgs = k.object({ id: k.id('notes') })
+
+export const get = authQuery({
+	args: NoteArgs,
+	get returns() { return k.object({ title: k.string() }) },
+	handler: async (_ctx, args) => args.id,
+})
+
+export const list = authQuery({
+	get args() { return relations.tables.notes.paginationOpts({ title: true }) },
+	get returns() { return relations.tables.notes.pageDto({}) },
+	handler: async () => null,
+})
+
+export const shared = authQuery({
+	args: schemas.byId,
+	get returns() { return k.null() },
+	handler: async () => null,
+})
+
+export const notAFunction = configure({ args: { id: k.id('notes') } })

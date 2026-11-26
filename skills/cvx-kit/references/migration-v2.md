@@ -403,7 +403,7 @@ node path/to/cvx-kit/tools/codemod-v2/index.mjs convex src --report codemod-repo
 node path/to/cvx-kit/tools/codemod-v2/index.mjs convex src --write --report codemod-report.json
 ```
 
-Options: `--write` writes the files (without it nothing is written), `--report <file>` writes the JSON report, `--ext ts,tsx,mts` sets the extensions, and `--ignore <glob…>` skips paths. `node_modules`, `dist`, `build`, `.next`, `_generated`, `.git` and `.d.ts` files are always skipped. Run it on a clean working tree so the diff is reviewable. Running it twice changes nothing the second time.
+Options: `--write` writes the files (without it nothing is written), `--report <file>` writes the JSON report, `--ext ts,tsx,mts` sets the extensions, `--no-getters` keeps function `args` and `returns` as data properties, and `--ignore <glob…>` skips paths. `node_modules`, `dist`, `build`, `.next`, `_generated`, `.git` and `.d.ts` files are always skipped. Run it on a clean working tree so the diff is reviewable. Running it twice changes nothing the second time.
 
 What it rewrites:
 
@@ -413,6 +413,7 @@ What it rewrites:
 - `zid('t')` → `k.id('t')`; the table callback form `(id) => ({ … })` → a plain object, for `zodTable`, `createTable(...)`, `tenantTable` and `zodVariantTable`.
 - `zodTable` → `kTable`, `zodVariantTable` → `kVariantTable`, `zodContract` → `kContract`, `effectZodApiBuilder` → `effectApiBuilder`, and `cvx-kit/zod-table` imports → `cvx-kit/table`.
 - `z.infer`, `z.input`, `z.output` → `k.infer`, `k.input`, `k.output`.
+- Function definitions (an object literal passed to a call and carrying a `handler`): `args: <expr>` and `returns: <expr>` become `get args() { return <expr> }` and `get returns() { return <expr> }`, unless the value is a plain reference (`NoteArgs`, `schemas.byId`) or mentions `this`, `await` or `yield`. Convex re-evaluates a module's import graph on every call, so a getter makes a call build only the validators of the function it serves; on the benchmark app (about 30 tables, 14 functions) module load went from 8.43 ms to 6.30 ms. The getters are written on one line; run your formatter afterwards. Pass `--no-getters` to keep data properties, which stay supported.
 
 Within a file, statements whose schemas reference each other move together: if one of them has an unsupported site, the whole group stays Zod byte for byte and the others are reported as `mixed-reference`. Each file gets a status: `rewritten`, `mixed` (some Zod or v1 kit names remain), `kept` (keep marker), `untouched` or `error` (the file did not parse).
 

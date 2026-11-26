@@ -262,4 +262,18 @@ Carried: structure, strict objects (`strip()` objects strip), ids with their tab
 
 Declaring a schema only records a chain: each chained call allocates one small record, and nothing else is built at import. Native validators and parse plans are built when Convex or a parse first asks for them, then memoised. A function whose schemas declare no checks, defaults, normalisers or transforms does no validation work of its own on a call; Convex validates the structure.
 
+Declare function `args` and `returns` as getters. Convex re-evaluates a module's whole import graph on every call, and a getter means a call builds only the validators of the function it invokes; on the benchmark app (about 30 tables, 14 functions) module load drops from 8.43 ms to 6.30 ms. The property form (`args: input`) is still supported and validates identically.
+
+```ts
+export const getDocument = authQuery({
+	get args() {
+		return k.object({ id: k.id('documents') })
+	},
+	get returns() {
+		return documentDto.nullable()
+	},
+	handler: (ctx, args) => ctx.db.get(args.id),
+})
+```
+
 Measured results are in `docs/benchmarks/validators.md` in the repository.

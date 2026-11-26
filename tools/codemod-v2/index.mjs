@@ -2,7 +2,8 @@
 // cvx-kit v2 codemod: rewrites the mechanical majority of Zod schema and kit
 // table call sites to `k` and reports every site it left for manual work.
 // Usage: node tools/codemod-v2/index.mjs <path…> [--write] [--report out.json]
-//          [--ext ts,tsx,mts] [--ignore glob…]
+//          [--ext ts,tsx,mts] [--no-getters] [--ignore glob…]
+// --no-getters keeps function `args` / `returns` as data properties.
 // Without --write it is a dry run and writes nothing but the optional report.
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, matchesGlob, relative, resolve } from 'node:path'
@@ -26,6 +27,7 @@ export function parseArguments(argv) {
 		report: null,
 		extensions: ['ts', 'tsx', 'mts'],
 		ignore: [],
+		getters: true,
 	}
 	let list = options.paths
 	for (let index = 0; index < argv.length; index++) {
@@ -38,6 +40,9 @@ export function parseArguments(argv) {
 			list = options.paths
 		} else if (arg === '--ext') {
 			options.extensions = argv[++index].split(',').map((ext) => ext.trim().replace(/^\./, ''))
+			list = options.paths
+		} else if (arg === '--no-getters') {
+			options.getters = false
 			list = options.paths
 		} else if (arg === '--ignore') {
 			list = options.ignore
@@ -77,7 +82,7 @@ export function run(argv, cwd = process.cwd()) {
 	const results = []
 	for (const file of collectFiles(options, cwd)) {
 		const source = readFileSync(file, 'utf8')
-		const outcome = transformSource(relative(cwd, file), source)
+		const outcome = transformSource(relative(cwd, file), source, { getters: options.getters })
 		if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
 		results.push(outcome)
 	}

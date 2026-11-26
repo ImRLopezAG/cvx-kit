@@ -13,6 +13,7 @@ import {
 } from './transforms/ast.mjs'
 import { collectImports, KIT_RENAMES, planImports, ZOD_INTEROP } from './transforms/imports.mjs'
 import { isSchemaExpression, processBoundChain, processZodChain } from './transforms/schema.mjs'
+import { getterEdits } from './transforms/getters.mjs'
 import { addEdit, addSkip } from './transforms/sites.mjs'
 import { isCreateTable, processTableCall, tableKind } from './transforms/tables.mjs'
 import { processZodType } from './transforms/types.mjs'
@@ -29,7 +30,11 @@ const SCHEMA_ARGUMENT_FUNCTIONS = new Set([
 
 const TYPE_DECLARATIONS = new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'])
 
-export function transformSource(path, source) {
+/**
+ * `options.getters` (default `true`): rewrite `args` / `returns` of function
+ * definitions to getters, see `transforms/getters.mjs`.
+ */
+export function transformSource(path, source, options = {}) {
 	let parsed
 	try {
 		parsed = parseSource(path, source)
@@ -41,7 +46,7 @@ export function transformSource(path, source) {
 		return result(path, source, 'kept')
 	}
 	try {
-		return rewrite(path, source, parsed.program)
+		return rewrite(path, source, parsed.program, options.getters !== false)
 	} catch (error) {
 		return failure(path, source, error.message)
 	}
@@ -104,6 +109,7 @@ function createUnit(node, index) {
 		tableCall: false,
 		boundSchema: false,
 		kitRefs: 0,
+		getterEdits: [],
 	}
 }
 
@@ -114,7 +120,7 @@ function declaredNames(declaration) {
 	return declaration.id?.type === 'Identifier' ? [declaration.id.name] : []
 }
 
-function rewrite(path, source, program) {
+function rewrite(path, source, program, getters) {
 	const ctx = createContext(source, program)
 	collectImports(ctx)
 	const units = program.body
@@ -132,17 +138,19 @@ function rewrite(path, source, program) {
 	}
 	classifyBindings(ctx, units)
 	for (const unit of units) scanUnit(ctx, unit)
+	if (getters) for (const unit of units) unit.getterEdits = getterEdits(unit.node)
 	const left = decideComponents(ctx, units)
 	if (ctx.kConflict && units.some((unit) => unit.edits.length > 0)) {
 		const skipped = [{ ...siteAt(ctx, ctx.kConflict), code: 'k-conflict' }]
 		return result(path, source, 'untouched', { skipped })
 	}
 	const isLeft = (unit) => left.has(unit)
-	const applied = units.filter((unit) => !isLeft(unit) && unit.edits.length > 0)
+	const editsOf = (unit) => [...unit.edits, ...unit.getterEdits]
+	const applied = units.filter((unit) => !isLeft(unit) && editsOf(unit).length > 0)
 	if (applied.length === 0) return summarize(path, source, ctx, units, isLeft, source)
 	const needsK = applied.some((unit) => unit.edits.some((edit) => edit.usesK))
 	const imports = planImports(ctx, (index) => isLeft(units[index]), needsK)
-	const output = applyEdits(source, [...applied.flatMap((unit) => unit.edits), ...imports.edits])
+	const output = applyEdits(source, [...applied.flatMap(editsOf), ...imports.edits])
 	const mixed =
 		imports.zodRemains ||
 		imports.oldKitRemains ||

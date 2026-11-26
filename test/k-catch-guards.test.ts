@@ -32,9 +32,21 @@ describe('catch around ids', () => {
 				.catch({ kind: 'a' } as never),
 		).toThrow(/\|0\.id/)
 		// SAFETY: a fallback of the wrong shape is fine; the declaration throws before it is used.
-		expect(() => k.string().pipe(k.id('users')).catch('x' as never)).toThrow(/k\.id/)
+		expect(() =>
+			k
+				.string()
+				.pipe(k.id('users'))
+				.catch('x' as never),
+		).toThrow(/k\.id/)
 		// SAFETY: a fallback of the wrong shape is fine; the declaration throws before it is used.
-		expect(() => k.id('users').nullable().optional().describe('x').catch(null as never)).toThrow()
+		expect(() =>
+			k
+				.id('users')
+				.nullable()
+				.optional()
+				.describe('x')
+				.catch(null as never),
+		).toThrow()
 	})
 
 	it('allows catch beside an id', () => {
@@ -76,7 +88,10 @@ describe('catch in variant tables and DTO extensions', () => {
 		const table = kTable('t', { a: k.string() }, { publicFields: ['a'] })
 		// SAFETY: a fallback of the wrong shape is fine; the declaration throws before it is used.
 		expect(() =>
-			table.toPublicDto({ a: 'x' } as never, { extend: { b: k.number().catch(0) }, values: {} } as never),
+			table.toPublicDto(
+				{ a: 'x' } as never,
+				{ extend: { b: k.number().catch(0) }, values: {} } as never,
+			),
 		).toThrow(/value-preserving/)
 	})
 })
@@ -135,9 +150,12 @@ describe('JSON Schema for catch', () => {
 	it('the output side keeps the shape but not the checks', () => {
 		expect(toJsonSchema(k.number().min(5).catch(0), { io: 'output' })).toEqual({ type: 'number' })
 		expect(
-			toJsonSchema(k.object({ s: k.string().min(3).regex(/a/), d: k.isoDate() }).catch({ s: '', d: '' }), {
-				io: 'output',
-			}),
+			toJsonSchema(
+				k.object({ s: k.string().min(3).regex(/a/), d: k.isoDate() }).catch({ s: '', d: '' }),
+				{
+					io: 'output',
+				},
+			),
 		).toEqual({
 			type: 'object',
 			properties: { s: { type: 'string' }, d: { type: 'string' } },

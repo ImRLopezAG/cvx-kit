@@ -102,7 +102,10 @@ describe('k.jsonObject()', () => {
 		expect(json(output.validator)).toEqual({ type: 'any' })
 		expect(hasDeclaredBehaviour(output)).toBe(true)
 		expect(() => runDeclared(output, [1])).toThrow()
-		expect(toJsonSchema(output)).toEqual({ type: 'object' })
+		expect(toJsonSchema(output)).toEqual({
+			type: 'object',
+			propertyNames: { type: 'string', pattern: '^[ -#%-~][ -~]{0,1023}$' },
+		})
 		expect(toZod(output).parse({ _id: 'a' })).toEqual({ _id: 'a' })
 		expect(output['~standard'].validate([])).toMatchObject({ issues: [{ path: [] }] })
 	})

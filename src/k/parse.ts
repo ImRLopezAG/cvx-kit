@@ -575,12 +575,7 @@ function checkJson(value: unknown, context: WalkContext): void {
 	for (const key of Object.keys(entries)) {
 		context.path.push(array ? Number(key) : key)
 		if (array || isFieldName(key)) checkJson(entries[key], context)
-		else
-			context.add(
-				'invalid_format',
-				"Invalid object key: not a Convex field name",
-				undefined,
-			)
+		else context.add('invalid_format', 'Invalid object key: not a Convex field name', undefined)
 		context.path.pop()
 	}
 }
@@ -706,7 +701,8 @@ function walkObject(
 		copyKnown(out, value, fields, null)
 	}
 	if (strip === 'loose' && out !== undefined)
-		for (const key of Object.keys(value)) if (!Object.hasOwn(fields, key)) setOwn(out, key, value[key])
+		for (const key of Object.keys(value))
+			if (!Object.hasOwn(fields, key)) setOwn(out, key, value[key])
 	return out ?? value
 }
 

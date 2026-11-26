@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { toJsonSchema } from '../src/json-schema'
 import { k } from '../src/k'
+import { toZod } from '../src/zod'
 
 describe('toJsonSchema', () => {
 	it('carries constraints and the input-side required list', () => {
@@ -17,7 +18,7 @@ describe('toJsonSchema', () => {
 		expect(toJsonSchema(schema)).toEqual({
 			type: 'object',
 			properties: {
-				name: { type: 'string', minLength: 1, maxLength: 80 },
+				name: { type: 'string', minLength: 1 },
 				code: { type: 'string', pattern: '^[A-Z]{3}$' },
 				status: { type: 'string', enum: ['open', 'done'], default: 'open' },
 				note: { type: 'string' },
@@ -173,5 +174,63 @@ describe('toJsonSchema io: output', () => {
 		expect(toJsonSchema(schema)).toEqual(toJsonSchema(schema, { io: 'input' }))
 		expect(toJsonSchema(schema).required).toEqual(['name', 'count', 'piped'])
 		expect(toJsonSchema(schema.partial(), { io: 'output' }).required).toBeUndefined()
+	})
+})
+
+describe('review fixes', () => {
+	it('a transform does not prove presence on the output side', () => {
+		const schema = k.object({
+			a: k
+				.string()
+				.optional()
+				.transform((value) => value),
+		})
+		expect(schema.parse({})).toEqual({})
+		expect(toJsonSchema(schema, { io: 'output' }).required).toBeUndefined()
+		const filled = k.object({
+			a: k
+				.string()
+				.default('x')
+				.transform((value) => value),
+		})
+		expect(toJsonSchema(filled, { io: 'output' }).required).toEqual(['a'])
+	})
+
+	it('a pipe target replaces the wrappers declared before it', () => {
+		expect(toJsonSchema(k.string().nullable().pipe(k.string()), { io: 'output' })).toEqual({
+			type: 'string',
+		})
+		expect(
+			toJsonSchema(k.string().nullable().describe('d').pipe(k.number()), { io: 'output' }),
+		).toEqual({ type: 'number', description: 'd' })
+		const optional = k.object({ a: k.string().optional().pipe(k.string().optional()) })
+		expect(toJsonSchema(optional, { io: 'output' }).required).toBeUndefined()
+		const rejected = k.object({ a: k.string().optional().pipe(k.string()) })
+		expect(toJsonSchema(rejected, { io: 'output' }).required).toEqual(['a'])
+	})
+
+	it('k.jsonObject() states the top-level key rule', () => {
+		const json = toJsonSchema(k.jsonObject())
+		expect(json.propertyNames).toEqual({ type: 'string', pattern: '^[ -#%-~][ -~]{0,1023}$' })
+		expect(k.jsonObject().safeParse({ $ref: 1 }).success).toBe(false)
+		expect(toZod(k.jsonObject()).safeParse({ $ref: 1 }).success).toBe(false)
+		expect(toZod(k.jsonObject()).safeParse({ _id: 1, a: { b: 1 } }).success).toBe(true)
+	})
+
+	it('checks after a normaliser are not promised on the input side', () => {
+		expect(
+			toJsonSchema(
+				k
+					.string()
+					.toLowerCase()
+					.regex(/^[a-z]+$/),
+			),
+		).toEqual({ type: 'string' })
+		expect(toJsonSchema(k.string().trim().min(1).max(3))).toEqual({ type: 'string', minLength: 1 })
+		expect(toJsonSchema(k.string().trim().min(1).max(3), { io: 'output' })).toEqual({
+			type: 'string',
+			minLength: 1,
+			maxLength: 3,
+		})
 	})
 })

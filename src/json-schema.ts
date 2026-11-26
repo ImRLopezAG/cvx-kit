@@ -156,6 +156,12 @@ function repeated(schema: KNode, output: boolean, defsKey: string): Map<KNode, s
 	return names
 }
 
+/**
+ * Convex's field-name rule (`isFieldName`) as a regex: 1 to 1024 printable ASCII characters, the
+ * first not `$`.
+ */
+const FIELD_NAME_PATTERN = '^[ -#%-~][ -~]{0,1023}$'
+
 const CONTAINERS = new Set(['object', 'array', 'record', 'union', 'discriminatedUnion'])
 
 function childrenOf(root: KNode): readonly KNode[] {
@@ -198,6 +204,9 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 	let nullable = false
 	let description: string | undefined
 	let fallback: JSONValue | undefined
+	// Checks after a normaliser test the normalised value, so the input side keeps only those the raw
+	// value must also meet: after `trim`, a lower length bound; after any other normaliser, none.
+	let normalised: 'none' | 'trim' | 'other' = 'none'
 	for (let index = records.length - 1; index >= 0; index--) {
 		const record = records[index]
 		switch (record.op) {
@@ -253,7 +262,16 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 			case 'gt':
 			case 'lt':
 			case 'safe':
-				if (!transformed && unchecked === 0) applyCheck(out, record)
+				if (!transformed && unchecked === 0 && rawHolds(record, output ? 'none' : normalised))
+					applyCheck(out, record)
+				break
+			case 'trim':
+				if (normalised === 'none') normalised = 'trim'
+				break
+			case 'lower':
+			case 'upper':
+			case 'overwrite':
+				normalised = 'other'
 				break
 			default:
 				break
@@ -276,6 +294,11 @@ function uncheckedOutput(node: KNode): JsonSchema {
 		unchecked--
 		shared = previous
 	}
+}
+
+function rawHolds(record: KNode, normalised: 'none' | 'trim' | 'other'): boolean {
+	if (normalised === 'none') return true
+	return normalised === 'trim' && record.op === 'min'
 }
 
 function rootSchema(root: KNode, output: boolean): JsonSchema {
@@ -311,7 +334,9 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 		case 'bytes':
 			return { type: 'string', contentEncoding: 'base64' }
 		case 'jsonObject':
-			return { type: 'object' }
+			// Top-level keys follow Convex's field-name rule exactly; nested keys are checked by parse
+			// only, since a recursive `$ref` form suits fewer tool-calling consumers.
+			return { type: 'object', propertyNames: { type: 'string', pattern: FIELD_NAME_PATTERN } }
 		case 'any':
 		case 'json':
 			return {}

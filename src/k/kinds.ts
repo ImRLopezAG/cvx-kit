@@ -19,7 +19,14 @@ import { discriminatorDispatch } from './dispatch'
 import { checkMessage } from './messages'
 import { setOwn } from './names'
 import { KSchema } from './schema'
-import type { KCheckMessage, KDiscriminated, KLiteralValue, KNode, KOutputRequired, KType } from './types'
+import type {
+	KCheckMessage,
+	KDiscriminated,
+	KLiteralValue,
+	KNode,
+	KOutputRequired,
+	KType,
+} from './types'
 
 export class KString extends KSchema<string, VString<string>> {
 	min(length: number, message?: KCheckMessage): this {
@@ -349,7 +356,10 @@ export function array<E extends KType>(element: E): KArray<E> {
 }
 
 /** The native record root; `k.record` (in object.ts) decides between this and an object. */
-export function nativeRecord<K extends KRecordKey, V extends KType>(key: K, value: V): KRecord<K, V> {
+export function nativeRecord<K extends KRecordKey, V extends KType>(
+	key: K,
+	value: V,
+): KRecord<K, V> {
 	return new KRecord<K, V>(null, 'record', Object.freeze([key, value]), undefined)
 }
 

@@ -83,6 +83,8 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `k.enum(...).extract(values)` follows the requested order at runtime, as its type and Zod 4 do; `exclude` keeps the source order.
 - `k.discriminatedUnion` no longer reports a conflict when one option lists the same discriminator value twice (`k.union([k.literal('a'), k.enum(['a', 'b'])])`).
 - `toPublicDto` threw `cannot project a 'jsonObject' schema` on a table with a `k.jsonObject()` public field; it now projects it (a stored non-object fails as `invalid_type`).
+- `toJsonSchema` output follows what parse can produce: an optional field stays optional through a `transform` (`required` no longer lists it), a `pipe` drops the `nullable`/default declared before it, and on the input side a check after a normaliser is no longer promised (`toLowerCase().regex(...)` accepted `'AB'`; after `trim` only the lower length bound is kept). A property test checks, over about 45 schemas, that every value parse accepts validates against the input schema and every parsed output against the output schema.
+- `k.jsonObject()` carries Convex's key rule into its JSON Schema (`propertyNames` pattern) and `toZod` for top-level keys; nested keys are checked by parse only.
 
 ### Changed
 

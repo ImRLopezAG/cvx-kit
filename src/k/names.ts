@@ -8,7 +8,12 @@
  * `'__proto__'` would call the prototype setter instead of adding a field.
  */
 export function setOwn<T>(target: Record<string, T>, key: string, value: T): void {
-	Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true })
+	Object.defineProperty(target, key, {
+		value,
+		enumerable: true,
+		writable: true,
+		configurable: true,
+	})
 }
 
 export function isFieldName(key: string): boolean {

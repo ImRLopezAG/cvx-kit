@@ -92,7 +92,10 @@ describe('discriminated unions', () => {
 		).toThrow(/option 1 has 'string'/)
 		expect(() =>
 			// @ts-expect-error an option without the key cannot dispatch
-			k.discriminatedUnion('kind', [k.object({ kind: k.literal('a') }), k.object({ other: k.number() })]),
+			k.discriminatedUnion('kind', [
+				k.object({ kind: k.literal('a') }),
+				k.object({ other: k.number() }),
+			]),
 		).toThrow(/option 1 has no 'kind' field/)
 	})
 })
@@ -247,13 +250,23 @@ describe('prototype-named keys', () => {
 
 	function fieldsWith(name: string, value: KType): FieldMap {
 		const fields: FieldMap = { other: k.number() }
-		Object.defineProperty(fields, name, { value, enumerable: true, writable: true, configurable: true })
+		Object.defineProperty(fields, name, {
+			value,
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		})
 		return fields
 	}
 
 	function valueWith(name: string, value: string | number): Row {
 		const out: Row = { other: 1 }
-		Object.defineProperty(out, name, { value, enumerable: true, writable: true, configurable: true })
+		Object.defineProperty(out, name, {
+			value,
+			enumerable: true,
+			writable: true,
+			configurable: true,
+		})
 		return out
 	}
 

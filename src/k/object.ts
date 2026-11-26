@@ -270,7 +270,11 @@ function checkedKeys(keys: readonly string[], factory: string): readonly string[
 	return keys
 }
 
-function maskKeys(node: KNode, method: string, args: readonly (string | KDeriveOptions)[]): string[] {
+function maskKeys(
+	node: KNode,
+	method: string,
+	args: readonly (string | KDeriveOptions)[],
+): string[] {
 	const last = args[args.length - 1]
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a mask call's trailing argument may be its options object.
 	const options = typeof last === 'object' ? last : undefined

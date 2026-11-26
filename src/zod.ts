@@ -43,6 +43,7 @@ declare global {
  * `partial()` field drops its default), ISO date and date-time formats,
  * timestamps and `describe`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a
  * transformed schema converts to its input schema, and checks declared after a transform are dropped.
+ * `k.jsonObject()` checks Convex's key rule on its top-level keys only; nested keys are not checked.
  * A schema holding `catch` throws.
  */
 export function toZod<S extends KType>(schema: S): KZod<S> {
@@ -113,6 +114,9 @@ function convert(node: KNode): Mini {
 	return description === undefined ? out : out.check(z.describe(description))
 }
 
+/** Convex's field-name rule (`isFieldName`): 1 to 1024 printable ASCII characters, the first not `$`. */
+const fieldName = /^[ -#%-~][ -~]{0,1023}$/
+
 function rootSchema(root: KNode, strip: boolean, loose: boolean): Mini {
 	switch (root.op) {
 		case 'string':
@@ -143,7 +147,8 @@ function rootSchema(root: KNode, strip: boolean, loose: boolean): Mini {
 		case 'json':
 			return z.json()
 		case 'jsonObject':
-			return z.record(z.string(), z.json())
+			// Top-level keys follow Convex's field-name rule; nested keys are not checked (see toZod).
+			return z.record(z.string().check(z.regex(fieldName)), z.json())
 		case 'literal':
 			// SAFETY: k.literal stores its value as the root argument.
 			return z.literal(root.arg as KLiteralValue)

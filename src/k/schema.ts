@@ -2,6 +2,7 @@ import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type { GenericValidator, VAny, VNull, VUnion } from 'convex/values'
 import { compileNative, compileOutput } from './compile'
 import type { KIssueInput, KSafeParseResult } from './issues'
+import { refineMessage } from './messages'
 import { parseSchema, safeParseSchema, type KPlan } from './parse'
 import { standardProps } from './standard'
 import type {
@@ -96,7 +97,7 @@ export abstract class KSchema<
 	): KNarrowed<this, U>
 	refine(check: (value: Out) => boolean, message?: string | KRefineOptions): this
 	refine(check: (value: Out) => boolean, message?: string | KRefineOptions): this {
-		return this.link('refine', check, frozenMessage(message))
+		return this.link('refine', check, refineMessage(message))
 	}
 
 	/** A check that may add several issues through `context.addIssue`. */
@@ -319,14 +320,6 @@ export class KPipe<I extends KType, P extends KType> extends KSchema<
 }
 
 type NullableOf<V extends KRequiredValidator> = VUnion<V['type'] | null, [V, VNull<null>]>
-
-/** Freezes a refine options object and its path in place, like every other container a record holds. */
-function frozenMessage(message: string | KRefineOptions | undefined): KMessage {
-	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- refine takes either its message or an options object.
-	if (message === undefined || typeof message === 'string') return message
-	if (message.path !== undefined) Object.freeze(message.path)
-	return Object.freeze(message)
-}
 
 function missingZodEntry(): never {
 	throw new Error("k: .toZod() needs the Zod interop entry; add `import 'cvx-kit/zod'` first")

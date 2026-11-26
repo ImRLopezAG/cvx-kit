@@ -64,6 +64,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `k.object` rejected class instances with `expected object, received object`; see the plain-object entry above.
 - `k.infer` of an object holding a `k.any()` field beside a defaulted field made the `any` field optional.
 - `refine` with a type-guard predicate narrows the schema's type.
+- Check options read Zod 4's `error` key: `refine(fn, { error: '…' })` reported `Invalid input`. `error` is now a string alias of `message` in `refine` and in the message argument of `min`/`max`/`length`/`regex`/`int` and the number checks, which also accept an options object. A function-valued `error` is a type error and throws at declaration. The codemod rewrites inline `error:` to `message:`, reports `error-map` and the informational `check-options-by-reference`.
 - Codemod: v1's number refusals are kept. `z.int()` and `z.number().int()` become `k.int().safe()` and `z.number()` becomes `k.number().finite()` (informational `int-safe-preserved`, `number-finite-preserved`); `--native-number-bounds` emits the bare forms and reports `int-no-longer-safe` / `number-now-accepts-nan`. The codemod prints its options with `--help`.
 
 ### Changed

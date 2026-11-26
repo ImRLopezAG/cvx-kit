@@ -1,0 +1,13 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 13,
+			"code": "error-map"
+		}
+	],
+	"declarations": {
+		"rewritten": 3,
+		"left": 1
+	}
+}

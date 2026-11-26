@@ -349,6 +349,8 @@ function processSteps(ctx, unit, steps, from, outer) {
 			addSkip(ctx, unit, site, 'string-format')
 		} else if (!KEPT_METHODS.has(step.name)) {
 			addSkip(ctx, unit, site, 'unknown-method')
+		} else if (OPTIONS_ARGUMENT.has(step.name)) {
+			checkOptions(ctx, unit, call.arguments[OPTIONS_ARGUMENT.get(step.name)])
 		}
 		if (OBJECT_STEPS.has(step.name)) {
 			unit.objectSites.push({
@@ -359,6 +361,55 @@ function processSteps(ctx, unit, steps, from, outer) {
 			})
 		}
 		index += 2
+	}
+}
+
+/** The argument index of a check's message or options object. */
+const OPTIONS_ARGUMENT = new Map([
+	['refine', 1],
+	['min', 1],
+	['max', 1],
+	['length', 1],
+	['regex', 1],
+	['int', 0],
+	['positive', 0],
+	['negative', 0],
+	['nonnegative', 0],
+	['nonpositive', 0],
+	['finite', 0],
+	['safe', 0],
+])
+
+/**
+ * Zod 4 spells a check's message `error`; `k` reads `message` (and accepts `error` as a string
+ * alias). An inline `error: '…'` becomes `message: '…'`; a function-valued `error` is Zod's error map,
+ * which `k` does not support. Options passed by reference cannot be read, so they are reported.
+ */
+function checkOptions(ctx, unit, argument) {
+	if (!argument) return
+	const node = unwrap(argument)
+	if (node.type === 'Identifier' || node.type === 'MemberExpression') {
+		addInfo(ctx, unit, argument, 'check-options-by-reference')
+		return
+	}
+	if (node.type !== 'ObjectExpression') return
+	const keyOf = (property) =>
+		property.type === 'Property' && !property.computed
+			? property.key.type === 'Identifier'
+				? property.key.name
+				: property.key.value
+			: null
+	if (node.properties.some((property) => keyOf(property) === 'message')) return
+	for (const property of node.properties) {
+		if (keyOf(property) !== 'error') continue
+		const value = unwrap(property.value)
+		// A non-function value read by reference is renamed too: k throws at declaration if it is a function.
+		if (value.type === 'ArrowFunctionExpression' || value.type === 'FunctionExpression') {
+			addSkip(ctx, unit, property, 'error-map')
+			continue
+		}
+		if (property.shorthand) addEdit(unit, property, `message: error`)
+		else addEdit(unit, property.key, 'message')
 	}
 }
 

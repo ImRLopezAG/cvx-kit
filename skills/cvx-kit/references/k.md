@@ -117,7 +117,7 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.safe()`                                       | number                      | a safe integer: `not_integer`, or `too_small`/`too_big` outside the range                                                                                                 |
 | `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                      | type-preserving normalisers                                                                                                                                               |
 | `.overwrite(fn)`                                | all                         | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                              |
-| `.refine(fn, message?)`                         | all                         | `fn(value)` must return `true`; `message` is a string or `{ message, path }`; a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
+| `.refine(fn, message?)`                         | all                         | `fn(value)` must return `true`; `message` is a string or `{ message, path }` (`error` is accepted as a string alias of `message`); a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
 | `.check((value, ctx) => …)`                     | all                         | adds any number of issues with `ctx.addIssue({ message, path?, code? })`                                                                                                  |
 | `.transform(fn)`                                | all                         | a type-changing step; see [Transforms](#transforms)                                                                                                                       |
 | `.pipe(schema)`                                 | all                         | parse this schema's output with `schema`; a transform kind                                                                                                                |
@@ -136,6 +136,8 @@ const maybeAt = k
 	.optional()
 	.refine((value): value is TimeOfDay | undefined => value === undefined || isTimeOfDay(value))
 ```
+
+Every check that takes a message (`min`, `max`, `length`, `regex`, `int`, `positive`, `negative`, `nonnegative`, `nonpositive`, `finite`, `safe`) also takes `{ message }`, and every options object also accepts Zod 4's `error: '…'` as a string alias of `message`; `message` wins when both are given. A function-valued `error` (Zod's error map) is a type error and throws at declaration, and an unknown option key is a type error.
 
 Refinements, checks, normalisers and transforms are synchronous. A `refine` callback that returns a promise fails with an `Invalid input` issue, a `check` that returns one adds `A check must be synchronous`, and a `transform` or `overwrite` that returns one fails with a `custom` issue saying async callbacks are not supported. Do asynchronous work in the handler.
 

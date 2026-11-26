@@ -82,8 +82,17 @@ export type KLiteralValue = string | number | bigint | boolean
 
 export type KPath = (string | number)[]
 
-/** Options for `refine`: a replacement message and a path, relative to the refined value, for the issue. */
-export type KRefineOptions = { readonly message?: string; readonly path?: KPath }
+/**
+ * Options for a check: a replacement message. `error` is Zod 4's spelling of the same string; when both
+ * are given `message` wins.
+ */
+export type KCheckOptions = { readonly message?: string; readonly error?: string }
+
+/** A check's message argument: the message itself or its options object. */
+export type KCheckMessage = string | KCheckOptions
+
+/** Options for `refine`: a replacement message (or `error`) and a path, relative to the refined value, for the issue. */
+export type KRefineOptions = KCheckOptions & { readonly path?: KPath }
 
 export type KMessage = string | KRefineOptions | undefined
 

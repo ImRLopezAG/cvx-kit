@@ -15,24 +15,25 @@ import type {
 	VString,
 	VUnion,
 } from 'convex/values'
+import { checkMessage } from './messages'
 import { KSchema } from './schema'
-import type { KDiscriminated, KLiteralValue, KNode, KOutputRequired, KType } from './types'
+import type { KCheckMessage, KDiscriminated, KLiteralValue, KNode, KOutputRequired, KType } from './types'
 
 export class KString extends KSchema<string, VString<string>> {
-	min(length: number, message?: string): this {
-		return this.link('min', length, message)
+	min(length: number, message?: KCheckMessage): this {
+		return this.link('min', length, checkMessage(message, 'min'))
 	}
 
-	max(length: number, message?: string): this {
-		return this.link('max', length, message)
+	max(length: number, message?: KCheckMessage): this {
+		return this.link('max', length, checkMessage(message, 'max'))
 	}
 
-	length(length: number, message?: string): this {
-		return this.link('length', length, message)
+	length(length: number, message?: KCheckMessage): this {
+		return this.link('length', length, checkMessage(message, 'length'))
 	}
 
-	regex(pattern: RegExp, message?: string): this {
-		return this.link('regex', pattern, message)
+	regex(pattern: RegExp, message?: KCheckMessage): this {
+		return this.link('regex', pattern, checkMessage(message, 'regex'))
 	}
 
 	trim(): this {
@@ -49,46 +50,46 @@ export class KString extends KSchema<string, VString<string>> {
 }
 
 export class KNumber extends KSchema<number, VFloat64<number>> {
-	min(value: number, message?: string): this {
-		return this.link('min', value, message)
+	min(value: number, message?: KCheckMessage): this {
+		return this.link('min', value, checkMessage(message, 'min'))
 	}
 
-	max(value: number, message?: string): this {
-		return this.link('max', value, message)
+	max(value: number, message?: KCheckMessage): this {
+		return this.link('max', value, checkMessage(message, 'max'))
 	}
 
-	int(message?: string): this {
-		return this.link('int', undefined, message)
+	int(message?: KCheckMessage): this {
+		return this.link('int', undefined, checkMessage(message, 'int'))
 	}
 
 	/** `> 0`; issue `too_small`. */
-	positive(message?: string): this {
-		return this.link('gt', 0, message)
+	positive(message?: KCheckMessage): this {
+		return this.link('gt', 0, checkMessage(message, 'positive'))
 	}
 
 	/** `>= 0`, the same check as `.min(0)`. */
-	nonnegative(message?: string): this {
-		return this.link('min', 0, message)
+	nonnegative(message?: KCheckMessage): this {
+		return this.link('min', 0, checkMessage(message, 'nonnegative'))
 	}
 
 	/** `< 0`; issue `too_big`. */
-	negative(message?: string): this {
-		return this.link('lt', 0, message)
+	negative(message?: KCheckMessage): this {
+		return this.link('lt', 0, checkMessage(message, 'negative'))
 	}
 
 	/** `<= 0`, the same check as `.max(0)`. */
-	nonpositive(message?: string): this {
-		return this.link('max', 0, message)
+	nonpositive(message?: KCheckMessage): this {
+		return this.link('max', 0, checkMessage(message, 'nonpositive'))
 	}
 
 	/** Rejects `NaN` and the infinities, which a bare `k.number()` accepts; issue `invalid_type`. */
-	finite(message?: string): this {
-		return this.link('finite', undefined, message)
+	finite(message?: KCheckMessage): this {
+		return this.link('finite', undefined, checkMessage(message, 'finite'))
 	}
 
 	/** A safe integer (`Number.isSafeInteger`): `not_integer`, or `too_small`/`too_big` outside the range. */
-	safe(message?: string): this {
-		return this.link('safe', undefined, message)
+	safe(message?: KCheckMessage): this {
+		return this.link('safe', undefined, checkMessage(message, 'safe'))
 	}
 }
 
@@ -180,16 +181,16 @@ export class KArray<E extends KType> extends KSchema<
 		return rootOf(this).arg as E
 	}
 
-	min(length: number, message?: string): this {
-		return this.link('min', length, message)
+	min(length: number, message?: KCheckMessage): this {
+		return this.link('min', length, checkMessage(message, 'min'))
 	}
 
-	max(length: number, message?: string): this {
-		return this.link('max', length, message)
+	max(length: number, message?: KCheckMessage): this {
+		return this.link('max', length, checkMessage(message, 'max'))
 	}
 
-	length(length: number, message?: string): this {
-		return this.link('length', length, message)
+	length(length: number, message?: KCheckMessage): this {
+		return this.link('length', length, checkMessage(message, 'length'))
 	}
 }
 

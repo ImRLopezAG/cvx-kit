@@ -39,4 +39,13 @@ export type {
 	KSchema,
 	KTransform,
 } from './k/schema'
-export type { KFields, KPath, KRefineOptions, KType, NativeOf, OutputNativeOf } from './k/types'
+export type {
+	KCheckMessage,
+	KCheckOptions,
+	KFields,
+	KPath,
+	KRefineOptions,
+	KType,
+	NativeOf,
+	OutputNativeOf,
+} from './k/types'

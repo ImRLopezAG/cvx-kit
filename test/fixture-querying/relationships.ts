@@ -1,42 +1,42 @@
-import { z } from 'zod'
+import { k } from '../../src/k'
 import { defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable } from '../../src/zod-table'
+import { kTable } from '../../src/table'
 import { defineRelations } from '../../src/relations'
 import { createQueryEngine } from '../../src/querying'
 import { cursor, managed, observed } from './scalar'
 import type { ManagedBudgets } from '../../src/querying/security'
 
 export function relationshipFixture(budgets?: Partial<ManagedBudgets>, extraCount = 0) {
-	const tasks = zodTable(
+	const tasks = kTable(
 		'tasks',
-		(id) => ({
-			ordinal: z.number(),
-			tenant: z.string(),
-			allowed: z.boolean(),
-			reference: id('tasks').nullable().optional(),
-			required: id('labels'),
-			code: z.string(),
-		}),
+		{
+			ordinal: k.number(),
+			tenant: k.string(),
+			allowed: k.boolean(),
+			reference: k.id('tasks').nullable().optional(),
+			required: k.id('labels'),
+			code: k.string(),
+		},
 		{ publicFields: ['ordinal', 'code'] },
 	)
-	const labels = zodTable(
+	const labels = kTable(
 		'labels',
-		(id) => ({
-			ordinal: z.number(),
-			tenant: z.string(),
-			allowed: z.boolean(),
-			code: z.string(),
-			task: id('tasks').optional(),
-		}),
+		{
+			ordinal: k.number(),
+			tenant: k.string(),
+			allowed: k.boolean(),
+			code: k.string(),
+			task: k.id('tasks').optional(),
+		},
 		{ publicFields: ['ordinal', 'code'] },
 	)
-	const edges = zodTable('edges', (id) => ({
-		task: id('tasks'),
-		label: id('labels'),
-		labelCode: z.string().optional(),
-		allowed: z.boolean(),
-	}))
+	const edges = kTable('edges', {
+		task: k.id('tasks'),
+		label: k.id('labels'),
+		labelCode: k.string().optional(),
+		allowed: k.boolean(),
+	})
 	tasks.table.index('by_code', ['code'])
 	labels.table
 		.index('by_task', ['task'])
@@ -50,18 +50,18 @@ export function relationshipFixture(budgets?: Partial<ManagedBudgets>, extraCoun
 			const fields = Object.fromEntries(
 				Array.from({ length: 12 }, (_, j) => [
 					`field${j}`,
-					z
+					k
 						.object({
-							title: z.string(),
-							active: z.boolean(),
-							amount: z.number(),
-							tags: z.array(z.string()),
-							address: z.object({ city: z.string(), zip: z.string() }).optional(),
+							title: k.string(),
+							active: k.boolean(),
+							amount: k.number(),
+							tags: k.array(k.string()),
+							address: k.object({ city: k.string(), zip: k.string() }).optional(),
 						})
 						.optional(),
 				]),
 			)
-			const table = zodTable(name, () => ({ tenant: z.string(), status: z.string(), ...fields }))
+			const table = kTable(name, { tenant: k.string(), status: k.string(), ...fields })
 			table.table.index('by_tenant', ['tenant']).index('by_status', ['status'])
 			return [name, table]
 		}),

@@ -1,5 +1,5 @@
 import { expect, test } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	defineRelations,
 	getRelationMetadata,
@@ -9,7 +9,7 @@ import {
 	type FieldReference,
 	verifyRelations,
 } from '../src/relations'
-import { zodTable, zodToConvex } from '../src/zod-table'
+import { kTable } from '../src/table'
 import { defineTestApp } from 'convex-test'
 import { defineSchema, defineTable } from 'convex/server'
 import {
@@ -45,16 +45,16 @@ test('eight native members narrow in both directions and preserve original valid
 	expect(data.tables.tasks.fields.rel.idTables).toEqual([...members].sort())
 	expect(data.tables.tasks.fields.rel.optional).toBe(true)
 	expect(data.tables.tasks.fields.rel.nullable).toBe(true)
-	expect(zodToConvex(tables.tasks.schema).kind).toBe('object')
+	expect(tables.tasks.schema.validator.kind).toBe('object')
 	expect(registry.identity).toBe(idUnionRelations(idUnionTables()).identity)
 	expect(registry.identity).not.toBe(idUnionRelations(tables, 'clients').identity)
 })
 
 test('singleton, duplicates, nullish and repeated selection are owned frozen references', () => {
-	const tasks = zodTable('tasks', (id) => ({
-		single: id('tasks').optional(),
-		duplicate: z.union([id('tasks'), id('tasks'), z.null()]).optional(),
-	}))
+	const tasks = kTable('tasks', {
+		single: k.id('tasks').optional(),
+		duplicate: k.union([k.id('tasks'), k.id('tasks'), k.null()]).optional(),
+	})
 	defineRelations({ tasks }, (r) => {
 		for (const original of [r.tasks.single, r.tasks.duplicate]) {
 			const selected = original.forTable('tasks')
@@ -74,16 +74,16 @@ test('singleton, duplicates, nullish and repeated selection are owned frozen ref
 })
 
 test('invalid/native-mixed/null-only/unregistered/repeated selectors reject without weakening exact scalar compatibility', () => {
-	const tasks = zodTable('tasks', (id) => ({
-		rel: z
-			.union([id('tasks'), id('missing')])
+	const tasks = kTable('tasks', {
+		rel: k
+			.union([k.id('tasks'), k.id('missing')])
 			.nullable()
 			.optional(),
-		mixed: z.union([id('tasks'), z.string()]),
-		nil: z.null(),
-		scalar: z.union([z.string(), z.number()]),
-		text: z.string(),
-	}))
+		mixed: k.union([k.id('tasks'), k.string()]),
+		nil: k.null(),
+		scalar: k.union([k.string(), k.number()]),
+		text: k.string(),
+	})
 	for (const [field, member] of [
 		['rel', 'unknown'],
 		['rel', 'missing'],
@@ -206,20 +206,20 @@ test('generated optional native union input and DTO validators reject arbitrary/
 	const app = base.defineModules({
 		functions: {
 			input: base.query({
-				args: { value: zodToConvex(tables.tasks.schema.shape.rel) },
+				args: { value: tables.tasks.schema.shape.rel.validator },
 				handler: (_, args) => args.value ?? null,
 			}),
 			insert: base.query({
-				args: { input: zodToConvex(insert) },
+				args: { input: insert.validator },
 				handler: (_, args) => args.input.rel ?? null,
 			}),
 			update: base.query({
-				args: { input: zodToConvex(update) },
+				args: { input: update.validator },
 				handler: (_, args) => args.input.rel ?? null,
 			}),
 			filter: base.query({
 				args: {
-					input: zodToConvex(relations.tables.tasks.paginationOpts({ client: { _id: true } })),
+					input: relations.tables.tasks.paginationOpts({ client: { _id: true } }).validator,
 				},
 				handler: () => true,
 			}),
@@ -289,11 +289,11 @@ test('generated optional native union input and DTO validators reject arbitrary/
 })
 
 test('caller dictionary mutation cannot register a previously unregistered selector', () => {
-	const tasks = zodTable('tasks', (id) => ({ rel: z.union([id('tasks'), id('missing')]) }))
+	const tasks = kTable('tasks', { rel: k.union([k.id('tasks'), k.id('missing')]) })
 	const tables = { tasks }
 	expect(() =>
 		unchecked(tables, (r) => {
-			Object.assign(tables, { missing: zodTable('missing', () => ({ name: z.string() })) })
+			Object.assign(tables, { missing: kTable('missing', { name: k.string() }) })
 			r.tasks.rel.forTable('missing')
 			return {}
 		}),

@@ -19,7 +19,7 @@ import {
 } from './execution'
 import type { createCursorCodec, CursorBinding } from './cursors'
 import { CursorError } from './cursors'
-import { z } from 'zod'
+import { k } from '../k'
 import { stream, EmptyStream, getIndexFields } from 'convex-helpers/server/stream'
 
 export interface OutputSelection {
@@ -42,7 +42,6 @@ export type RelationDocument = Record<string, Value> & {
 }
 type Document = RelationDocument
 type Planner = ReturnType<typeof createPlanner>
-const navigation = z.object({ cursor: z.string(), ancestors: z.array(z.string()).max(3) }).strict()
 
 export class RelationshipError extends Error {
 	constructor(readonly code: 'AMBIGUOUS_RELATION' | 'INVALID_RELATION') {
@@ -77,11 +76,10 @@ export function relationshipExecutor(
 	}
 	const guarded = (row: Document | Record<string, Value>, guard?: RelationGuard) =>
 		!guard || row[guard.discriminator] === guard.tag
-	const memberIdSchema = z.string()
 	function memberMatches(value: Value | undefined, member: Edge['sourceMember']): boolean {
 		if (!member) return true
-		const id = memberIdSchema.safeParse(value)
-		return id.success && request.db.normalizeId(member.table, id.data) !== null
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- A stored member ID is a string Convex value.
+		return typeof value === 'string' && request.db.normalizeId(member.table, value) !== null
 	}
 	function sourceValue(declared: Edge, parent: Document | null): Value | undefined {
 		if (!parent || !guarded(parent, declared.sourceGuard)) return undefined
@@ -510,7 +508,7 @@ export function relationshipExecutor(
 		}
 		async function open(token: string) {
 			try {
-				return navigation.parse(JSON.parse(codec.open(token, await bind())))
+				return navigation().parse(JSON.parse(codec.open(token, await bind())))
 			} catch {
 				throw new CursorError()
 			}
@@ -798,4 +796,15 @@ function scalarOnly(ast: FilterAst): boolean {
 	if (ast.kind === 'and' || ast.kind === 'or') return ast.children.every(scalarOnly)
 	if (ast.kind === 'not' || ast.kind === 'variant') return scalarOnly(ast.child)
 	return true
+}
+
+let navigationSchema: ReturnType<typeof buildNavigation> | undefined
+
+/** The sealed relation navigation payload, built on the first nested continuation. */
+function navigation(): ReturnType<typeof buildNavigation> {
+	return (navigationSchema ??= buildNavigation())
+}
+
+function buildNavigation() {
+	return k.object({ cursor: k.string(), ancestors: k.array(k.string()).max(3) })
 }

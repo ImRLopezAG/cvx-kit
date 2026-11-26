@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	defineSchema,
 	queryGeneric,
@@ -10,13 +10,18 @@ import {
 	type DataModelFromSchemaDefinition,
 } from 'convex/server'
 import type { GenericId } from 'convex/values'
-import { createAuthFunctions } from '../src/auth'
+import type { KObject } from '../src/k'
+import { createKAuthFunctions } from '../src/auth'
 import { defineRelations } from '../src/relations'
-import { zodTable } from '../src/zod-table'
+import { kTable } from '../src/table'
 
-const tasks = zodTable('tasks', (id) => ({ title: z.string(), parent: id('tasks').optional() }), {
-	publicFields: ['title'],
-})
+const tasks = kTable(
+	'tasks',
+	{ title: k.string(), parent: k.id('tasks').optional() },
+	{
+		publicFields: ['title'],
+	},
+)
 const schema = defineSchema({ tasks: tasks.table })
 const registry = defineRelations({ tasks }, (r) => ({
 	tasks: { parentTask: r.one.tasks({ from: r.tasks.parent, to: r.tasks._id }) },
@@ -26,7 +31,7 @@ const relational = registry.tables.tasks.paginationOpts({
 	parent: true,
 	parentTask: { title: true },
 })
-const auth = createAuthFunctions<DataModelFromSchemaDefinition<typeof schema>, 'viewer'>({
+const auth = createKAuthFunctions<DataModelFromSchemaDefinition<typeof schema>, 'viewer'>({
 	query: queryGeneric,
 	mutation: mutationGeneric,
 	action: actionGeneric,
@@ -40,9 +45,9 @@ const auth = createAuthFunctions<DataModelFromSchemaDefinition<typeof schema>, '
 
 auth.authQuery({
 	args: scalar,
-	returns: z.null(),
+	returns: k.null(),
 	handler: (_ctx, args) => {
-		const parsed: z.output<typeof scalar> = args
+		const parsed: k.output<typeof scalar> = args
 		void parsed
 		// @ts-expect-error endpoint scalar mask excludes this field
 		void args.filters?.secret
@@ -51,17 +56,17 @@ auth.authQuery({
 })
 auth.authQuery({
 	args: relational,
-	returns: z.null(),
+	returns: k.null(),
 	handler: (_ctx, args) => {
-		const parsed: z.output<typeof relational> = args
+		const parsed: k.output<typeof relational> = args
 		void parsed
 		// @ts-expect-error relationship endpoint mask excludes this field
 		void args.filters?.parentTask?.secret
 		return null
 	},
 })
-const scalarObject: z.ZodObject = scalar
-const relationalObject: z.ZodObject = relational
+const scalarObject: KObject<any> = scalar
+const relationalObject: KObject<any> = relational
 void [scalarObject, relationalObject]
 const filter = scalar.shape.filters.unwrap().parse({ parent: 'tasks:1' })
 declare const parent: Extract<NonNullable<typeof filter.parent>, string>
@@ -71,10 +76,12 @@ void parent
 // @ts-expect-error a parsed native ID belongs to its table
 const wrong: GenericId<'labels'> | undefined = parent
 void wrong
-const input: z.input<typeof relational> = {
+const input: k.input<typeof relational> = {
 	cursor: null,
 	numItems: 1,
-	filters: { parent: 'tasks:1' },
+	// A k input carries the native ID brand, as the native validator does.
+	// SAFETY: a fixture ID literal stands in for a real document ID of this table.
+	filters: { parent: 'tasks:1' as GenericId<'tasks'> },
 }
 void input
 

@@ -4,7 +4,6 @@ import { defineTestApp } from 'convex-test'
 import { v } from 'convex/values'
 import { z } from 'zod'
 
-import { defineRelations } from '../src/relations'
 import { zid, zodToConvex, zodVariantTable } from '../src/zod-table'
 
 export const paymentStorage = z.discriminatedUnion('type', [
@@ -117,7 +116,8 @@ describe('zodVariantTable boundaries', () => {
 			expect(native.members[0].fields[key].kind).toBe('float64')
 			expect(native.members[0].fields[key].isOptional).toBe('required')
 		}
-		expect(defineRelations({ ledger: table }, () => ({})).tables.ledger).toBeDefined()
+		// Relations now take k boundaries only (U13); kVariantTable registration is covered by
+		// querying-explicit-timestamps.test.ts and querying-variants.test.ts.
 		for (const timestamps of [true, undefined])
 			expect(() =>
 				zodVariantTable('ledger', storage, { discriminator: 'type', timestamps, variants }),
@@ -279,10 +279,8 @@ describe('zodVariantTable boundaries', () => {
 		}
 	})
 
-	it('registers generated variant boundaries without an object facade', () => {
-		const registry = defineRelations({ payments }, () => ({}))
-		expect(registry.tables.payments).toBeDefined()
-	})
+	// 'registers generated variant boundaries without an object facade' moved to k: relations now
+	// take k boundaries only (U13), covered by querying-variants.test.ts.
 
 	it('rejects malformed branch masks and unsupported schemas at construction', () => {
 		for (const variants of [

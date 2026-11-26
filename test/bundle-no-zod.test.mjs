@@ -20,6 +20,8 @@ const coreEntries = [
 	'src/table.ts',
 	'src/registration.ts',
 	'src/filters.ts',
+	'src/relations-public.ts',
+	'src/querying.ts',
 ]
 const zodInputs = [/node_modules\/zod\//, /node_modules\/convex-helpers\/server\/zod4/]
 

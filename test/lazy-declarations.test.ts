@@ -2,6 +2,9 @@
 import { afterEach, expect, it, vi } from 'vite-plus/test'
 import { Effect } from 'effect'
 import { z } from 'zod'
+import { k } from '../src/k'
+import { KObject } from '../src/k/object'
+import { kTable } from '../src/table'
 import { zodTable, zodVariantTable } from '../src/zod-table'
 import { createEffectFoundation } from '../src/effect'
 import { defineDomainContract } from '../src/contracts'
@@ -131,21 +134,20 @@ it('force-builds selected registries through checkArchitecture without executing
 	expect(builds).toBe(1)
 })
 
-it('memoizes page composition while returning independent public validators', async () => {
+it('memoizes page composition and shares the immutable k validator', async () => {
 	const { defineRelations } = await import('../src/relations')
-	const items = zodTable('items', () => ({ name: z.string() }), { publicFields: ['name'] })
+	const items = kTable('items', { name: k.string() }, { publicFields: ['name'] })
 	const registry = defineRelations({ items }, () => ({}))
-	// The first call returns its fresh build; a repeated selection captures the
-	// recipe, and only later calls reconstruct without recomposing.
+	// v1 rebuilt independent Zod copies so callers could not mutate each other's; k records are
+	// immutable, so a repeated selection returns the boundary it built the first time.
 	const first = registry.tables.items.pageDto({})
-	const captured = registry.tables.items.pageDto({})
-	const extend = vi.spyOn(z.ZodObject.prototype, 'extend')
+	const extend = vi.spyOn(KObject.prototype, 'extend')
 	const second = registry.tables.items.pageDto({})
 	expect(extend).not.toHaveBeenCalled()
-	expect(second).not.toBe(first)
-	expect(second).not.toBe(captured)
+	expect(second).toBe(first)
 	const page = { page: [{ _id: 'items:1', name: 'ok' }], isDone: true, continueCursor: '' }
 	expect(second.parse(page)).toEqual(page)
+	extend.mockRestore()
 })
 
 it('reuses ordinary pagination native field conversion and preserves fresh validators', () => {
@@ -240,27 +242,22 @@ it('force-checks contracted thunk registries once without resolving context or c
 	expect([builds, resolutions, calls]).toEqual([1, 1, 1])
 })
 
-it('memoizes relation pagination predicates without sharing mutable public validators', async () => {
+it('memoizes relation pagination predicates and shares the immutable k validator', async () => {
 	const { defineRelations } = await import('../src/relations')
-	const items = zodTable('items', () => ({ rank: z.number() }), { publicFields: ['rank'] })
+	const items = kTable('items', { rank: k.number() }, { publicFields: ['rank'] })
 	const registry = defineRelations({ items }, () => ({}))
-	const extend = vi.spyOn(z.ZodObject.prototype, 'extend')
+	const extend = vi.spyOn(KObject.prototype, 'extend')
 	const first = registry.tables.items.paginationOpts({ rank: true })
 	const firstBuilds = extend.mock.calls.length
 	extend.mockClear()
 	const second = registry.tables.items.paginationOpts({ rank: true })
 	expect(extend.mock.calls.length).toBeLessThan(firstBuilds)
-	const filter = first.shape.filters.unwrap()
-	if (!(filter instanceof z.ZodObject)) throw new Error('Expected filter object')
-	const predicate = filter.shape.rank.unwrap()
-	if (!(predicate instanceof z.ZodUnion)) throw new Error('Expected scalar predicate')
-	Reflect.set(predicate.options, '0', z.string())
+	// v1 also mutated one result's Zod predicate to prove isolation; k records are immutable.
+	expect(second).toBe(first)
 	const invalid = { numItems: 1, cursor: null, filters: { rank: 'invalid' } }
-	expect(first.safeParse(invalid).success).toBe(true)
-	expect(second.safeParse(invalid).success).toBe(false)
-	expect(registry.tables.items.paginationOpts({ rank: true }).safeParse(invalid).success).toBe(
-		false,
-	)
+	expect(first.safeParse(invalid).success).toBe(false)
+	expect(second.safeParse({ ...invalid, filters: { rank: 1 } }).success).toBe(true)
+	extend.mockRestore()
 })
 
 it('preserves writable public declaration properties without replacing the internal DTO owner', () => {

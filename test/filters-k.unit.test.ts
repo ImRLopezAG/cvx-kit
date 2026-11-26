@@ -5,10 +5,8 @@
 // mutable check definitions, z.lazy capture fallbacks) have no `k` counterpart, since `k` records are
 // immutable and have no such API.
 import type { GenericValidator, ValidatorJSON } from 'convex/values'
-import { v } from 'convex/values'
 import { describe, expect, test, vi } from 'vite-plus/test'
 import { k, KValidationError, type KType } from '../src/k'
-import { defineFilterContract } from '../src/filters'
 import { compactNativeFilter } from '../src/querying/filter-boundary'
 import {
 	compactFilterMetadata,
@@ -466,180 +464,7 @@ describe('compact native projection on k', () => {
 	})
 })
 
-const contract = defineFilterContract({
-	status: v.union(v.literal('open'), v.literal('done')),
-	title: v.string(),
-	score: v.number(),
-	count: v.optional(v.int64()),
-	active: v.boolean(),
-	nullable: v.union(v.string(), v.null()),
-	reference: v.id('targets'),
-})
-
-describe('shared filter contract on k', () => {
-	test('one pure declaration supplies bounded scalar filters', () => {
-		const c = defineFilterContract({
-			status: v.union(v.literal('open'), v.literal('done')),
-			count: v.optional(v.int64()),
-		})
-		expect(c.schema.parse({ status: { in: ['open'] }, count: { exists: false } })).toEqual({
-			status: { in: ['open'] },
-			count: { exists: false },
-		})
-		expect(c.schema.safeParse({ status: 'other' }).success).toBe(false)
-	})
-
-	test('fields declare a k table with the same native validators', () => {
-		const records = kTable('records', contract.fields)
-		const stored: Readonly<Record<string, KType>> = records.storage.shape
-		for (const [field, expected] of Object.entries(contract.native))
-			expect(nativeJson(stored[field].validator)).toEqual(expected.json)
-		expect(contract.fields.reference.parse('native-id')).toBe('native-id')
-		expect(() => defineFilterContract({ unsupported: v.array(v.string()) })).toThrow('Unsupported')
-		expect(() => defineFilterContract({ variant: v.object({ tag: v.string() }) })).toThrow(
-			'Unsupported',
-		)
-	})
-
-	test('descriptors preserve scalar metadata and do not invent date semantics', () => {
-		const entries = Object.fromEntries(contract.describe().map((d) => [d.field, d]))
-		expect(entries.status).toMatchObject({
-			kind: 'enum',
-			values: ['open', 'done'],
-			operators: ['eq', 'in', 'gt', 'gte', 'lt', 'lte'],
-		})
-		expect(entries.count).toMatchObject({ kind: 'bigint', optional: true, nullable: false })
-		expect(entries.nullable).toMatchObject({
-			kind: 'union',
-			nullable: true,
-			operators: ['eq', 'in'],
-		})
-		expect(entries.reference).toMatchObject({
-			kind: 'id',
-			idTables: ['targets'],
-			operators: ['eq', 'in'],
-		})
-		expect(entries.active.kind).toBe('boolean')
-		expect(entries.score.kind).toBe('number')
-	})
-
-	test('accepts the bounded grammar and rejects raw invalid inputs', () => {
-		const valid = [
-			{},
-			{ status: { in: ['open', 'done'] } },
-			{ count: { exists: false } },
-			{ count: { gte: 1n, lt: 3n } },
-			{ score: { gte: 1, lt: 5 } },
-			{ nullable: null },
-			{ reference: 'some-id' },
-			{ not: { or: [{ active: false }, { title: { gt: 'z' } }] } },
-		]
-		for (const filters of valid) expect(contract.schema.parse(filters)).toEqual(filters)
-		const invalid = [
-			{ status: 'missing' },
-			{ count: 1 },
-			{ score: '1' },
-			{ score: Infinity },
-			{ score: NaN },
-			{ count: 1n << 63n },
-			{ active: { gt: true } },
-			{ title: null },
-			{ nullable: { exists: false } },
-			{ reference: 123 },
-			{ reference: { in: [null] } },
-			{ unknown: true },
-			{ title: {} },
-			{ variant: { tag: 'a', filters: {} } },
-			{ relation: { some: {} } },
-		]
-		for (const filters of invalid)
-			expect(contract.schema.safeParse(filters).success, JSON.stringify(filters, replacer)).toBe(
-				false,
-			)
-		expect(JSON.stringify(nativeJson(contract.schema.validator))).toContain('"tableName":"targets"')
-	})
-
-	test('three-valued evaluation distinguishes known missing from inaccessible', () => {
-		const c = defineFilterContract({ optional: v.optional(v.string()), active: v.boolean() })
-		const visible = new Set(['optional', 'active']),
-			hidden = new Set(['active'])
-		expect(c.evaluate({ optional: { exists: false } }, {}, visible)).toBe(true)
-		expect(c.evaluate({ optional: { exists: false } }, {}, hidden)).toBe('unknown')
-		expect(c.evaluate({ not: { optional: { exists: false } } }, {}, hidden)).toBe('unknown')
-		expect(
-			c.evaluate({ and: [{ optional: 'x' }, { active: true }] }, { active: false }, hidden),
-		).toBe(false)
-		expect(
-			c.evaluate({ or: [{ optional: 'x' }, { active: true }] }, { active: true }, hidden),
-		).toBe(true)
-		expect(c.evaluate({ optional: { exists: false } }, {})).toBe(true)
-		expect(c.evaluate({ optional: { eq: 'x' } }, {})).toBe(false)
-	})
-
-	test('versioned URL codec canonicalizes keys, retains arrays and bigint, and rejects bounded invalid input', () => {
-		const first = contract.searchParam.encode({
-			status: { in: ['open', 'done'] },
-			count: { gte: 1n },
-		})
-		const second = contract.searchParam.encode({
-			count: { gte: 1n },
-			status: { in: ['open', 'done'] },
-		})
-		expect(first).toEqual(second)
-		if (!first.success) throw new Error(first.error)
-		expect(contract.searchParam.decode(first.value)).toEqual({
-			success: true,
-			value: { status: { in: ['open', 'done'] }, count: { gte: 1n } },
-		})
-		expect(
-			contract.searchParam.encode({ status: { in: ['done', 'open'] }, count: { gte: 1n } }),
-		).not.toEqual(first)
-		for (const input of [
-			'',
-			'{}',
-			'{"v":2,"filters":{}}',
-			'{"v":1,"filters":{"count":{"$integer":"bad"}}}',
-			'x'.repeat(32769),
-		])
-			expect(contract.searchParam.decode(input).success).toBe(false)
-		const cycle: any = {}
-		cycle.not = cycle
-		const getter = Object.defineProperty({}, 'title', {
-			enumerable: true,
-			get() {
-				throw new Error('getter must not run')
-			},
-		})
-		for (const filters of [
-			cycle,
-			getter,
-			{ title: 'x'.repeat(40000) },
-			{ status: { in: Array(101).fill('open') } },
-			{ not: { not: { not: { not: { not: { active: true } } } } } },
-		])
-			expect(contract.searchParam.encode(filters).success).toBe(false)
-		expect(contract.schema.safeParse(getter).success).toBe(false)
-		expect(contract.schema.safeParse(cycle).success).toBe(false)
-		const deep = '{"v":1,"filters":' + '['.repeat(10000) + '0' + ']'.repeat(10000) + '}'
-		expect(contract.searchParam.decode(deep).success).toBe(false)
-	})
-
-	test('native declaration mutation cannot change an already created contract', () => {
-		const input = { status: v.union(v.literal('open'), v.literal('done')) }
-		const c = defineFilterContract(input)
-		Object.defineProperty(input.status.members[0], 'value', { value: 'changed' })
-		expect(c.schema.parse({ status: 'open' })).toEqual({ status: 'open' })
-		expect(c.schema.safeParse({ status: 'changed' }).success).toBe(false)
-		expect(c.describe()[0].values).toEqual(['open', 'done'])
-		expect(c.native.status.json).toEqual({
-			type: 'union',
-			value: [
-				{ type: 'literal', value: 'open' },
-				{ type: 'literal', value: 'done' },
-			],
-		})
-	})
-})
+// The shared filter contract's tests run on k in place in filter-contracts.unit.test.ts.
 
 describe('laziness (R22)', () => {
 	test('importing the filter modules builds no pagination schema until one is requested', async () => {
@@ -669,8 +494,4 @@ describe('laziness (R22)', () => {
 function schemaParse(schema: KType, input: unknown) {
 	// SAFETY: every KType at runtime is a k schema record with safeParse.
 	return (schema as ReturnType<typeof k.any>).safeParse(input)
-}
-
-function replacer(_key: string, value: unknown) {
-	return typeof value === 'bigint' ? `${value}n` : value
 }

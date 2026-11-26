@@ -1,6 +1,6 @@
 import { anyApi, defineSchema } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable } from '../src/zod-table'
+import { kTable } from '../src/table'
 import { defineRelations } from '../src/relations-public'
 import { authenticatedFixture } from './fixture-querying/auth'
 import { largeRegistry } from './fixture-querying/large-registry'
@@ -23,8 +23,9 @@ import {
 	scope,
 } from './fixture-querying/scalar'
 import type { FilterScalar } from '../src/querying/filters'
-import type { ScalarFilters, ScalarSelection } from '../src/querying/v1-zod-filters'
-import { z } from 'zod'
+import type { ScalarFilters, ScalarSelection } from '../src/querying/filters'
+import { k } from '../src/k'
+import { KObject } from '../src/k/object'
 import type { DM } from './fixture-querying/scalar'
 import type { DataModelFromSchemaDefinition, DocumentByName } from 'convex/server'
 
@@ -52,13 +53,17 @@ function sorted<Row extends { _id: string; _creationTime: number }>(
 describe('U5 actual helper scalar engine', () => {
 	test('private output validation runs once per row and still rejects invalid public values', async () => {
 		let validations = 0
-		const text = z.string().refine((value): boolean => {
+		const text = k.string().refine((value): boolean => {
 			validations++
 			return value === 'valid'
 		})
-		const items = zodTable('items', () => ({ text, secret: z.string() }), {
-			publicFields: ['text'],
-		})
+		const items = kTable(
+			'items',
+			{ text, secret: k.string() },
+			{
+				publicFields: ['text'],
+			},
+		)
 		const relations = defineRelations({ items }, () => ({}))
 		const schema = defineSchema({ items: items.table })
 		const querying = createQueryEngine({ schema, relations, cursor })
@@ -76,15 +81,15 @@ describe('U5 actual helper scalar engine', () => {
 				expect(result.page.every((row) => !Object.hasOwn(row, 'secret'))).toBe(true)
 				expect(validations).toBe(2 * pass)
 			}
-			// Changing the original check cannot admit an invalid stored public field.
-			Reflect.set(text._zod.def.checks![0]._zod.def, 'fn', () => true)
+			// An invalid stored public field still fails projection (v1 also swapped the Zod check
+			// function first; k records are immutable).
 			await ctx.db.insert('items', { text: 'invalid', secret: 'private' })
 			await expect(query.paginate(args)).rejects.toThrow()
 		})
 	})
 	test('planner construction defers private pagination validators and reuses them', () => {
 		const f = largeRegistry()
-		const initialize = vi.spyOn(z.ZodObject.prototype, 'extend', 'get')
+		const initialize = vi.spyOn(KObject.prototype, 'extend')
 		try {
 			const planner = createPlanner(f.schema, f.relations)
 			expect(initialize).not.toHaveBeenCalled()
@@ -171,78 +176,6 @@ describe('U5 actual helper scalar engine', () => {
 		})
 		expect(f.calls.prefault).toBe(0)
 	}, 10000)
-	test('pipe prefault graph mutations leave cached execution and post-policy snapshots stable', async () => {
-		const mutations = [
-			(f: ReturnType<typeof privatePrefaultFixture>) =>
-				Reflect.set(f.tasks.schema.shape, 'hidden', f.tasks.schema.shape.title),
-			(f: ReturnType<typeof privatePrefaultFixture>) =>
-				Object.defineProperty(f.output._zod.def, 'defaultValue', {
-					get: () => 'changed',
-					enumerable: true,
-					configurable: true,
-				}),
-			(f: ReturnType<typeof privatePrefaultFixture>) =>
-				Reflect.set(f.output._zod.def.innerType._zod, 'def', { type: 'number' }),
-			(f: ReturnType<typeof privatePrefaultFixture>) =>
-				Reflect.set(f.hidden._zod.def, 'out', f.hidden._zod.def.in),
-			(f: ReturnType<typeof privatePrefaultFixture>) =>
-				Reflect.set(f.nestedOutput.shape, 'code', f.tasks.schema.shape.title),
-			(f: ReturnType<typeof privatePrefaultFixture>) =>
-				Object.defineProperty(f.nestedOutput.shape.code._zod.def, 'defaultValue', {
-					get: () => 'changed',
-					enumerable: true,
-					configurable: true,
-				}),
-			(f: ReturnType<typeof privatePrefaultFixture>) =>
-				Reflect.set(f.nestedOutput.shape.code._zod.def.innerType._zod, 'def', { type: 'number' }),
-		]
-		for (const mutate of mutations) {
-			const f = privatePrefaultFixture()
-			await f.t.run(async (ctx) => {
-				await ctx.db.insert('tasks', { title: 'visible', hidden: '', nested: { code: '' } })
-				const o = observed<DataModelFromSchemaDefinition<typeof f.schema>>(ctx.db)
-				const q = f.querying(managed(o.raw)).tasks.where({ hidden: '' })
-				await q.paginate({ numItems: 1, cursor: null })
-				const before = { ...o.counts }
-				mutate(f)
-				await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
-					page: [{ title: 'visible' }],
-				})
-				expect(o.counts.next).toBeGreaterThan(before.next)
-				expect(o.counts.closes).toBe(before.closes + 1)
-				expect(() =>
-					createQueryEngine({ schema: f.schema, relations: f.relations, cursor }),
-				).not.toThrow()
-			})
-			expect(f.calls.prefault).toBe(0)
-		}
-		for (const mutate of mutations) {
-			const f = privatePrefaultFixture()
-			await f.t.run(async (ctx) => {
-				for (let i = 0; i < 2; i++)
-					await ctx.db.insert('tasks', { title: `visible${i}`, hidden: '', nested: { code: '' } })
-				const o = observed<DataModelFromSchemaDefinition<typeof f.schema>>(ctx.db)
-				const q = f
-					.querying(
-						managed(o.raw, {
-							tasks: {
-								read: async () => {
-									await Promise.resolve()
-									mutate(f)
-									return true
-								},
-							},
-						}),
-					)
-					.tasks.where({ hidden: '' })
-				await expect(q.paginate({ numItems: 100, cursor: null })).resolves.toMatchObject({
-					page: [{ title: 'visible0' }, { title: 'visible1' }],
-				})
-				expect(o.counts).toEqual({ next: 3, returned: 2, ranges: 1, gets: 0, closes: 1 })
-			})
-			expect(f.calls.prefault).toBe(0)
-		}
-	}, 10000)
 	test('private stored parsers never run during native numeric/string filtering and strict projection', async () => {
 		const f = privateStoredFixture()
 		const rows = await f.t.run(async (ctx) => {
@@ -294,65 +227,6 @@ describe('U5 actual helper scalar engine', () => {
 				q.paginate({ numItems: 100, cursor: null, filters: JSON.parse('{"coerced":"1"}') }),
 			).rejects.toThrow()
 			expect(o.counts).toEqual(before)
-		})
-		expect(f.calls).toEqual({ transform: 0, default: 0, coercion: 0 })
-	}, 10000)
-	test('private stored graph mutations leave cached execution and post-policy projection stable', async () => {
-		for (const mutate of [
-			(f: ReturnType<typeof privateStoredFixture>) =>
-				Reflect.set(f.numeric._zod.def.in._zod, 'def', { type: 'string' }),
-			(f: ReturnType<typeof privateStoredFixture>) =>
-				Reflect.set(f.text._zod.def.out._zod.def, 'transform', () => 'changed'),
-			(f: ReturnType<typeof privateStoredFixture>) =>
-				Object.defineProperty(f.fallback._zod.def, 'defaultValue', {
-					get: () => 'changed',
-					enumerable: true,
-					configurable: true,
-				}),
-			(f: ReturnType<typeof privateStoredFixture>) =>
-				Reflect.set(f.coerced._zod.def, 'coerce', false),
-			(f: ReturnType<typeof privateStoredFixture>) =>
-				Reflect.set(f.fallback._zod.def.innerType._zod, 'def', { type: 'number' }),
-		]) {
-			const f = privateStoredFixture()
-			await f.t.run(async (ctx) => {
-				await ctx.db.insert('tasks', { title: 'visible', numeric: 1, text: 'yes', coerced: 1 })
-				const o = observed<DataModelFromSchemaDefinition<typeof f.schema>>(ctx.db)
-				const q = f.querying(managed(o.raw)).tasks.where({ numeric: 1 })
-				await q.paginate({ numItems: 1, cursor: null })
-				const before = { ...o.counts }
-				mutate(f)
-				await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
-					page: [{ title: 'visible' }],
-				})
-				expect(o.counts.next).toBeGreaterThan(before.next)
-				expect(o.counts.closes).toBe(before.closes + 1)
-				expect(() =>
-					createQueryEngine({ schema: f.schema, relations: f.relations, cursor }),
-				).not.toThrow()
-			})
-			expect(f.calls).toEqual({ transform: 0, default: 0, coercion: 0 })
-		}
-		const f = privateStoredFixture()
-		await f.t.run(async (ctx) => {
-			await ctx.db.insert('tasks', { title: 'visible', numeric: 1, text: 'yes', coerced: 1 })
-			const o = observed<DataModelFromSchemaDefinition<typeof f.schema>>(ctx.db)
-			const q = f
-				.querying(
-					managed(o.raw, {
-						tasks: {
-							read: async () => {
-								Reflect.set(f.numeric._zod.def.in._zod, 'def', { type: 'string' })
-								return true
-							},
-						},
-					}),
-				)
-				.tasks.where({ numeric: 1 })
-			await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
-				page: [{ title: 'visible' }],
-			})
-			expect(o.counts).toEqual({ next: 1, returned: 1, ranges: 1, gets: 0, closes: 1 })
 		})
 		expect(f.calls).toEqual({ transform: 0, default: 0, coercion: 0 })
 	}, 10000)
@@ -1110,25 +984,7 @@ describe('U5 actual helper scalar engine', () => {
 				page: [{ ordinal: 0 }],
 			})
 		})
-		const f2 = harness()
-		await seed(f2, 1)
-		await f2.t.run(async (ctx) => {
-			const o = observed(ctx.db)
-			const q = f2.querying(
-				managed(o.raw, {
-					tasks: {
-						read: async () => {
-							Reflect.set(f2.tasks.publicDto.shape.ordinal._zod, 'def', { type: 'string' })
-							return true
-						},
-					},
-				}),
-			).tasks
-			await expect(q.paginate({ numItems: 1, cursor: null })).resolves.toMatchObject({
-				page: [{ ordinal: 0 }],
-			})
-			expect(o.counts.closes).toBe(1)
-		})
+		// v1 also rewrote a Zod definition of the public DTO mid-policy; k records are immutable.
 		const f3 = harness()
 		await seed(f3, 1)
 		await f3.t.run(async (ctx) => {

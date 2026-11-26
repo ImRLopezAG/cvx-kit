@@ -1,25 +1,25 @@
 import { defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
 import { defineTestApp } from 'convex-test'
 import { expect, test } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { createQueryEngine } from '../src/querying'
 import { defineRelations } from '../src/relations-public'
-import { zodVariantTable } from '../src/zod-table'
+import { kVariantTable } from '../src/table'
 import { cursor, managed, observed } from './fixture-querying/scalar'
 
 test('explicit server timestamps retain native required fields and paginate through the shared engine', async () => {
-	const ledger = zodVariantTable(
+	const ledger = kVariantTable(
 		'ledger',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('adjustment'),
-				createdAt: z.int().nonnegative(),
-				recordedAt: z.int().nonnegative(),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('adjustment'),
+				createdAt: k.int().min(0),
+				recordedAt: k.int().min(0),
 			}),
-			z.strictObject({
-				type: z.literal('payment'),
-				createdAt: z.int().nonnegative(),
-				recordedAt: z.int().nonnegative(),
+			k.object({
+				type: k.literal('payment'),
+				createdAt: k.int().min(0),
+				recordedAt: k.int().min(0),
 			}),
 		]),
 		{
@@ -55,13 +55,13 @@ test('explicit server timestamps retain native required fields and paginate thro
 	])
 	await expect(
 		t.run((ctx) =>
-			// @ts-expect-error hostile insert bypasses the Zod boundary to test native requiredness
+			// @ts-expect-error hostile insert bypasses the k boundary to test native requiredness
 			ctx.db.insert('ledger', { type: 'adjustment', recordedAt: 10 }),
 		),
 	).rejects.toThrow()
 	await expect(
 		t.run((ctx) =>
-			// @ts-expect-error hostile insert tests native number validation independently of Zod
+			// @ts-expect-error hostile insert tests native number validation independently of k
 			ctx.db.insert('ledger', { type: 'adjustment', createdAt: '0', recordedAt: 10 }),
 		),
 	).rejects.toThrow()

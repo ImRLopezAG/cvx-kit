@@ -1,18 +1,17 @@
 import type { GenericId } from 'convex/values'
 import type { DataModelFromSchemaDefinition } from 'convex/server'
 import type { ManagedQueryContext } from '../src/querying/security'
-import { z } from 'zod'
-import { zid } from 'convex-helpers/server/zod4'
+import { k } from '../src/k'
 import { defineRelations } from '../src/relations-public'
-import { zodVariantTable } from '../src/zod-table'
+import { kVariantTable } from '../src/table'
 import { variantDeclarations, variantFixture } from './fixture-querying/variants'
 
 const f = variantFixture()
-const scalarVariants = zodVariantTable(
+const scalarVariants = kVariantTable(
 	'scalarVariants',
-	z.discriminatedUnion('type', [
-		z.strictObject({ type: z.literal('a'), variants: z.string(), value: z.number() }),
-		z.strictObject({ type: z.literal('b'), variants: z.string(), label: z.string() }),
+	k.discriminatedUnion('type', [
+		k.object({ type: k.literal('a'), variants: k.string(), value: k.number() }),
+		k.object({ type: k.literal('b'), variants: k.string(), label: k.string() }),
 	]),
 	{
 		discriminator: 'type',
@@ -27,9 +26,9 @@ scalarRelations.tables.scalarVariants.paginationOpts({ variants: true })
 scalarRelations.tables.scalarVariants.paginationOpts({
 	variants: { a: { value: true }, b: { label: true } },
 })
-const single = zodVariantTable(
+const single = kVariantTable(
 	'single',
-	z.discriminatedUnion('type', [z.strictObject({ type: z.literal('a'), value: z.number() })]),
+	k.discriminatedUnion('type', [k.object({ type: k.literal('a'), value: k.number() })]),
 	{ discriminator: 'type', variants: { a: { publicFields: ['value'] } } },
 )
 defineRelations({ single }, () => ({})).tables.single.paginationOpts({
@@ -115,7 +114,7 @@ const input = f.relations.tables.payments.paginationOpts({
 	clientId: true,
 	variants: { creditor_payment: { creditorId: true }, client_draft: { draftDate: true } },
 })
-const filters: NonNullable<z.input<typeof input>['filters']> = {
+const filters: NonNullable<k.input<typeof input>['filters']> = {
 	variant: { tag: 'creditor_payment', filters: { creditorId } },
 }
 void filters
@@ -189,11 +188,11 @@ defineRelations(tables, (r, branch) => {
 		},
 	}
 })
-const mixed = zodVariantTable(
+const mixed = kVariantTable(
 	'mixed',
-	z.discriminatedUnion('type', [
-		z.strictObject({ type: z.literal('a'), ref: zid('clients') }),
-		z.strictObject({ type: z.literal('b'), ref: zid('creditors') }),
+	k.discriminatedUnion('type', [
+		k.object({ type: k.literal('a'), ref: k.id('clients') }),
+		k.object({ type: k.literal('b'), ref: k.id('creditors') }),
 	]),
 	{
 		discriminator: 'type',

@@ -18,9 +18,11 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { z } from 'zod'
+import { k } from '../src/k'
 import { describe, expect, it } from 'vite-plus/test'
 import {
 	createAuthFunctions,
+	createKAuthFunctions,
 	type AuthBundle,
 	type AuthFunctionsConfig,
 	type SecurityConfig,
@@ -128,7 +130,10 @@ const edit = agentMutation({
 	},
 })
 /** A host mistake: an extra named like a native handle must not replace the secured one. */
-const rawDbPrincipal = (ctx: GenericQueryCtx<DM> | GenericMutationCtx<DM>, args: DefaultFunctionArgs) => ({
+const rawDbPrincipal = (
+	ctx: GenericQueryCtx<DM> | GenericMutationCtx<DM>,
+	args: DefaultFunctionArgs,
+) => ({
 	...principal(ctx, args),
 	db: ctx.db,
 })
@@ -243,7 +248,8 @@ describe('service principal constructors', () => {
 	it('runs the query engine under a service ctx without UNMANAGED_QUERY_CONTEXT', async () => {
 		const f = groupDeclarations()
 		type FDM = DataModelFromSchemaDefinition<typeof f.schema>
-		const fixtureAuth = createAuthFunctions<FDM, Role>({
+		// The query engine's boundaries are k schemas; the v2 constructors register them.
+		const fixtureAuth = createKAuthFunctions<FDM, Role>({
 			...builders,
 			getAuthUser: async () => null,
 			mapRole: () => 'owner',
@@ -258,7 +264,7 @@ describe('service principal constructors', () => {
 		const querying = createQueryEngine({ schema: f.schema, relations: f.relations }, { cursor })
 		const args = f.relations.tables.clients
 			.paginationOpts({ name: true })
-			.extend({ hidden: z.string() })
+			.extend({ hidden: k.string() })
 		const page = fixtureAuth.serviceQuery((_ctx, raw) => ({
 			...bundleFor('c1', 'one'),
 			hidden: String(raw.hidden),

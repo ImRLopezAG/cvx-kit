@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'vite-plus/test'
-import { z } from 'zod'
+import { k, type KType } from '../src/k'
 import {
 	defineRelations,
 	getRelationExecutor,
 	type RelationRegistryIdentity,
 	type RelationTables,
 } from '../src/relations'
-import { zodTable } from '../src/zod-table'
+import { kTable } from '../src/table'
 import { createPlanner, digest, type QueryInput, type RegistryScope } from '../src/querying/planner'
 import { defineSchema } from 'convex/server'
 
@@ -33,7 +33,7 @@ type Change =
 /** a -bs-> b (through links), b -c-> c, and z -a-> a; y is disconnected. */
 function world(change: Change = 'none') {
 	const captured: string[] = []
-	function observe<T extends { dto: (includeId: true) => z.ZodType }>(name: string, table: T): T {
+	function observe<T extends { dto: (includeId: true) => KType }>(name: string, table: T): T {
 		const dto = table.dto
 		Reflect.set(table, 'dto', (includeId: true) => {
 			captured.push(name)
@@ -41,42 +41,51 @@ function world(change: Change = 'none') {
 		})
 		return table
 	}
-	const extra = (when: Change) => (change === when ? z.string() : z.string().optional())
+	const extra = (when: Change) => (change === when ? k.string() : k.string().optional())
 	const a = observe(
 		'a',
-		zodTable('a', () => ({ code: z.string(), extra: extra('root') }), { publicFields: ['code'] }),
+		kTable('a', { code: k.string(), extra: extra('root') }, { publicFields: ['code'] }),
 	)
 	const b = observe(
 		'b',
-		zodTable('b', (id) => ({ code: z.string(), cId: id('c'), extra: extra('target') }), {
-			publicFields: ['code'],
-		}),
+		kTable(
+			'b',
+			{ code: k.string(), cId: k.id('c'), extra: extra('target') },
+			{
+				publicFields: ['code'],
+			},
+		),
 	)
-	const c = observe(
-		'c',
-		zodTable('c', () => ({ code: z.string() }), { publicFields: ['code'] }),
-	)
+	const c = observe('c', kTable('c', { code: k.string() }, { publicFields: ['code'] }))
 	const links = observe(
 		'links',
-		zodTable('links', () => ({ a: z.string(), b: z.string(), extra: extra('junction') }), {
-			publicFields: ['a'],
-		}),
+		kTable(
+			'links',
+			{ a: k.string(), b: k.string(), extra: extra('junction') },
+			{
+				publicFields: ['a'],
+			},
+		),
 	)
 	const y = observe(
 		'y',
-		zodTable('y', () => ({ code: z.string(), extra: extra('unrelated') }), {
-			publicFields: ['code'],
-		}),
+		kTable(
+			'y',
+			{ code: k.string(), extra: extra('unrelated') },
+			{
+				publicFields: ['code'],
+			},
+		),
 	)
 	const zt = observe(
 		'z',
-		zodTable('z', (id) => ({ aId: id('a'), other: id('a') }), { publicFields: ['aId'] }),
+		kTable('z', { aId: k.id('a'), other: k.id('a') }, { publicFields: ['aId'] }),
 	)
 	links.table.index('by_a', ['a'])
 	b.table.index('by_code', ['code'])
 	if (change === 'transitive') c.table.index('by_code', ['code'])
 	if (change === 'brokenUnrelated')
-		Reflect.set(y, 'dto', () => z.object({ code: z.string().superRefine(() => {}) }))
+		Reflect.set(y, 'dto', () => k.object({ code: k.string().trim() }))
 	const tables = { a, b, c, links, y, z: zt }
 	const registry = unchecked(tables, (r) => {
 		const toA = { a: r.one.a({ from: r.z.aId, to: r.a._id }) }
@@ -141,7 +150,7 @@ describe('scoped cursor identity', () => {
 		expect(captured).toEqual(['a'])
 		scoped(['a'], throughB)
 		expect([...new Set(captured)].sort()).toEqual(['a', 'b', 'links'])
-		expect(() => registry.identity).toThrow(/opaque.*refine/i)
+		expect(() => registry.identity).toThrow(/DTOs only validate/)
 		expect(() => scoped(['missing'])).toThrow('Unknown query table')
 		expect(() => scoped(['a'], [['a', 'missing']])).toThrow('Unknown relation')
 	})

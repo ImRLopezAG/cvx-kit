@@ -29,7 +29,7 @@ import {
 } from './filters'
 import { SearchError } from './search'
 import { RelationshipError } from './relationships'
-import type { EnginePaginationResult, PageCompleteness } from '../zod-table'
+import type { EnginePaginationResult, PageCompleteness } from '../table'
 
 type Entry = [Record<string, Value> | null, IndexKey, number]
 type Plan = ReturnType<ReturnType<typeof createPlanner>['plan']>

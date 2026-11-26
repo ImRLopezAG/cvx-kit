@@ -1,17 +1,17 @@
 import { expect, test } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import type { Value } from 'convex/values'
 import { defineRelations, getRelationExecutor } from '../src/relations'
-import { zodVariantTable } from '../src/zod-table'
+import { kVariantTable } from '../src/table'
 
 test('variant extraction snapshots own fields before getters and reads current values on every call', () => {
-	const items = zodVariantTable(
+	const items = kVariantTable(
 		'items',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('entry'),
-				first: z.string(),
-				later: z.string().optional(),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('entry'),
+				first: k.string(),
+				later: k.string().optional(),
 			}),
 		]),
 		{ discriminator: 'type', variants: { entry: { publicFields: ['first'] } } },
@@ -53,10 +53,10 @@ test('variant extraction snapshots own fields before getters and reads current v
 })
 
 test('variant extraction still reads fields deleted by an earlier getter', () => {
-	const items = zodVariantTable(
+	const items = kVariantTable(
 		'items',
-		z.discriminatedUnion('type', [
-			z.strictObject({ type: z.literal('entry'), first: z.string(), later: z.string().optional() }),
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal('entry'), first: k.string(), later: k.string().optional() }),
 		]),
 		{ discriminator: 'type', variants: { entry: { publicFields: ['first'] } } },
 	)

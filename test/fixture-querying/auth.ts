@@ -8,7 +8,7 @@ import {
 	queryGeneric,
 	type GenericQueryCtx,
 } from 'convex/server'
-import { createAuthFunctions } from '../../src/auth'
+import { createKAuthFunctions } from '../../src/auth'
 import { createQueryEngine } from '../../src/querying'
 import { declarations, cursor, type DM } from './scalar'
 import type { ManagedBudgets } from '../../src/querying/security'
@@ -32,8 +32,8 @@ export function authenticatedFixture(budgets?: Partial<ManagedBudgets>) {
 		mapRole: () => 'owner' as const,
 		adminRoles: ['owner'] as const,
 	}
-	const defaultAuth = createAuthFunctions<DM, 'owner'>(config)
-	const composedAuth = createAuthFunctions<DM, 'owner'>({
+	const defaultAuth = createKAuthFunctions<DM, 'owner'>(config)
+	const composedAuth = createKAuthFunctions<DM, 'owner'>({
 		...config,
 		security: {
 			tenancy: { tables: ['tasks', 'permissions'] },

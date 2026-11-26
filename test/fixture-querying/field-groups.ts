@@ -10,47 +10,47 @@ import {
 	type GenericQueryCtx,
 	type DataModelFromSchemaDefinition,
 } from 'convex/server'
-import { z } from 'zod'
-import { zodTable, zodVariantTable } from '../../src/zod-table'
-import { defineRelations } from '../../src/relations'
+import { k } from '../../src/k'
+import { kTable, kVariantTable } from '../../src/table'
+import { defineRelations, withFieldGroups } from '../../src/relations'
 import { createQueryEngine, type FieldGroupPolicyContext } from '../../src/querying'
-import { createAuthFunctions } from '../../src/auth'
+import { createKAuthFunctions } from '../../src/auth'
 import { cursor } from './scalar'
 import type { ManagedBudgets } from '../../src/querying/security'
 
 export function groupDeclarations() {
-	const clients = zodTable(
+	const clients = kTable(
 		'clients',
-		() => ({
-			tenant: z.string(),
-			name: z.string(),
-			balance: z.bigint(),
-			secret: z.string(),
-			profile: z.object({ cents: z.number(), date: z.string().nullable() }),
-		}),
+		{
+			tenant: k.string(),
+			name: k.string(),
+			balance: k.int64(),
+			secret: k.string(),
+			profile: k.object({ cents: k.number(), date: k.string().nullable() }),
+		},
 		{ publicFields: ['name'] },
 	)
-	const accounts = zodTable(
+	const accounts = kTable(
 		'accounts',
-		(id) => ({
-			tenant: z.string(),
-			client: id('clients'),
-			name: z.string(),
-			balance: z.bigint(),
-		}),
+		{
+			tenant: k.string(),
+			client: k.id('clients'),
+			name: k.string(),
+			balance: k.int64(),
+		},
 		{ publicFields: ['name'] },
 	)
-	const permissions = zodTable('permissions', () => ({
-		tenant: z.string(),
-		user: z.string(),
-		clients: z.boolean(),
-		accounts: z.boolean(),
-	}))
-	const variants = zodVariantTable(
+	const permissions = kTable('permissions', {
+		tenant: k.string(),
+		user: k.string(),
+		clients: k.boolean(),
+		accounts: k.boolean(),
+	})
+	const variants = kVariantTable(
 		'variants',
-		z.discriminatedUnion('kind', [
-			z.strictObject({ kind: z.literal('finance'), tenant: z.string(), balance: z.bigint() }),
-			z.strictObject({ kind: z.literal('ordinary'), tenant: z.string(), title: z.string() }),
+		k.discriminatedUnion('kind', [
+			k.object({ kind: k.literal('finance'), tenant: k.string(), balance: k.int64() }),
+			k.object({ kind: k.literal('ordinary'), tenant: k.string(), title: k.string() }),
 		]),
 		{
 			discriminator: 'kind',
@@ -61,9 +61,9 @@ export function groupDeclarations() {
 	const accountsTable = accounts.table.index('by_client', ['client'])
 	const permissionTable = permissions.table.index('by_user', ['user'])
 	const definitions = {
-		clients: { ...clients, fieldGroups: { finance: ['balance', 'profile'] as const } },
-		accounts: { ...accounts, fieldGroups: { finance: ['balance'] as const } },
-		variants: { ...variants, fieldGroups: { finance: ['balance'] as const } },
+		clients: withFieldGroups(clients, { finance: ['balance', 'profile'] as const }),
+		accounts: withFieldGroups(accounts, { finance: ['balance'] as const }),
+		variants: withFieldGroups(variants, { finance: ['balance'] as const }),
 		permissions,
 	}
 	const relations = defineRelations(definitions, (r) => ({
@@ -92,7 +92,7 @@ export function fieldGroupFixture(budgets?: Partial<ManagedBudgets>) {
 		internalMutation: internalMutationGeneric,
 		internalAction: internalActionGeneric,
 	}
-	const auth = createAuthFunctions<DM, 'reader'>({
+	const auth = createKAuthFunctions<DM, 'reader'>({
 		...builders,
 		getAuthUser: async (ctx: GenericQueryCtx<DM> | { auth: GenericQueryCtx<DM>['auth'] }) => {
 			const identity = await ctx.auth.getUserIdentity()

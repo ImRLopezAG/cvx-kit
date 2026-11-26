@@ -348,14 +348,17 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 				context.add('not_integer', messageOf(record, 'Expected an integer'), undefined)
 			return
 		case 'refine':
-			if (callbackOf(record)(value) !== true) {
+			if (settled(callbackOf(record)(value)) !== true) {
 				const options = optionsOf(record)
 				context.add('custom', options?.message ?? 'Invalid input', options?.path)
 			}
 			return
-		case 'check':
-			callbackOf(record)(value, new CheckContext(context))
+		case 'check': {
+			const result = callbackOf(record)(value, new CheckContext(context))
+			if (isThenable(settled(result)))
+				context.add('custom', 'A check must be synchronous', undefined)
 			return
+		}
 		default:
 			throw new Error(`k: '${record.op}' is not a check`)
 	}
@@ -606,6 +609,24 @@ function walkDiscriminated(
 		return FAIL
 	}
 	return walk(option, value, context, full, false)
+}
+
+/**
+ * A check is synchronous. One that returns a promise (an untyped caller's async callback) fails, and
+ * its rejection is contained so no detail escapes as an unhandled rejection.
+ */
+function settled(result: unknown): unknown {
+	if (isThenable(result)) result.then(undefined, () => {})
+	return result
+}
+
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+	return (
+		value !== null &&
+		(typeof value === 'object' || typeof value === 'function') &&
+		'then' in value &&
+		typeof value.then === 'function'
+	)
 }
 
 function invalidType(context: WalkContext, expected: string, value: unknown): typeof FAIL {

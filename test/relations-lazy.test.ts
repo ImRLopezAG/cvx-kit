@@ -1,17 +1,21 @@
-import { expect, test } from 'vite-plus/test'
-import { z } from 'zod'
-import type { GenericValidator, ValidatorJSON } from 'convex/values'
-import { captureDto, materializeDto } from '../src/querying/schema-snapshot'
+// Relation registries do per-table work on first use only. The v1 tests that lived here exercised
+// the Zod DTO capture/materialisation mirror (mutated shapes and definitions, z.config hooks, UUID
+// constructor failures, branch-object isolation under mutation); `k` records are immutable, so that
+// mirror is gone (U13) and those tests went with it. What remains holds for `k` boundaries.
+import { defineSchema } from 'convex/server'
+import { expect, test, vi } from 'vite-plus/test'
+import { v } from 'convex/values'
+import { k } from '../src/k'
 import { defineRelations, getRelationExecutor, verifyRelations } from '../src/relations'
-import { zid, zodTable, zodToConvex, zodVariantTable } from '../src/zod-table'
+import { kTable, kVariantTable } from '../src/table'
 
-test.each([1, 2])('pageDto call %i isolates relation validators between variant branches', (call) => {
-	const target = zodTable('target', () => ({ name: z.string() }), { publicFields: ['name'] })
-	const source = zodVariantTable(
+test.each([1, 2])('pageDto call %i keeps relation validators per variant branch', (call) => {
+	const target = kTable('target', { name: k.string() }, { publicFields: ['name'] })
+	const source = kVariantTable(
 		'source',
-		z.discriminatedUnion('kind', [
-			z.strictObject({ kind: z.literal('a'), targetId: zid('target') }),
-			z.strictObject({ kind: z.literal('b'), targetId: zid('target') }),
+		k.discriminatedUnion('kind', [
+			k.object({ kind: k.literal('a'), targetId: k.id('target') }),
+			k.object({ kind: k.literal('b'), targetId: k.id('target') }),
 		]),
 		{
 			discriminator: 'kind',
@@ -23,232 +27,29 @@ test.each([1, 2])('pageDto call %i isolates relation validators between variant 
 	}))
 	if (call === 2) registry.tables.source.pageDto({ target: true })
 	const page = registry.tables.source.pageDto({ target: true })
-	if (!(page instanceof z.ZodObject)) throw new Error('Expected object page')
-	const rows = page.shape.page
-	if (!(rows instanceof z.ZodArray)) throw new Error('Expected page array')
-	const row = rows.element
-	if (!(row instanceof z.ZodDiscriminatedUnion)) throw new Error('Expected variant rows')
-	const [a, b] = row.options
-	if (!(a instanceof z.ZodObject) || !(b instanceof z.ZodObject))
-		throw new Error('Expected object branches')
-	const aTarget = a.shape.target
-	const bTarget = b.shape.target
-	if (!(aTarget instanceof z.ZodNullable) || !(bTarget instanceof z.ZodNullable))
-		throw new Error('Expected nullable relations')
-	const first = aTarget.unwrap()
-	const second = bTarget.unwrap()
-	if (!(first instanceof z.ZodObject) || !(second instanceof z.ZodObject))
-		throw new Error('Expected object relations')
-	expect(first).not.toBe(second)
-	first.shape.name = z.number()
 	const value = { _id: 'target:1', name: 'ok' }
-	expect(first.safeParse(value).success).toBe(false)
-	expect(second.parse(value)).toEqual(value)
-})
-
-function nativeJson(validator: GenericValidator): ValidatorJSON {
-	// SAFETY: Convex exposes converter JSON at runtime but omits it from public declarations.
-	return (validator as GenericValidator & { json: ValidatorJSON }).json
-}
-
-function registryFor(dto: z.ZodObject) {
-	const items = zodTable('items', () => ({ value: z.string() }))
-	Reflect.set(items, 'dto', () => dto)
-	return defineRelations({ items }, () => ({}))
-}
-
-test('U1 public object shape divergence preserves captured conversion and full identity', () => {
-	const nested = z.object({ visible: z.string() })
-	void nested.shape
-	Object.defineProperty(nested, 'shape', {
-		value: { visible: z.number() },
-		configurable: true,
-	})
-	const source = z.object({ nested })
-	const restored = materializeDto(captureDto(source))
-	expect(nativeJson(zodToConvex(source))).not.toEqual(nativeJson(zodToConvex(restored)))
-	const registry = registryFor(source)
-	const equivalent = registryFor(z.object({ nested: z.object({ visible: z.number() }) }))
-	expect(registry.identity).toBe(equivalent.identity)
-	expect(registry.identity).not.toBe(
-		registryFor(z.object({ nested: z.object({ visible: z.string() }) })).identity,
-	)
-	const row = { nested: { visible: 42 } }
-	expect(getRelationExecutor(registry).project('items', row, () => true)).toEqual(row)
-	expect(() =>
-		getRelationExecutor(registry).project('items', { nested: { visible: 'text' } }, () => true),
-	).toThrow()
-	const page = { page: [row], isDone: true, continueCursor: '' }
-	expect(registry.tables.items.pageDto({}).parse(page)).toEqual(page)
-})
-
-test('U1 top-level public shape divergence also participates in canonical identity', () => {
-	const source = z.object({ original: z.string() })
-	void source.shape
-	Object.defineProperty(source, 'shape', {
-		value: { captured: z.number().optional() },
-		configurable: true,
-	})
-	expect(nativeJson(zodToConvex(source))).not.toEqual(
-		nativeJson(zodToConvex(materializeDto(captureDto(source)))),
-	)
-	expect(registryFor(source).identity).toBe(
-		registryFor(z.object({ captured: z.number().optional() })).identity,
-	)
-})
-
-test('U1 refined native IDs preserve source/restored brands, optionality and parser checks', () => {
-	const id = zid('items').refine((value) => value !== 'items:denied')
-	const source = z.object({
-		id,
-		optional: id.optional(),
-		nullable: id.nullable(),
-		union: z
-			.union([id, zid('other')])
-			.nullable()
-			.optional(),
-		nested: z.array(z.object({ id })),
-	})
-	const restored = materializeDto(captureDto(source))
-	expect(nativeJson(zodToConvex(source))).toEqual(nativeJson(zodToConvex(restored)))
-	const good = { id: 'items:ok', nullable: null, nested: [{ id: 'items:ok' }] }
-	expect(source.parse(good)).toEqual(restored.parse(good))
-	expect(source.safeParse({ ...good, id: 'items:denied' }).success).toBe(false)
-	expect(restored.safeParse({ ...good, id: 'items:denied' }).success).toBe(false)
-	expect(registryFor(source).identity).toBe(registryFor(restored).identity)
-})
-
-test('U1 variant tag and nested-container conversion agrees for ordinary captured definitions', () => {
-	const source = z.discriminatedUnion('kind', [
-		z.object({
-			kind: z.literal('one'),
-			values: z.array(z.string().optional().nullable()).optional(),
-		}),
-		z.object({ kind: z.literal('two'), value: z.number().nullable() }),
-	])
-	// Arrays of optional values are rejected by both conversion routes.
-	expect(() => zodToConvex(source)).toThrow('Arrays of optional values are not supported')
-	expect(() => zodToConvex(materializeDto(captureDto(source)))).toThrow(
-		'Arrays of optional values are not supported',
-	)
-	const supported = z.discriminatedUnion('kind', [
-		z.object({ kind: z.literal('one'), values: z.array(z.string().nullable()).optional() }),
-		z.object({ kind: z.literal('two'), value: z.number().nullable() }),
-	])
-	const restored = materializeDto(captureDto(supported))
-	expect(nativeJson(zodToConvex(supported))).toEqual(nativeJson(zodToConvex(restored)))
-	expect(restored.parse({ kind: 'one', values: [null, 'ok'] })).toEqual(
-		supported.parse({ kind: 'one', values: [null, 'ok'] }),
-	)
-})
-
-test('U1 constructor-rejected UUID definition fails on first use despite source conversion success', () => {
-	const uuid = z.uuid()
-	Reflect.set(uuid._zod.def, 'version', 'invalid')
-	const dto = z.object({ value: uuid })
-	expect(nativeJson(zodToConvex(dto))).toEqual(
-		nativeJson(zodToConvex(z.object({ value: z.string() }))),
-	)
-	const recipe = captureDto(dto)
-	expect(() => materializeDto(recipe)).toThrow('Invalid UUID version: "invalid"')
-	const items = zodTable('items', () => ({ value: z.string() }))
-	Reflect.set(items, 'dto', () => dto)
-	let declared = false
-	const registry = defineRelations({ items }, () => {
-		declared = true
-		return {}
-	})
-	// Per-table capture is deferred to first use; declaration no longer waits for it.
-	expect(declared).toBe(true)
-	expect(() => registry.tables.items.pageDto({})).toThrow('Invalid UUID version: "invalid"')
-	expect(() => verifyRelations(registry)).toThrow('Invalid UUID version: "invalid"')
-})
-
-test('U1 continuation constructor failure precedes bad indexes on first use', () => {
-	const uuid = z.uuid()
-	Reflect.set(uuid._zod.def, 'version', 'invalid')
-	const items = zodTable('items', () => ({ value: z.string() }))
-	Reflect.set(items, 'dto', () => z.object({ value: uuid }))
-	Reflect.set(items.table, 'indexes', [{ indexDescriptor: 42, fields: [] }])
-	const registry = defineRelations({ items }, () => ({}))
-	expect(() => registry.tables.items.paginationOpts({})).toThrow('Invalid UUID version')
-})
-
-test('U1 continuation hidden constructor-sensitive catchall fails on first use', () => {
-	const uuid = z.uuid()
-	Reflect.set(uuid._zod.def, 'version', 'invalid')
-	const registry = registryFor(z.object({ value: z.string() }).catchall(uuid))
-	expect(() => registry.tables.items.pageDto({})).toThrow('Invalid UUID version')
-})
-
-test('U1 continuation configured constructor hook is observed on first use', () => {
-	const dto = z.object({ value: z.string() })
-	const items = zodTable('items', () => ({ value: z.string() }))
-	const previous = z.config().postProcessor
-	Reflect.set(items, 'dto', () => {
-		z.config({
-			postProcessor: () => {
-				throw new Error('admission hook')
-			},
-		})
-		return dto
-	})
-	try {
-		const registry = defineRelations({ items }, () => ({}))
-		expect(() => registry.tables.items.pageDto({})).toThrow('admission hook')
-	} finally {
-		z.config({ postProcessor: previous })
-	}
-})
-
-test('U1 continuation captured IDs and optional union order survive source mutation', () => {
-	const source = z.object({ value: z.union([zid('items'), zid('other').optional()]).nullable() })
-	const registry = registryFor(source)
-	const identity = registry.identity
-	Reflect.set(source.shape, 'value', z.number())
-	expect(registry.identity).toBe(identity)
+	const rows = [
+		{ _id: 'source:1', kind: 'a', targetId: 'target:1', target: value },
+		{ _id: 'source:2', kind: 'b', targetId: 'target:1', target: null },
+	]
+	expect(page.parse({ page: rows, isDone: true, continueCursor: '' }).page).toEqual(rows)
 	expect(
-		registry.tables.items
-			.pageDto({})
-			.parse({ page: [{ value: null }], isDone: true, continueCursor: '' }).page,
-	).toEqual([{ value: null }])
-	expect(registryFor(source).identity).not.toBe(identity)
-})
-
-test('U1 continuation compatibility retains the later identity conversion after first use', () => {
-	const source = z.object({ value: z.string() })
-	const items = zodTable('items', () => ({ value: z.string() }))
-	const previous = z.config().postProcessor
-	let restored: z.ZodObject | undefined
-	Reflect.set(items, 'dto', () => {
-		z.config({
-			postProcessor: (schema) => {
-				if (schema instanceof z.ZodObject && Object.hasOwn(schema.shape, 'value')) restored = schema
-			},
-		})
-		return source
-	})
-	const registry = defineRelations({ items }, () => ({}))
-	try {
-		// First use captures the DTO; identity converts the restored schema later.
-		getRelationExecutor(registry).select('items', {})
-		expect(restored).toBeDefined()
-		Reflect.set(restored!.shape, 'value', z.number())
-	} finally {
-		z.config({ postProcessor: previous })
-	}
-	expect(registry.identity).toBe(registryFor(z.object({ value: z.number() })).identity)
-	expect(getRelationExecutor(registry).project('items', { value: 42 }, () => true)).toEqual({
-		value: 42,
-	})
+		page.safeParse({
+			page: [{ ...rows[0], target: { ...value, name: 1 } }],
+			isDone: true,
+			continueCursor: '',
+		}).success,
+	).toBe(false)
 })
 
 test('U3 full identity binds unused exposure independently of private materialization order', () => {
 	function pair(exposeOther = true) {
-		const items = zodTable('items', () => ({ value: z.string() }), { publicFields: ['value'] })
-		const other = zodTable('other', () => ({ label: z.string() }), {
-			publicFields: exposeOther ? ['label'] : [],
-		})
+		const items = kTable('items', { value: k.string() }, { publicFields: ['value'] })
+		const other = kTable(
+			'other',
+			{ label: k.string() },
+			{ publicFields: exposeOther ? ['label'] : [] },
+		)
 		return defineRelations({ items, other }, () => ({}))
 	}
 	const left = pair(),
@@ -261,4 +62,59 @@ test('U3 full identity binds unused exposure independently of private materializ
 	expect(left.identity).toBe(before)
 	expect(right.identity).toBe(before)
 	expect(pair(false).identity).not.toBe(before)
+})
+
+test('R22: defining relations for 87 tables does no per-table work until a table is first used', () => {
+	const fields = {
+		tenant: k.string(),
+		status: k.string(),
+		title: k.string(),
+		amount: k.number(),
+		tags: k.array(k.string()),
+		address: k.object({ city: k.string(), zip: k.string() }).optional(),
+	}
+	const tables = Object.fromEntries(
+		Array.from({ length: 87 }, (_, i) => {
+			const name = `table${i}`
+			return [name, kTable(name, { ...fields, next: k.id(`table${(i + 1) % 87}`) })]
+		}),
+	)
+	const reads: string[] = []
+	const observed = Object.fromEntries(
+		Object.entries(tables).map(([name, table]) => [
+			name,
+			new Proxy(table, {
+				get(target, key) {
+					if (key === 'table' || key === 'schema' || key === 'dto') reads.push(name)
+					// oxlint-disable-next-line anti-slop/no-reflect-get -- The observer forwards every member with the table as receiver.
+					return Reflect.get(target, key, target)
+				},
+			}),
+		]),
+	)
+	const objects = vi.spyOn(v, 'object')
+	try {
+		// SAFETY: generated table names erase the builder's literal keys; the runtime is the subject.
+		const registry = (defineRelations as (...args: never[]) => ReturnType<typeof defineRelations>)(
+			observed as never,
+			// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Generated table names erase the builder's literal keys.
+			((r: Record<string, Record<string, any>>) => ({
+				table0: { following: r.one.table1({ from: r.table0.next, to: r.table1._id }) },
+			})) as never,
+		)
+		// Declaration read only the two tables its declarations name, and built no native validator.
+		expect(new Set(reads)).toEqual(new Set(['table0', 'table1']))
+		expect(objects).not.toHaveBeenCalled()
+		reads.length = 0
+		registry.tables.table5.pageDto({})
+		expect(new Set(reads)).toEqual(new Set(['table5']))
+		expect(objects).toHaveBeenCalled()
+		void defineSchema(Object.fromEntries(Object.entries(tables).map(([n, t]) => [n, t.table])))
+		reads.length = 0
+		verifyRelations(registry)
+		// Verification materialises every table not yet used (table5 already was).
+		expect(new Set([...reads, 'table5']).size).toBe(87)
+	} finally {
+		objects.mockRestore()
+	}
 })

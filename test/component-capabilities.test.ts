@@ -19,7 +19,10 @@ import { Effect } from 'effect'
 import { describe, expect, it } from 'vite-plus/test'
 import { z } from 'zod'
 import { tenantTable, zodTable, paginated } from '../src/zod-table'
-import { defineRelations } from '../src/relations-public'
+import { defineRelations, withFieldGroups } from '../src/relations-public'
+import { k } from '../src/k'
+import { kTable, tenantTable as kTenantTable } from '../src/table'
+import { toZod } from '../src/zod'
 import { createQueryEngine } from '../src/querying'
 import { createInclude } from '../src/auth'
 import { createTenantRules, wrapDatabaseReader, wrapDatabaseWriter } from '../src/tenancy'
@@ -44,9 +47,17 @@ const audits = zodTable('audits', () => ({
 	tenant: z.string(),
 	operation: z.string(),
 }))
+// The query engine runs on k tables (U13/U14); the v1 Zod declarations above still serve the
+// Zod-based crud and Effect builders (U15/U16). Both describe the same stored documents.
+const kNotes = kTenantTable(
+	'notes',
+	{ text: k.string(), secret: k.string(), parent: k.id('notes').nullable(), hostRun: k.string() },
+	{ commandFields: ['text'], publicFields: ['text'] },
+)
+const kAudits = kTable('audits', { actor: k.string(), tenant: k.string(), operation: k.string() })
 const schema = defineSchema({
-	notes: notes.table.index('by_tenant', ['tenant']),
-	audits: audits.table,
+	notes: kNotes.table.index('by_tenant', ['tenant']),
+	audits: kAudits.table,
 })
 type DM = DataModelFromSchemaDefinition<typeof schema>
 type MC = GenericMutationCtx<DM>
@@ -74,7 +85,7 @@ const componentMutation = effectZodApiBuilder(zCustomMutation(mutation, triggerC
 })
 const componentQuery = effectZodApiBuilder(zCustomQuery(query, NoOp), { errors })
 const relations = defineRelations(
-	{ audits, notes: { ...notes, fieldGroups: { private: ['secret'] as const } } },
+	{ audits: kAudits, notes: withFieldGroups(kNotes, { private: ['secret'] as const }) },
 	(r) => ({
 		notes: { parentNote: r.one.notes({ from: r.notes.parent, to: r.notes._id }) },
 	}),
@@ -191,15 +202,24 @@ function createComponentQuerying(ctx: QC, scope: Scope, key: number[]) {
 	return engine(reader)
 }
 const pageArgs = relations.tables.notes.paginationOpts({ text: true })
+const listDto = relations.tables.notes.pageDto({ parentNote: true })
+const privateDto = relations.tables.notes.pageDto({}, { fieldGroups: { private: 'required' } })
+// The Effect builder is still Zod-based (U16): the interop entry converts the engine's k boundaries.
+// SAFETY: each interop schema validates exactly its k boundary's values, typed by that boundary.
+const zodPageArgs = toZod(pageArgs) as z.ZodType<k.infer<typeof pageArgs>>
+// SAFETY: as above.
+const zodListDto = toZod(listDto) as z.ZodType<k.infer<typeof listDto>>
+// SAFETY: as above.
+const zodPrivateDto = toZod(privateDto) as z.ZodType<k.infer<typeof privateDto>>
 const list = componentQuery({
-	args: { scope: scopeSchema, key: z.array(z.number()), page: pageArgs },
-	returns: relations.tables.notes.pageDto({ parentNote: true }),
+	args: { scope: scopeSchema, key: z.array(z.number()), page: zodPageArgs },
+	returns: zodListDto,
 	handler: (ctx, { scope, key, page }) =>
 		createComponentQuerying(ctx, scope, key).notes.with({ parentNote: true }).paginate(page),
 })
 const privateList = componentQuery({
 	args: { scope: scopeSchema, key: z.array(z.number()) },
-	returns: relations.tables.notes.pageDto({}, { fieldGroups: { private: 'required' } }),
+	returns: zodPrivateDto,
 	handler: (ctx, { scope, key }) =>
 		createComponentQuerying(ctx, scope, key)
 			.notes.include({ private: 'required' })

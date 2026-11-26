@@ -1,20 +1,20 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import type { GenericId } from 'convex/values'
 import { defineRelations } from '../src/relations'
-import { zodTable } from '../src/zod-table'
+import { kTable } from '../src/table'
 
-const tasks = zodTable(
+const tasks = kTable(
 	'tasks',
-	(id) => ({
-		title: z.string(),
-		reference: id('tasks').nullable(),
-		other: id('labels'),
-		status: z.enum(['open', 'done']).nullable(),
-	}),
+	{
+		title: k.string(),
+		reference: k.id('tasks').nullable(),
+		other: k.id('labels'),
+		status: k.enum(['open', 'done']).nullable(),
+	},
 	{ publicFields: ['title'] },
 )
-const labels = zodTable('labels', () => ({ name: z.string() }), { publicFields: ['name'] })
-const links = zodTable('links', (id) => ({ taskId: id('tasks'), labelId: id('labels') }))
+const labels = kTable('labels', { name: k.string() }, { publicFields: ['name'] })
+const links = kTable('links', { taskId: k.id('tasks'), labelId: k.id('labels') })
 links.table.index('by_task', ['taskId'])
 const tables = { tasks, labels, links }
 const registry = defineRelations(tables, (r) => ({
@@ -97,33 +97,35 @@ const opts = registry.tables.tasks.paginationOpts({
 	referencedTask: { title: true, referencedTask: { title: true } },
 	labels: { name: true },
 })
-const input: z.input<typeof opts> = {
+const input: k.input<typeof opts> = {
 	numItems: 1,
 	cursor: null,
 	filters: {
-		reference: 'tasks:1',
+		// A k input carries the native ID brand, as the native validator does.
+		// SAFETY: a fixture ID literal stands in for a real document ID of this table.
+		reference: 'tasks:1' as GenericId<'tasks'>,
 		status: null,
 		referencedTask: { and: [{ title: 't' }] },
 		labels: { none: { name: 'n' } },
 	},
 }
 const parsed = opts.parse(input)
-const branded: NonNullable<z.output<typeof opts>['filters']>['reference'] =
+const branded: NonNullable<k.output<typeof opts>['filters']>['reference'] =
 	parsed.filters?.reference
 void branded
 declare const labelBrand: GenericId<'labels'>
 // @ts-expect-error different native table brand
-const wrong: Extract<NonNullable<z.output<typeof opts>['filters']>['reference'], string> =
+const wrong: Extract<NonNullable<k.output<typeof opts>['filters']>['reference'], string> =
 	labelBrand
 void wrong
-const bad: z.input<typeof opts> = {
+const bad: k.input<typeof opts> = {
 	numItems: 1,
 	cursor: null,
 	// @ts-expect-error fields outside explicit endpoint mask stay absent
 	filters: { referencedTask: { other: 'labels:1' } },
 }
 void bad
-const badMany: z.input<typeof opts> = {
+const badMany: k.input<typeof opts> = {
 	numItems: 1,
 	cursor: null,
 	// @ts-expect-error unknown many operators
@@ -135,13 +137,13 @@ const depthOpts = registry.tables.tasks.paginationOpts({
 	referencedTask: { title: true },
 	labels: { name: true },
 })
-const boundary: z.input<typeof depthOpts> = {
+const boundary: k.input<typeof depthOpts> = {
 	numItems: 1,
 	cursor: null,
 	filters: { and: [{ not: { or: [{ referencedTask: { title: 't' } }] } }] },
 }
 void boundary
-const tooDeep: z.input<typeof depthOpts> = {
+const tooDeep: k.input<typeof depthOpts> = {
 	numItems: 1,
 	cursor: null,
 	// @ts-expect-error mixed boolean/relation target depth five exceeds grammar
@@ -149,7 +151,7 @@ const tooDeep: z.input<typeof depthOpts> = {
 }
 void tooDeep
 const scalar = tasks.paginationOpts({ title: true })
-const scalarDeep: z.input<typeof scalar> = {
+const scalarDeep: k.input<typeof scalar> = {
 	numItems: 1,
 	cursor: null,
 	// @ts-expect-error scalar boolean depth five exceeds the shared grammar
@@ -160,7 +162,7 @@ void scalarDeep
 registry.tables.tasks.paginationOpts({ referencedTask: { title: true, unknown: true } })
 // @ts-expect-error nested output mask cannot add unknown keys alongside valid keys
 registry.tables.tasks.pageDto({ referencedTask: { referencedTask: true, unknown: true } })
-const links2 = zodTable('links2', (id) => ({ taskId: id('tasks'), labelId: id('labels') }))
+const links2 = kTable('links2', { taskId: k.id('tasks'), labelId: k.id('labels') })
 defineRelations({ ...tables, links2 }, (r) => ({
 	tasks: {
 		// @ts-expect-error junction tables must be identical

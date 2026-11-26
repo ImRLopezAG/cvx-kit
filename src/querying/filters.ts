@@ -184,19 +184,16 @@ export function convexPaginationOptions(): KObject<Omit<NativePaginationFields, 
 }
 
 /** Preserve the object boundary so pagination options can be registered directly as query args. */
-export type PaginationOptionsSchema<Filters, InputFilters = Filters> = KObject<
+export type PaginationOptionsSchema<Filters> = KObject<
 	NativePaginationFields & {
-		readonly filters: KOptional<KFilterSchema<Filters, InputFilters>>
+		readonly filters: KOptional<KFilterSchema<Filters>>
 		readonly order: KOptional<KEnum<readonly ['asc', 'desc']>>
 	}
 >
 export type ScalarPaginationSchema<
 	Fields extends FieldSchemas,
 	Selection,
-> = PaginationOptionsSchema<
-	ScalarFilters<Fields, Selection>,
-	ScalarFilters<Fields, Selection, 'input'>
->
+> = PaginationOptionsSchema<ScalarFilters<Fields, Selection>>
 
 /** Scalar-only schema constructor shared by table and future registry boundaries.
  * Convex metadata describes stored INPUT, so storage refinements/transforms never run here.

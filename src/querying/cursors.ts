@@ -3,6 +3,9 @@ import { aessiv } from '@noble/ciphers/aes.js'
 import { bytesToHex, hexToBytes } from '@noble/ciphers/utils.js'
 import { jsonToConvex, type Value, type JSONValue } from 'convex/values'
 import type { KSchema, KType } from '../k'
+
+/** A `k` schema whose parsed output is a Convex value, as a cursor payload must be. */
+export type KCursorSchema = KType & { readonly _output: Value }
 import type { ManagedScope } from './security'
 import { canonicalConvexBytes } from '../modules/contracts/idempotency'
 
@@ -178,20 +181,20 @@ export function createCursorCodec(config: CursorCodecConfig) {
 }
 
 /** Server-derived binding supplements managed scope; opening never grants row access. */
-export interface ScopedCursorOptions<S extends KType> {
+export interface ScopedCursorOptions<S extends KCursorSchema> {
 	readonly domain: string
 	readonly bind: Value
 	/** A `k` schema, applied on seal AND open. Outputs must be bounded Convex values. */
 	readonly schema: S
 }
 /** Integrity only: consumers must recheck current authorization on every request. */
-export interface ScopedCursorCodec<S extends KType> {
+export interface ScopedCursorCodec<S extends KCursorSchema> {
 	seal(payload: S['validator']['type']): string
 	open(token: string): S['_output']
 }
 
 /** Internal construction uses the configured engine's already captured key ring. */
-export function createScopedCursorCodec<S extends KType>(
+export function createScopedCursorCodec<S extends KCursorSchema>(
 	transport: ReturnType<typeof createCursorCodec>['custom'],
 	scope: ManagedScope & { readonly policyVersion: string },
 	options: ScopedCursorOptions<S>,

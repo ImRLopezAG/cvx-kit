@@ -1,26 +1,25 @@
-import { z } from 'zod'
-import { zid } from 'convex-helpers/server/zod4'
+import { k } from '../../src/k'
 import { defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable, zodVariantTable } from '../../src/zod-table'
+import { kTable, kVariantTable } from '../../src/table'
 import { defineRelations } from '../../src/relations-public'
 import { createQueryEngine } from '../../src/querying'
 import { cursor, managed, observed } from './scalar'
 
 export function variantEdgesFixture() {
-	const creditors = zodTable('creditors', () => ({ name: z.string() }), { publicFields: ['name'] })
-	const payments = zodVariantTable(
+	const creditors = kTable('creditors', { name: k.string() }, { publicFields: ['name'] })
+	const payments = kVariantTable(
 		'payments',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('creditor'),
-				creditorId: zid('creditors'),
-				amount: z.number(),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('creditor'),
+				creditorId: k.id('creditors'),
+				amount: k.number(),
 			}),
-			z.strictObject({
-				type: z.literal('draft'),
-				creditorId: zid('creditors'),
-				amount: z.number(),
+			k.object({
+				type: k.literal('draft'),
+				creditorId: k.id('creditors'),
+				amount: k.number(),
 			}),
 		]),
 		{
@@ -33,24 +32,24 @@ export function variantEdgesFixture() {
 	)
 	// No leading creditorId index: every relation lookup must bind the guard prefix.
 	payments.table.index('by_type_creditorId', ['type', 'creditorId'])
-	const links = zodVariantTable(
+	const links = kVariantTable(
 		'links',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('attachment'),
-				paymentId: zid('payments'),
-				code: z.string(),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('attachment'),
+				paymentId: k.id('payments'),
+				code: k.string(),
 			}),
-			z.strictObject({ type: z.literal('other'), paymentId: zid('payments'), code: z.string() }),
+			k.object({ type: k.literal('other'), paymentId: k.id('payments'), code: k.string() }),
 		]),
 		{ discriminator: 'type', variants: { attachment: {}, other: {} } },
 	)
 	links.table.index('by_type_paymentId', ['type', 'paymentId'])
-	const attachments = zodVariantTable(
+	const attachments = kVariantTable(
 		'attachments',
-		z.discriminatedUnion('type', [
-			z.strictObject({ type: z.literal('file'), code: z.string(), name: z.string() }),
-			z.strictObject({ type: z.literal('other'), code: z.string(), name: z.string() }),
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal('file'), code: k.string(), name: k.string() }),
+			k.object({ type: k.literal('other'), code: k.string(), name: k.string() }),
 		]),
 		{
 			discriminator: 'type',

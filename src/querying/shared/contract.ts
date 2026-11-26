@@ -106,7 +106,7 @@ export interface FilterDescriptor {
 export interface FilterContract<F extends Record<string, GenericValidator>> {
 	readonly fields: FieldSchemas<F>
 	readonly native: Readonly<Record<string, { json: ValidatorJSON; optional: boolean }>>
-	readonly schema: KFilterSchema<SharedFilters<F>, SharedFilters<F, 'input'>>
+	readonly schema: KFilterSchema<SharedFilters<F>>
 	describe(): readonly FilterDescriptor[]
 	evaluate(
 		filters: SharedFilters<F, 'input'>,
@@ -146,10 +146,7 @@ export function defineFilterContract<const F extends Record<string, GenericValid
 		descriptors.push(describe(field, validator, operators))
 	}
 	// SAFETY: every selected native scalar generates precisely the mapped predicate grammar.
-	const schema = boundedFilterSchema(predicates) as KFilterSchema<
-		SharedFilters<F>,
-		SharedFilters<F, 'input'>
-	>
+	const schema = boundedFilterSchema(predicates) as KFilterSchema<SharedFilters<F>>
 	const encode = (value: SharedFilters<F, 'input'>) => {
 		// SAFETY: bounded scalar schema outputs contain only Convex scalar values and containers.
 		try {

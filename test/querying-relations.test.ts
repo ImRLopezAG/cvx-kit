@@ -829,14 +829,12 @@ for (const permitted of [false, true])
 		await f.t.run(async (ctx) => {
 			const o = f.context(ctx.db)
 			let policies = 0
-			const def = f.labels.schema.shape.ordinal._zod.def
 			const policy = managed(o.raw, {
 				tasks: { read: async (_, row) => row.allowed },
 				labels: {
 					read: async () => {
 						await Promise.resolve()
 						policies++
-						Reflect.set(def, 'type', 'string')
 						return permitted
 					},
 				},
@@ -855,7 +853,7 @@ for (const permitted of [false, true])
 				expect(policies).toBe(2)
 				expect(o.counts.closes).toBe(2)
 			} finally {
-				Reflect.set(def, 'type', 'number')
+				// v1 also mutated the Zod field definition mid-policy; k records are immutable.
 			}
 		})
 	})

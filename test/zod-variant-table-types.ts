@@ -2,7 +2,6 @@ import type { GenericId } from 'convex/values'
 import { expectTypeOf } from 'vite-plus/test'
 import { z } from 'zod'
 
-import { defineRelations } from '../src/relations'
 import { zodVariantTable, zid } from '../src/zod-table'
 
 const storage = z.discriminatedUnion('kind', [
@@ -97,7 +96,7 @@ zodVariantTable('payments', storage, {
 })
 // @ts-expect-error mismatched discriminator
 zodVariantTable('payments', storage, { discriminator: 'type', variants })
-defineRelations({ payments: table }, () => ({}))
+// Relations take k boundaries only (U13); see querying-variants.types.test-d.ts.
 
 const timestamped = zodVariantTable('payments', storage, {
 	discriminator: 'kind',
@@ -155,7 +154,7 @@ expectTypeOf<z.output<typeof explicit.publicDto>>().toEqualTypeOf<{
 	type: 'adjustment'
 	createdAt: number
 }>()
-defineRelations({ ledger: explicit }, () => ({}))
+// Relations take k boundaries only (U13); see querying-explicit-timestamps.test.ts.
 
 const writable = zodVariantTable('ledger', explicitStorage, {
 	discriminator: 'type',

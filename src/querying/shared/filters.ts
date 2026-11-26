@@ -41,11 +41,12 @@ export interface PaginationValidatorOptions {
 /**
  * A filter boundary: a `k` schema whose native validator is the full structural filter validator and
  * whose parse first runs the layout and depth/node budget preflight, then the structural walk. Its
- * output is its input: filters declare no defaults or transforms.
+ * output is its input: filters declare no defaults or transforms. Like every `k` schema, both sides
+ * carry native ID brands, as the native validator does.
  */
-export type KFilterSchema<Out = FilterTree, In = Out> = KSchema<
-	Out,
-	VObject<In, PropertyValidators>
+export type KFilterSchema<Filters = FilterTree> = KSchema<
+	Filters,
+	VObject<Filters, PropertyValidators>
 >
 
 export interface FilterBoundaryMetadata {

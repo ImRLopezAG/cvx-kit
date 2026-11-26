@@ -1,5 +1,5 @@
 import { expect, test } from 'vite-plus/test'
-import { compileFilters, parseFilterPlan } from '../src/querying/v1-zod-filters'
+import { compileFilters, parseFilterPlan } from '../src/querying/filters'
 import { declarations } from './fixture-querying/scalar'
 
 const f = declarations()

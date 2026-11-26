@@ -65,7 +65,7 @@ names (`_id`, `_creationTime`, `createdAt`, `updatedAt`, `archivedAt`).
 
 ### Shared ID validation (0.1.3)
 
-Install one compatible `convex-helpers` peer (`>=0.1.127 <0.2.0`) alongside
+Install one compatible `convex-helpers` peer (`>=0.1.130 <0.2.0`) alongside
 cvx-kit. ID metadata lives in a helper-instance registry: copying schemas
 between separately installed helper instances can silently turn an ID into
 `v.any()`. An exact nested dependency previously caused that failure even

@@ -1102,7 +1102,7 @@ export function jsonSafeZid<Table extends string>(
 	const id = zid(tableName)
 	return z
 		.string()
-		.refine((value): value is GenericId<Table> => id.safeParse(value).success)
+		.refine((value): value is GenericId<Table> => id.validate(value))
 		.describe(`Convex document id for table "${tableName}"; validated against the table by Convex`)
 }
 
@@ -1165,7 +1165,7 @@ function deriveVariantTable(
 		if (!(tagSchema instanceof z.ZodLiteral) || tagSchema.values.size !== 1)
 			throw new Error('Variant branches require one string literal discriminator')
 		const tag = [...tagSchema.values][0]
-		if (!z.string().safeParse(tag).success)
+		if (!z.string().validate(tag))
 			throw new Error('Variant branches require a string discriminator')
 		// SAFETY: a single literal value was checked as a string above.
 		const tagValue = tag as string
@@ -1365,7 +1365,7 @@ function assertVariantToolField(schema: z.core.$ZodType): void {
 	if (
 		schema instanceof z.ZodBigInt ||
 		(schema instanceof z.ZodLiteral &&
-			[...schema.values].some((value) => z.bigint().safeParse(value).success))
+			[...schema.values].some((value) => z.bigint().validate(value)))
 	)
 		throw new Error(
 			'Variant tool command fields cannot contain bigint; JSON Schema cannot represent it',
@@ -1398,7 +1398,7 @@ function variantToolField(schema: z.core.$ZodType): z.ZodType {
 	if (
 		schema instanceof z.ZodBigInt ||
 		(schema instanceof z.ZodLiteral &&
-			[...schema.values].some((value) => z.bigint().safeParse(value).success))
+			[...schema.values].some((value) => z.bigint().validate(value)))
 	)
 		throw new Error(
 			'Variant tool command fields cannot contain bigint; JSON Schema cannot represent it',
@@ -1407,8 +1407,8 @@ function variantToolField(schema: z.core.$ZodType): z.ZodType {
 	if (native.kind === 'id') {
 		const id = jsonSafeZid(native.tableName)
 		if (native.isOptional === 'optional')
-			return id.optional().refine((value) => schema.safeParse(value).success)
-		return id.refine((value) => schema.safeParse(value).success)
+			return id.optional().refine((value) => schema.validate(value))
+		return id.refine((value) => schema.validate(value))
 	}
 	if (schema instanceof z.ZodOptional)
 		return schema.clone({ ...schema.def, innerType: variantToolField(schema.unwrap()) })

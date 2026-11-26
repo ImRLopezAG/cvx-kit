@@ -1,3 +1,4 @@
+import { isLazyAccessor } from './shared/lazy'
 import { z } from 'zod'
 import { v, type GenericValidator } from 'convex/values'
 import { vRequired } from 'convex-helpers/validators'
@@ -139,9 +140,9 @@ const traitDispatch = new Map(
 			] as const,
 	),
 )
-// The audited installed 4.5.4/4.6.5 constructors use literal trait membership,
-// with no Parent specialization. Unknown peer versions retain the original scan.
-const ordinaryTraitDispatch = ['4.5.4', '4.6.5'].includes(
+// The audited installed 4.5.4/4.6.5/4.6.7 constructors use literal trait membership,
+// with no Parent specialization (4.6.7 only adds a parse-size-cap wrapper to array/map/set). Unknown peer versions retain the original scan.
+const ordinaryTraitDispatch = ['4.5.4', '4.6.5', '4.6.7'].includes(
 	`${z.core.version.major}.${z.core.version.minor}.${z.core.version.patch}`,
 )
 const intrinsicSetHas = Set.prototype.has
@@ -208,8 +209,12 @@ export function captureDto<Schema extends z.ZodType>(schema: Schema): DtoRecipe<
 			for (const key of Reflect.ownKeys(object)) {
 				if (String(key) !== key) throw new Error('Unsupported DTO definition symbol')
 				const descriptor = Object.getOwnPropertyDescriptor(object, key)!
-				if (!('value' in descriptor)) throw new Error('Unsupported DTO schema accessor')
-				entries.push(Object.freeze([key, capture(descriptor.value, depth + 1)]))
+				// A kit-built lazy definition is captured as the schema it builds; other accessors are rejected.
+				const lazy = 'value' in descriptor ? undefined : descriptor.get
+				if (!('value' in descriptor) && !isLazyAccessor(lazy))
+					throw new Error('Unsupported DTO schema accessor')
+				const entry: unknown = isLazyAccessor(lazy) ? lazy.call(object) : descriptor.value
+				entries.push(Object.freeze([key, capture(entry, depth + 1)]))
 			}
 			recipe = { kind: 'record', entries: Object.freeze(entries) }
 		}
@@ -614,7 +619,10 @@ function ordinaryConstructorEnvironment(): boolean {
 	const version: { major: number; minor: number; patch: number } = z.core.version
 	if (
 		version.major !== 4 ||
-		!((version.minor === 6 && version.patch === 5) || (version.minor === 5 && version.patch === 4))
+		!(
+			(version.minor === 6 && (version.patch === 5 || version.patch === 7)) ||
+			(version.minor === 5 && version.patch === 4)
+		)
 	)
 		return false
 	const global = Object.getOwnPropertyDescriptor(globalThis, '__zod_globalConfig')

@@ -1,22 +1,40 @@
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/require-safety-comment-for-type-assertion -- Failure fixtures deliberately throw untyped values and drive erased hosts. */
-import { Effect, Exit } from 'effect'
+import { Cause, Effect, Exit, Schema } from 'effect'
 import { convexTest } from 'convex-test'
 import {
+	actionGeneric,
 	defineSchema,
+	internalActionGeneric,
+	internalMutationGeneric,
+	internalQueryGeneric,
+	makeFunctionReference,
 	defineTable,
 	mutationGeneric,
+	queryGeneric,
 	type DataModelFromSchemaDefinition,
 	type GenericMutationCtx,
 	type MutationBuilder,
 } from 'convex/server'
-import { ConvexError, v } from 'convex/values'
-import { describe, expect, it } from 'vite-plus/test'
+import { ConvexError, v, type Value } from 'convex/values'
+import { describe, expect, it, vi } from 'vite-plus/test'
 import { z } from 'zod'
-import { combineErrorContracts, defineErrorContract } from '../src/modules/contracts/errors'
+import {
+	ARGUMENT_ISSUE_LIMITS,
+	argumentErrors,
+	combineErrorContracts,
+	decodeFailure,
+	defineErrorContract,
+	failureOf,
+	type ArgumentFailurePolicy,
+} from '../src/errors'
+import type { StandardSchema } from '../src/modules/contracts/contract'
 import { defineDomainContract } from '../src/modules/contracts/domain'
+import { zodContract } from '../src/modules/contracts/standard'
+import { createEffectAuthFunctions } from '../src/modules/effect/auth'
 import { effectApiBuilder } from '../src/modules/effect/api'
 import { projectErrorCause } from '../src/modules/effect/errors'
 import { createEffectFoundation } from '../src/modules/effect/foundation'
+import { effectContract, effectSchema } from '../src/modules/effect/schema'
 import type { FailureAuditEntry, FailureAuditOptions } from '../src/modules/effect/failure-audit'
 
 const schema = defineSchema({ writes: defineTable({ kind: v.string() }) })
@@ -285,5 +303,277 @@ describe('declared defects at the API boundary', () => {
 						},
 			)
 		}
+	})
+})
+
+const invalidInput = { secret: 'private-rejected-value' }
+const argumentContracts = combineErrorContracts(notesErrors, argumentErrors)
+const neutralInput: StandardSchema<string> = {
+	'~standard': {
+		version: 1,
+		vendor: 'test',
+		validate: () => ({
+			issues: Array.from({ length: ARGUMENT_ISSUE_LIMITS.issues + 1 }, () => ({
+				path: [{ key: 'nested' }, 0],
+				message: 'Invalid input',
+				input: invalidInput.secret,
+			})),
+		}),
+	},
+}
+
+function argumentHarness(argumentFailure?: ArgumentFailurePolicy) {
+	const entries: FailureAuditEntry[] = []
+	const foundation = createEffectFoundation({
+		argumentFailure,
+		observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'F' }) },
+		writeAudit: () => undefined,
+		auditFailure: {
+			emit: (entry) => {
+				entries.push(entry)
+			},
+			details: (details) => ({ details: JSON.stringify(details) }),
+			input: (input) => ({ input: JSON.stringify(input) }),
+		},
+	})
+	const contract = defineDomainContract({
+		errors: notesErrors,
+		commands: {
+			save: {
+				input: z.object({ secret: z.number() }),
+				result: z.string(),
+				classification: 'business',
+			},
+		},
+		queries: {
+			read: { input: effectSchema(Schema.Struct({ secret: Schema.Number })), result: z.string() },
+			neutral: { input: neutralInput, result: z.string() },
+			adaptedZod: { input: zodContract(z.string().min(5)), result: z.string() },
+			invalidResult: { input: z.object({}), result: z.string().min(10) },
+			nested: { input: z.object({}), result: z.string() },
+			decoderFailure: {
+				input: effectContract(() => Effect.fail(notesErrors.create('NOT_FOUND', {}))),
+				result: z.string(),
+			},
+		},
+	})
+	const command = foundation.Command({
+		contract,
+		context: () => ({}),
+		audit: () => null,
+		operations: ({ command }) => ({
+			save: command.handler(() => {
+				throw argumentErrors.toConvexError('INVALID_ARGUMENTS', { issues: [] })
+			}),
+		}),
+	})
+	const query = foundation.Query({
+		contract,
+		context: () => ({}),
+		operations: ({ query }) => ({
+			read: query.handler(() => 'read'),
+			neutral: query.handler(() => 'unreachable'),
+			adaptedZod: query.handler(() => 'unreachable'),
+			invalidResult: query.handler(() => 'short'),
+			nested: query.handler(() => command.exec('save', invalidInput as never, undefined)),
+			decoderFailure: query.handler(() => 'unreachable'),
+		}),
+	})
+	const mutation = effectApiBuilder(nativeMutation, { errors: notesErrors })({
+		args: { secret: v.union(v.number(), v.string()) },
+		handler: (_ctx, args) => command.exec('save', args as never, undefined),
+	})
+	const read = effectApiBuilder(queryGeneric, { errors: notesErrors })({
+		args: { secret: v.string() },
+		handler: (_ctx, args) => query.exec('read', args as never, undefined),
+	})
+	const t = convexTest(schema, {
+		...modules,
+		'./fixture/argument-functions.ts': async () => ({ mutation, read }),
+	})
+	return { command, query, mutation, read, t, entries }
+}
+
+describe('Effect operation argument failures', () => {
+	it('uses the shared auth policy for endpoint Zod validation before the Effect handler', async () => {
+		const handler = vi.fn(() => Effect.succeed('unreachable'))
+		const auth = createEffectAuthFunctions(
+			{
+				query: queryGeneric,
+				mutation: mutationGeneric,
+				action: actionGeneric,
+				internalQuery: internalQueryGeneric,
+				internalMutation: internalMutationGeneric,
+				internalAction: internalActionGeneric,
+				getAuthUser: async () => null,
+				mapRole: () => 'reader',
+				adminRoles: ['reader'],
+				argumentFailure: 'declared',
+			},
+			{
+				query: {},
+				mutation: {},
+				action: {},
+				systemQuery: { errors: notesErrors },
+				systemMutation: {},
+				systemAction: {},
+			},
+		)
+		const read = auth.systemQuery({ args: { secret: z.string().min(100) }, handler })
+		const t = convexTest(schema, {
+			...modules,
+			'./fixture/argument-functions.ts': async () => ({ read }),
+		})
+		const ref = makeFunctionReference<'query', typeof invalidInput>('argument-functions:read')
+		const error = await t.query(ref, invalidInput).catch((error: unknown) => error)
+		expect(failureOf(error, argumentContracts, 'INVALID_ARGUMENTS')?.details.issues).toEqual([
+			expect.objectContaining({ path: ['secret'], code: 'too_small' }),
+		])
+		expect(handler).not.toHaveBeenCalled()
+	})
+
+	it('preserves each legacy decoder failure in direct exec', async () => {
+		const { command, query } = argumentHarness()
+		await expect(
+			Effect.runPromise(command.exec('save', invalidInput as never, undefined)),
+		).rejects.toBeInstanceOf(z.ZodError)
+		await expect(
+			Effect.runPromise(query.exec('read', invalidInput as never, undefined)),
+		).rejects.toBeInstanceOf(Schema.SchemaError)
+	})
+
+	it('audits a nested custom primitive rejection once and preserves the value', async () => {
+		const { query, entries } = argumentHarness(() => 'rejected')
+		await expect(Effect.runPromise(query.exec('nested', {}, undefined))).rejects.toBe('rejected')
+		expect(entries).toEqual([
+			expect.objectContaining({ operation: 'save', errorCode: 'UNKNOWN_FAILURE', depth: 1 }),
+		])
+	})
+
+	it.each([undefined, 'legacy'] as const)(
+		'retains legacy client projection (%s)',
+		async (policy) => {
+			const { mutation, read, t } = argumentHarness(policy)
+			for (const error of [
+				await t
+					.mutation((ctx) => invoke(mutation, ctx, invalidInput))
+					.catch((error: unknown) => error),
+				await t.query((ctx) => invoke(read, ctx, invalidInput)).catch((error: unknown) => error),
+			]) {
+				expect(error).toBeInstanceOf(ConvexError)
+				expect((error as ConvexError<Value>).data).toEqual({ _tag: 'UnknownFailure', version: 1 })
+			}
+		},
+	)
+
+	it('projects contract input rejections at both Convex boundaries and audits them without input', async () => {
+		const { t, entries } = argumentHarness('declared')
+		const saveError = await t
+			.mutation(
+				makeFunctionReference<'mutation', typeof invalidInput>('argument-functions:mutation'),
+				invalidInput,
+			)
+			.catch((error: unknown) => error)
+		const readError = await t
+			.query(
+				makeFunctionReference<'query', typeof invalidInput>('argument-functions:read'),
+				invalidInput,
+			)
+			.catch((error: unknown) => error)
+		expect(failureOf(saveError, argumentContracts, 'INVALID_ARGUMENTS')?.details.issues).toEqual([
+			expect.objectContaining({ path: ['secret'], code: 'invalid_type' }),
+		])
+		expect(failureOf(readError, argumentContracts, 'INVALID_ARGUMENTS')?.details.issues).toEqual([
+			expect.objectContaining({ path: ['secret'], code: 'InvalidType' }),
+		])
+		expect(JSON.stringify((readError as ConvexError<Value>).data)).not.toContain(
+			invalidInput.secret,
+		)
+		expect(entries).toEqual([
+			{
+				kind: 'command',
+				operation: 'save',
+				classification: 'business',
+				errorCode: 'INVALID_ARGUMENTS',
+				declared: true,
+				root: 'save',
+				depth: 0,
+			},
+			{
+				kind: 'query',
+				operation: 'read',
+				classification: 'query',
+				errorCode: 'INVALID_ARGUMENTS',
+				declared: true,
+				root: 'read',
+				depth: 0,
+			},
+		])
+	})
+
+	it('normalizes Standard Schema paths and applies the shared issue limits', async () => {
+		const { query } = argumentHarness('declared')
+		const exit = await Effect.runPromiseExit(query.exec('neutral', 'invalid', undefined))
+		if (Exit.isSuccess(exit)) throw Error('expected failure')
+		const rejection = failureOf(Cause.squash(exit.cause), argumentContracts, 'INVALID_ARGUMENTS')
+		expect(rejection?.details.issues).toEqual(
+			Array.from({ length: ARGUMENT_ISSUE_LIMITS.issues }, () => ({
+				path: ['nested', 0],
+				code: 'custom',
+				message: 'Invalid input',
+			})),
+		)
+		const zodError = await Effect.runPromise(query.exec('adaptedZod', 'x', undefined)).catch(
+			(error: unknown) => error,
+		)
+		expect(failureOf(zodError, argumentContracts, 'INVALID_ARGUMENTS')?.details.issues).toEqual([
+			expect.objectContaining({ path: [], code: 'too_small' }),
+		])
+	})
+
+	it('retains the ConvexError in direct exec and audits a nested failure once', async () => {
+		const { query, entries } = argumentHarness('declared')
+		const exit = await Effect.runPromiseExit(query.exec('nested', {}, undefined))
+		if (Exit.isSuccess(exit)) throw Error('expected failure')
+		expect(decodeFailure(Cause.squash(exit.cause), argumentContracts)).toMatchObject({
+			_tag: 'DeclaredFailure',
+			code: 'INVALID_ARGUMENTS',
+		})
+		expect(entries).toEqual([
+			expect.objectContaining({
+				operation: 'save',
+				errorCode: 'INVALID_ARGUMENTS',
+				root: 'nested',
+				depth: 1,
+			}),
+		])
+	})
+
+	it('throws the custom policy value through an endpoint with a declared error projector', async () => {
+		const thrown = notesErrors.toConvexError('NOT_FOUND', {})
+		const hook = vi.fn(() => thrown)
+		const { mutation, t, entries } = argumentHarness(hook)
+		await expect(t.mutation((ctx) => invoke(mutation, ctx, invalidInput))).rejects.toBe(thrown)
+		expect(hook).toHaveBeenCalledExactlyOnceWith({
+			source: 'arguments',
+			issues: [expect.objectContaining({ path: ['secret'], code: 'invalid_type' })],
+		})
+		expect(entries).toEqual([
+			expect.objectContaining({ errorCode: 'UNKNOWN_FAILURE', declared: false }),
+		])
+	})
+
+	it('keeps handler defects and arbitrary typed decoder errors on their existing paths', async () => {
+		const { mutation, query, t } = argumentHarness('declared')
+		const error = await t
+			.mutation((ctx) => invoke(mutation, ctx, { secret: 1 }))
+			.catch((error: unknown) => error)
+		expect((error as ConvexError<Value>).data).toEqual({ _tag: 'UnknownFailure', version: 1 })
+		const exit = await Effect.runPromiseExit(query.exec('decoderFailure', undefined, undefined))
+		if (Exit.isSuccess(exit)) throw Error('expected failure')
+		expect(projectErrorCause(notesErrors, exit.cause)).toMatchObject({ code: 'NOT_FOUND' })
+		await expect(
+			Effect.runPromise(query.exec('invalidResult', {}, undefined)),
+		).rejects.toBeInstanceOf(z.ZodError)
 	})
 })

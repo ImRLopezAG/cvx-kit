@@ -60,6 +60,18 @@ const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
 const identifier = /^[A-Za-z0-9_-]{1,32}$/
 
+// Only the fresh, engine-owned binding for a single operation can reuse AAD.
+let operationBindings: WeakMap<CursorBinding, Map<string, Uint8Array>> | undefined
+
+/** Internal pagination boundary. The binding and its nested values are engine-owned for this operation. */
+export function prepareCursorBinding(binding: CursorBinding): CursorBinding {
+	operationBindings ??= new WeakMap()
+	if (operationBindings.has(binding)) return binding
+	const prepared = Object.freeze({ ...binding })
+	operationBindings.set(prepared, new Map())
+	return prepared
+}
+
 /** Private lazy server configuration. Call only at the first pagination boundary. */
 export function createEnvironmentCursorCodec() {
 	try {
@@ -126,7 +138,7 @@ export function createCursorCodec(config: CursorCodecConfig) {
 					const payload = encoder.encode(JSON.stringify(raw))
 					const cipher = aessiv(
 						keys.get(currentKeyId)!,
-						aad(version, currentKeyId, binding, namespace),
+						associatedData(version, currentKeyId, binding, namespace),
 					)
 					return `${namespace}.${version}.${currentKeyId}.${bytesToHex(cipher.encrypt(payload))}`
 				} catch {
@@ -155,7 +167,7 @@ export function createCursorCodec(config: CursorCodecConfig) {
 						!/^[0-9a-f]+$/.test(encoded)
 					)
 						throw new CursorError()
-					const cipher = aessiv(key, aad(version, keyId, binding, namespace))
+					const cipher = aessiv(key, associatedData(version, keyId, binding, namespace))
 					const plaintext = cipher.decrypt(hexToBytes(encoded))
 					if (plaintext.length > maxPayloadBytes) throw new CursorError()
 					const json = decoder.decode(plaintext)
@@ -474,4 +486,21 @@ function aad(
 			bounds,
 		),
 	)
+}
+
+function associatedData(
+	version: string,
+	keyId: string,
+	binding: CursorBinding,
+	namespace: 'pc' | 'cc',
+) {
+	const prepared = operationBindings?.get(binding)
+	if (!prepared) return aad(version, keyId, binding, namespace)
+	const key = `${namespace}:${version}:${keyId}`
+	let data = prepared.get(key)
+	if (!data) {
+		data = aad(version, keyId, binding, namespace)
+		prepared.set(key, data)
+	}
+	return data
 }

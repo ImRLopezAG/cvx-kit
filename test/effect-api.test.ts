@@ -335,9 +335,13 @@ describe('Effect native API', () => {
 			expect(error).toBeInstanceOf(Error)
 			if (!(error instanceof Error) || !Cause.isCause(error.cause)) throw error
 			expect(error.message).toBe('Effect API execution failed')
+			// effect >=4.1 reports the handler failure as a Die reason carrying the same value when a
+			// finalizer defect joins it; 4.0.x keeps a Fail reason. Either way the exact value survives.
 			expect(
 				error.cause.reasons.some(
-					(reason) => Cause.isFailReason(reason) && reason.error === expected,
+					(reason) =>
+						(Cause.isFailReason(reason) && reason.error === expected) ||
+						(Cause.isDieReason(reason) && reason.defect === expected),
 				),
 			).toBe(true)
 			expect(

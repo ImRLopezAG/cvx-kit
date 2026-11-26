@@ -72,6 +72,52 @@ undeclared input fields and rejecting invalid declared details. Their code and
 detail types stay correlated. `toConvexError` uses the browser-safe `convex/values`
 peer and round-trips through `decodeFailure`; React is not required.
 
+### Argument validation failures
+
+By default a rejected zod argument schema (or compact pagination filter) throws the
+helper-compatible `ConvexError({ ZodError: [...] })`, which no declared contract
+decodes. Opt in per constructor family with `argumentFailure`:
+
+```ts
+const auth = createAuthFunctions({ ...config, argumentFailure: 'declared' })
+```
+
+- `'legacy'` (default): payload unchanged.
+- `'declared'`: throws `argumentErrors.toConvexError('INVALID_ARGUMENTS', { issues })`.
+  The envelope carries no `ZodError` key, because declared decoding is exact-keyed.
+- `(failure) => thrown`: receives `{ source: 'arguments' | 'filter', issues }` and
+  returns the value to throw, e.g. `appErrors.toConvexError('INVALID_INPUT', {})`.
+
+`createEffectAuthFunctions(config, options)` uses the same auth config
+for endpoint Zod arguments and compact filters. Configure
+`createEffectFoundation({ argumentFailure, ... })` for command and query
+`input` schema failures, including direct and nested `exec`. Under
+`'legacy'` the decoder's original failure is preserved, so endpoints
+with a declared errors projector continue to emit `UnknownFailure`
+for validation errors. The other policies throw the declared envelope
+or the hook's return value through the Effect API adapter. Hooks receive
+`source: 'arguments'` for operation input.
+
+Issues are an allowlist of `{ path, code, message }`, capped by `ARGUMENT_ISSUE_LIMITS`
+(20 issues, 32 path segments, 256-char messages, 32 KB in total). The kit never adds the
+rejected value. Zod and Standard Schema messages and path segments come
+from the schema, so keep sensitive input out of custom messages. Native
+Effect Schema failures use issue tags and a fixed message, because Effect's
+default formatter includes rejected values.
+
+```ts
+import { argumentErrors, combineErrorContracts, matchFailure } from 'cvx-kit/errors'
+
+const failures = combineErrorContracts(appErrors, argumentErrors)
+const message = matchFailure(caught, failures, {
+	INVALID_ARGUMENTS: ({ details }) => details.issues[0]?.message ?? 'Invalid input',
+	_: (failure) => (failure._tag === 'DeclaredFailure' ? failure.message : 'Something went wrong'),
+})
+```
+
+Effect command/query `input` decoding is separate: a `ContractValidationError`
+projects as `UnknownFailure` unless the app maps it.
+
 ### Serialized data evidence
 
 In installed Convex 1.48.0, `server/impl/registration_impl.ts` routes native

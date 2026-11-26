@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit } from 'effect'
 import type { Value } from 'convex/values'
 import { isRecord, type ErrorContract, type ErrorDefinitions } from '../contracts/errors'
-import { projectErrorCause } from './errors'
+import { getArgumentRejection, projectErrorCause } from './errors'
 import { observationFailure } from './normalize'
 import type { ScopeState } from './scope'
 
@@ -45,6 +45,7 @@ type FailureReport = Readonly<{
 	classification: string
 	// oxlint-disable-next-line anti-slop/no-unknown-type-aliases -- The decoded input of the failed operation; only a redactor may read it.
 	input: unknown
+	inputRejected?: boolean
 	contract?: ProjectingContract
 	entered: ScopeState | undefined
 	current: ScopeState
@@ -60,13 +61,29 @@ export function reportFailure(
 	const cause = exit.cause
 	if (!Cause.hasFails(cause) && !Cause.hasDies(cause)) return Effect.void
 	return emitQuietly(options, () => {
-		const failure = observationFailure(cause)
+		const argumentRejection = getArgumentRejection(cause)
+		const failure = argumentRejection ?? observationFailure(cause)
 		if (failure instanceof Object) {
 			if (report.current.reported.has(failure)) return undefined
 			report.current.reported.add(failure)
 		}
-		let projected = report.contract
-			? projectErrorCause(report.contract, cause)
+		const positionAndOperation = {
+			kind: report.kind,
+			operation: report.operation,
+			classification: report.classification,
+			...position(report),
+		}
+		if (report.inputRejected || argumentRejection) {
+			const declared = argumentRejection?.declared ?? false
+			return {
+				...positionAndOperation,
+				errorCode: declared ? 'INVALID_ARGUMENTS' : 'UNKNOWN_FAILURE',
+				declared,
+			}
+		}
+		const contract = report.contract
+		let projected = contract
+			? projectErrorCause(contract, cause)
 			: ({ _tag: 'UnknownFailure', version: 1 } as const)
 		if (projected._tag !== 'DeclaredFailure' && options.errors)
 			projected = projectErrorCause(options.errors, cause)
@@ -81,12 +98,9 @@ export function reportFailure(
 			: undefined
 		return Object.assign(
 			{
-				kind: report.kind,
-				operation: report.operation,
-				classification: report.classification,
+				...positionAndOperation,
 				errorCode,
 				declared: declaredFailure !== undefined,
-				...position(report),
 			},
 			details === undefined ? undefined : { details },
 			input === undefined ? undefined : { input },

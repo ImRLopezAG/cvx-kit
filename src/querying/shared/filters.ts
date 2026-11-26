@@ -22,7 +22,7 @@ const relationPredicates = new WeakMap<
 	{ cardinality: 'one' | 'many'; target: FilterGrammar }
 >()
 const variantPredicates = new WeakMap<z.core.$ZodType, NonNullable<FilterGrammar['variants']>>()
-const filterGrammars = new WeakMap<z.core.$ZodType, FilterGrammar>()
+const filterGrammars = new WeakMap<z.core.$ZodType, FilterGrammar | (() => FilterGrammar)>()
 
 export interface PaginationValidatorOptions {
 	validator: 'compact'
@@ -85,9 +85,11 @@ export function relationFilterSchema(
  * a query never reads relation grammars, or their tables, that it does not use.
  */
 export function lazyRelationFilterSchema(
-	grammar: FilterGrammar,
+	source: FilterGrammar | (() => FilterGrammar),
 	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
 ): z.ZodType {
+	let root: FilterGrammar | undefined
+	const grammar = () => (root ??= resolveGrammar(source))
 	const restricted = new Map<string, FilterGrammar>()
 	const ids = new WeakMap<FilterGrammar, number>()
 	let nextId = 0
@@ -99,14 +101,16 @@ export function lazyRelationFilterSchema(
 	// A restriction is a function of the root grammar and the relation names used
 	// per grammar, so that flat set is its key: no larger than the input.
 	function restrict(used: Map<FilterGrammar, Set<string>>): FilterGrammar {
-		const key = JSON.stringify(
-			[...used]
-				.map(([source, names]) => [idOf(source), [...names].sort()] as const)
-				.sort(([a], [b]) => a - b),
-		)
+		const key = used.size
+			? JSON.stringify(
+					[...used]
+						.map(([source, names]) => [idOf(source), [...names].sort()] as const)
+						.sort(([a], [b]) => a - b),
+				)
+			: ''
 		let result = restricted.get(key)
 		if (!result) {
-			result = build(used, grammar, 0, new Map())
+			result = build(used, grammar(), 0, new Map())
 			if (restricted.size >= 256) restricted.clear()
 			restricted.set(key, result)
 		}
@@ -146,8 +150,8 @@ export function lazyRelationFilterSchema(
 			}
 		return result
 	}
-	const scalar = restrict(new Map())
-	return boundedObject(filterNodeSchema(scalar, 0, cache)._zod.def, grammar, undefined, (used) =>
+	// The private wrapper always delegates to the grammar selected during preflight.
+	return boundedObject(z.strictObject({})._zod.def, grammar, undefined, (used) =>
 		filterNodeSchema(restrict(used), 0, cache),
 	)
 }
@@ -158,7 +162,7 @@ export function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined 
 	if (!(filters instanceof z.ZodOptional)) return undefined
 	const root = filters.unwrap()
 	const cached = filterGrammars.get(root)
-	if (cached) return cached
+	if (cached) return resolveGrammar(cached)
 	if (!(root instanceof z.ZodObject)) return undefined
 	return {
 		fields: root.shape,
@@ -418,7 +422,7 @@ function withinFilterBudget(
 				if (
 					!tag ||
 					!('value' in tag) ||
-					!z.string().safeParse(tag.value).success ||
+					!z.string().validate(tag.value) ||
 					!Object.hasOwn(entry.grammar.variants?.options ?? {}, tag.value)
 				)
 					return false
@@ -448,9 +452,14 @@ function normalizeScalar(field: string, predicate: FilterTree): FilterAst[] {
 		}))
 }
 
+function resolveGrammar(grammar: FilterGrammar | (() => FilterGrammar)): FilterGrammar {
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- The engine's grammar can be a deferred internal builder.
+	return typeof grammar === 'function' ? grammar() : grammar
+}
+
 function boundedObject(
 	definition: z.ZodObject['_zod']['def'],
-	grammar: FilterGrammar,
+	grammar: FilterGrammar | (() => FilterGrammar),
 	metadata?: FilterBoundaryMetadata,
 	resolve?: (used: Map<FilterGrammar, Set<string>>) => z.ZodObject,
 ): z.ZodObject {
@@ -479,7 +488,7 @@ function boundedObject(
 			inst._zod.parse = (payload, ctx) => {
 				const used = resolve && new Map<FilterGrammar, Set<string>>()
 				// SAFETY: layout preflight precedes Zod's value traversal.
-				if (!withinFilterBudget(payload.value as FilterTree, grammar, used)) {
+				if (!withinFilterBudget(payload.value as FilterTree, resolveGrammar(grammar), used)) {
 					payload.issues.push({
 						code: 'custom',
 						input: payload.value,

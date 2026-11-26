@@ -1,6 +1,6 @@
 {
 	"name": "cvx-kit",
-	"version": "0.1.35",
+	"version": "0.2.0",
 	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
 	"keywords": [
 		"component",
@@ -165,45 +165,46 @@
 		"test:package:smoke:npm": "node scripts/smoke-packed-components.mjs npm",
 		"skills:check": "node scripts/check-skills.mjs",
 		"bench:app-load": "node scripts/bench-app-load.mjs --check scripts/bench/app-load-budget.json",
+		"bench:per-call": "node scripts/bench-per-call.mjs",
 		"prepublishOnly": "bun run build && bun run typecheck && bun run test && bun run skills:check",
 		"build:codegen": "convex codegen --component-dir ./src/components/foundation && convex codegen --component-dir ./src/components/approvals && vp pack",
 		"release": "npm version patch && git push --follow-tags",
 		"release:minor": "npm version minor && git push --follow-tags"
 	},
 	"dependencies": {
-		"@convex-dev/workflow": "0.4.10",
+		"@convex-dev/workflow": "0.5.0",
 		"@noble/ciphers": "2.4.0",
-		"@oxlint/plugins": "1.87.0",
+		"@oxlint/plugins": "1.95.0",
 		"@standard-schema/spec": "^1.1.0",
 		"convex-audit-log": "^0.2.0",
-		"oxc-parser": "0.153.0",
+		"oxc-parser": "0.160.0",
 		"oxc-resolver": "11.24.2"
 	},
 	"devDependencies": {
 		"@edge-runtime/vm": "^5.0.0",
-		"@types/node": "^26.6.5",
-		"@types/react": "19.2.2",
-		"@types/react-dom": "19.2.2",
-		"convex": "1.48.0",
-		"convex-helpers": "0.1.129",
-		"convex-test": "^0.0.65",
-		"effect": "4.0.2",
-		"jsdom": "26.1.0",
-		"oxlint": "1.87.0",
+		"@types/node": "^26.6.11",
+		"@types/react": "19.3.3",
+		"@types/react-dom": "19.3.0",
+		"convex": "1.51.0",
+		"convex-helpers": "0.1.137",
+		"convex-test": "^0.0.75",
+		"effect": "4.1.6",
+		"jsdom": "31.0.1",
+		"oxlint": "1.95.0",
 		"publint": "^0.3.25",
-		"react": "19.2.8",
-		"react-dom": "19.2.8",
+		"react": "19.3.1",
+		"react-dom": "19.3.1",
 		"typescript": "7.0.2",
-		"vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
-		"vite-plus": "1.1.0",
-		"zod": "4.6.5"
+		"vite": "npm:@voidzero-dev/vite-plus-core@8.3.8001",
+		"vite-plus": "1.8.0",
+		"zod": "4.6.7"
 	},
 	"peerDependencies": {
 		"convex": "^1.46.0",
-		"convex-helpers": ">=0.1.127 <0.2.0",
+		"convex-helpers": ">=0.1.130 <0.2.0",
 		"effect": ">=4.0.1 <5",
 		"react": "^18.0.0 || ^19.0.0",
-		"zod": "^4.5.4"
+		"zod": "^4.6.7"
 	},
 	"peerDependenciesMeta": {
 		"effect": {
@@ -214,7 +215,7 @@
 		}
 	},
 	"overrides": {
-		"vite": "npm:@voidzero-dev/vite-plus-core@1.1.0"
+		"vite": "npm:@voidzero-dev/vite-plus-core@8.3.8001"
 	},
 	"devEngines": {
 		"packageManager": {

@@ -60,7 +60,7 @@ export function planSearch(
 	input: SearchInput,
 	constraints: readonly StoredConstraint[],
 ) {
-	if (!z.string().safeParse(text).success || !text.trim())
+	if (!z.string().validate(text) || !text.trim())
 		throw new SearchError('SEARCH_TEXT_REQUIRED')
 	const envelope = optionEnvelope.safeParse(input)
 	if (!envelope.success) throw new SearchError('SEARCH_OPTIONS_UNSUPPORTED')
@@ -181,7 +181,7 @@ export async function executeSearch(
 			search.equalities,
 			options,
 		)
-		if (!nativePage.safeParse(result).success) throw new SearchError('SEARCH_PROTOCOL_UNSUPPORTED')
+		if (!nativePage.validate(result)) throw new SearchError('SEARCH_PROTOCOL_UNSUPPORTED')
 		if (!result.isDone && result.continueCursor === start.nativeCursor)
 			throw new SearchError('SEARCH_PROTOCOL_UNSUPPORTED')
 		const seen = start.seen + result.page.length

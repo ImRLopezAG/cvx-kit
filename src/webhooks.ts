@@ -1,7 +1,7 @@
 import type { GenericMutationCtx, GenericDataModel, FunctionReference } from 'convex/server'
-import { z } from 'zod'
 import { defaultErrors, type ErrorFactory } from './errors'
-import { zodTable } from './zod-table'
+import { k } from './k'
+import { kTable } from './table'
 
 /**
  * The host-owned dedup table (the kit gains no tables). Register it in the
@@ -14,11 +14,11 @@ import { zodTable } from './zod-table'
  * `receivedAt` — see docs/webhooks.md).
  */
 export function webhookEventsTable() {
-	return zodTable('webhookEvents', () => ({
-		eventKey: z.string(),
-		source: z.string(),
-		receivedAt: z.number(),
-	}))
+	return kTable('webhookEvents', {
+		eventKey: k.string(),
+		source: k.string(),
+		receivedAt: k.number(),
+	})
 }
 
 type DedupContext = Pick<GenericMutationCtx<GenericDataModel>, 'db'>

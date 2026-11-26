@@ -2,12 +2,12 @@
 import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
 
 import { Foundation } from '../src/components/foundation/client'
 import { createCrudCommands } from '../src/crud'
 import { KitError } from '../src/errors'
-import { tenantTable, zodTable } from '../src/zod-table'
+import { k } from '../src/k'
+import { kTable, tenantTable } from '../src/table'
 import schema from './fixture-tenant/schema'
 
 const modules = import.meta.glob('./fixture-tenant/**/*.ts')
@@ -36,8 +36,9 @@ describe('createCrudCommands on the real Convex runtime', () => {
 		const id = await asOne.mutation(api.crudCreate, { name: 'Doc' })
 		await asOne.mutation(api.crudUpdate, { id, name: 'Renamed' })
 		await asOne.mutation(api.crudArchive, { id })
-		const row = z
-			.object({ name: z.string(), archivedAt: z.number().optional() })
+		const row = k
+			.object({ name: k.string(), archivedAt: k.number().optional() })
+			.strip()
 			.parse(await t.query(api.getProject, { id }))
 		expect(row.name).toBe('Renamed')
 		expect(row.archivedAt).toEqual(expect.any(Number))
@@ -75,9 +76,13 @@ describe('createCrudCommands construction', () => {
 	}
 
 	it('fails fast when a tenantTable has no enrich callback', () => {
-		const table = tenantTable('things', () => ({ name: z.string() }), {
-			commandFields: ['name'],
-		})
+		const table = tenantTable(
+			'things',
+			{ name: k.string() },
+			{
+				commandFields: ['name'],
+			},
+		)
 		expect(() =>
 			createCrudCommands({
 				Command: makeCommand(),
@@ -89,9 +94,13 @@ describe('createCrudCommands construction', () => {
 	})
 
 	it('plain tables construct without enrich; defaults are business-classified', () => {
-		const table = zodTable('notes', () => ({ text: z.string() }), {
-			commandFields: ['text'],
-		})
+		const table = kTable(
+			'notes',
+			{ text: k.string() },
+			{
+				commandFields: ['text'],
+			},
+		)
 		const crud = createCrudCommands({
 			Command: makeCommand(),
 			table,
@@ -103,9 +112,13 @@ describe('createCrudCommands construction', () => {
 	})
 
 	it('strict update input rejects fields outside commandFields', async () => {
-		const table = zodTable('notes', () => ({ text: z.string(), secret: z.string() }), {
-			commandFields: ['text'],
-		})
+		const table = kTable(
+			'notes',
+			{ text: k.string(), secret: k.string() },
+			{
+				commandFields: ['text'],
+			},
+		)
 		const fakeDb = {
 			insert: async () => {
 				throw new Error('Invalid input must not insert')
@@ -127,6 +140,39 @@ describe('createCrudCommands construction', () => {
 					data: { secret: 'leak' },
 				},
 			),
-		).rejects.toThrow()
+		).rejects.toThrow(
+			expect.objectContaining({ data: expect.objectContaining({ code: 'VALIDATION' }) }),
+		)
+	})
+
+	it('an update with an out-of-range field fails with VALIDATION before any write', async () => {
+		const table = kTable('notes', { text: k.string().max(5) }, { commandFields: ['text'] })
+		const patched: unknown[] = []
+		const fakeDb = {
+			insert: async () => {
+				throw new Error('Invalid input must not insert')
+			},
+			patch: async (...args: unknown[]) => {
+				patched.push(args)
+			},
+		}
+		const crud = createCrudCommands<{ db: typeof fakeDb }, typeof table>({
+			Command: makeCommand(),
+			table,
+			aggregateType: 'note',
+			actor: () => 'user',
+		})
+		const id = table.tools.id.parse({ id: 'id_1' }).id
+		await expect(
+			crud.executeUpdate({ db: fakeDb }, { id, data: { text: 'far too long' } }),
+		).rejects.toMatchObject({
+			data: {
+				code: 'VALIDATION',
+				issues: [expect.objectContaining({ code: 'too_big', path: ['data', 'text'] })],
+			},
+		})
+		expect(patched).toEqual([])
+		await crud.executeUpdate({ db: fakeDb }, { id, data: { text: 'ok' } })
+		expect(patched).toEqual([[id, { text: 'ok' }]])
 	})
 })

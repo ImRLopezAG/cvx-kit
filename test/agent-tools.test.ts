@@ -1,16 +1,17 @@
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
-import { z } from 'zod'
 
 import { createAgentTools } from '../src/agent-tools'
-import { zodTable } from '../src/zod-table'
+import { toJsonSchema } from '../src/json-schema'
+import { k, type KType } from '../src/k'
+import { kTable } from '../src/table'
 
-const documents = zodTable(
+const documents = kTable(
 	'documents',
-	(id) => ({
-		title: z.string(),
-		ownerId: id('users'),
-		secretNote: z.string(),
-	}),
+	{
+		title: k.string().describe('Document title'),
+		ownerId: k.id('users'),
+		secretNote: k.string(),
+	},
 	{ commandFields: ['title'] },
 )
 
@@ -49,10 +50,7 @@ describe('createAgentTools', () => {
 	it('routes invocations to the supplied handler with the input', async () => {
 		const received: unknown[] = []
 		const tools = createAgentTools(documents, {
-			create: async (
-				_ctx: Record<never, never>,
-				input: z.output<typeof documents.tools.insert>,
-			) => {
+			create: async (_ctx: Record<never, never>, input: k.infer<typeof documents.tools.insert>) => {
 				received.push(input)
 				return { id: 'doc_1' }
 			},
@@ -66,15 +64,45 @@ describe('createAgentTools', () => {
 		expect(received).toEqual([{ title: 'Plan' }])
 	})
 
-	it('ids present as plain strings in generated JSON schemas (jsonSafeZid)', () => {
+	it('ids present as plain strings in generated JSON schemas', () => {
 		const tools = createAgentTools(documents, {
 			update: async () => null,
 			get: async () => null,
 		})
-		const getSchema = z.toJSONSchema(tools.documents_get!.args)
+		const getSchema = toJsonSchema(tools.documents_get!.args)
 		expect(getSchema.properties?.id).toMatchObject({ type: 'string' })
-		const updateSchema = z.toJSONSchema(tools.documents_update!.args)
+		const updateSchema = toJsonSchema(tools.documents_update!.args)
 		expect(updateSchema.properties?.id).toMatchObject({ type: 'string' })
+	})
+
+	it('field descriptions carry into the generated JSON schemas', () => {
+		const tools = createAgentTools(documents, {
+			create: async () => null,
+			update: async () => null,
+		})
+		expect(toJsonSchema(tools.documents_create!.args).properties?.title).toEqual({
+			type: 'string',
+			description: 'Document title',
+		})
+		expect(
+			toJsonSchema(tools.documents_update!.args).properties?.data?.properties?.title,
+		).toMatchObject({ type: 'string', description: 'Document title' })
+	})
+
+	it('args implement Standard Schema v1 and reject unknown fields with VALIDATION', async () => {
+		const tools = createAgentTools(documents, { create: async () => null })
+		const args = tools.documents_create!.args
+		expect(args['~standard'].version).toBe(1)
+		expect(await args['~standard'].validate({ title: 'Plan' })).toEqual({
+			value: { title: 'Plan' },
+		})
+		expect(args.safeParse({ title: 'Plan', secretNote: 'leak' })).toMatchObject({
+			success: false,
+			issues: [{ code: 'unrecognized_key', path: ['secretNote'] }],
+		})
+		expect(() => args.parse({ title: 'Plan', secretNote: 'leak' })).toThrow(
+			expect.objectContaining({ data: expect.objectContaining({ code: 'VALIDATION' }) }),
+		)
 	})
 
 	it('list args are the pagination opts boundary', () => {
@@ -89,7 +117,7 @@ describe('createAgentTools', () => {
 		// Structural stand-in for @convex-dev/agent's createTool signature.
 		function createToolStub<Result>(definition: {
 			description: string
-			args: z.ZodType
+			args: KType
 			handler: (ctx: never, input: never) => Promise<Result>
 		}) {
 			return definition

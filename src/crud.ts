@@ -1,5 +1,3 @@
-import { zid } from 'convex-helpers/server/zod4'
-import { z } from 'zod'
 import type { Value } from 'convex/values'
 import type { GenericDataModel, GenericMutationCtx } from 'convex/server'
 import type {
@@ -7,19 +5,25 @@ import type {
 	ApplicationCommand,
 	AuditedOperation,
 	CommandConstructor,
+	Parseable,
 	SchemaOutput,
 } from './components/foundation/client'
 import { defaultErrors, type ErrorFactory } from './errors'
+import { k, type KFields, type KObject, type KType } from './k'
 
 /**
- * The zodTable surface the factory consumes — structural, so any zodTable /
- * tenantTable return satisfies it.
+ * The table surface the factory consumes — structural, so any kTable / createTable / tenantTable
+ * boundary satisfies it.
  */
 type CrudTable = {
-	tableName: string
-	commandInput: z.ZodObject<Record<string, z.ZodType<Value | undefined>>>
-	storage: z.ZodObject<Record<string, z.ZodType<Value | undefined>>>
+	readonly tableName: string
+	readonly commandInput: KType & Parseable<CommandRow>
+	// oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- `.shape` is the k object field map the table boundary exposes.
+	readonly storage: KType & { readonly shape: KFields }
 }
+
+/** A parsed command: the commandFields' values. */
+type CommandRow = { readonly [field: string]: Value | undefined }
 
 type CrudContext = { db: Pick<GenericMutationCtx<GenericDataModel>['db'], 'insert' | 'patch'> }
 
@@ -43,7 +47,7 @@ export type CrudConfig<Context extends CrudContext, Table extends CrudTable = Cr
 	enrich?: (
 		context: Context,
 		command: SchemaOutput<Table['commandInput']>,
-	) => MaybePromise<Partial<z.input<Table['storage']>>>
+	) => MaybePromise<Partial<k.input<Table['storage']>>>
 	/** Per-operation preconditions; run before the handlers. */
 	guards?: {
 		create?: (context: Context, command: never) => MaybePromise<void>
@@ -56,7 +60,7 @@ export type CrudConfig<Context extends CrudContext, Table extends CrudTable = Cr
 }
 
 /**
- * Generates the standard create/update/archive operations from one zodTable
+ * Generates the standard create/update/archive operations from one kTable
  * declaration, fully inside the audited command pipeline: strict command
  * inputs from `commandFields`, mandatory audit with the declared aggregate
  * type, soft delete only (archive sets `archivedAt` — no hard-delete
@@ -87,11 +91,12 @@ export function createCrudCommands<
 	}
 
 	const commandSchema: Table['commandInput'] = config.table.commandInput
-	const id = zid(name)
-	const createResult = z.object({ id }).strict()
-	const okResult = z.object({ ok: z.literal(true) }).strict()
-	const updateInput = z.object({ id, data: commandSchema.partial().strict() }).strict()
-	const archiveInput = z.object({ id }).strict()
+	// k objects are strict: an update naming a field outside commandFields fails with VALIDATION.
+	const id = k.id(name)
+	const createResult = k.object({ id })
+	const okResult = k.object({ ok: k.literal(true) })
+	const updateInput = k.object({ id, data: commandObject(commandSchema).partial() })
+	const archiveInput = k.object({ id })
 
 	const createName = `${name}.create` as const
 	const updateName = `${name}.update` as const
@@ -105,7 +110,7 @@ export function createCrudCommands<
 			aggregates: [config.aggregateType],
 			middleware: config.middleware,
 			guard: config.guards?.create,
-			audit: (resolution: { result: z.output<typeof createResult> }, context: Context) => ({
+			audit: (resolution: { result: k.infer<typeof createResult> }, context: Context) => ({
 				operation: createName,
 				actorId: config.actor(context),
 				aggregate: { type: config.aggregateType, id: resolution.result.id },
@@ -118,7 +123,7 @@ export function createCrudCommands<
 			aggregates: [config.aggregateType],
 			middleware: config.middleware,
 			guard: config.guards?.update,
-			audit: (resolution: { command: z.output<typeof updateInput> }, context: Context) => ({
+			audit: (resolution: { command: k.infer<typeof updateInput> }, context: Context) => ({
 				operation: updateName,
 				actorId: config.actor(context),
 				aggregate: { type: config.aggregateType, id: resolution.command.id },
@@ -131,7 +136,7 @@ export function createCrudCommands<
 			aggregates: [config.aggregateType],
 			middleware: config.middleware,
 			guard: config.guards?.archive,
-			audit: (resolution: { command: z.output<typeof archiveInput> }, context: Context) => ({
+			audit: (resolution: { command: k.infer<typeof archiveInput> }, context: Context) => ({
 				operation: archiveName,
 				actorId: config.actor(context),
 				aggregate: { type: config.aggregateType, id: resolution.command.id },
@@ -146,8 +151,10 @@ export function createCrudCommands<
 		operation: createName,
 		handler: async (context, command) => {
 			const enrichment = config.enrich ? await config.enrich(context, command) : {}
+			const row: CommandRow = command
+			const stamped: CommandRow = enrichment
 			const values: Record<string, Value> = {}
-			for (const [field, value] of Object.entries({ ...command, ...enrichment })) {
+			for (const [field, value] of Object.entries({ ...row, ...stamped })) {
 				if (value !== undefined) values[field] = value
 			}
 			const inserted = await context.db.insert(name, values)
@@ -176,6 +183,12 @@ export function createCrudCommands<
 		executeUpdate,
 		executeArchive,
 	}
+}
+
+/** The command input as an object schema, for its `partial()` patch shape. */
+function commandObject(schema: KType): KObject<KFields> {
+	// SAFETY: every table boundary's commandInput is a k.object (kTable picks the commandFields into one).
+	return schema as KObject<KFields>
 }
 
 function namedOperation<Name extends string, Definition extends AuditedOperation>(

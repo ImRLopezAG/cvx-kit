@@ -1,5 +1,5 @@
-import { z } from 'zod'
 import { defaultErrors, type ErrorFactory } from './errors'
+import { k } from './k'
 
 /**
  * Structural surface of @convex-dev/rate-limiter's RateLimiter (checked
@@ -39,7 +39,7 @@ export function rateLimit<Context = never>(config: {
 		context: never
 		next: (options?: { context?: object }) => Promise<Result>
 	}): Promise<Result> => {
-		const key = config.key ? config.key(input.context) : tenantContext.parse(input.context).tenant
+		const key = config.key ? config.key(input.context) : contextTenant(input.context)
 		if (key === undefined) {
 			return errors.throw({
 				code: 'RATE_LIMIT_KEY_MISSING',
@@ -62,4 +62,12 @@ export function rateLimit<Context = never>(config: {
 	}
 }
 
-const tenantContext = z.object({ tenant: z.string().optional() })
+const tenantField = k.string().optional()
+
+/** The only context member the default key reads; the rest of the context is never inspected. */
+type TenantCarrier = { readonly tenant?: unknown }
+
+/** `ctx.tenant`, which must be a string when present (VALIDATION otherwise). */
+function contextTenant(context: TenantCarrier): string | undefined {
+	return tenantField.parse(context.tenant)
+}

@@ -1,4 +1,3 @@
-import { zid } from 'convex-helpers/server/zod4'
 import type schema from './schema'
 type FixtureDataModel = DataModelFromSchemaDefinition<typeof schema>
 import {
@@ -11,10 +10,10 @@ import {
 	type DataModelFromSchemaDefinition,
 	type GenericMutationCtx,
 } from 'convex/server'
-import { z } from 'zod'
-import { createAuthFunctions } from '../../src/auth'
+import { createKAuthFunctions } from '../../src/auth'
 import { Foundation } from '../../src/components/foundation/client'
 import { createCrudCommands } from '../../src/crud'
+import { k } from '../../src/k'
 import { createTriggers, tenantOwnership, timestamps } from '../../src/triggers'
 import { recordWebhookEvent } from '../../src/webhooks'
 import { projects } from './schema'
@@ -30,7 +29,7 @@ export const triggers = createTriggers<FixtureDataModel>()
 timestamps(triggers, 'projects')
 tenantOwnership(triggers, ...TENANT_TABLES)
 
-export const auth = createAuthFunctions<FixtureDataModel, FixtureRole>({
+export const auth = createKAuthFunctions<FixtureDataModel, FixtureRole>({
 	triggers,
 	query: queryGeneric,
 	mutation: mutationGeneric,
@@ -61,7 +60,7 @@ export const auth = createAuthFunctions<FixtureDataModel, FixtureRole>({
 })
 
 export const create = auth.authMutation({
-	args: { name: z.string() },
+	args: { name: k.string() },
 	handler: async (ctx, args) => {
 		await ctx.db.insert('projects', {
 			name: args.name,
@@ -73,7 +72,7 @@ export const create = auth.authMutation({
 })
 
 export const createForeign = auth.authMutation({
-	args: { name: z.string() },
+	args: { name: k.string() },
 	handler: async (ctx, args) => {
 		await ctx.db.insert('projects', {
 			name: args.name,
@@ -94,7 +93,7 @@ export const listAll = auth.authQuery({
 })
 
 export const rename = auth.authMutation({
-	args: { name: z.string() },
+	args: { name: k.string() },
 	handler: async (ctx, args) => {
 		const first = await ctx.db.query('projects').first()
 		if (!first) throw new Error('nothing to rename')
@@ -122,7 +121,7 @@ export const readGlobals = auth.authQuery({
 })
 
 export const listPage = auth.authQuery({
-	args: { numItems: z.number(), cursor: z.string().nullable() },
+	args: { numItems: k.number(), cursor: k.string().nullable() },
 	handler: (ctx, args) =>
 		ctx
 			.include(ctx.db.query('projects'))
@@ -134,7 +133,7 @@ export const listPage = auth.authQuery({
 
 /** Full-scan pagination on purpose: RLS must filter foreign rows mid-page. */
 export const listPageUnscoped = auth.authQuery({
-	args: { numItems: z.number(), cursor: z.string().nullable() },
+	args: { numItems: k.number(), cursor: k.string().nullable() },
 	handler: (ctx, args) =>
 		ctx
 			.include(ctx.db.query('projects'))
@@ -195,7 +194,7 @@ const projectCrud = createCrudCommands<CrudCtx>({
 })
 
 export const crudCreate = auth.authMutation({
-	args: { name: z.string() },
+	args: { name: k.string() },
 	handler: async (ctx, args) => {
 		const result = await projectCrud.executeCreate(ctx, args)
 		return result.id
@@ -203,7 +202,7 @@ export const crudCreate = auth.authMutation({
 })
 
 export const crudUpdate = auth.authMutation({
-	args: { id: zid('projects'), name: z.string() },
+	args: { id: k.id('projects'), name: k.string() },
 	handler: async (ctx, args) => {
 		await projectCrud.executeUpdate(ctx, { id: args.id, data: { name: args.name } })
 		return null
@@ -211,7 +210,7 @@ export const crudUpdate = auth.authMutation({
 })
 
 export const crudArchive = auth.authMutation({
-	args: { id: zid('projects') },
+	args: { id: k.id('projects') },
 	handler: async (ctx, args) => {
 		await projectCrud.executeArchive(ctx, { id: args.id })
 		return null
@@ -227,7 +226,7 @@ export const auditCount = auth.systemQuery({
 })
 
 export const getProject = auth.systemQuery({
-	args: { id: zid('projects') },
+	args: { id: k.id('projects') },
 	handler: async (ctx, args) => {
 		const row = await ctx.db.get(args.id)
 		return row
@@ -235,7 +234,7 @@ export const getProject = auth.systemQuery({
 })
 
 export const receiveEvent = auth.systemMutation({
-	args: { eventKey: z.string(), payload: z.string(), source: z.string() },
+	args: { eventKey: k.string(), payload: k.string(), source: k.string() },
 	handler: async (ctx, args) => {
 		const dedup = await recordWebhookEvent(ctx, {
 			key: args.eventKey,

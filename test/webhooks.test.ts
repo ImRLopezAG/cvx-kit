@@ -1,10 +1,10 @@
-import { z } from 'zod'
 // @vitest-environment edge-runtime
 import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'
 import { describe, expect, it } from 'vite-plus/test'
 
 import { KitError } from '../src/errors'
+import { k } from '../src/k'
 import { createWebhookBoundary } from '../src/webhooks'
 import schema from './fixture-tenant/schema'
 
@@ -61,8 +61,8 @@ describe('createWebhookBoundary', () => {
 				return true
 			},
 			eventKey: (raw) => {
-				const parsed = z
-					.object({ event: z.string(), id: z.string(), updatedAt: z.string() })
+				const parsed = k
+					.object({ event: k.string(), id: k.string(), updatedAt: k.string() })
 					.parse(JSON.parse(raw))
 				return `${parsed.event}:${parsed.id}:${parsed.updatedAt}`
 			},

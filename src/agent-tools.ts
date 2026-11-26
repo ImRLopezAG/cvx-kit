@@ -1,28 +1,33 @@
-import { convexToZod } from 'convex-helpers/server/zod4'
-import { paginationOptsValidator } from 'convex/server'
-import { z } from 'zod'
+import { k, type KObject, type KType } from './k'
+import { convexPaginationOptions } from './querying/filters'
 
 /**
- * A framework-agnostic tool record: directly spreadable into
- * @convex-dev/agent's createTool ({ description, args, handler }) and
- * adaptable to ai-sdk tool(). The kit imports neither framework — checked
- * against registry snapshots on 2026-08-14; re-verify at install time.
+ * A framework-agnostic tool record: `args` is a `k` schema, which implements Standard Schema v1
+ * (`args['~standard']`) and parses with `args.parse`. For a JSON Schema of the input (ids are strings,
+ * `.describe()` texts carry through) call `toJsonSchema(record.args)` from `cvx-kit/json-schema`; for a
+ * framework that only takes Zod, `toZod(record.args)` from `cvx-kit/zod`. The kit imports no agent
+ * framework.
  */
 export type AgentToolRecord<Result = unknown, Context = never, Input = never> = {
 	name: string
 	description: string
-	args: z.ZodType
+	args: KType
 	handler: (ctx: Context, input: Input) => Promise<Result>
 }
 
 type ToolTable = {
-	tableName: string
-	tools: {
-		insert: z.ZodType
-		update: z.ZodType
-		id: z.ZodType
+	readonly tableName: string
+	readonly tools: {
+		readonly insert: KType
+		readonly update: KType
+		readonly id: KType
 	}
 }
+
+/** The `list` tool input: Convex's pagination options under `paginationOpts`. */
+export type AgentListArgs = KObject<{
+	readonly paginationOpts: ReturnType<typeof convexPaginationOptions>
+}>
 
 type ToolHandler<Result> = (ctx: never, input: never) => Promise<Result>
 
@@ -36,11 +41,9 @@ export type AgentToolHandlers<Result = unknown> = {
 	list?: ToolHandler<Result>
 }
 
-const listArgs = z.object({ paginationOpts: convexToZod(paginationOptsValidator) }).strict()
-
 /**
  * Emits agent tool definitions from the existing table tool masks: args are
- * the masks (jsonSafeZid keeps ids primitive in generated JSON schemas),
+ * the masks (`k` schemas; ids are strings in their JSON Schema),
  * names are `<tableName>_<verb>`, and only the kinds you supply handlers for
  * are emitted. Wire mutation handlers to createCrudCommands executors (or
  * your own) so every agent action is an audited command.
@@ -51,12 +54,12 @@ export function createAgentTools<Table extends ToolTable, Handlers extends Agent
 	options?: { descriptions?: Partial<Record<keyof AgentToolHandlers, string>> },
 ) {
 	const name = table.tableName
-	const masks: Record<keyof AgentToolHandlers, z.ZodType> = {
-		create: table.tools.insert,
-		update: table.tools.update,
-		archive: table.tools.id,
-		get: table.tools.id,
-		list: listArgs,
+	const masks: Record<keyof AgentToolHandlers, () => KType> = {
+		create: () => table.tools.insert,
+		update: () => table.tools.update,
+		archive: () => table.tools.id,
+		get: () => table.tools.id,
+		list: listArgsSchema,
 	}
 	const defaults: Record<keyof AgentToolHandlers, string> = {
 		create: `Create a ${name} record`,
@@ -72,7 +75,7 @@ export function createAgentTools<Table extends ToolTable, Handlers extends Agent
 		tools[`${name}_${verb}`] = {
 			name: `${name}_${verb}`,
 			description: options?.descriptions?.[verb] ?? defaults[verb],
-			args: masks[verb],
+			args: masks[verb](),
 			handler,
 		}
 	}
@@ -89,7 +92,7 @@ export type AgentTools<Table extends ToolTable, Handlers extends AgentToolHandle
 			: Verb extends 'update'
 				? Table['tools']['update']
 				: Verb extends 'list'
-					? typeof listArgs
+					? AgentListArgs
 					: Table['tools']['id']
 		handler: NonNullable<Handlers[Verb]>
 	}
@@ -108,3 +111,10 @@ export {
 	type OperationToolOutcome,
 	type OperationTool,
 } from './modules/contracts/exposure'
+
+let listArgs: AgentListArgs | undefined
+
+/** Built on the first `list` tool, so importing this module builds nothing. */
+function listArgsSchema(): AgentListArgs {
+	return (listArgs ??= k.object({ paginationOpts: convexPaginationOptions() }))
+}

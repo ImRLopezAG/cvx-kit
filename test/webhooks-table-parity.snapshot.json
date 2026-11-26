@@ -1,0 +1,172 @@
+{
+	"indexed": {
+		"documentType": {
+			"type": "object",
+			"value": {
+				"archivedAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": true
+				},
+				"createdAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": true
+				},
+				"eventKey": {
+					"fieldType": {
+						"type": "string"
+					},
+					"optional": false
+				},
+				"receivedAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": false
+				},
+				"source": {
+					"fieldType": {
+						"type": "string"
+					},
+					"optional": false
+				},
+				"updatedAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": true
+				}
+			}
+		},
+		"indexes": [
+			{
+				"fields": ["eventKey"],
+				"indexDescriptor": "by_eventKey"
+			}
+		],
+		"searchIndexes": [],
+		"stagedDbIndexes": [],
+		"stagedDocumentType": "$undefined",
+		"stagedSearchIndexes": [],
+		"stagedVectorIndexes": [],
+		"vectorIndexes": []
+	},
+	"insertSchema": {
+		"type": "object",
+		"value": {
+			"eventKey": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			},
+			"receivedAt": {
+				"fieldType": {
+					"type": "number"
+				},
+				"optional": false
+			},
+			"source": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			}
+		}
+	},
+	"storage": {
+		"type": "object",
+		"value": {
+			"archivedAt": {
+				"fieldType": {
+					"type": "number"
+				},
+				"optional": true
+			},
+			"createdAt": {
+				"fieldType": {
+					"type": "number"
+				},
+				"optional": true
+			},
+			"eventKey": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			},
+			"receivedAt": {
+				"fieldType": {
+					"type": "number"
+				},
+				"optional": false
+			},
+			"source": {
+				"fieldType": {
+					"type": "string"
+				},
+				"optional": false
+			},
+			"updatedAt": {
+				"fieldType": {
+					"type": "number"
+				},
+				"optional": true
+			}
+		}
+	},
+	"table": {
+		"documentType": {
+			"type": "object",
+			"value": {
+				"archivedAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": true
+				},
+				"createdAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": true
+				},
+				"eventKey": {
+					"fieldType": {
+						"type": "string"
+					},
+					"optional": false
+				},
+				"receivedAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": false
+				},
+				"source": {
+					"fieldType": {
+						"type": "string"
+					},
+					"optional": false
+				},
+				"updatedAt": {
+					"fieldType": {
+						"type": "number"
+					},
+					"optional": true
+				}
+			}
+		},
+		"indexes": [],
+		"searchIndexes": [],
+		"stagedDbIndexes": [],
+		"stagedDocumentType": "$undefined",
+		"stagedSearchIndexes": [],
+		"stagedVectorIndexes": [],
+		"vectorIndexes": []
+	},
+	"tableName": "webhookEvents"
+}

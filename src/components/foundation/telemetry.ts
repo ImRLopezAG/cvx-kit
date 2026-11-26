@@ -14,7 +14,7 @@ export function emitSemanticEvent(
 		if (!semanticToken.test(event)) return
 		const safe = Object.fromEntries(
 			Object.entries(fields).filter(
-				([key, value]) => semanticToken.test(key) && semanticValue.safeParse(value).success,
+				([key, value]) => semanticToken.test(key) && semanticValue.validate(value),
 			),
 		)
 		console.info(JSON.stringify({ event, ...safe }))

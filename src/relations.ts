@@ -1854,7 +1854,7 @@ function nativeSkeleton(table: RelationTable, native: TableDefinition): NativeSk
 	}
 	const definition = own(own(table.schema, '_zod'), 'def')
 	const discriminator = own(definition, 'discriminator')
-	if (own(validator, 'kind') !== 'union' || !z.string().safeParse(discriminator).success)
+	if (own(validator, 'kind') !== 'union' || !z.string().validate(discriminator))
 		return undefined
 	try {
 		preflightNative(native)
@@ -1869,7 +1869,7 @@ function nativeSkeleton(table: RelationTable, native: TableDefinition): NativeSk
 	const branches: (readonly [string, readonly string[]])[] = []
 	for (const member of stored) {
 		const tag = member[String(discriminator)]
-		if (tag?.kind !== 'literal' || !z.string().safeParse(tag.value).success) return undefined
+		if (tag?.kind !== 'literal' || !z.string().validate(tag.value)) return undefined
 		branches.push([String(tag.value), [...new Set([...Object.keys(member), ...system])]])
 	}
 	// Mirrors normalizeTable: system fields are identical in every branch.
@@ -1916,7 +1916,7 @@ function assertGroupData(value: unknown, depth = 0): void {
 		throw new Error('Invalid field groups')
 	for (const key of Reflect.ownKeys(value)) {
 		const descriptor = Object.getOwnPropertyDescriptor(value, key)!
-		if (!z.string().safeParse(key).success || !('value' in descriptor))
+		if (!z.string().validate(key) || !('value' in descriptor))
 			throw new Error('Invalid field groups')
 		assertGroupData(descriptor.value, depth + 1)
 	}

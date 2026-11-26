@@ -701,7 +701,7 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 		Extra extends Record<string, unknown>,
 	>(principal: ServicePrincipal<Ctx, Role, Extra>, ctx: Ctx) {
 		const bundle = await principal(ctx, rawFunctionArgs(ctx))
-		if (!servicePrincipalContract.safeParse(bundle).success) {
+		if (!servicePrincipalContract.validate(bundle)) {
 			throw new Error('A service principal must be an AuthBundle with user.id and tenant')
 		}
 		// Extras are spread onto the secured ctx; a host field named like a native

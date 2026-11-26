@@ -422,7 +422,7 @@ function withinFilterBudget(
 				if (
 					!tag ||
 					!('value' in tag) ||
-					!z.string().safeParse(tag.value).success ||
+					!z.string().validate(tag.value) ||
 					!Object.hasOwn(entry.grammar.variants?.options ?? {}, tag.value)
 				)
 					return false

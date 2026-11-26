@@ -429,7 +429,7 @@ export function createQueryEngine<
 					),
 				orderBy: (index: string) => {
 					if (search) throw new SearchError('SEARCH_ORDER_UNSUPPORTED')
-					if (!z.string().safeParse(index).success) throw new Error('Unknown ordering index')
+					if (!z.string().validate(index)) throw new Error('Unknown ordering index')
 					return tableQuery(table, conditions, constraints, selection, route, index, groups, search)
 				},
 				when: (value: IndexCondition['value'], index: string) => {

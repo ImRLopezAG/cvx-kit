@@ -530,7 +530,7 @@ function supportsRange(validator: GenericValidator): boolean {
 		case 'int64':
 			return true
 		case 'literal':
-			return z.union([z.string(), z.number(), z.bigint()]).safeParse(validator.value).success
+			return z.union([z.string(), z.number(), z.bigint()]).validate(validator.value)
 		case 'union':
 			return validator.members.every(supportsRange)
 		default:

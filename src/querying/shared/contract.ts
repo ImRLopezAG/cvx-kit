@@ -205,6 +205,7 @@ export function defineFilterContract<const F extends Record<string, GenericValid
 		searchParam: Object.freeze({ encode, decode }),
 	})
 }
+const idString = z.string()
 function scalarSchema(validator: GenericValidator): z.ZodType {
 	let result: z.ZodType
 	switch (validator.kind) {
@@ -230,7 +231,7 @@ function scalarSchema(validator: GenericValidator): z.ZodType {
 			result = z.literal(validator.value)
 			break
 		case 'id':
-			result = z.custom<string>((value) => z.string().safeParse(value).success)
+			result = z.custom<string>((value) => idString.validate(value))
 			break
 		case 'union':
 			result = z.union(validator.members.map(scalarSchema))
@@ -251,7 +252,7 @@ function ordered(validator: GenericValidator): boolean {
 	return (
 		['string', 'float64', 'int64'].includes(validator.kind) ||
 		(validator.kind === 'literal' &&
-			z.union([z.string(), z.number(), z.bigint()]).safeParse(validator.value).success) ||
+			z.union([z.string(), z.number(), z.bigint()]).validate(validator.value)) ||
 		(validator.kind === 'union' && validator.members.every(ordered))
 	)
 }

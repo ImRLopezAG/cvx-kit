@@ -16,7 +16,8 @@ import {
 	union,
 } from './kinds'
 import { isoDate, isoDateTime, timestamp } from './dates'
-import { object, partialRecord, record } from './object'
+import { jsonObject } from './loose'
+import { looseObject, object, partialRecord, record } from './object'
 import type { KType } from './types'
 
 export const k = {
@@ -29,11 +30,13 @@ export const k = {
 	bytes,
 	any,
 	json,
+	jsonObject,
 	literal,
 	enum: enumOf,
 	id,
 	array,
 	object,
+	looseObject,
 	record,
 	partialRecord,
 	union,

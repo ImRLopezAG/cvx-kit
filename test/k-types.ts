@@ -259,3 +259,14 @@ const catchAssertions: [
 void catchAssertions
 // @ts-expect-error the fallback is the schema's output.
 k.string().catch(1)
+
+const looseHook = k.looseObject({ id: k.string(), n: k.number().optional() })
+const looseChained = k.object({ id: k.string() }).loose().pick('id')
+const plainJsonObject = k.jsonObject()
+const looseAssertions: [
+	Assert<Equal<k.output<typeof looseHook>, { id: string; n?: number }>>,
+	Assert<Equal<k.output<typeof looseChained>, { id: string }>>,
+	Assert<Equal<k.output<typeof plainJsonObject>, Record<string, JSONValue>>>,
+	Assert<Equal<k.input<typeof plainJsonObject>, Record<string, JSONValue>>>,
+] = [true, true, true, true]
+void looseAssertions

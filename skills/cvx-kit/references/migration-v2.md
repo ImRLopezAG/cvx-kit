@@ -117,7 +117,9 @@ New in 2.0: `cvx-kit/k` (`k`, `KValidationError` and the schema types, including
 | `z.union([a, b])`, `z.discriminatedUnion('kind', [...])`             | `k.union([a, b])`, `k.discriminatedUnion('kind', [...])`                                    |                                                                                        |
 | `z.object({...})`, `z.strictObject({...})`                           | `k.object({...})`                                                                           | always strict; see [Objects are strict](#objects-are-strict)                           |
 | `.strict()`                                                          | remove                                                                                      |                                                                                        |
-| `z.looseObject`, `.passthrough()`, `.catchall(x)`                    | not supported                                                                               | see [No v2 form](#constructs-with-no-v2-form)                                          |
+| `z.looseObject({...})`, `.passthrough()`, `.loose()`                 | `k.looseObject({...})`, `.loose()`                                                          | parse keeps unknown keys; the native validator stays closed, as in v1; see [Open objects](k.md#open-objects) |
+| `.catchall(x)`                                                       | not supported                                                                               | see [No v2 form](#constructs-with-no-v2-form)                                          |
+| a JSON object with any keys (`_id`, …)                               | `k.jsonObject()`                                                                            | native `v.any()`; see [Open objects](k.md#open-objects)                                |
 | `.catch(value)`, `.catch((ctx) => value)`                            | same                                                                                        | the callback gets `{ issues, input }`; not on table fields or `returns`; see [Fallbacks](k.md#fallbacks) |
 | `z.any()`, `z.unknown()`                                             | `k.any()`                                                                                   |                                                                                        |
 | `z.json()`                                                           | `k.json()`                                                                                  |                                                                                        |
@@ -189,7 +191,7 @@ if (!result.success) log(result.issues)
 
 ### Objects are strict
 
-`k.object` always rejects unknown keys on parse. In v1, `z.object` stripped unknown keys on parse, and `z.looseObject` and `.catchall` kept them, but all of them were stored as the same closed native object. So the stored shape does not change; only parse behaviour does.
+`k.object` rejects unknown keys on parse unless it is `.strip()` or `.loose()`. In v1, `z.object` stripped unknown keys on parse, and `z.looseObject` and `.catchall` kept them, but all of them were stored as the same closed native object. So the stored shape does not change; only parse behaviour does.
 
 ```ts
 // before: z.object({ a: z.string() }).parse({ a: 'x', b: 1 }) → { a: 'x' }
@@ -198,7 +200,7 @@ k.object({ a: k.string() }).parse({ a: 'x', b: 1 }) // throws: unrecognized_key 
 k.object({ a: k.string() }).strip().parse({ a: 'x', b: 1 }) // { a: 'x' }
 ```
 
-What to do: where code relied on stripping (parsing a superset of fields, for example a whole row against a smaller object), add `.strip()` or pick the fields first. There is no loose object at a Convex boundary; see [No v2 form](#constructs-with-no-v2-form).
+What to do: where code relied on stripping (parsing a superset of fields, for example a whole row against a smaller object), add `.strip()` or pick the fields first; `.loose()` keeps them. Neither changes the closed native object, so at a Convex boundary unknown keys are still rejected; see [Open objects](k.md#open-objects).
 
 ### Parse returns the input when nothing is normalised
 
@@ -356,7 +358,7 @@ const count = k.int().refine(Number.isSafeInteger, 'Expected a safe integer')
 
 After the key schema runs (including normalisers), each `k.record` key must be non-empty, at most 1024 characters, printable ASCII, and must not start with `$` or `_`. Otherwise parse reports an `invalid_format` issue at that key. Convex already rejected such keys on write, so the error now comes from the kit before the write. A key normaliser such as `.toLowerCase()` that produces a key Convex would reject fails the same way.
 
-There is no `k` form for an object whose keys are arbitrary JSON (keys starting with `_` or `$` included). The supported form is `k.json()`, plus a check if the value must be an object: `k.json().refine((value) => value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected an object')`. Its parse checks values, not keys. Convex itself still rejects keys it does not allow when such a value is stored or sent as an argument, so rename those keys before they reach Convex.
+For an object whose keys are arbitrary (`_id`, `_creationTime` included), use `k.jsonObject()`: a plain object of JSON values, natively `v.any()`, whose keys parse checks against Convex's object-value rule (no leading `$`). See [Open objects](k.md#open-objects).
 
 ### Shared arrays and field objects become read-only
 
@@ -442,7 +444,7 @@ These are not supported in 2.0. `cvx-kit/zod` does not help: it converts `k` to 
 
 | Construct                                         | What to do                                                                                                                                                                                                                                 |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `z.looseObject`, `.passthrough()`, `.catchall(x)` | Convex stored these as closed objects and rejected the extra keys on write. Use a strict `k.object` with every field declared, `.strip()` when parse should drop extra keys, or a `k.record(k.string(), value)` field for open-ended keys. |
+| `.catchall(x)`                                    | Convex stored these as closed objects and rejected the extra keys on write. Use `.loose()` when parse should keep extra keys unchecked, a strict `k.object` with every field declared, or a `k.record(k.string(), value)` field for open-ended keys. |
 | `z.lazy` (recursive schemas)                      | Restructure: store a bounded depth explicitly (nested objects to a fixed depth), store children as separate rows linked by `k.id`, or store the tree as `k.json()` and check it with `.check(...)`.                                        |
 | `z.tuple([a, b])`                                 | Use an object with named fields, or `k.array(k.union([a, b])).length(2)` with a `.check` on positions.                                                                                                                                     |
 | `z.custom`, `z.instanceof`                        | Use the closest structural schema plus `.refine(...)`. Convex values cannot be class instances except `ArrayBuffer` (`k.bytes()`).                                                                                                         |
@@ -495,7 +497,7 @@ The report holds `summary` (file counts by status), `declarations` (rewritten an
 
 | Reason code              | Meaning                                                                                                                                    | What to do                                                                              |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `loose-object`           | `z.looseObject`, `.passthrough()` or `.catchall()`                                                                                         | Decide per site; see [No v2 form](#constructs-with-no-v2-form).                         |
+| `loose-object`           | `.catchall()` (`z.looseObject` and `.passthrough()` are rewritten to `k.looseObject` and `.loose()`)                                       | Decide per site; see [No v2 form](#constructs-with-no-v2-form).                         |
 | `catch`                  | `.catch(...)` whose callback reads Zod's `ctx.value` or `ctx.error`, or has no single argument                                             | Read `input` and `issues` instead; `k` passes `{ issues, input }`.                      |
 | `recursive`              | `z.lazy`                                                                                                                                   | Restructure the data.                                                                   |
 | `tuple`                  | `z.tuple`                                                                                                                                  | Use an object or a checked array.                                                       |
@@ -558,7 +560,7 @@ No data migration is expected: the stored shape and indexes are unchanged. If `n
 - an enum or literal union that lost a value;
 - a field whose type changed, for example `z.date()` or a transform replaced by a different stored type;
 - a table whose fields moved under `createTable` shared fields with a different definition;
-- `z.looseObject` data: if documents were written with extra keys through a native path, a strict object rejects them. Declare the keys or use a `k.record` field.
+- `z.looseObject` data (now `k.looseObject`, same closed native object): if documents were written with extra keys through a native path, a strict object rejects them. Declare the keys or use a `k.record` field.
 
 ## Verification checklist
 

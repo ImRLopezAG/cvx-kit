@@ -27,9 +27,12 @@ export type {
 	KUnion,
 } from './k/kinds'
 export type { KIsoDate, KIsoDateTime, KTimestamp } from './k/dates'
-export type { KObject } from './k/object'
+export type { KJsonObject } from './k/loose'
+export type { KDeriveOptions, KExtendOptions, KObject } from './k/object'
 export type {
 	AnyKSchema,
+	KCatch,
+	KCatchContext,
 	KCheckContext,
 	KDefault,
 	KNarrowed,

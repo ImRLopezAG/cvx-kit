@@ -126,6 +126,15 @@ export class KObject<F extends KFields> extends KSchema<
 	strip(): this {
 		return this.link('strip', undefined, undefined)
 	}
+
+	/**
+	 * Parse keeps unknown own enumerable keys in the output unchanged, as Zod's `looseObject`. The native
+	 * validator stays the closed object (v1's conversion of a loose object), so Convex still rejects
+	 * unknown keys in args, returns and documents; the output type names the declared fields only.
+	 */
+	loose(): this {
+		return this.link('loose', undefined, undefined)
+	}
 }
 
 /** The result of `required(...keys)`. */
@@ -161,6 +170,11 @@ export type KRequiredField<S extends KType> = S extends KOptional<infer I> ? KRe
 
 export function object<F extends KFields>(fields: F): KObject<F> {
 	return new KObject<F>(null, 'object', fields, undefined)
+}
+
+/** `z.looseObject`: `k.object(fields).loose()`. */
+export function looseObject<F extends KFields>(fields: F): KObject<F> {
+	return object(fields).loose()
 }
 
 /** A record whose key is a finite set of string literals: one field per value. */

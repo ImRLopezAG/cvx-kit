@@ -89,6 +89,9 @@ export function containsTransform(schema: KNode): boolean {
 	return planOf(schema).transform
 }
 
+/** Unknown-key handling of the object being walked: strict (`false`), `.strip()` or `.loose()`. */
+type Keys = boolean | 'loose'
+
 const FAIL: unique symbol = Symbol('k.fail')
 const noRecords: readonly KNode[] = []
 const emptyPlan = new KPlan(false, false, null, noRecords, noRecords, null)
@@ -128,6 +131,7 @@ function compilePlan(node: KNode): KPlan {
 		case 'partial':
 		case 'nullable':
 		case 'strip':
+		case 'loose':
 		case 'describe':
 			return planOf(node.prev)
 		case 'default':
@@ -162,6 +166,7 @@ function rootPlan(root: KNode): KPlan {
 	switch (root.op) {
 		case 'int':
 		case 'json':
+		case 'jsonObject':
 		case 'isoDate':
 		case 'isoDateTime':
 		case 'timestamp':
@@ -247,7 +252,7 @@ function walk(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	if (!full && !planOf(node).declared) return value
 	if (node.prev === null) return walkRoot(node, value, context, full, strip)
@@ -267,6 +272,8 @@ function walk(
 			return walk(node.prev, node.arg, context, full, strip)
 		case 'strip':
 			return walk(node.prev, value, context, full, true)
+		case 'loose':
+			return walk(node.prev, value, context, full, 'loose')
 		case 'transform': {
 			const input = walk(node.prev, value, context, full, strip)
 			return input === FAIL ? FAIL : callbackResult(callbackOf(node)(input), context, 'transform')
@@ -291,7 +298,7 @@ function walkCatch(
 	inner: KNode,
 	value: unknown,
 	context: WalkContext,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	const issues = context.issues
 	context.issues = []
@@ -309,7 +316,7 @@ function walkRun(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	const plan = planOf(node)
 	// SAFETY: runPlan always records the base below a run.
@@ -461,7 +468,7 @@ function walkRoot(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	switch (root.op) {
 		case 'array':
@@ -507,9 +514,56 @@ function walkRoot(
 			if (isJson(value)) return value
 			context.add('invalid_type', 'Expected a JSON value', undefined)
 			return FAIL
+		case 'jsonObject':
+			return walkJsonObject(value, context)
 		default:
 			return full ? walkLeaf(root, value, context) : value
 	}
+}
+
+/**
+ * `k.jsonObject()`: Convex validated only `v.any()`, so the whole value is checked here. Keys follow
+ * Convex's rule for object values at any depth (`validateObjectField` in convex/src/values/value.ts:
+ * at most 1024 characters, no leading '$', printable ASCII); a leading '_' is allowed.
+ */
+function walkJsonObject(value: unknown, context: WalkContext): unknown {
+	if (!isPlainObject(value)) return invalidType(context, 'object', value)
+	const before = context.issues.length
+	checkJsonValue(value, context)
+	return context.issues.length === before ? value : FAIL
+}
+
+function checkJsonValue(value: unknown, context: WalkContext): void {
+	if (Array.isArray(value)) {
+		for (let index = 0; index < value.length; index++) {
+			context.path.push(index)
+			checkJsonValue(value[index], context)
+			context.path.pop()
+		}
+		return
+	}
+	if (!isPlainObject(value)) {
+		if (!isJson(value)) context.add('invalid_type', 'Expected a JSON value', undefined)
+		return
+	}
+	for (const key of Object.keys(value)) {
+		context.path.push(key)
+		if (isValueKey(key)) checkJsonValue(value[key], context)
+		else context.add('invalid_format', valueKeyMessage, undefined)
+		context.path.pop()
+	}
+}
+
+const valueKeyMessage =
+	"Invalid object key: Convex object keys are printable ASCII, at most 1024 characters, and do not start with '$'"
+
+function isValueKey(key: string): boolean {
+	if (key.length > 1024 || key[0] === '$') return false
+	for (let index = 0; index < key.length; index++) {
+		const code = key.charCodeAt(index)
+		if (code < 32 || code >= 127) return false
+	}
+	return true
 }
 
 function walkTimestamp(value: unknown, context: WalkContext, full: boolean): unknown {
@@ -596,7 +650,7 @@ function walkObject(
 	value: Record<string, unknown>,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	const fields = fieldsOf(root)
 	let out: Record<string, unknown> | undefined
@@ -617,10 +671,12 @@ function walkObject(
 		if (out !== undefined && output !== undefined) setOwn(out, key, output)
 	}
 	let stripped = false
+	let kept = false
 	if (full) {
 		for (const key of Object.keys(value)) {
 			if (Object.hasOwn(fields, key)) continue
-			if (strip) stripped = true
+			if (strip === 'loose') kept = true
+			else if (strip) stripped = true
 			else {
 				failed = true
 				context.add('unrecognized_key', `Unrecognized key: ${JSON.stringify(key)}`, [key])
@@ -632,6 +688,9 @@ function walkObject(
 		out = {}
 		copyKnown(out, value, fields, null)
 	}
+	// A loose object returns the input itself unless a field changed; then unknown keys are copied over.
+	if (kept && out !== undefined)
+		for (const key of Object.keys(value)) if (!Object.hasOwn(fields, key)) setOwn(out, key, value[key])
 	return out ?? value
 }
 

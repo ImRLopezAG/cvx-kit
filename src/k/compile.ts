@@ -166,6 +166,7 @@ function compileRoot(node: KNode): KRequiredValidator {
 		case 'bytes':
 			return v.bytes()
 		case 'any':
+		case 'jsonObject':
 			return v.any()
 		case 'json':
 			return v.union(

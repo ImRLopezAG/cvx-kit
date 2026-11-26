@@ -17,6 +17,7 @@ const FACTORIES = new Map([
 	['any', 'any'],
 	['object', 'object'],
 	['strictObject', 'object'],
+	['looseObject', 'looseObject'],
 	['int', 'int'],
 	['bigint', 'int64'],
 	['discriminatedUnion', 'discriminatedUnion'],
@@ -63,7 +64,6 @@ const STRING_FORMATS = new Set([
 ])
 
 const REPORTED_FACTORIES = new Map([
-	['looseObject', 'loose-object'],
 	['lazy', 'recursive'],
 	['tuple', 'tuple'],
 	['custom', 'custom'],
@@ -107,6 +107,7 @@ const KEPT_METHODS = new Set([
 	'removeDefault',
 	'check',
 	'catch',
+	'loose',
 ])
 
 /** Steps that build a new object from an object, whose strictness `.strip()` must restate. */
@@ -115,11 +116,13 @@ const OBJECT_STEPS = new Set(['extend', 'pick', 'omit', 'partial', 'required'])
 // Zod spellings of an inclusive bound, rewritten to the k method that expresses it.
 const BOUND_ALIASES = new Map([['nonempty', ['min', '1']]])
 
+// Zod spellings rewritten to the k method with the same behaviour.
+const METHOD_RENAMES = new Map([['passthrough', 'loose']])
+
 const TERMINAL_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync'])
 
 const REPORTED_METHODS = new Map([
 	['catchall', 'loose-object'],
-	['passthrough', 'loose-object'],
 	['superRefine', 'super-refine'],
 	['meta', 'meta'],
 	['brand', 'brand'],
@@ -134,6 +137,7 @@ export const SCHEMA_METHODS = new Set([
 	'nullish',
 	'strict',
 	...BOUND_ALIASES.keys(),
+	...METHOD_RENAMES.keys(),
 	'pick',
 	'omit',
 ])
@@ -316,6 +320,8 @@ function processSteps(ctx, unit, steps, from, outer) {
 			const first = call.arguments[0]
 			const at = first ? first.start : call.end - 1
 			addEdit(unit, { start: at, end: at }, first ? `${bound}, ` : bound)
+		} else if (METHOD_RENAMES.has(step.name) && call.arguments.length === 0) {
+			addEdit(unit, step.node.property, METHOD_RENAMES.get(step.name))
 		} else if (step.name === 'strict' && call.arguments.length === 0) {
 			addEdit(unit, { start: step.node.object.end, end: call.end }, '')
 		} else if (step.name === 'pick' || step.name === 'omit') {
@@ -348,7 +354,13 @@ function setsStrictness(steps, from) {
 	for (let index = from; index < steps.length; index++) {
 		const step = steps[index]
 		if (step.kind !== 'member') continue
-		if (step.name === 'strict' || step.name === 'strip') return true
+		if (
+			step.name === 'strict' ||
+			step.name === 'strip' ||
+			step.name === 'loose' ||
+			step.name === 'passthrough'
+		)
+			return true
 		if (OBJECT_STEPS.has(step.name)) return false
 	}
 	return false

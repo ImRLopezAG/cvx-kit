@@ -88,6 +88,9 @@ function convert(node: KNode, output: boolean): JsonSchema {
 			case 'describe':
 				description = textOf(record)
 				break
+			case 'loose':
+				out = { ...out, additionalProperties: true }
+				break
 			case 'nullable':
 				nullable = true
 				break
@@ -136,6 +139,8 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 			return { type: 'null' }
 		case 'bytes':
 			return { type: 'string', contentEncoding: 'base64' }
+		case 'jsonObject':
+			return { type: 'object' }
 		case 'any':
 		case 'json':
 			return {}

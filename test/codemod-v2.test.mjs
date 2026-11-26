@@ -64,9 +64,9 @@ describe('codemod-v2 fixtures', () => {
 		const outcome = transformSource('not-rewritten.ts', fixture('not-rewritten', 'input.ts'))
 		expect(outcome.skipped[0]).toEqual({
 			line: 3,
-			column: 22,
+			column: 59,
 			code: 'loose-object',
-			text: 'z.looseObject({ a: z.string() })',
+			text: 'catchall(z.string())',
 		})
 		expect(outcome.skipped.every((site) => site.text.length <= 80)).toBe(true)
 	})
@@ -263,7 +263,7 @@ describe('codemod-v2 cross-file knowledge', () => {
 		tree(
 			{
 				'src/schemas.ts':
-					"import { z } from 'zod'\nexport const Ok = z.object({ a: z.string() })\nexport const Loose = z.looseObject({})\n",
+					"import { z } from 'zod'\nexport const Ok = z.object({ a: z.string() })\nexport const Loose = z.object({}).catchall(z.string())\n",
 				'src/types.ts':
 					"import { z } from 'zod'\nimport { Ok, Loose } from './schemas'\nexport type Ok = z.infer<typeof Ok>\nexport type Loose = z.infer<typeof Loose>\n",
 			},

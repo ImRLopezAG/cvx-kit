@@ -240,7 +240,7 @@ export function combineErrorContracts<const Contracts extends readonly Projectin
 }
 
 /** Fixed, diagnostic-free transport shared by query endpoints and client recovery. */
-export const queryErrors = defineErrorContract({
+export const queryErrors = /* @__PURE__ */ defineErrorContract({
 	'invalid-cursor': { message: 'Invalid cursor', details: {} },
 	FIELD_GROUP_DENIED: { message: 'Field group access denied', details: {} },
 	QUERY_FANOUT: { message: 'Query fan-out limit exceeded', details: {} },
@@ -328,7 +328,7 @@ export function sanitizeArgumentIssues(issues: unknown): ArgumentIssue[] {
 }
 
 /** Built-in declared contract for rejected function arguments. */
-export const argumentErrors = defineErrorContract({
+export const argumentErrors = /* @__PURE__ */ defineErrorContract({
 	INVALID_ARGUMENTS: {
 		message: 'Invalid arguments',
 		details: { issues: { parse: parseArgumentIssues } },

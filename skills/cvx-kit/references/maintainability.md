@@ -8,8 +8,8 @@ it's violated). Conventions that live only in documentation decay.
 ## Schema and indexes
 
 - `convex/schema.ts` stays at ~4 lines: `defineSchema(domainTables)`.
-  Per-domain `table.ts` files attach indexes to `<zodTable>.table` and
-  `domain/table.ts` merges the maps. Shapes (zod) and topology (indexes) are
+  Per-domain `table.ts` files attach indexes to `<kTable>.table` and
+  `domain/table.ts` merges the maps. Shapes (`k` fields) and topology (indexes) are
   deliberately separate files.
 - **Index naming**: `by_<field>_and_<field>...`, camelCase field names in
   declaration order, nested paths flattened with `_`
@@ -34,7 +34,7 @@ additive:
 4. Never rename in place: add the new field, dual-write, backfill, drop the
    old one release(s) later.
 
-zod-table makes step 1 cheap: change the shape once and every boundary mask
+The table boundaries make step 1 cheap: change the shape once and every boundary mask
 updates together, with `tsc` pointing at every consumer that must adapt.
 
 ## Function hygiene
@@ -43,7 +43,7 @@ updates together, with `tsc` pointing at every consumer that must adapt.
   Everything public is `auth*`/`role*`/`admin*`; everything
   internal/scheduled is `system*`. This is what makes triggers, auth, and
   bounded reads impossible to forget.
-- Public functions in `api/` are thin: parse args (zod-table masks), call the
+- Public functions in `api/` are thin: parse args (table masks), call the
   domain executor with `ctx.actor`, project through `toPublicDto`. Business
   logic that lives in an adapter can't be reused by workflows or callbacks —
   keep it in the domain.
@@ -112,7 +112,7 @@ test modules the same way (`@convex-dev/workflow/test`,
 
 ## Checklist for a new entity
 
-1. `domain/<entity>/schema.ts` — `zodTable` with the three masks thought
+1. `domain/<entity>/schema.ts` — `kTable` with the three masks thought
    through (`serverFields`, `commandFields`, `publicFields`).
 2. `domain/<entity>/table.ts` — indexes, named `by_...`.
 3. Register in `domain/table.ts`; add `timestamps(triggers, '<table>')` and

@@ -53,9 +53,9 @@ appears in `TENANT_TABLES`, and vice versa.
 
 ```ts
 // domain/<module>/schema.ts — tenant injected at the schema boundary
-export const <entities> = tenantTable('<entities>', (id) => ({
-  name: z.string(), ownerId: id('users'),
-}), { publicFields: ['name'] })
+export const <entities> = tenantTable('<entities>', {
+  name: k.string(), ownerId: k.id('users'),
+}, { publicFields: ['name'] })
 // tenant: excluded from insertSchema/updateSchema/commandInput,
 // in publicDto only if explicitly allowlisted
 
@@ -167,7 +167,7 @@ const row = await requireTenantReference(ctx.tenant, () => ctx.db.get(args.id))
 
 ## Module maps
 
-`createModule` (from `cvx-kit/zod-table`) merges per-module table maps into
+`createModule` (from `cvx-kit/table`) merges per-module table maps into
 the schema and rejects a table declared by two modules:
 
 ```ts
@@ -179,4 +179,4 @@ export default defineSchema(domainTables)
 
 Wrap a module map in `namespace('Inventory', { items: …, itemLedgerEntries: … })`
 to give its tables qualified names (`Inventory.Items`) without renaming the
-stored tables. See [zod-table](zod-table.md#namespace--qualified-names-without-renaming-tables).
+stored tables. See [table](table.md#namespace--qualified-names-without-renaming-tables).

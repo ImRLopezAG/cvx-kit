@@ -24,7 +24,7 @@ Do not call `Effect.runPromise` from the middle of a domain operation to dischar
 
 ## Register the native API
 
-`effectApiBuilder` accepts Convex validators; `effectZodApiBuilder` accepts Zod definitions. Pass the application's secured builder, such as `auth.authMutation`, so its trusted context is constructed before the service provider runs. The compile fixture uses `createAuthFunctions` from `cvx-kit/auth`, tenant security for documents/receipts/audits, and owner-only write rules. The repository receives the resulting secured writer.
+`effectApiBuilder` accepts `k` schemas and native Convex validators. Pass the application's secured builder, such as `auth.authMutation`, so its trusted context is constructed before the service provider runs. The compile fixture uses `createAuthFunctions` from `cvx-kit/auth`, tenant security for documents/receipts/audits, and owner-only write rules. The repository receives the resulting secured writer.
 
 The host takes tenant, actor, and writer from the secured context and captures the raw title before the domain decoder runs. The fixture also registers `get` through `auth.authQuery`, injecting a separate `DocumentReader` capability that exposes only repository reads.
 
@@ -32,11 +32,11 @@ Each invocation gets its own provider and scope. If service initialization or sc
 
 The fixture has a negative example: an API provider returning `Context.empty()` cannot register a handler requiring `Documents`. The `invokeNativeCreate` function demonstrates native consumption with `ctx.runMutation(api.idempotency.save, { key, payload })` using the real registered fixture mutation. When installing the local document module in an application, generate its own references with Convex codegen before calling its `create` and `get` exports. The native function reference carries its args/result and kind; it does not transport the server Effect's `E` or `R` types.
 
-`zid('documents')` brands strings in Zod parsing. A registered native `v.id('documents')` validator establishes the real Convex ID/table boundary. The host must enforce native IDs when raw tool or network strings reach a registered function; a brand alone does not prove a valid document ID.
+`k.id('documents')` is natively `v.id('documents')`, so a registered function's args establish the real Convex ID/table boundary. `parse` outside a registered function only checks that the value is a string and brands it; the host must enforce native IDs (for example with `ctx.db.normalizeId`) when raw tool or network strings reach code that is not behind a registered validator. A brand alone does not prove a valid document ID.
 
 ## Choose each contract explicitly
 
-Import `zodContract`, `standardContract`, and `convexContract` from `cvx-kit/contracts` for neutral codecs. Ordinary operation definitions can also use Zod schemas directly and may decode asynchronously. Standard Schema supplies validation, not a portable schema AST or encoder; do not derive native validators from a black-box contract. Import `effectContract`, `effectSchema`, or `effectStandardSchema` from `cvx-kit/effect` when decoding itself requires Effects or services.
+Import `kContract`, `standardContract`, and `convexContract` from `cvx-kit/contracts` for neutral codecs. Ordinary operation definitions can also use `k` schemas directly; `k` decoding is synchronous, and a Standard Schema contract may decode asynchronously. Standard Schema supplies validation, not a portable schema AST or encoder; do not derive native validators from a black-box contract. Import `effectContract`, `effectSchema`, or `effectStandardSchema` from `cvx-kit/effect` when decoding itself requires Effects or services.
 
 Keep the raw input, decoded domain result, retained final result, and public wire projection distinct. A title-trimming input decoder belongs inside the operation. A fresh-result transform must not run again on receipt replay or native workflow journal replay. Use a separate `replayResult` schema for the retained final form and a public wire schema/projector when exposing only selected fields.
 
@@ -80,7 +80,7 @@ The pinned native `WorkflowManager.restart` retains the original completion call
 
 The native acceptance driver exercises paused-run recovery across a compatible redeployment and rejects changed recorded step arguments through the real journal. Listed compatibility metadata is an explicit host decision, not automatic compatibility discovery.
 
-The actual rename declaration lives in `test/fixture-effect/convex/integratedRename.ts`. Its `commands.rename` resolves the injected `Notes` repository and produces only `{ title }`. The registered `applyRename` adapter supplies that repository per invocation, resolves the host-issued capability, rechecks current permission, and reconstructs the tenant/owner secured writer with native triggers. Permission, rename and actor audit execute inside the same native mutation. The asynchronous title decoder runs once there; neither the tool converter nor workflow binding normalizes it again. `rejectMissingRenameService` imports this exact registry and verifies that an API provider returning `Context.empty()` cannot close its required `Notes` service.
+The actual rename declaration lives in `test/fixture-effect/convex/integratedRename.ts`. Its `commands.rename` resolves the injected `Notes` repository and produces only `{ title }`. The registered `applyRename` adapter supplies that repository per invocation, resolves the host-issued capability, rechecks current permission, and reconstructs the tenant/owner secured writer with native triggers. Permission, rename and actor audit execute inside the same native mutation. The title decoder runs once there; neither the tool converter nor workflow binding normalizes it again. `rejectMissingRenameService` imports this exact registry and verifies that an API provider returning `Context.empty()` cannot close its required `Notes` service.
 
 The native driver independently reads business, audit and trigger state after direct API, selected tool and workflow calls. It also pauses a real component workflow, revokes authority, and verifies the newly executed step leaves those writes unchanged. Completed journal results remain historical; current checks apply when the native mutation executes again.
 
@@ -123,7 +123,7 @@ consumer/
 
 Copy the actual native fixture modules and generated files together: `api.d.ts` imports every registered module, and `server.d.ts` uses the generated model derived from `schema.ts`. Do not replace generated references with `any`, fabricated `FunctionReference` casts, or handwritten API stubs. Mount the workflow component through the fixture's `convex.config.ts` when generating or running the native app.
 
-The checked versions are Effect `4.0.1`, Convex `1.45.0`, convex-helpers `0.1.124`, Zod `4.5.4`, and `@convex-dev/workflow` `0.4.6`; compilation also needs TypeScript (this checkout uses `7.0.2`) and `@types/node` (here `26.6.1`) because the registered action fixture uses `process`. Install the packed `cvx-kit` package and its required peers. Use ESM with strict TypeScript, bundler module resolution, ES2025 and DOM libraries, `types: ["node"]`, and no emit. An installed consumer must resolve `cvx-kit/*` through package exports without source path aliases.
+The checked versions are Effect `4.0.1`, convex-helpers `0.1.127` and `@convex-dev/workflow` `0.4.6`, without Zod installed; compilation also needs TypeScript (this checkout uses `7.0.2`) and `@types/node` (here `26.6.1`) because the registered action fixture uses `process`. Install the packed `cvx-kit` package and its required peers. Use ESM with strict TypeScript, bundler module resolution, ES2025 and DOM libraries, `types: ["node"]`, and no emit. An installed consumer must resolve `cvx-kit/*` through package exports without source path aliases.
 
 The module includes compile-only negative assertions for a missing service provider and incompatible native function kind, arguments, and result. Preserve the `@ts-expect-error` assertions in the compilation fixture. They are not application registrations to execute. Typechecking proves public API compatibility; it does not establish native rollback, callback delivery, provider dedupe, or runtime acceptance.
 
@@ -132,7 +132,6 @@ The module includes compile-only negative assertions for a missing service provi
 
 ```ts
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import { ConvexError, v, type Value } from 'convex/values'
 import {
 	defineSchema,
@@ -151,15 +150,11 @@ import {
 	type GenericDatabaseReader,
 } from 'convex/server'
 import { createAuthFunctions } from 'cvx-kit/auth'
-import {
-	createEffectFoundation,
-	createEffectCrud,
-	effectApiBuilder,
-	effectZodApiBuilder,
-} from 'cvx-kit/effect'
+import { createEffectFoundation, createEffectCrud, effectApiBuilder } from 'cvx-kit/effect'
 import { defineErrorContract } from 'cvx-kit/errors'
-import { zid, tenantTable } from 'cvx-kit/zod-table'
-import { zodContract, standardContract, convexContract } from 'cvx-kit/contracts'
+import { k } from 'cvx-kit/k'
+import { tenantTable } from 'cvx-kit/table'
+import { kContract, standardContract, convexContract } from 'cvx-kit/contracts'
 import {
 	captureIdempotencyInvocation,
 	transactionalIdempotency,
@@ -212,13 +207,13 @@ const internalMutation: MutationBuilder<Model, 'internal'> = internalMutationGen
 const internalQuery: QueryBuilder<Model, 'internal'> = internalQueryGeneric
 const internalAction: ActionBuilder<Model, 'internal'> = internalActionGeneric
 const errors = defineErrorContract({
-	MISSING: { message: 'Document missing', details: { id: z.string() } },
+	MISSING: { message: 'Document missing', details: { id: k.string() } },
 })
-const document = z.object({ id: zid('documents'), title: z.string() }).strict()
-const createInput = z.object({ title: z.string().trim().min(1) }).strict()
-const renameInput = z.object({ id: zid('documents'), title: z.string().trim().min(1) }).strict()
-const getInput = z.object({ id: zid('documents') }).strict()
-type Document = z.infer<typeof document>
+const document = k.object({ id: k.id('documents'), title: k.string() })
+const createInput = k.object({ title: k.string().trim().min(1) })
+const renameInput = k.object({ id: k.id('documents'), title: k.string().trim().min(1) })
+const getInput = k.object({ id: k.id('documents') })
+type Document = k.infer<typeof document>
 interface Repository {
 	create(title: string): Promise<Document>
 	rename(id: Document['id'], title: string): Promise<Document>
@@ -402,12 +397,12 @@ const auth = createAuthFunctions<Model, 'owner'>({
 		}),
 	},
 })
-const securedMutation = effectZodApiBuilder(auth.authMutation, {
+const securedMutation = effectApiBuilder(auth.authMutation, {
 	services: (ctx) => Context.make(Documents, repository(ctx.db, ctx.tenant)),
 	errors,
 })
 export const create = securedMutation({
-	args: { key: z.string().min(1), title: z.string() },
+	args: { key: k.string().min(1), title: k.string() },
 	returns: document,
 	handler: (ctx, args) => {
 		const invocation = captureIdempotencyInvocation({
@@ -432,7 +427,7 @@ export const create = securedMutation({
 		return commands.exec('create', { title: args.title }, host)
 	},
 })
-const securedQuery = effectZodApiBuilder(auth.authQuery, {
+const securedQuery = effectApiBuilder(auth.authQuery, {
 	services: (ctx) =>
 		Context.make(DocumentReader, {
 			get: async (id) => {
@@ -473,8 +468,8 @@ const stepBinding = workflowBinding({
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ id: z.string(), title: z.string() }).strict(),
-	result: z.object({ title: z.string() }).strict(),
+	args: k.object({ id: k.string(), title: k.string() }),
+	result: k.object({ title: k.string() }),
 	reference: internal.integratedRename.applyRename,
 })
 export function nativeWorkflowStep(
@@ -489,21 +484,21 @@ workflowBinding({
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ id: z.string(), title: z.string() }).strict(),
-	result: z.object({ title: z.string() }).strict(),
+	args: k.object({ id: k.string(), title: k.string() }),
+	result: k.object({ title: k.string() }),
 	// @ts-expect-error A registered mutation reference cannot be an action binding.
 	reference: internal.integratedRename.applyRename,
 })
 
 workflowBinding({
 	...stepBinding,
-	args: z.object({ id: z.string(), title: z.number() }),
+	args: k.object({ id: k.string(), title: k.number() }),
 	// @ts-expect-error The real mutation takes a string title, not a numeric title.
 	reference: internal.integratedRename.applyRename,
 })
 workflowBinding({
 	...stepBinding,
-	result: z.object({ title: z.number() }),
+	result: k.object({ title: k.number() }),
 	// @ts-expect-error The real mutation returns a string title, not a numeric title.
 	reference: internal.integratedRename.applyRename,
 })
@@ -584,11 +579,15 @@ export function decodeRemoteFailure(error: ConvexError<Value>) {
 	return errors.decode(error.data)
 }
 
-const documentTable = tenantTable('documents', () => ({ title: z.string() }), {
-	commandFields: ['title'],
-	serverFields: [],
-	publicFields: ['title'],
-})
+const documentTable = tenantTable(
+	'documents',
+	{ title: k.string() },
+	{
+		commandFields: ['title'],
+		serverFields: [],
+		publicFields: ['title'],
+	},
+)
 export const documentCrud = createEffectCrud({
 	foundation,
 	table: documentTable,
@@ -607,8 +606,8 @@ export const documentCrud = createEffectCrud({
 				.paginate(options),
 	},
 })
-export const rawTitleContract = zodContract(z.string().trim())
-export const standardTitleContract = standardContract(z.string())
+export const rawTitleContract = kContract(k.string().trim())
+export const standardTitleContract = standardContract(k.string())
 export const nativeDocumentIdContract = convexContract(v.id('documents'))
 ```
 

@@ -32,7 +32,7 @@ http.route({ path: '/webhooks/vendor', method: 'POST',
 
 // the target — a systemMutation; dedup FIRST, transactionally:
 export const applyVendorEvent = systemMutation({
-  args: { eventKey: z.string(), payload: z.string(), source: z.string() },
+  args: { eventKey: k.string(), payload: k.string(), source: k.string() },
   handler: async (ctx, args) => {
     const { duplicate } = await recordWebhookEvent(ctx, { key: args.eventKey, source: args.source })
     if (duplicate) return null

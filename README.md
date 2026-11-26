@@ -3,18 +3,24 @@
 [![CI](https://github.com/ImRLopezAG/cvx-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/ImRLopezAG/cvx-kit/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/cvx-kit)](https://www.npmjs.com/package/cvx-kit)
 
-Reusable Convex application kit: foundation kernels, a generic approvals
-component, zod table boundaries, auth-aware function constructors with
-per-app role vocabularies, an application trigger registry, and an audited
-command protocol.
+Reusable Convex application kit: `k` validators built on native Convex
+validators, table boundaries, foundation kernels, a generic approvals
+component, auth-aware function constructors with per-app role vocabularies, an
+application trigger registry, and an audited command protocol.
 
 ```sh
 bun add cvx-kit
 # or: npm install cvx-kit
 ```
 
-Supported versions: Convex `^1.46.0`, Zod `^4.5.4`, Bun `1.3+`, and Node.js
-`24+` with npm `11+`. The library runtime is ESM-only.
+Supported versions: Convex `^1.46.0`, convex-helpers `>=0.1.127 <0.2.0`, Bun
+`1.3+`, and Node.js `24+` with npm `11+`. The library runtime is ESM-only.
+Zod is not required. Install `zod` (`^4.5.4`) only to use the optional
+`cvx-kit/zod` interop entry; install `effect` (`>=4.0.1 <5`) for
+`cvx-kit/effect`.
+
+To upgrade from cvx-kit 0.1.x (Zod), follow the
+[2.0 migration guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration-v2.md).
 
 ## Toolchain
 
@@ -56,7 +62,9 @@ Guides:
 
 - [`architecture.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/architecture.md) — the layered application shape the kit encodes
 - [`conventions.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/conventions.md) — the doctrine: folder structure, file anatomy, naming grammar, import rules
-- [`zod-table.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/zod-table.md) — one zod shape per entity, masked into every boundary
+- [`k.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/k.md) — the `k` validators: factories, chains, parse and issues, dates, JSON Schema, Zod interop
+- [`table.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/table.md) — one field object per entity, masked into every boundary
+- [`migration-v2.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration-v2.md) — moving an app from cvx-kit 0.1.x (Zod) to 2.0
 - [`auth.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/auth.md) — auth-aware function constructors from injected policy
 - [`commands.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/commands.md) — Effect command declarations, lifecycle, and migration
 - [`effect.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/effect.md) — opt-in Effect v4 registries, injected services, and shared API builders
@@ -67,7 +75,7 @@ Guides:
 - [`crud.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/crud.md) — the CRUD command factory
 - [`webhooks.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/webhooks.md) — the sanctioned webhook boundary
 - [`agent-tools.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/agent-tools.md) — agent tools that are audited commands
-- [`upgrading.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/upgrading.md) — 0.0.x → 0.1.0, old way → new way
+- [`upgrading.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/upgrading.md) — upgrades within 0.1.x, old way → new way
 - [`maintainability.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/maintainability.md) — keeping a Convex app maintainable long-term
 - [`migration.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration.md) — restructuring an existing raw Convex project into this architecture
 - [`llms.md`](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/llms.md) — optional condensed reference for coding agents
@@ -94,42 +102,66 @@ Two more things keep the deferral intact. First, a `paginationOpts(...)` or `pag
 
 ## Modules
 
-### `cvx-kit/zod-table`
+### `cvx-kit/k`
 
-One zod shape per entity, masked into every boundary it crosses:
+Schemas are written with `k`. Each `k` schema carries a plain native Convex
+validator, which is what Convex receives for args, returns and tables. The kit
+runs checks, defaults, normalisers, refinements and transforms only where a
+schema declares them; a function with none does no validation work of its own.
 
 ```ts
-import { zodTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
 
-export const documents = zodTable(
+const renameArgs = k.object({
+	id: k.id('documents'),
+	title: k.string().trim().min(1).max(200),
+})
+type RenameArgs = k.input<typeof renameArgs>
+```
+
+Failed declared checks throw a `ConvexError` with data
+`{ code: 'VALIDATION', issues: [{ path, code, message }] }`. `k` schemas
+implement Standard Schema v1; `toJsonSchema` (`cvx-kit/json-schema`) and
+`toZod` (`cvx-kit/zod`) convert them for agent tools and Zod-only libraries.
+See the [`k` guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/k.md).
+
+### `cvx-kit/table`
+
+One field object per entity, masked into every boundary it crosses:
+
+```ts
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
+
+export const documents = kTable(
 	'documents',
-	(id) => ({
-		title: z.string(),
-		ownerId: id('users'),
-		secretNote: z.string(),
-	}),
+	{
+		title: k.string(),
+		ownerId: k.id('users'),
+		secretNote: k.string(),
+	},
 	{
 		commandFields: ['title'], // what a command may say
 		publicFields: ['title', 'ownerId'], // the DTO allowlist
 	},
 )
 // documents.table → defineTable(...) for schema.ts
-// documents.toPublicDto(row) → projects AND re-parses (runtime redaction)
+// documents.toPublicDto(row) → projects AND re-checks (runtime redaction)
 ```
 
 For fields shared across tables, create a reusable declaration function:
 
 ```ts
-import { createTable } from 'cvx-kit/zod-table'
+import { createTable } from 'cvx-kit/table'
 
-const customTable = createTable({ ref: z.string(), nextActivity: z.string() })
-const tasks = customTable('tasks', () => ({ title: z.string() }))
-const projects = customTable('projects', () => ({ name: z.string() }))
+const customTable = createTable({ ref: k.string(), nextActivity: k.string() })
+const tasks = customTable('tasks', { title: k.string() })
+const projects = customTable('projects', { name: k.string() })
 ```
 
-It accepts the same arguments and returns the same boundary as `zodTable`.
+It accepts the same arguments and returns the same boundary as `kTable`.
 Table-specific fields cannot repeat shared field names. See the
-[`zod-table` guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/zod-table.md)
+[`table` guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/table.md)
 for field masks and examples.
 
 Every table gets `createdAt`, `updatedAt`, and `archivedAt` baked in —
@@ -138,13 +170,13 @@ opinionated, server-owned, always excluded from inserts and commands
 `timestamps` trigger once and they maintain themselves; `archivedAt` stays
 under application control.
 
-`zodVariantTable` covers discriminated-union tables; `jsonSafeZid` keeps
-LLM-tool JSON schemas primitive while preserving the `Id<...>` type.
+`kVariantTable` covers discriminated-union tables. Tool masks keep `k.id(...)`;
+`toJsonSchema` renders ids as strings while the `Id<...>` type is preserved.
 
 ### `cvx-kit/relations` and `cvx-kit/querying`
 
 See the [querying guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/querying.md),
-[DTO parameters](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/zod-table.md#public-dto-parameters), and
+[DTO parameters](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/table.md#public-dto-parameters), and
 [consumer rule reference](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/oxlint.md#dto-and-pagination-diagnostics).
 
 Declare relationships once in `convex/relations.ts`, then configure the engine
@@ -169,7 +201,7 @@ export const relations = defineRelations({ tasks, labels, edges }, (r) => ({
 }))
 ```
 
-The tables can be `zodTable`, `tenantTable`, or three-argument `zodVariantTable` boundaries, with
+The tables can be `kTable`, `createTable`, `tenantTable`, or three-argument `kVariantTable` boundaries, with
 indexes supporting each declared lookup. Names can distinguish multiple edges
 to the same table; references can point to the same table. A one edge returns a
 public DTO or `null`. A many edge returns a bounded native page. Junction output
@@ -197,9 +229,8 @@ import { relations } from '../convex/relations'
 test('relation registry is valid', () => verifyRelations(relations))
 ```
 
-Relation DTOs support `.refine()`. They reject opaque `.superRefine()` and
-`.check()` callbacks; express those validations with `.refine()` instead.
-Captured callbacks still observe application state through their closures.
+Relation DTOs only validate; they never transform stored values. Refinement
+closures still observe application state.
 
 Variant tables keep their discriminated public unions. Use the relation callback's
 second argument, `branch('payments', 'creditor_payment').creditorId`, for a
@@ -227,10 +258,8 @@ output, index, order, relation ancestry, principal/tenant/security scope, and
 registry/policy/engine versions. Page-size changes alone remain valid. Retain
 old keys during rotation when existing cursors should continue working.
 
-Relation registration captures and validates schemas eagerly; eligible private
-DTO schemas reconstruct on first projection. Public helper schemas stay fresh.
-See [registry capture and compatibility](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/querying.md#registry-capture-and-private-dtos)
-for eager fallback and the unsupported side-effecting internal Proxy boundary.
+Private DTO schemas are built on a table's first projection, and helper schemas
+are memoised. See [registry capture](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/querying.md#registry-capture-and-private-dtos).
 
 Use the registry's validators in domain contracts and an authenticated Query
 registry handler:
@@ -298,12 +327,12 @@ and custom sorts are outside this API.
 Root full-text search uses a declared native search index and keeps native relevance order:
 
 ```ts
-const page = await querying(ctx).tasks
- .search('search_text', input.text)
- .where({ status: 'open' })
- .include({ finance: 'if-permitted' })
- .with({ labels: true })
- .paginate({ numItems: 25, cursor: input.cursor, scanLimit: 250 })
+const page = await querying(ctx)
+	.tasks.search('search_text', input.text)
+	.where({ status: 'open' })
+	.include({ finance: 'if-permitted' })
+	.with({ labels: true })
+	.paginate({ numItems: 25, cursor: input.cursor, scanLimit: 250 })
 ```
 
 Declare `search_text` on the exact native table registered in `relations`.
@@ -338,7 +367,7 @@ storage fields. `tasks.toPublicDto(row, true)` or `{ _id: true }` adds the brand
 ID only. Computed extensions use matching schemas:
 
 ```ts
-const extend = { url: z.url() }
+const extend = { url: k.string() }
 const dto = tasks.toPublicDto(row, {
 	_id: true,
 	extend,
@@ -455,7 +484,7 @@ policies once with `createEffectFoundation`, and declare each handler inside
 ```ts
 import { createEffectFoundation } from 'cvx-kit/effect'
 import type { AuditEntryInput } from 'cvx-kit/components/foundation'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 
 type Host = {
 	actorId: string
@@ -469,13 +498,13 @@ const { Command } = createEffectFoundation({
 	},
 	writeAudit: (host: Host, entry) => host.appendAudit(entry),
 })
-const renameInput = z.object({ id: z.string(), title: z.string() }).strict()
+const renameInput = k.object({ id: k.string(), title: k.string() })
 export const commands = Command({
 	context: (host: Host) => host,
 	operations: ({ command }) => ({
 		'documents.rename': command({
 			input: renameInput,
-			result: z.object({ ok: z.literal(true) }).strict(),
+			result: k.object({ ok: k.literal(true) }),
 			classification: 'business',
 			handler: async (input, context) => {
 				await context.rename(input.id, input.title)
@@ -489,12 +518,12 @@ export const commands = Command({
 		}),
 	}),
 })
-export const executeRename = (input: z.input<typeof renameInput>, host: Host) =>
+export const executeRename = (input: k.input<typeof renameInput>, host: Host) =>
 	commands.exec('documents.rename', input, host)
 ```
 
 `exec` returns a lazy Effect even for ordinary async handlers. Shared
-`effectApiBuilder` / `effectZodApiBuilder` constructors provide invocation-local
+`effectApiBuilder` constructors provide invocation-local
 services and execute it; domain code can compose `Effect.gen` and `Effect.fn`
 without starting another runner. Commands validate inputs and results, enforce
 permissions and guards, and write audit entries in the mutation transaction.
@@ -629,7 +658,7 @@ One-time setup (already-published package required first):
 
 ## Roadmap
 
-See [ROADMAP.md](https://github.com/ImRLopezAG/cvx-kit/blob/main/ROADMAP.md) — milestones from 0.1.0 through 1.0.0.
+See [ROADMAP.md](https://github.com/ImRLopezAG/cvx-kit/blob/main/ROADMAP.md) for milestones.
 
 Optional request context can be added through the existing Effect API adapter's
 `context` callback. Bind selected registries with `commands.withContext(value)`

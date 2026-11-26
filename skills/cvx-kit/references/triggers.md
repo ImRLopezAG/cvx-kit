@@ -16,7 +16,7 @@ import type { DataModel } from './_generated/dataModel'
 
 export const triggers = createTriggers<DataModel>()
 
-// Server-owned lifecycle timestamps (see zod-table.md)
+// Server-owned lifecycle timestamps (see table.md)
 timestamps(triggers, 'documents', 'projects', 'members')
 
 // Evidence tables: inserts only — updates/deletes throw and roll back
@@ -40,7 +40,7 @@ createAuthFunctions<DataModel>({ ..., triggers })
 
 ## The built-in helpers
 
-- **`timestamps(triggers, ...tables)`** — maintains zod-table's opinionated
+- **`timestamps(triggers, ...tables)`** — maintains the table boundaries' opinionated
   fields: sets `createdAt` + `updatedAt` on insert, moves `updatedAt` on every
   update. `archivedAt` stays under application control. Contains its own
   recursion guard (a write that already moved `updatedAt` — including the

@@ -64,7 +64,7 @@ import {
 	type GenericMutationCtx,
 } from 'convex/server'
 import { ConvexError, v } from 'convex/values'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
 import type { AuditEntryInput } from 'cvx-kit/components/foundation'
 
@@ -127,16 +127,16 @@ const foundation = createEffectFoundation({
 			yield* writer.audit(host.actor, entry)
 		}),
 })
-const keyInput = z.object({ key: z.string().min(1) })
-const renameInput = keyInput.extend({ title: z.string().trim().min(1) })
-const titleResult = z.string().transform((title) => ({ title }))
+const keyInput = k.object({ key: k.string().min(1) })
+const renameInput = keyInput.extend({ title: k.string().trim().min(1) })
+const titleResult = k.string().transform((title) => ({ title }))
 
 export const documents = foundation.Query({
 	context: (host: Host) => host,
 	operations: ({ query }) => ({
 		label: query({
 			input: keyInput,
-			result: z.string(),
+			result: k.string(),
 			handler: async (input) => `Document ${input.key}`,
 		}),
 		preview: query({
@@ -154,7 +154,7 @@ export const documents = foundation.Query({
 			result: titleResult,
 			permission: 'documents:read',
 			handler: Effect.fn('documents.title')(function* (
-				input: z.output<typeof keyInput>,
+				input: k.output<typeof keyInput>,
 				host: Host,
 			) {
 				const reader = yield* DocumentReader
@@ -302,8 +302,8 @@ export const renameDocument = mutationApi({
 
 ## Types and schema boundaries
 
-The command accepts `z.input<typeof renameInput>`. Its handler sees
-`z.output<typeof renameInput>`, so the title has already been trimmed. The
+The command accepts `k.input<typeof renameInput>`. Its handler sees
+`k.output<typeof renameInput>`, so the title has already been trimmed. The
 handler returns a string, which is the input of `titleResult`; the registry's
 final result is `{ title: string }`, the output of that transform. Middleware
 `next()` returns the handler result before the final result parser, so wrap
@@ -397,7 +397,7 @@ export const scopedCommands = scopedFoundation.Command({
 	operations: ({ command }) => ({
 		touch: command({
 			input: keyInput,
-			result: z.string(),
+			result: k.string(),
 			classification: 'business',
 			handler: (input) => input.key,
 			audit: ({ result }, host, scope) => ({
@@ -426,7 +426,7 @@ import { defineErrorContract } from 'cvx-kit/errors'
 
 const invoiceErrors = defineErrorContract({
 	NOT_FOUND: { message: 'Invoice not found', details: {} },
-	LIMIT_EXCEEDED: { message: 'Invoice limit exceeded', details: { limit: z.number() } },
+	LIMIT_EXCEEDED: { message: 'Invoice limit exceeded', details: { limit: k.number() } },
 })
 const auditedFoundation = createEffectFoundation({
 	observability: {
@@ -441,7 +441,7 @@ const auditedFoundation = createEffectFoundation({
 		errors: invoiceErrors,
 		// Optional redactors; without them the entry carries neither field.
 		details: (details, code) =>
-			code === 'LIMIT_EXCEEDED' ? z.object({ limit: z.number() }).parse(details) : undefined,
+			code === 'LIMIT_EXCEEDED' ? k.object({ limit: k.number() }).parse(details) : undefined,
 		input: (_input, operation) => (operation === 'invoices.void' ? { operation } : undefined),
 	},
 })
@@ -473,7 +473,7 @@ const INVOICE_LIMIT = 3
 const invoiceContract = defineDomainContract({
 	errors: invoiceErrors,
 	commands: {
-		'invoices.void': { input: keyInput, result: z.string(), classification: 'business' },
+		'invoices.void': { input: keyInput, result: k.string(), classification: 'business' },
 	},
 })
 export const invoices = auditedFoundation.Command({
@@ -548,7 +548,7 @@ export const settlement = actionFoundation.Action({
 	operations: ({ action }) => ({
 		'settlement.post': action({
 			input: keyInput,
-			result: z.string(),
+			result: k.string(),
 			handler: (input, ctx) => attemptInvoice(() => ctx.runMutation(postSettlement, input)),
 			audit: ({ command }) => ({
 				operation: 'settlement.post',
@@ -616,7 +616,7 @@ The [command guide](./commands.md) documents the current lifecycle and migration
 steps; the [deprecated API reference](./commands-legacy.md) retains old examples.
 The [authentication guide](./auth.md)
 shows the shared `createEffectAuthFunctions(config, policies)` factory and how
-to wrap individual trusted builders with `effectZodApiBuilder`, so auth,
+to wrap individual trusted builders with `effectApiBuilder`, so auth,
 tenancy, validators, row-level policies, and triggers run through their
 existing builder before Effect request services are provisioned.
 

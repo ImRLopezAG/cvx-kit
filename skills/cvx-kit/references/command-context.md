@@ -9,11 +9,11 @@ neither resolves context nor executes a command. Explicit
 
 ## Keep existing function names
 
-Add context through `effectZodApiBuilder` around the existing custom constructor.
+Add context through `effectApiBuilder` around the existing custom constructor.
 Export it under your application's ordinary `authMutation`, `adminQuery`,
 `organizationMutation`, or other function name. These are application choices;
-the library does not require a new helper family. The same option works on
-`effectApiBuilder` for native builders. `services` is optional when your Effects
+the library does not require a new helper family. The same option works when
+`effectApiBuilder` wraps a native builder. `services` is optional when your Effects
 need no services.
 
 The complete example below uses a custom authenticated mutation to make the
@@ -26,9 +26,9 @@ context is constructed before the additions callback runs.
 ```ts
 import { Effect } from 'effect'
 import { mutationGeneric } from 'convex/server'
-import { zCustomMutation } from 'convex-helpers/server/zod4'
-import { createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
-import { z } from 'zod'
+import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
+import { k } from 'cvx-kit/k'
+import { kCustomMutation } from 'cvx-kit/registration'
 
 const foundation = createEffectFoundation({
 	observability: {
@@ -43,8 +43,8 @@ const notifications = foundation.Command({
 	context: (dependencies: { format: (message: string) => string }) => dependencies,
 	operations: ({ command }) => ({
 		format: command({
-			input: z.string(),
-			result: z.string(),
+			input: k.string(),
+			result: k.string(),
 			classification: 'business',
 			handler: (message, context) => context.format(message),
 			audit: () => null,
@@ -59,8 +59,8 @@ const tasks = foundation.Command({
 	}) => dependencies,
 	operations: ({ command }) => ({
 		create: command({
-			input: z.string(),
-			result: z.string(),
+			input: k.string(),
+			result: k.string(),
 			classification: 'business',
 			handler: (title, context) =>
 				context.notifications.exec('format', `${context.nextNumber()}:${title}`),
@@ -69,7 +69,7 @@ const tasks = foundation.Command({
 	}),
 })
 
-const baseAuthMutation = zCustomMutation(mutationGeneric, {
+const baseAuthMutation = kCustomMutation(mutationGeneric, {
 	args: {},
 	input: async (ctx) => {
 		const identity = await ctx.auth.getUserIdentity()
@@ -79,7 +79,7 @@ const baseAuthMutation = zCustomMutation(mutationGeneric, {
 })
 
 // In a real app, keep this composition in the tasks feature's functions module.
-export const authMutation = effectZodApiBuilder(baseAuthMutation, {
+export const authMutation = effectApiBuilder(baseAuthMutation, {
 	context: (ctx) => {
 		const messages = notifications.withContext({
 			format: (message) => `${ctx.actor}:${message}`,
@@ -91,8 +91,8 @@ export const authMutation = effectZodApiBuilder(baseAuthMutation, {
 })
 
 export const createTask = authMutation({
-	args: { title: z.string() },
-	returns: z.string(),
+	args: { title: k.string() },
+	returns: k.string(),
 	handler: (ctx, input) => ctx.tasks.exec('create', input.title),
 })
 
@@ -101,8 +101,8 @@ const echo = foundation.Command({
 	context: () => undefined,
 	operations: ({ command }) => ({
 		echo: command({
-			input: z.string(),
-			result: z.string(),
+			input: k.string(),
+			result: k.string(),
 			classification: 'business',
 			handler: (input) => input,
 			audit: () => null,

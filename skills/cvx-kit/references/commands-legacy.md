@@ -61,15 +61,15 @@ of its domain dependencies through the host context:
 
 ```ts
 import { Foundation, type AuditEntryInput } from 'cvx-kit/components/foundation'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 
 type Host = {
 	actorId: string
 	rename: (id: string, title: string) => Promise<void>
 	appendAudit: (entry: AuditEntryInput) => Promise<void>
 }
-const input = z.object({ id: z.string(), title: z.string() }).strict()
-const result = z.object({ ok: z.literal(true) }).strict()
+const input = k.object({ id: k.string(), title: k.string() })
+const result = k.object({ ok: k.literal(true) })
 
 export function createLegacyRename(component: ConstructorParameters<typeof Foundation>[0]) {
 	const { Command } = new Foundation(component, {
@@ -112,15 +112,15 @@ uses input-first, context-second callbacks and returns a lazy Effect from
 ```ts
 import { type AuditEntryInput } from 'cvx-kit/components/foundation'
 import { createEffectFoundation } from 'cvx-kit/effect'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 
 type Host = {
 	actorId: string
 	rename: (id: string, title: string) => Promise<void>
 	appendAudit: (entry: AuditEntryInput) => Promise<void>
 }
-const input = z.object({ id: z.string(), title: z.string() }).strict()
-const result = z.object({ ok: z.literal(true) }).strict()
+const input = k.object({ id: k.string(), title: k.string() })
+const result = k.object({ ok: k.literal(true) })
 const foundation = createEffectFoundation({
 	observability: {
 		enabled: false,
@@ -150,7 +150,7 @@ export const commands = foundation.Command({
 ```
 
 Pass the resulting Effect to a handler registered through a shared
-`effectApiBuilder` or `effectZodApiBuilder`; see [the complete domain-to-API
+`effectApiBuilder`; see [the complete domain-to-API
 example](./effect.md). Domain composition does not start a separate runner.
 Ordinary throws and rejected Promises become defects; use `Effect.fail` or
 `Effect.tryPromise` for an inferred typed error channel. The native Convex
@@ -169,18 +169,17 @@ operation** — auditing is type-enforced, not opt-in.
 
 ```ts
 // convex/domain/documents/commands.ts
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { Command } from '../../foundation'
 import { documents } from './schema'
-import { zid } from 'cvx-kit/zod-table'
 import type { MutationCtx } from '../../_generated/server'
 
 const typed = Command.withContext<MutationCtx>()
 
 const operations = {
 	'documents.rename': typed.operation({
-		command: documents.commandInput.extend({ id: zid('documents') }),
-		result: z.object({ ok: z.literal(true) }).strict(),
+		command: documents.commandInput.extend({ id: k.id('documents') }),
+		result: k.object({ ok: k.literal(true) }),
 		classification: 'business',
 		audit: ({ command }) => ({
 			operation: 'documents.rename',
@@ -208,7 +207,7 @@ The public API layer then wraps the executor in an `authMutation` and passes
 
 ## What one execution does, in order
 
-1. **Parse the command** through the operation's `command` schema (strict zod).
+1. **Parse the command** through the operation's `command` schema (a strict `k` object).
 2. **Observe**: start the observation clock.
 3. **Permission check** — if the operation declares `permission`, the
    Foundation's injected `checkPermission(ctx, { permission, operation })`
@@ -260,8 +259,8 @@ export const { Command, Query, observability } = new Foundation(
 // domain/<module>/commands.ts
 const operations = {
   '<entities>.publish': Command.operation({
-    command: <entities>.commandInput.extend({ id: zid('<entities>') }),
-    result: z.object({ ok: z.literal(true) }).strict(),
+    command: <entities>.commandInput.extend({ id: k.id('<entities>') }),
+    result: k.object({ ok: k.literal(true) }),
     classification: 'business',
     permission: '<domain>.manage',                    // checked first
     aggregates: ['<aggregate-type>'],                 // audit vocabulary allowlist
@@ -337,8 +336,8 @@ command and result boundary intentionally remains unknown.
 const typed = Command.withContext<Ctx>()
 const operations = {
 	rename: typed.operation({
-		command: z.object({ title: z.string().transform((value) => value.length) }),
-		result: z.object({ ok: z.boolean() }),
+		command: k.object({ title: k.string().transform((value) => value.length) }),
+		result: k.object({ ok: k.boolean() }),
 		classification: 'business',
 		aggregates: ['document'],
 		guard: (ctx, command) => requireTitleLength(ctx, command.title), // number
@@ -417,7 +416,7 @@ middleware short-circuiting is not this replay path and still audits.
 
 Replays are parsed through `result` by default. If that schema transforms its
 input, store the completion callback's validated output and supply
-`replayResult` with an output validator (for example `z.number().int()` when
+`replayResult` with an output validator (for example `k.int()` when
 `result` transforms a string into a number). This prevents reapplying an input
 transform to an already transformed durable result. An invalid replay fails
 inside observation; successful replay does not invoke completion again.

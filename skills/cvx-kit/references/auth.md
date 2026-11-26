@@ -135,7 +135,7 @@ to configure all twelve constructors once. Its first argument is the same
 `AuthFunctionsConfig` used by `createAuthFunctions`; its second argument has
 six explicit policies: `query`, `mutation`, `action`, `systemQuery`,
 `systemMutation`, and `systemAction`. Each accepts `services`, `context`, and
-`mapError`, like `effectZodApiBuilder`. Pass `{}` when no additions are needed.
+`mapError`, like `effectApiBuilder`. Pass `{}` when no additions are needed.
 
 Type the auth config with your generated `DataModel` and role vocabulary,
 then let the factory infer its generics from both arguments. Do not supply
@@ -156,15 +156,15 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { Effect } from 'effect'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import type { AuthFunctionsConfig, AuthBundle } from 'cvx-kit/auth'
 import { createEffectAuthFunctions, createEffectFoundation } from 'cvx-kit/effect'
 
 const schema = defineSchema({ notes: defineTable({ tenant: v.string(), title: v.string() }) })
 type Model = DataModelFromSchemaDefinition<typeof schema>
 type Role = 'owner' | 'viewer'
-const input = z.object({ title: z.string().trim().min(1) })
-const saveRef = makeFunctionReference<'mutation', z.input<typeof input>, null>('notes:save')
+const input = k.object({ title: k.string().trim().min(1) })
+const saveRef = makeFunctionReference<'mutation', k.input<typeof input>, null>('notes:save')
 
 export function createApplicationFunctions(config: AuthFunctionsConfig<Model, Role>) {
 	const foundation = createEffectFoundation({
@@ -178,8 +178,8 @@ export function createApplicationFunctions(config: AuthFunctionsConfig<Model, Ro
 		context: (ctx: (GenericQueryCtx<Model> | GenericMutationCtx<Model>) & AuthBundle<Role>) => ctx,
 		operations: ({ query }) => ({
 			actor: query({
-				input: z.object({}),
-				result: z.string(),
+				input: k.object({}),
+				result: k.string(),
 				handler: (_input, ctx) => ctx.actor.userId,
 			}),
 		}),
@@ -189,7 +189,7 @@ export function createApplicationFunctions(config: AuthFunctionsConfig<Model, Ro
 		operations: ({ command }) => ({
 			save: command({
 				input,
-				result: z.null(),
+				result: k.null(),
 				classification: 'business',
 				audit: () => null,
 				handler: (args, ctx) =>
@@ -211,7 +211,7 @@ export function createApplicationFunctions(config: AuthFunctionsConfig<Model, Ro
 		action: {
 			context: (ctx) => ({
 				commands: {
-					save: (args: z.input<typeof input>) =>
+					save: (args: k.input<typeof input>) =>
 						Effect.promise(() => ctx.runMutation(saveRef, args)),
 				},
 			}),
@@ -222,7 +222,7 @@ export function createApplicationFunctions(config: AuthFunctionsConfig<Model, Ro
 	})
 	const save = functions.roleMutation('owner')({
 		args: input.shape,
-		returns: z.null(),
+		returns: k.null(),
 		handler: (ctx, args) => ctx.commands.exec('save', args),
 	})
 	return { ...functions, save }
@@ -254,18 +254,17 @@ JWT-based auth policy.
 Additions cannot replace native or auth context keys: static checks reject
 known collisions and runtime checks also reject inherited keys before the
 handler executes. Put class-based handles under named properties in the
-returned plain record. Scoped services, required Effect services, Zod raw and
-parsed argument/result types, function references, and error projection retain
+returned plain record. Scoped services, required Effect services, `k` input and
+output argument/result types, function references, and error projection retain
 the existing adapter's behavior. Let failures escape registered mutations so
 nested command writes, triggers, and audit writes roll back together.
 
 ## Shared Effect execution after authentication
 
 For an individual constructor, wrap the builder returned by `createAuthFunctions` with
-`effectZodApiBuilder` from `cvx-kit/effect`. The original constructor resolves
+`effectApiBuilder` from `cvx-kit/effect`. The original constructor resolves
 authentication, authorization, tenant policy, and the wrapped database before
-the service provider runs. Keep that ordering when adding Effect; use the Zod
-adapter for these custom constructors.
+the service provider runs. Keep that ordering when adding Effect.
 
 This factory accepts the configured `authMutation` from the setup above. The
 actor service comes from trusted `ctx.actor`, with no actor or organization
@@ -276,9 +275,9 @@ argument from callers:
 ```ts
 import type { GenericDataModel } from 'convex/server'
 import { createAuthFunctions } from 'cvx-kit/auth'
-import { effectZodApiBuilder } from 'cvx-kit/effect'
+import { effectApiBuilder } from 'cvx-kit/effect'
+import { k } from 'cvx-kit/k'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 
 class Actor extends Context.Service<
 	Actor,
@@ -288,12 +287,12 @@ class Actor extends Context.Service<
 export function createEffectAccountApi<DataModel extends GenericDataModel>(
 	baseAuthMutation: ReturnType<typeof createAuthFunctions<DataModel>>['authMutation'],
 ) {
-	const authMutation = effectZodApiBuilder(baseAuthMutation, {
+	const authMutation = effectApiBuilder(baseAuthMutation, {
 		services: (ctx) => Context.make(Actor, ctx.actor),
 	})
 	const currentActor = authMutation({
 		args: {},
-		returns: z.object({ userId: z.string(), organizationId: z.string() }),
+		returns: k.object({ userId: k.string(), organizationId: k.string() }),
 		handler: () =>
 			Effect.gen(function* () {
 				const actor = yield* Actor
@@ -336,8 +335,11 @@ domain registries, error mapping, scoped services, and tracing.
 | `systemMutation`                                                | internal   | none (trusted caller)        | still trigger-wrapped            |
 | `systemAction`                                                  | internal   | none                         | plain internal action            |
 
-All are `zCustom*` constructors from convex-helpers, so `args` and `returns`
-take zod schemas directly and compose with `zodTable` masks.
+All are `kCustom*` constructors (`cvx-kit/registration`), so `args` takes a
+field object, a `k.object` or a native `v.object`, and `returns` takes a `k`
+schema or a native validator. They compose with `kTable` masks. Convex
+validates the structure; the kit runs only the checks, defaults, normalisers
+and transforms the args declare, and does not parse or strip return values.
 
 ## What handlers receive on `ctx`
 
@@ -447,8 +449,8 @@ rejects limits outside `1..maxRows` (default 100, configurable via
 
 ```ts
 export const list = authQuery({
-	args: { ownerId: zid('users').optional(), limit: z.number() },
-	returns: z.array(documents.publicDto),
+	args: { ownerId: k.id('users').optional(), limit: k.int().min(1).max(100) },
+	returns: k.array(documents.publicDto),
 	handler: (ctx, args) =>
 		ctx
 			.include(ctx.db.query('documents'))
@@ -506,7 +508,7 @@ export const agentMutation = serviceMutation(agentPrincipal)
 
 // convex/agent/notes.ts
 export const list = agentQuery({
-	args: { clientId: z.string(), organizationId: z.string() },
+	args: { clientId: k.string(), organizationId: k.string() },
 	handler: (ctx, args) => querying(ctx).notes.paginate(args), // scope: ctx.clientId
 })
 ```

@@ -26,8 +26,8 @@ convex/
     table.ts              # merges per-domain table maps into domainTables
     shared/               # genuinely cross-entity helpers only
     <entity>/            # one directory per entity/aggregate
-      schema.ts           #   zodTable declaration (shapes only)
-      table.ts            #   indexes attached to <zodTable>.table
+      schema.ts           #   kTable declaration (shapes only)
+      table.ts            #   indexes attached to <kTable>.table
       constants.ts        #   finite vocabularies (UPPER_SNAKE readonly tuples)
       commands.ts         #   Command({ context, operations }) with handlers inside command({...})
       queries.ts          #   domain read logic
@@ -41,7 +41,7 @@ convex/
    `mutation(` — only `auth*`/`role*`/`admin*` constructors delegating to
    domain `execute*` functions. Public functions are adapters: parse, pass
    `ctx.actor`, project DTOs.
-2. **`domain/<entity>/` owns everything about the entity** — its zod shape,
+2. **`domain/<entity>/` owns everything about the entity** — its `k` field shape,
    indexes, vocabularies, commands, queries, workflows. Cross-domain reuse
    goes through `domain/shared/`, never sibling imports of another domain's
    internals.
@@ -72,17 +72,18 @@ private child component's tables.
 
 ## Boundaries as schemas
 
-Data crossing any boundary is a zod schema derived from one `zodTable`
-declaration per entity (see `zod-table.md`):
+Data crossing any boundary is a `k` schema derived from one `kTable`
+declaration per entity (see `table.md`); Convex receives each schema's native
+validator:
 
-- storage → `defineTable` via `zodToConvex`
+- storage → `defineTable(storage.validator)` via `<table>.table`
 - writes → `insertSchema`/`updateSchema` (server fields and timestamps
   excluded)
 - commands → `commandInput` (explicit allowlist)
 - clients → `publicDto` + `toPublicDto` (runtime redaction)
-- LLM tools → `tools.*` and `jsonSafeZid`
+- LLM tools → `tools.*`, converted with `toJsonSchema` (ids become strings)
 
-Everything is `.strict()`. There is exactly one source of truth per entity and
+Every object is strict. There is exactly one source of truth per entity and
 no boundary that "just trusts" its input.
 
 ## Writes as commands
@@ -101,7 +102,7 @@ first so the checker can't silently pass. Highly recommended for consumers:
 
 - **No inline tables/schemas** — `defineTable`/`defineSchema` only in
   `table.ts`/`schema.ts`.
-- **No inline enums** — `z.enum([...])` with an inline array literal is
+- **No inline enums** — `k.enum([...])` with an inline array literal is
   banned; vocabularies are named `UPPER_SNAKE` tuples in `constants.ts`.
 - **No deep server imports** — components consumed only through their
   `client.ts` facade; explicit allowlist for exceptions.

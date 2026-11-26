@@ -35,7 +35,7 @@ belong in this milestone: they land already conforming to the frozen names.
       cursors, not just bounded `take`.
 - [x] **CRUD command factory** — `createCrudCommands(table, policy)`
       generating the standard create/update/archive operations from a
-      zodTable's masks: command input from `commandFields`, audit derivation
+      table boundary's masks: command input from `commandFields`, audit derivation
       from the aggregate, timestamps/tenant already structural. The single
       biggest remaining per-entity boilerplate.
 - [x] **State-machine helper** — `createStateMachine(STATES, transitions)`
@@ -51,7 +51,7 @@ belong in this milestone: they land already conforming to the frozen names.
       first-class helper.
 - [x] **Agent tool generator** — `createAgentTools(table, executors)`
       emitting `@convex-dev/agent` tool definitions from the existing
-      `tools.*` masks + `jsonSafeZid`, with handlers routed through the
+      `tools.*` masks (ids rendered as strings by `toJsonSchema`), with handlers routed through the
       command protocol — agents get audited commands, never raw db access.
 
 Each feature ships with its own doc page (or section), tests on the real
@@ -113,7 +113,7 @@ Entry gates, not work items. The rc ships when all are true:
   injectable `emit`, so `command.execution` events land in real telemetry
   without per-consumer mapping.
 - Migration companion: a thin `@convex-dev/migrations` wrapper aligned with
-  zodTable epochs ("make optional field required after backfill" as a
+  table epochs ("make optional field required after backfill" as a
   declared step), closing the loop with `migration.md`.
 
 ## Explicitly out of scope for 1.0

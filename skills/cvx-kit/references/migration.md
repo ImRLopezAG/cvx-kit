@@ -3,7 +3,7 @@
 This guide takes a "raw" Convex project — the typical shape where every file at
 the root of `convex/` exports public queries and mutations, tables are defined
 inline in `schema.ts`, and validators are `v.*` objects repeated per function —
-and restructures it into the cvx-kit architecture.
+and restructures it into the cvx-kit architecture. To move an app that already uses cvx-kit 0.1.x (Zod) to 2.0, use [migration-v2](migration-v2.md) instead.
 
 This is an **opinionated infrastructure**. The rules below are not
 suggestions; they are the contract. Where the kit makes something structural
@@ -38,11 +38,11 @@ convex/
   domain/                     # ═══ ALL BUSINESS LOGIC ═══
     table.ts                  # merges per-entity table maps into domainTables
     shared/                   # genuinely cross-entity code ONLY
-      schema.ts               #   cross-entity zod helpers (if any)
+      schema.ts               #   cross-entity k field schemas (if any)
       <provider>.ts           #   one configured vendor client per provider (sql, cache, email, ...)
     <entity>/                 # one directory per entity/aggregate
-      schema.ts               #   the zodTable declaration — shapes and masks, nothing else
-      table.ts                #   index topology attached to <zodTable>.table
+      schema.ts               #   the kTable declaration — shapes and masks, nothing else
+      table.ts                #   index topology attached to <kTable>.table
       constants.ts            #   finite vocabularies: UPPER_SNAKE readonly tuples
       commands.ts             #   operation registry + command executors
       queries.ts              #   domain read logic
@@ -79,9 +79,9 @@ a structural guarantee:
 | Forbidden                                                                                         | Where it's allowed instead                         | What it breaks otherwise          |
 | ------------------------------------------------------------------------------------------------- | -------------------------------------------------- | --------------------------------- |
 | `query(`, `mutation(`, `action(`, `internalMutation(`, `internalAction(` from `_generated/server` | `functions.ts` only                                | auth, triggers, bounded reads     |
-| `defineTable(`                                                                                    | `domain/<entity>/table.ts` via `<zodTable>.table`  | single source of truth per entity |
+| `defineTable(`                                                                                    | `domain/<entity>/table.ts` via `<kTable>.table`    | single source of truth per entity |
 | `defineSchema(`                                                                                   | root `schema.ts` only                              | schema assembly                   |
-| inline `z.enum([...])` / repeated literal unions                                                  | tuple in `constants.ts`                            | vocabulary ownership              |
+| inline `k.enum([...])` / repeated literal unions                                                  | tuple in `constants.ts`                            | vocabulary ownership              |
 | `.collect()` / unbounded reads in public paths                                                    | `ctx.include(...).execute(limit)`                  | read bounds                       |
 | `makeFunctionReference`                                                                           | generated `internal` / `api`                       | refactoring safety                |
 | deep imports of a component's internals                                                           | the component's client facade                      | component boundary                |
@@ -101,8 +101,8 @@ A raw project's root files usually mix several kinds of code. Pull them apart:
 | `export const get/list = query({...})` at root              | adapter in `api/<entity>.ts` + read logic in `domain/<entity>/queries.ts`                               |
 | `export const create/update = mutation({...})` at root      | adapter in `api/<entity>.ts` + operation in `domain/<entity>/commands.ts`                               |
 | `internalMutation`/`internalAction` helpers                 | `system*` functions in `domain/<entity>/<purpose>_functions.ts`                                         |
-| inline `defineTable({...})` in `schema.ts`                  | `zodTable` in `domain/<entity>/schema.ts` + indexes in `domain/<entity>/table.ts`                       |
-| `v.union(v.literal(...))` / inline `z.enum` repeated around | one `UPPER_SNAKE` tuple in `domain/<entity>/constants.ts`                                               |
+| inline `defineTable({...})` in `schema.ts`                  | `kTable` in `domain/<entity>/schema.ts` + indexes in `domain/<entity>/table.ts`                         |
+| `v.union(v.literal(...))` / inline `k.enum` repeated around | one `UPPER_SNAKE` tuple in `domain/<entity>/constants.ts`                                               |
 | validation/business `if`-chains inside handlers             | pure predicates in `domain/<entity>/rules.ts`                                                           |
 | shared grab-bag (`helpers.ts`, `utils.ts`, `lib.ts`)        | split by owner into `domain/<entity>/shared.ts`; only genuinely cross-entity code into `domain/shared/` |
 | ad-hoc vendor clients (HTTP SDKs, caches, SQL)              | one configured client per provider in `domain/shared/<provider>.ts`                                     |
@@ -164,8 +164,9 @@ the new constructors.
 
 For each table:
 
-1. `domain/<entity>/schema.ts`: a `zodTable` mirroring the current shape,
-   `v.*` converted to zod. Decide the three masks **deliberately** —
+1. `domain/<entity>/schema.ts`: a `kTable` mirroring the current shape,
+   `v.*` converted to `k` (`v.string()` → `k.string()`, `v.id('t')` →
+   `k.id('t')`, and so on; the stored shape stays the same). Decide the three masks **deliberately** —
    `serverFields` (server-assigned), `commandFields` (what a write request
    may say), `publicFields` (what a client may see). This is where implicit
    trust becomes explicit policy; a mis-declared mask is a security bug, so
@@ -235,9 +236,9 @@ Replace `.collect()` and unbounded `.take(n)` in public paths with
 `ctx.include(...).execute(limit)` (limit ≤ 100). Where a query can't be
 served by an index, **add the index** — a scan is a schema problem, not a
 query-code problem. Paginated surfaces cross the boundary with the convex
-pagination validators bridged into zod (`convexToZod(paginationOptsValidator)`
-and a `paginationResultValidator` built from the row validator), not with
-hand-rolled cursor objects.
+pagination boundary from `paginated(<entity>.publicDto)` in `cvx-kit/table`
+(Convex's `paginationOptsValidator` and a page result built from the DTO), not
+with hand-rolled cursor objects.
 
 ### Step 7 — Enforce everything with tests
 
@@ -332,7 +333,7 @@ The migration is complete when every box checks:
 - [ ] Every public function lives in `api/` and uses `auth*`/`role*`/`admin*`.
 - [ ] Every internal function uses `system*` and lives in its domain.
 - [ ] `functions.ts` is the only file importing `_generated/server` builders.
-- [ ] Every table is a `zodTable` with deliberately reviewed masks; indexes
+- [ ] Every table is a `kTable` with deliberately reviewed masks; indexes
       named by convention; timestamps trigger registered.
 - [ ] Every vocabulary is a single-owner tuple in a `constants.ts`.
 - [ ] Every state change is a command operation with classification + audit.

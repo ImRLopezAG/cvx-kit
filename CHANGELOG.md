@@ -12,6 +12,49 @@ are this file's matching section.
 
 ## [Unreleased]
 
+These changes are planned as 2.0.0, a breaking release that removes Zod from the kit. Follow the [2.0 migration guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration-v2.md); the codemod in `tools/codemod-v2/` rewrites the mechanical call sites and reports the rest.
+
+### Breaking
+
+- Zod is removed from every core entry. Schemas are written with `k` (`cvx-kit`, `cvx-kit/k`), whose schemas carry plain native Convex validators. `zod` is now an optional peer, needed only for `cvx-kit/zod`.
+- `cvx-kit/zod-table` is removed. `zodTable` is `kTable`, `zodVariantTable` is `kVariantTable`, and the table builders and types move to `cvx-kit/table` (also exported from `cvx-kit`). Fields are a plain object, not a callback, and ids are `k.id('table')`. `zid`, `jsonSafeZid`, `zodToConvex` and `convexToZod` are removed.
+- `zodContract` is `kContract` (synchronous decoding) and `effectZodApiBuilder` is `effectApiBuilder`, one builder for `k` schemas and native validators.
+- Validation failures raised by the kit are a `ConvexError` with data `{ code: 'VALIDATION', issues: [{ path, code, message }] }` (`KValidationError`), replacing `ConvexError({ ZodError })`. Structural arg failures raised by Convex keep Convex's error. `safeParse` returns `{ success, issues }` on failure, with no `.error`.
+- `k.object` is always strict: parse rejects unknown keys where `z.object` stripped them. `.strip()` restores stripping. Loose objects, `catchall`, `catch`, recursive schemas, tuples, `custom`/`instanceof`, `coerce`/`preprocess` and `meta` are not supported in 2.0.
+- The kit no longer parses return values. Convex validates them against the output-side validator, so a handler that returns more fields than `returns` declares now fails; return `toPublicDto(row)`. A transforming `returns` schema is rejected, return refinements do not run, and `returns` must be a schema, not a plain field object.
+- `transform` and `pipe` are rejected on table fields and return shapes; `trim`, `toLowerCase`, `toUpperCase` and `overwrite` stay allowed everywhere. Refinements and checks are synchronous; `superRefine` becomes `check`.
+- `insert`, `update`, `pick` and `omit` take string keys instead of `{ key: true }` masks. Table boundaries are read-only accessors built on first read, so an object spread does not copy them; use `withFieldGroups` for field groups.
+- Ids are branded on input: `k.input` keeps `Id<'table'>`.
+- `k.number()` accepts `NaN` and infinities, as native `v.number()` does, and `int()` no longer caps at the safe-integer range.
+- Out-of-range search options fail with `VALIDATION` instead of `SearchError('SEARCH_OPTIONS_UNSUPPORTED')`.
+- `AgentToolRecord.args` is a `k` schema; `approvalCallbackInput` is a `k` object and `approvalCallbackArgs` its native validator.
+
+### Added
+
+- `cvx-kit/k`: `k` factories (including `k.isoDate()`, `k.isoDateTime()`, `k.timestamp()` and their input conversions), chain methods, `parse`/`safeParse`, `k.infer`/`k.input`/`k.output`, Standard Schema v1 on every schema, and `KValidationError`.
+- `cvx-kit/table`: `kTable`, `createTable`, `tenantTable`, `kVariantTable` and the table types.
+- `cvx-kit/registration`: `kCustomQuery`, `kCustomMutation`, `kCustomAction` and `rawFunctionArgs`.
+- `cvx-kit/json-schema`: `toJsonSchema`, which renders ids as strings.
+- `cvx-kit/zod`: `toZod(schema)` and `.toZod()`, a one-way conversion to Zod 4.
+- `withFieldGroups` in `cvx-kit/relations` and `AgentListArgs` in `cvx-kit/agent-tools`.
+- A codemod, `node tools/codemod-v2/index.mjs <path…> [--write] [--report out.json]`, run from a cvx-kit checkout.
+
+### Changed
+
+- The stored shape and indexes of every table are unchanged from 0.1.35, so no data migration is expected.
+- `updateSchema` and `.partial()` no longer fill defaults, so a patch cannot overwrite stored values with defaults.
+- `toPublicDto` re-checks structure only; it no longer re-runs normalisers on stored values.
+- The `cvx-kit/oxlint` rules recognise `k`, `kTable`, `kVariantTable` and `cvx-kit/table`.
+- Relation helpers are memoised and immutable, and no longer depend on a list of audited Zod versions.
+
+### Removed
+
+- `cvx-kit/zod-table`, `zodTable`, `zodVariantTable`, `zid`, `jsonSafeZid`, `zodToConvex`, `convexToZod`, `zodContract`, `effectZodApiBuilder`, `EffectZodApiBuilder`, `TableBoundary`, `VariantBoundaryOptions` and `VariantTableBoundary`.
+
+### Performance
+
+- Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On one consumer app's schema graph, declaring the schemas on import fell from 23.05 ms to 4.24 ms and retained heap from 10.55 MB to 1.43 MB. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
+
 ## [0.1.35] - 2026-11-25
 
 ### Changed

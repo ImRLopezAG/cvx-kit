@@ -16,35 +16,37 @@ to make a missing API appear. Upgrading requires the user's requested scope.
 
 Read only the guides needed for the task, resolving paths relative to this skill:
 
-| Task                                                       | References                                                                                                                     |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Application structure and ownership                        | [architecture](references/architecture.md), [conventions](references/conventions.md)                                           |
-| Tables, masks, DTOs, variants, namespaces, tool validators | [zod-table](references/zod-table.md)                                                                                           |
-| Relationships, ordering, ranges, cursors, field groups     | [querying](references/querying.md)                                                                                             |
-| Browser-safe filters and native full-text search           | [querying](references/querying.md)                                                                                             |
-| Compact pagination validators and static API size          | [querying](references/querying.md#compact-generated-filter-validators)                                                         |
-| Variant joins, branch predicates, mixed pages              | [variant-querying](references/variant-querying.md)                                                                             |
-| Native-ID union links, inverse pages, link migration       | [native-id-relations](references/native-id-relations.md)                                                                       |
-| Authentication, roles, shared Effect context               | [auth](references/auth.md)                                                                                                     |
-| Tenant isolation and row security                          | [tenancy](references/tenancy.md)                                                                                               |
-| Commands, queries, registry wiring, audit                  | [commands](references/commands.md), [effect](references/effect.md)                                                             |
-| Nested registry audit and the request scope                | [effect](references/effect.md#request-scope-and-nested-audit)                                                                  |
-| Failure audit (`auditFailure`) and redaction               | [effect](references/effect.md#failure-audit)                                                                                   |
-| Raising/recovering declared errors (`fail`, `attempt`)     | [effect](references/effect.md#raising-and-recovering-declared-errors)                                                          |
-| Convex actions (`foundation.Action`, `writeActionAudit`)   | [effect](references/effect.md#action-registries), [domain-contracts](references/domain-contracts.md#actions-and-error-helpers) |
-| Error contracts, transported failures and React commands   | [client-failures](references/client-failures.md)                                                                               |
-| Reactive lists, error boundaries and search continuation   | [client-list](references/client-list.md)                                                                                       |
-| Conservative optimistic list updates                       | [client-optimistic](references/client-optimistic.md)                                                                           |
-| Contracts and domain API integration                       | [domain-contracts](references/domain-contracts.md), [domain-operations](references/domain-operations.md)                       |
-| Request-local registry context                             | [command-context](references/command-context.md)                                                                               |
-| Timestamps and database lifecycle rules                    | [triggers](references/triggers.md)                                                                                             |
-| Approval workflows and callbacks                           | [approvals](references/approvals.md)                                                                                           |
-| CRUD and agent tools                                       | [crud](references/crud.md), [agent-tools](references/agent-tools.md)                                                           |
-| Webhook verification and deduplication                     | [webhooks](references/webhooks.md)                                                                                             |
-| Consumer lint rules                                        | [oxlint](references/oxlint.md)                                                                                                 |
-| Migration and upgrades                                     | [migration](references/migration.md), [upgrading](references/upgrading.md)                                                     |
-| Maintaining an application                                 | [maintainability](references/maintainability.md)                                                                               |
-| Existing deprecated Promise commands                       | [commands-legacy](references/commands-legacy.md)                                                                               |
+| Task                                                                    | References                                                                                                                     |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Application structure and ownership                                     | [architecture](references/architecture.md), [conventions](references/conventions.md)                                           |
+| Validators: `k` schemas, parse, issues, dates, JSON Schema, Zod interop | [k](references/k.md)                                                                                                           |
+| Tables, masks, DTOs, variants, namespaces, tool validators              | [table](references/table.md)                                                                                                   |
+| Relationships, ordering, ranges, cursors, field groups                  | [querying](references/querying.md)                                                                                             |
+| Browser-safe filters and native full-text search                        | [querying](references/querying.md)                                                                                             |
+| Compact pagination validators and static API size                       | [querying](references/querying.md#compact-generated-filter-validators)                                                         |
+| Variant joins, branch predicates, mixed pages                           | [variant-querying](references/variant-querying.md)                                                                             |
+| Native-ID union links, inverse pages, link migration                    | [native-id-relations](references/native-id-relations.md)                                                                       |
+| Authentication, roles, shared Effect context                            | [auth](references/auth.md)                                                                                                     |
+| Tenant isolation and row security                                       | [tenancy](references/tenancy.md)                                                                                               |
+| Commands, queries, registry wiring, audit                               | [commands](references/commands.md), [effect](references/effect.md)                                                             |
+| Nested registry audit and the request scope                             | [effect](references/effect.md#request-scope-and-nested-audit)                                                                  |
+| Failure audit (`auditFailure`) and redaction                            | [effect](references/effect.md#failure-audit)                                                                                   |
+| Raising/recovering declared errors (`fail`, `attempt`)                  | [effect](references/effect.md#raising-and-recovering-declared-errors)                                                          |
+| Convex actions (`foundation.Action`, `writeActionAudit`)                | [effect](references/effect.md#action-registries), [domain-contracts](references/domain-contracts.md#actions-and-error-helpers) |
+| Error contracts, transported failures and React commands                | [client-failures](references/client-failures.md)                                                                               |
+| Reactive lists, error boundaries and search continuation                | [client-list](references/client-list.md)                                                                                       |
+| Conservative optimistic list updates                                    | [client-optimistic](references/client-optimistic.md)                                                                           |
+| Contracts and domain API integration                                    | [domain-contracts](references/domain-contracts.md), [domain-operations](references/domain-operations.md)                       |
+| Request-local registry context                                          | [command-context](references/command-context.md)                                                                               |
+| Timestamps and database lifecycle rules                                 | [triggers](references/triggers.md)                                                                                             |
+| Approval workflows and callbacks                                        | [approvals](references/approvals.md)                                                                                           |
+| CRUD and agent tools                                                    | [crud](references/crud.md), [agent-tools](references/agent-tools.md)                                                           |
+| Webhook verification and deduplication                                  | [webhooks](references/webhooks.md)                                                                                             |
+| Consumer lint rules                                                     | [oxlint](references/oxlint.md)                                                                                                 |
+| Moving an app from cvx-kit 0.1.x (Zod) to 2.0                           | [migration-v2](references/migration-v2.md)                                                                                     |
+| Restructuring a project and older upgrades                              | [migration](references/migration.md), [upgrading](references/upgrading.md)                                                     |
+| Maintaining an application                                              | [maintainability](references/maintainability.md)                                                                               |
+| Existing deprecated Promise commands                                    | [commands-legacy](references/commands-legacy.md)                                                                               |
 
 [llms](references/llms.md) is an optional condensed overview, not a prerequisite
 for every task. Examples use illustrative entities; adapt them to the app.
@@ -77,9 +79,11 @@ for every task. Examples use illustrative entities; adapt them to the app.
   stored tag, merge and validate the complete storage row, then write in the
   same mutation. Declare branch-specific relation references and filter nodes
   explicitly; keep the public discriminated union intact.
-- Keep native IDs in storage validators; JSON-safe tool inputs are a separate
-  boundary. Let registered triggers maintain timestamps. Consume components
-  through their public clients and generated references.
+- Declare schemas with `k` (`cvx-kit/k`), not Zod. Keep `k.id(...)` in storage
+  and tool validators; `toJsonSchema` renders ids as strings for agent tools.
+  Return projected DTOs: the kit does not strip return values. Let registered
+  triggers maintain timestamps. Consume components through their public
+  clients and generated references.
 
 Run the application's relevant type checks, lint, and runtime tests. Test DTO
 redaction, denied access, wrong-table IDs, invalid patches, and rollback when

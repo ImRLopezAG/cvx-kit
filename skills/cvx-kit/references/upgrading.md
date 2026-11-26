@@ -1,5 +1,7 @@
 # Upgrading to 0.1.0 — the new way of things
 
+To move an app from cvx-kit 0.1.x to 2.0 (Zod removed, `k` validators, `kTable`), follow [migration-v2](migration-v2.md). The sections below cover upgrades within 0.1.x. Their code examples are written for 2.0 names where a name changed; the 0.1.x names are listed in the migration guide's name map.
+
 ## Current dependency requirements
 
 Install Convex 1.46 or newer and convex-helpers 0.1.127 or newer (below 0.2.0).
@@ -229,7 +231,7 @@ bun add cvx-kit@0.1.3 convex-helpers@0.1.124
 The peer range was `>=0.1.123 <0.2.0`. Remove overrides that force a
 separate helper copy and regenerate the installation without discarding
 unrelated dependency choices. This release is validated with Convex 1.45.0,
-Zod 4.5.4, and convex-test 0.0.56.
+Zod 4.5.4, and convex-test 0.0.56 (cvx-kit 2.0 no longer requires Zod).
 
 Existing `Command.operation` and `Command.middleware` remain available.
 For callback inference, use `Command.withContext<MutationCtx>().operation`;
@@ -300,14 +302,14 @@ Release with CHANGELOG notes.
 Old way:
 
 ```ts
-// hand-rolled: convexToZod(paginationOptsValidator) in every project,
+// hand-rolled: a copy of Convex's paginationOptsValidator in every project,
 // or worse, .execute(100) and client-side slicing.
 ```
 
 New way:
 
 ```ts
-import { paginated } from 'cvx-kit/zod-table'
+import { paginated } from 'cvx-kit/table'
 
 const page = paginated(<entities>.publicDto)
 export const list = authQuery({
@@ -429,10 +431,9 @@ const withVendor = Command.middleware<Ctx, { vendor: Vendor }>(async ({ context,
 
 Unchanged: untyped middleware keeps compiling.
 
-## The one behavior change: tool masks use jsonSafeZid
+## The one behavior change: tool mask ids in JSON Schema
 
-`<table>.tools.update` and `<table>.tools.id` now type ids with
-`jsonSafeZid` instead of `zid`, so generated JSON schemas present ids as
-plain strings (compile-time `Id<...>` preserved). If you relied on the masks
-producing `zid` runtime metadata, re-check; for LLM tool schemas this is the
-fix you wanted.
+In 0.1.0, `<table>.tools.update` and `<table>.tools.id` switched to ids that
+JSON Schema generators render as plain strings. In 2.0 the masks keep
+`k.id(...)` and `toJsonSchema` from `cvx-kit/json-schema` renders ids as
+strings, with `Id<...>` preserved at compile time.

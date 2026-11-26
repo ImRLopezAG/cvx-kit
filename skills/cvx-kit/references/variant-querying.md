@@ -1,6 +1,6 @@
 # Variant tables in the shared query engine
 
-The three-argument `zodVariantTable` boundary supports one physical table with
+The three-argument `kVariantTable` boundary supports one physical table with
 branch-specific storage, commands, DTOs, and relations. Mixed pages preserve
 literal tags and branded IDs. Configure the same global engine and authenticated
 query facade used for ordinary tables; see [querying](./querying.md) and
@@ -10,31 +10,27 @@ query facade used for ordinary tables; see [querying](./querying.md) and
 
 ```ts
 // convex/domain/payments/schema.ts
-import { z } from 'zod'
-import { zid, zodTable, zodVariantTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { kTable, kVariantTable } from 'cvx-kit/table'
 
-export const clients = zodTable('clients', () => ({ name: z.string() }), {
-	publicFields: ['name'],
-})
-export const creditors = zodTable('creditors', () => ({ name: z.string() }), {
-	publicFields: ['name'],
-})
-export const payments = zodVariantTable(
+export const clients = kTable('clients', { name: k.string() }, { publicFields: ['name'] })
+export const creditors = kTable('creditors', { name: k.string() }, { publicFields: ['name'] })
+export const payments = kVariantTable(
 	'payments',
-	z.discriminatedUnion('type', [
-		z.strictObject({
-			type: z.literal('client_draft'),
-			clientId: zid('clients'),
-			amountCents: z.int().positive(),
-			draftDate: z.int().nonnegative(),
-			external: z.strictObject({ providerId: z.string() }).optional(),
+	k.discriminatedUnion('type', [
+		k.object({
+			type: k.literal('client_draft'),
+			clientId: k.id('clients'),
+			amountCents: k.int().min(1),
+			draftDate: k.int().min(0),
+			external: k.object({ providerId: k.string() }).optional(),
 		}),
-		z.strictObject({
-			type: z.literal('creditor_payment'),
-			clientId: zid('clients'),
-			creditorId: zid('creditors'),
-			amountCents: z.int().positive(),
-			external: z.strictObject({ providerId: z.string() }).optional(),
+		k.object({
+			type: k.literal('creditor_payment'),
+			clientId: k.id('clients'),
+			creditorId: k.id('creditors'),
+			amountCents: k.int().min(1),
+			external: k.object({ providerId: k.string() }).optional(),
 		}),
 	]),
 	{
@@ -79,7 +75,7 @@ import { tables } from './domain/payments/table'
 export default defineSchema(tables)
 ```
 
-Declare indexes before compiling relations. Registration verifies the exact native
+Declare indexes before compiling relations. `payments.table` is built once and `.index(...)` adds to that same definition, so registering the boundary itself sees the indexes. Do not spread a boundary (`{ ...payments, table }`): its `table` and schema boundaries are accessors, and a spread does not copy them. Registration verifies the exact native
 table owners, every branch's storage validators, public masks, and supporting
 indexes. The legacy two-argument helper does not generate the required registry
 boundaries. Do not flatten a variant into an object of optional properties.
@@ -89,34 +85,27 @@ boundaries. Do not flatten a variant into an object of optional properties.
 ```ts
 // convex/relations.ts
 import { defineRelations } from 'cvx-kit/relations'
-import { tables } from './domain/payments/table'
+import './domain/payments/table' // attaches the indexes to payments.table
 import { clients, creditors, payments } from './domain/payments/schema'
 
-export const relations = defineRelations(
-	{
-		clients,
-		creditors,
-		payments: { ...payments, table: tables.payments },
+export const relations = defineRelations({ clients, creditors, payments }, (r, branch) => ({
+	clients: {
+		payments: r.many.payments({ from: r.clients._id, to: r.payments.clientId }),
 	},
-	(r, branch) => ({
-		clients: {
-			payments: r.many.payments({ from: r.clients._id, to: r.payments.clientId }),
-		},
-		payments: {
-			client: r.one.clients({ from: r.payments.clientId, to: r.clients._id }),
-			creditor: r.one.creditors({
-				from: branch('payments', 'creditor_payment').creditorId,
-				to: r.creditors._id,
-			}),
-		},
-		creditors: {
-			payments: r.many.payments({
-				from: r.creditors._id,
-				to: branch('payments', 'creditor_payment').creditorId,
-			}),
-		},
-	}),
-)
+	payments: {
+		client: r.one.clients({ from: r.payments.clientId, to: r.clients._id }),
+		creditor: r.one.creditors({
+			from: branch('payments', 'creditor_payment').creditorId,
+			to: r.creditors._id,
+		}),
+	},
+	creditors: {
+		payments: r.many.payments({
+			from: r.creditors._id,
+			to: branch('payments', 'creditor_payment').creditorId,
+		}),
+	},
+}))
 ```
 
 Common references require the field to be declared in every branch with a
@@ -227,7 +216,7 @@ filling. Duplicate junction occurrences remain visible. Invalid branch data
 fails through the engine's redacted execution error boundary.
 
 For atomic tagged patches, use the fetch, authorize, tag-check, merge, and full
-storage-validation sequence in [zod-table](./zod-table.md). A query's branch filter
+storage-validation sequence in [table](./table.md#kvarianttable--discriminated-unions). A query's branch filter
 does not authorize a write or convert an existing row to another branch.
 
 ## Verify

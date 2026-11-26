@@ -190,7 +190,7 @@ function once<T>(build: () => T): () => T {
 /** Built on the first search, never at import. */
 const searchInput = once(() =>
 	k.object({
-		numItems: k.int().min(1),
+		numItems: k.int().min(1).max(Number.MAX_SAFE_INTEGER),
 		cursor: k.string().nullable(),
 		id: k.number().refine(Number.isFinite, 'Invalid input: expected a finite number').optional(),
 		scanLimit: k.int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),

@@ -88,7 +88,7 @@ export abstract class KSchema<
 
 	/** A check on the parsed value; `options.path` attaches the issue below this value (object refinements). */
 	refine(check: (value: Out) => boolean, message?: string | KRefineOptions): this {
-		return this.link('refine', check, message)
+		return this.link('refine', check, frozenMessage(message))
 	}
 
 	/** A check that may add several issues through `context.addIssue`. */
@@ -261,6 +261,14 @@ export class KPipe<I extends KType, P extends KType> extends KSchema<
 }
 
 type NullableOf<V extends KRequiredValidator> = VUnion<V['type'] | null, [V, VNull<null>]>
+
+/** Freezes a refine options object and its path in place, like every other container a record holds. */
+function frozenMessage(message: string | KRefineOptions | undefined): KMessage {
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- refine takes either its message or an options object.
+	if (message === undefined || typeof message === 'string') return message
+	if (message.path !== undefined) Object.freeze(message.path)
+	return Object.freeze(message)
+}
 
 function missingZodEntry(): never {
 	throw new Error("k: .toZod() needs the Zod interop entry; add `import 'cvx-kit/zod'` first")

@@ -48,7 +48,7 @@ describe('toJsonSchema', () => {
 				owner: { type: 'string', description: 'The owner' },
 				due: { type: 'string', format: 'date' },
 				at: { type: 'string', format: 'date-time' },
-				when: { type: 'integer', minimum: 0 },
+				when: { type: 'integer', minimum: 0, maximum: 253_402_300_799_999 },
 			},
 			required: ['owner', 'due', 'when'],
 			additionalProperties: false,
@@ -105,6 +105,32 @@ describe('toJsonSchema', () => {
 		})
 		expect(toJsonSchema(k.literal(3))).toEqual({ type: 'number', const: 3 })
 		expect(toJsonSchema(k.json())).toEqual({})
+	})
+
+	it('uses the strongest of repeated bounds and joins repeated patterns', () => {
+		expect(toJsonSchema(k.number().min(10).min(0))).toEqual({ type: 'number', minimum: 10 })
+		expect(toJsonSchema(k.number().max(3).max(9).max(5))).toEqual({ type: 'number', maximum: 3 })
+		expect(toJsonSchema(k.string().min(2).length(4).max(10).min(1))).toEqual({
+			type: 'string',
+			minLength: 4,
+			maxLength: 4,
+		})
+		expect(toJsonSchema(k.array(k.number()).max(4).max(2).min(1))).toEqual({
+			type: 'array',
+			items: { type: 'number' },
+			minItems: 1,
+			maxItems: 2,
+		})
+		expect(toJsonSchema(k.timestamp().min(-5))).toEqual({
+			type: 'integer',
+			minimum: 0,
+			maximum: 253_402_300_799_999,
+		})
+		expect(toJsonSchema(k.string().regex(/^a/).regex(/b$/).regex(/x/))).toEqual({
+			type: 'string',
+			pattern: '^a',
+			allOf: [{ pattern: 'b$' }, { pattern: 'x' }],
+		})
 	})
 
 	it('keeps strip objects closed and omits partial fields from required', () => {

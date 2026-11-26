@@ -1,6 +1,6 @@
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- This module is the decoding boundary: it receives undecoded values, narrows them by representation and hands them back as the schema's output, which the typed callers in schema.ts name. */
 import { membersOf } from './compile'
-import { isIsoDate, isIsoDateTime, isTimestamp } from './formats'
+import { KConversionFailure, isIsoDate, isIsoDateTime, isTimestamp, maxTimestamp } from './formats'
 import {
 	KValidationError,
 	type KIssue,
@@ -140,8 +140,8 @@ function compilePlan(node: KNode): KPlan {
 function runPlan(node: KNode): KPlan {
 	const run: KNode[] = []
 	let base = node
-	while (base.prev !== null && isRunOp(base)) {
-		run.push(base)
+	while (base.prev !== null && (isRunOp(base) || base.op === 'describe')) {
+		if (base.op !== 'describe') run.push(base)
 		base = base.prev
 	}
 	const normalisers: KNode[] = []
@@ -216,12 +216,26 @@ function dispatchOf(root: KNode): Map<KLiteralValue, KNode> {
 		if (field === undefined)
 			throw new Error(`k.discriminatedUnion: an option has no '${key}' field`)
 		const fieldRoot = rootOf(asSchema(field))
-		if (fieldRoot.op === 'literal') dispatch.set(literalOf(fieldRoot), member)
+		if (fieldRoot.op === 'literal') dispatchTo(dispatch, key, literalOf(fieldRoot), member)
 		else if (fieldRoot.op === 'enum')
-			for (const value of enumOf(fieldRoot)) dispatch.set(value, member)
+			for (const value of enumOf(fieldRoot)) dispatchTo(dispatch, key, value, member)
 		else throw new Error(`k.discriminatedUnion: '${key}' must be a literal or enum on every option`)
 	}
 	return dispatch
+}
+
+/** Two options sharing a discriminator value would make dispatch pick a branch the native union may not. */
+function dispatchTo(
+	dispatch: Map<KLiteralValue, KNode>,
+	key: string,
+	value: KLiteralValue,
+	member: KNode,
+): void {
+	if (dispatch.has(value))
+		throw new Error(
+			`k.discriminatedUnion: more than one option has '${key}' value ${JSON.stringify(String(value))}`,
+		)
+	dispatch.set(value, member)
 }
 
 function walk(
@@ -251,7 +265,7 @@ function walk(
 			return walk(node.prev, value, context, full, true)
 		case 'transform': {
 			const input = walk(node.prev, value, context, full, strip)
-			return input === FAIL ? FAIL : callbackOf(node)(input)
+			return input === FAIL ? FAIL : callbackResult(callbackOf(node)(input), context, 'transform')
 		}
 		case 'pipe': {
 			const input = walk(node.prev, value, context, full, strip)
@@ -273,7 +287,10 @@ function walkRun(
 	// SAFETY: runPlan always records the base below a run.
 	let output = walk(plan.base as KNode, value, context, full, strip)
 	if (output === FAIL) return FAIL
-	for (const normaliser of plan.normalisers) output = normalise(normaliser, output)
+	for (const normaliser of plan.normalisers) {
+		output = callbackResult(normalise(normaliser, output), context, 'overwrite')
+		if (output === FAIL) return FAIL
+	}
 	const before = context.issues.length
 	for (const check of plan.checks) runCheck(check, output, context)
 	return context.issues.length === before ? output : FAIL
@@ -296,7 +313,7 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 	switch (record.op) {
 		case 'min': {
 			const limit = numberArg(record)
-			if (sizeOf(value) < limit)
+			if (!(sizeOf(value) >= limit))
 				context.add(
 					'too_small',
 					messageOf(record, `Too small: expected ${unitOf(value, limit, '>=')}`),
@@ -306,7 +323,7 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 		}
 		case 'max': {
 			const limit = numberArg(record)
-			if (sizeOf(value) > limit)
+			if (!(sizeOf(value) <= limit))
 				context.add(
 					'too_big',
 					messageOf(record, `Too big: expected ${unitOf(value, limit, '<=')}`),
@@ -317,13 +334,14 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 		case 'length': {
 			const limit = numberArg(record)
 			const size = sizeOf(value)
-			if (size < limit)
+			if (size === limit) return
+			if (!(size > limit))
 				context.add(
 					'too_small',
 					messageOf(record, `Too small: expected ${unitOf(value, limit, '==')}`),
 					undefined,
 				)
-			else if (size > limit)
+			else
 				context.add(
 					'too_big',
 					messageOf(record, `Too big: expected ${unitOf(value, limit, '==')}`),
@@ -424,7 +442,13 @@ function walkTimestamp(value: unknown, context: WalkContext, full: boolean): unk
 	if (!Number.isFinite(time)) context.add('invalid_type', 'Expected a finite timestamp', undefined)
 	else if (!Number.isInteger(time))
 		context.add('not_integer', 'Expected integer milliseconds', undefined)
-	else context.add('too_small', 'Expected a timestamp >= 0', undefined)
+	else if (time < 0) context.add('too_small', 'Expected a timestamp >= 0', undefined)
+	else
+		context.add(
+			'too_big',
+			`Expected a timestamp <= ${maxTimestamp} (9999-12-31T23:59:59.999Z)`,
+			undefined,
+		)
 	return FAIL
 }
 
@@ -512,7 +536,7 @@ function walkObject(
 			out = {}
 			copyKnown(out, value, fields, key)
 		}
-		if (out !== undefined && output !== undefined) out[key] = output
+		if (out !== undefined && output !== undefined) setOwn(out, key, output)
 	}
 	let stripped = false
 	if (full) {
@@ -542,7 +566,7 @@ function copyKnown(
 ): void {
 	for (const key in fields) {
 		if (key === stop) break
-		if (Object.hasOwn(value, key) && value[key] !== undefined) out[key] = value[key]
+		if (Object.hasOwn(value, key) && value[key] !== undefined) setOwn(out, key, value[key])
 	}
 }
 
@@ -560,7 +584,11 @@ function walkRecord(
 		const key = keys[index]
 		const input = value[key]
 		context.path.push(key)
-		const outputKey = walk(keySchema, key, context, full, false)
+		let outputKey = walk(keySchema, key, context, full, false)
+		if (outputKey !== FAIL && (full || outputKey !== key) && !isRecordKey(stringOf(outputKey))) {
+			context.add('invalid_format', recordKeyMessage, undefined)
+			outputKey = FAIL
+		}
 		const output = walk(valueSchema, input, context, full, false)
 		context.path.pop()
 		if (outputKey === FAIL || output === FAIL) {
@@ -569,9 +597,9 @@ function walkRecord(
 		}
 		if (out === undefined && (outputKey !== key || output !== input)) {
 			out = {}
-			for (let before = 0; before < index; before++) out[keys[before]] = value[keys[before]]
+			for (let before = 0; before < index; before++) setOwn(out, keys[before], value[keys[before]])
 		}
-		if (out !== undefined) out[stringOf(outputKey)] = output
+		if (out !== undefined) setOwn(out, stringOf(outputKey), output)
 	}
 	if (failed) return FAIL
 	return out ?? value
@@ -611,6 +639,21 @@ function walkDiscriminated(
 	return walk(option, value, context, full, false)
 }
 
+/** A transform or overwrite is synchronous; a promise or a conversion failure becomes an issue. */
+function callbackResult(output: unknown, context: WalkContext, kind: string): unknown {
+	if (output instanceof KConversionFailure) {
+		context.add('invalid_value', output.message, undefined)
+		return FAIL
+	}
+	if (!isThenable(settled(output))) return output
+	context.add(
+		'custom',
+		`Async ${kind} is not supported: ${kind} callbacks must be synchronous`,
+		undefined,
+	)
+	return FAIL
+}
+
 /**
  * A check is synchronous. One that returns a promise (an untyped caller's async callback) fails, and
  * its rejection is contained so no detail escapes as an unhandled rejection.
@@ -627,6 +670,29 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
 		'then' in value &&
 		typeof value.then === 'function'
 	)
+}
+
+const recordKeyMessage =
+	"Invalid record key: Convex record keys are non-empty ASCII, at most 1024 characters, and do not start with '$' or '_'"
+
+/** The Convex record key rule (`v.record`), applied to the key after normalisation. */
+function isRecordKey(key: string): boolean {
+	if (key.length === 0 || key.length > 1024 || key[0] === '$' || key[0] === '_') return false
+	for (let index = 0; index < key.length; index++) {
+		const code = key.charCodeAt(index)
+		if (code < 32 || code >= 127) return false
+	}
+	return true
+}
+
+/** Write an own data property: a key taken from input (`__proto__`) never reaches a setter. */
+function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+	Object.defineProperty(target, key, {
+		value,
+		enumerable: true,
+		writable: true,
+		configurable: true,
+	})
 }
 
 function invalidType(context: WalkContext, expected: string, value: unknown): typeof FAIL {

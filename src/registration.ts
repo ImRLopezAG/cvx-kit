@@ -61,8 +61,10 @@ type OutputFields<A extends KArgFields> = {
 type Props<T> = T extends PropertyValidators ? T : never
 
 /** Caller-facing args of an `args` declaration: a defaulted `k` field is optional, a transformed one has its input type. */
-export type KArgsInput<A> = [A] extends [KObject<any>]
-	? A['_input']
+export type KArgsInput<A> = [A] extends [KObject<infer F>]
+	? keyof F extends never
+		? {}
+		: A['_input']
 	: [A] extends [VObject<any, any, any>]
 		? A['type']
 		: [A] extends [KArgFields]
@@ -555,13 +557,19 @@ function customFnBuilder(
 				const boundary = argsState().boundary
 				return addFieldsToValidator(boundary?.validator ?? nativeArgs(declaration()), inputArgs)
 			})
+			// Convex validates nothing when skipped, so customization args are checked before input runs.
+			const customRun =
+				skipConvexValidation && inputKeys.length > 0
+					? memoize(() => fullRun({ schema: undefined, native: undefined, fields: inputArgs }))
+					: undefined
 			const native = nativeDefinition(async (ctx: any, allArgs: any) => {
 				const { keys, run, boundary } = argsState()
 				boundary?.preflight(allArgs)
 				rawArguments.set(ctx, allArgs)
+				const customArgs = inputKeys.length === 0 ? {} : pick(allArgs, inputKeys)
 				const added = await customInput(
 					ctx,
-					inputKeys.length === 0 ? {} : pick(allArgs, inputKeys),
+					customRun === undefined ? customArgs : customRun()(customArgs),
 					extra,
 				)
 				const declaredValues = inputKeys.length === 0 ? allArgs : pick(allArgs, keys)

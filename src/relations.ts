@@ -954,11 +954,16 @@ export function defineRelations<
 			ownRefs.add(ref)
 			return Object.freeze(ref)
 		}
-		for (const field of fields)
-			result[field] = makeReference(
-				field,
-				once(() => fieldValidator(name, field, guard)),
+		// A table exposes every field name, but builds a field's reference on its first read.
+		for (const field of fields) {
+			const reference = once(() =>
+				makeReference(
+					field,
+					once(() => fieldValidator(name, field, guard)),
+				),
 			)
+			Object.defineProperty(result, field, { enumerable: true, get: reference })
+		}
 		return Object.freeze(result)
 	}
 	// Field names come from the native skeleton; without one, the table materializes.
@@ -1294,7 +1299,13 @@ export function withFieldGroups<
 	T extends RelationTable,
 	const G extends Readonly<Record<string, readonly string[]>>,
 >(table: T, fieldGroups: G): T & { readonly fieldGroups: G } {
-	const groups = Object.freeze({ ...fieldGroups })
+	// Copied and frozen per table: later edits to the caller's map or arrays cannot reach the engine.
+	// SAFETY: the copy has exactly the caller's keys and field-name arrays, so it is a G.
+	const groups = Object.freeze(
+		Object.fromEntries(
+			Object.entries(fieldGroups).map(([group, fields]) => [group, Object.freeze([...fields])]),
+		),
+	) as G
 	const view = new Proxy(table, {
 		get: (target, key) => (key === 'fieldGroups' ? groups : memberOf(target, key)),
 		has: (target, key) => key === 'fieldGroups' || key in target,
@@ -1758,29 +1769,40 @@ function schemaSkeleton(table: RelationTable): NativeSkeleton | undefined {
 	if (!(schema instanceof KDiscriminatedUnion)) return undefined
 	const discriminator = schema.discriminator
 	const branches: (readonly [string, readonly string[]])[] = []
-	const stored: Record<string, GenericValidator>[] = []
-	for (const option of schema.options) {
+	const objects: KObject<any>[] = []
+	for (const option of optionsOf(schema)) {
 		if (!(option instanceof KObject)) return undefined
 		const tag = literalOf(option.shape[discriminator])
 		if (tag === undefined) return undefined
-		const { _id, _creationTime, ...fields } = option.validator.fields
-		stored.push(fields)
+		objects.push(option)
 		branches.push([tag, [...new Set([...Object.keys(option.shape), ...system])]])
 	}
-	if (!stored.length) return undefined
-	// Mirrors normalizeTable: system fields are identical in every branch.
-	const common = [
-		...Object.keys(stored[0]).filter(
-			(key) =>
-				stored.every((member) => Object.hasOwn(member, key)) &&
-				(key === discriminator ||
-					stored.every((member) => commonCompatible(member[key], stored[0][key]))),
-		),
-		...system,
-	]
+	if (!objects.length) return undefined
+	// The common fields compare branch validators natively, so they are computed only when
+	// `r.<table>` is first read; branch scopes and name checks need field names alone.
+	const common = once(() => {
+		const stored = objects.map((option) => {
+			const { _id, _creationTime, ...fields } = option.validator.fields
+			return fields
+		})
+		// Mirrors normalizeTable: system fields are identical in every branch.
+		return [
+			...new Set([
+				...Object.keys(stored[0]).filter(
+					(key) =>
+						stored.every((member) => Object.hasOwn(member, key)) &&
+						(key === discriminator ||
+							stored.every((member) => commonCompatible(member[key], stored[0][key]))),
+				),
+				...system,
+			]),
+		]
+	})
 	return {
 		fields: [...new Set(branches.flatMap(([, fields]) => fields))],
-		common: [...new Set(common)],
+		get common() {
+			return common()
+		},
 		variant: true,
 		discriminator,
 		branches,

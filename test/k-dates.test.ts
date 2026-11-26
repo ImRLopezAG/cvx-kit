@@ -78,7 +78,7 @@ describe('k dates', () => {
 		expect(k.isoDateTime().toTimestamp().parse('2026-11-26T00:00:00Z')).toBe(ms)
 		expect(k.isoDateTime().toTimestamp().parse('2026-11-26T02:00:00+02:00')).toBe(ms)
 		expect(k.isoDate().toTimestamp().parse('2026-11-26')).toBe(ms)
-		expect(k.isoDate().toTimestamp().parse('0050-01-01')).toBe(Date.parse('0050-01-01T00:00:00Z'))
+		expect(k.isoDate().toTimestamp().safeParse('0050-01-01').success).toBe(false)
 		expect(k.timestamp().toIsoDateTime().parse(ms)).toBe('2026-11-26T00:00:00.000Z')
 		expect(k.timestamp().toIsoDate().parse(ms)).toBe('2026-11-26')
 		const roundTrip = k.isoDateTime().toTimestamp().pipe(k.timestamp().toIsoDateTime())

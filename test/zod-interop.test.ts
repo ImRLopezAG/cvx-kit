@@ -88,6 +88,23 @@ describe('toZod', () => {
 		expect(toZod(k.json()).parse({ a: [1] })).toEqual({ a: [1] })
 	})
 
+	it('keeps partial() free of defaults and runs a default through the rest of the chain, as k does', () => {
+		const patch = k.object({ x: k.string().default('x') }).partial()
+		expect(toZod(patch).parse({})).toEqual(patch.parse({}))
+		expect(toZod(patch).parse({})).toEqual({})
+		const trimmed = k.string().trim().default('  hi  ')
+		expect(toZod(trimmed).parse(undefined)).toBe(trimmed.parse(undefined))
+		expect(toZod(trimmed).parse(undefined)).toBe('hi')
+		const wrapped = k.object({ n: k.number().default(1).optional() })
+		expect(toZod(wrapped).parse({})).toEqual(wrapped.parse({}))
+	})
+
+	it('keeps describe transparent to the order of normalisers and checks', () => {
+		const schema = k.string().min(2).describe('name').trim()
+		expect(toZod(schema).safeParse(' x ').success).toBe(schema.safeParse(' x ').success)
+		expect(toZod(schema).description).toBe('name')
+	})
+
 	it('installs .toZod() on every k schema', () => {
 		const zod = task.shape.title.toZod()
 		expect(zod).toBeInstanceOf(z.ZodType)

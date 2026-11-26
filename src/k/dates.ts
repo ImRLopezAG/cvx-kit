@@ -1,4 +1,5 @@
 import {
+	type KConversionFailure,
 	isoDateTimeToTimestamp,
 	isoDateToTimestamp,
 	timestampToIsoDate,
@@ -11,7 +12,7 @@ import type { KTransform } from './schema'
 export class KIsoDate extends KString {
 	/** Input-position conversion to UTC midnight in milliseconds. A transform: table fields reject it. */
 	toTimestamp(): KTransform<this, number> {
-		return this.transform(isoDateToTimestamp)
+		return this.transform(conversion(isoDateToTimestamp))
 	}
 }
 
@@ -19,7 +20,7 @@ export class KIsoDate extends KString {
 export class KIsoDateTime extends KString {
 	/** Input-position conversion to milliseconds. A transform: table fields reject it. */
 	toTimestamp(): KTransform<this, number> {
-		return this.transform(isoDateTimeToTimestamp)
+		return this.transform(conversion(isoDateTimeToTimestamp))
 	}
 }
 
@@ -27,12 +28,12 @@ export class KIsoDateTime extends KString {
 export class KTimestamp extends KNumber {
 	/** Input-position conversion to an ISO date-time in UTC. A transform: table fields reject it. */
 	toIsoDateTime(): KTransform<this, string> {
-		return this.transform(timestampToIsoDateTime)
+		return this.transform(conversion(timestampToIsoDateTime))
 	}
 
 	/** Input-position conversion to the UTC `YYYY-MM-DD`. A transform: table fields reject it. */
 	toIsoDate(): KTransform<this, string> {
-		return this.transform(timestampToIsoDate)
+		return this.transform(conversion(timestampToIsoDate))
 	}
 }
 
@@ -50,4 +51,10 @@ export function isoDateTime(): KIsoDateTime {
 
 export function timestamp(): KTimestamp {
 	return timestampRoot
+}
+
+/** A conversion's failure value is reported by the walker as an issue, so callers see only the success type. */
+function conversion<I, O>(convert: (value: I) => O | KConversionFailure): (value: I) => O {
+	// SAFETY: the walker turns a KConversionFailure result into an issue before any caller sees it.
+	return convert as (value: I) => O
 }

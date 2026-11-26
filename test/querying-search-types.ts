@@ -1,6 +1,24 @@
-import type { DataModelFromSchemaDefinition } from 'convex/server'
+import {
+	actionGeneric,
+	internalActionGeneric,
+	internalMutationGeneric,
+	internalQueryGeneric,
+	mutationGeneric,
+	queryGeneric,
+	type ApiFromModules,
+	type DataModelFromSchemaDefinition,
+	type FunctionReturnType,
+} from 'convex/server'
+import { Effect } from 'effect'
+import { createAuthFunctions } from '../src/auth'
+import { createEffectAuthFunctions } from '../src/effect'
+import { k } from '../src/k'
 import type { GenericId } from 'convex/values'
-import { createQueryEngine, type SearchPaginationResult } from '../src/querying'
+import {
+	createQueryEngine,
+	queryFailureContract,
+	type SearchPaginationResult,
+} from '../src/querying'
 import type { ManagedQueryContext } from '../src/querying/security'
 import { searchDeclarations } from './fixture-querying/search'
 const f = searchDeclarations()
@@ -39,3 +57,47 @@ root
 	.search('search_text', 'x')
 // @ts-expect-error search cannot open direct relation
 root.search('search_text', 'x').relation(parent, 'children')
+
+// Registered search pages, plain and Effect, keep the required search marker in their results.
+const config = {
+	query: queryGeneric,
+	mutation: mutationGeneric,
+	action: actionGeneric,
+	internalQuery: internalQueryGeneric,
+	internalMutation: internalMutationGeneric,
+	internalAction: internalActionGeneric,
+	getAuthUser: async () => ({ id: 'reader' }),
+	mapRole: () => 'reader' as const,
+	adminRoles: [],
+}
+type SearchDM = DataModelFromSchemaDefinition<typeof f.schema>
+const auth = createAuthFunctions<SearchDM, 'reader'>(config)
+const effect = createEffectAuthFunctions(config, {
+	query: { errors: queryFailureContract },
+	mutation: {},
+	action: {},
+	systemQuery: {},
+	systemMutation: {},
+	systemAction: {},
+})
+const searchArgs = k.object({ text: k.string() })
+function runSearch(ctx: Parameters<typeof engine>[0], { text }: k.infer<typeof searchArgs>) {
+	return engine(ctx).docs.search('search_text', text).paginate({ numItems: 2, cursor: null })
+}
+const authPage = auth.authQuery({
+	args: searchArgs,
+	returns: f.relations.tables.docs.pageDto({}),
+	handler: (ctx, a) => runSearch(ctx, a),
+})
+const effectPage = effect.authQuery({
+	args: searchArgs,
+	returns: f.relations.tables.docs.pageDto({}),
+	handler: (ctx, a) => Effect.tryPromise({ try: () => runSearch(ctx, a), catch: (error) => error }),
+})
+type SearchApi = ApiFromModules<{
+	search: { page: typeof authPage; effectPage: typeof effectPage }
+}>
+type RegisteredSearch =
+	| FunctionReturnType<SearchApi['search']['page']>
+	| FunctionReturnType<SearchApi['search']['effectPage']>
+export const registeredMode = (page: RegisteredSearch): 'native-search' => page.paginationMode

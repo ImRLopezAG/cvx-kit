@@ -1,6 +1,7 @@
 /** JSON Schema for `k` schemas (KTD8): a separate entry, so core function bundles never load it. */
 import type { JSONValue, Value } from 'convex/values'
 import { membersOf } from './k/compile'
+import { maxTimestamp } from './k/formats'
 import type { KDiscriminated, KFields, KLiteralValue, KNode, KType } from './k/types'
 
 /** The JSON Schema (draft 2020-12) subset `toJsonSchema` emits. */
@@ -27,6 +28,7 @@ export interface JsonSchema {
 	propertyNames?: JsonSchema
 	anyOf?: JsonSchema[]
 	oneOf?: JsonSchema[]
+	allOf?: JsonSchema[]
 }
 
 export type JsonSchemaOptions = {
@@ -105,7 +107,7 @@ function rootSchema(root: KNode): JsonSchema {
 		case 'int64':
 			return { type: 'integer' }
 		case 'timestamp':
-			return { type: 'integer', minimum: 0 }
+			return { type: 'integer', minimum: 0, maximum: maxTimestamp }
 		case 'boolean':
 			return { type: 'boolean' }
 		case 'null':
@@ -168,7 +170,9 @@ function applyCheck(out: JsonSchema, record: KNode): void {
 	}
 	if (record.op === 'regex') {
 		// SAFETY: .regex stores its pattern as the record argument.
-		out.pattern = (record.arg as RegExp).source
+		const pattern = (record.arg as RegExp).source
+		if (out.pattern === undefined) out.pattern = pattern
+		else (out.allOf ??= []).push({ pattern })
 		return
 	}
 	// SAFETY: min, max and length store their numeric limit as the record argument.
@@ -176,15 +180,24 @@ function applyCheck(out: JsonSchema, record: KNode): void {
 	const low = record.op === 'min' || record.op === 'length'
 	const high = record.op === 'max' || record.op === 'length'
 	if (out.type === 'string') {
-		if (low) out.minLength = limit
-		if (high) out.maxLength = limit
+		if (low) out.minLength = strongest(out.minLength, limit, Math.max)
+		if (high) out.maxLength = strongest(out.maxLength, limit, Math.min)
 	} else if (out.type === 'array') {
-		if (low) out.minItems = limit
-		if (high) out.maxItems = limit
+		if (low) out.minItems = strongest(out.minItems, limit, Math.max)
+		if (high) out.maxItems = strongest(out.maxItems, limit, Math.min)
 	} else {
-		if (low) out.minimum = limit
-		if (high) out.maximum = limit
+		if (low) out.minimum = strongest(out.minimum, limit, Math.max)
+		if (high) out.maximum = strongest(out.maximum, limit, Math.min)
 	}
+}
+
+/** Repeated bounds all apply when parsing, so the schema keeps the strongest one. */
+function strongest(
+	current: number | undefined,
+	limit: number,
+	pick: (a: number, b: number) => number,
+): number {
+	return current === undefined ? limit : pick(current, limit)
 }
 
 function literalSchema(value: KLiteralValue): JsonSchema {

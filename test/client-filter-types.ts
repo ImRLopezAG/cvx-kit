@@ -1,3 +1,7 @@
+import { defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
+import type { k } from '../src/k'
+import { createQueryEngine } from '../src/querying'
+import type { ManagedQueryContext } from '../src/querying/security'
 import { v, type GenericId } from 'convex/values'
 import { defineFilterContract, type SharedFilters } from '../src/filters'
 import { kTable } from '../src/table'
@@ -37,3 +41,13 @@ void [badEnum, badRange, badExists, badBig, badRelation]
 const badIdRange: SharedFilters<typeof fields> = { id: { gt: id } }
 void badIdRange
 contract.searchParam.encode({ id: 'raw-browser-input' })
+
+// Regression (TS2589): paginating with a contract binding's parsed args stays within type depth.
+const records = kTable('records', contract.fields)
+const recordRelations = defineRelations({ records }, () => ({}))
+const recordSchema = defineSchema({ records: records.table })
+const recordEngine = createQueryEngine({ schema: recordSchema, relations: recordRelations })
+const recordOptions = recordRelations.tables.records.filters(contract)
+declare const recordCtx: ManagedQueryContext<DataModelFromSchemaDefinition<typeof recordSchema>>
+declare const recordArgs: k.infer<typeof recordOptions>
+void recordEngine(recordCtx).records.paginate(recordArgs)

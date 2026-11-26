@@ -7,6 +7,7 @@
 import { zid } from 'convex-helpers/server/zod4'
 import { z } from 'zod'
 import { membersOf } from './k/compile'
+import { maxTimestamp } from './k/formats'
 import { KSchema } from './k/schema'
 import type { KDiscriminated, KFields, KLiteralValue, KMessage, KNode, KType } from './k/types'
 
@@ -26,7 +27,8 @@ declare global {
 /**
  * Convert a `k` schema to a Zod 4 schema, node by node, with ids from convex-helpers' `zid` so they
  * keep their table typing. Carried: structure, strict objects (`strip()` objects strip), `min`, `max`,
- * `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date and date-time formats,
+ * `length`, `regex`, `int`, `trim`, case normalisers, defaults (as `prefault`, so a default runs through the chain like in `k`; a
+ * `partial()` field drops its default), ISO date and date-time formats,
  * timestamps and `describe`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a
  * transformed schema converts to its input schema, and checks declared after a transform are dropped.
  */
@@ -52,12 +54,18 @@ function convert(node: KNode): z.ZodType {
 	// SAFETY: a chain always ends at a root record.
 	const root = records.pop() as KNode
 	let out = rootSchema(root, records.some(isStrip))
+	const partialAt = records.findIndex(isPartial)
 	let transformed = false
+	let description: string | undefined
 	let run: KNode[] = []
 	for (let index = records.length - 1; index >= 0; index--) {
 		const record = records[index]
 		if (isRunOp(record)) {
 			if (!transformed) run.push(record)
+			continue
+		}
+		if (record.op === 'describe') {
+			description = textOf(record)
 			continue
 		}
 		out = applyRun(out, run)
@@ -75,16 +83,14 @@ function convert(node: KNode): z.ZodType {
 				out = out.nullable()
 				break
 			case 'default':
-				if (!transformed) out = withDefault(out, record)
-				break
-			case 'describe':
-				out = out.describe(textOf(record))
+				if (!transformed && !(partialAt >= 0 && index > partialAt)) out = withDefault(out, record)
 				break
 			default:
 				break
 		}
 	}
-	return applyRun(out, run)
+	out = applyRun(out, run)
+	return description === undefined ? out : out.describe(description)
 }
 
 function rootSchema(root: KNode, strip: boolean): z.ZodType {
@@ -103,7 +109,7 @@ function rootSchema(root: KNode, strip: boolean): z.ZodType {
 		case 'int':
 			return z.number().int()
 		case 'timestamp':
-			return z.number().int().min(0)
+			return z.number().int().min(0).max(maxTimestamp)
 		case 'int64':
 			return z.bigint()
 		case 'boolean':
@@ -197,9 +203,13 @@ function applyCheck(base: z.ZodType, record: KNode): z.ZodType {
 	return base
 }
 
+/**
+ * `k` runs a default through the rest of the chain (normalisers, checks), so it maps to Zod's
+ * `prefault`, not `default`, which would short-circuit.
+ */
 function withDefault(base: z.ZodType, record: KNode): z.ZodType {
-	// SAFETY: a default record stores a value of the schema's output type.
-	return base.default(record.arg as never)
+	// SAFETY: a default record stores a value of the schema's input type here (no transform below it).
+	return base.prefault(record.arg as never)
 }
 
 function messageOf(message: KMessage): string | undefined {
@@ -229,6 +239,11 @@ function isRunOp(record: KNode): boolean {
 
 function isNormaliser(record: KNode): boolean {
 	return record.op === 'trim' || record.op === 'lower' || record.op === 'upper'
+}
+
+/** A `partial()` field is optional and never receives the default declared below it. */
+function isPartial(record: KNode): boolean {
+	return record.op === 'partial'
 }
 
 function isStrip(record: KNode): boolean {

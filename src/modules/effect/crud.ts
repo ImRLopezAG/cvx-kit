@@ -282,7 +282,8 @@ export function createEffectCrud<
 		numItems: k.int().min(1).max(config.read.maxPageSize),
 		cursor: k.string().nullable(),
 		endCursor: k.string().nullable().optional(),
-		id: k.number().optional(),
+		// Finite, as v1's Zod number required; native v.number() admits NaN and Infinity.
+		id: k.number().refine(Number.isFinite, 'Invalid input: expected a finite number').optional(),
 		maximumRowsRead: k.int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 		maximumBytesRead: k.int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
 	})

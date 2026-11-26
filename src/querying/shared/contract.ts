@@ -5,7 +5,9 @@ import {
 	type JSONValue,
 	type ValidatorJSON,
 	type GenericValidator,
+	type OptionalProperty,
 	type Value,
+	type VUnion,
 } from 'convex/values'
 import {
 	k,
@@ -44,8 +46,10 @@ type RequiredSharedField<V extends GenericValidator> = V extends { kind: 'string
 						? KLiteral<L>
 						: V extends { kind: 'id'; type: infer I }
 							? KId<Extract<I, GenericId<string>> extends GenericId<infer T> ? T : string>
-							: V extends { kind: 'union' }
-								? KSchema<Exclude<V['type'], undefined>>
+							: V extends VUnion<infer T, infer M, OptionalProperty, infer P>
+								? // Keep the precise native union: a bare KSchema would widen its validator to every
+									// validator kind, which filter types then expand per member.
+									KSchema<Exclude<T, undefined>, VUnion<Exclude<T, undefined>, M, 'required', P>>
 								: never
 /** The `k` schema a shared filter contract generates for one native scalar validator. */
 export type SharedField<V extends GenericValidator> = V extends { isOptional: 'optional' }

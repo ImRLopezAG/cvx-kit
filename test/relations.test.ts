@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import { k, type KType } from '../src/k'
+import { k, type KFields, type KObject, type KType } from '../src/k'
 import { defineSchema, defineTable, type TableDefinition } from 'convex/server'
 import { v } from 'convex/values'
 import { defineTestApp } from 'convex-test'
 import {
 	defineRelations,
+	withFieldGroups,
 	verifyRelations,
 	getRelationExecutor,
 	getRelationMetadata,
@@ -446,6 +447,64 @@ describe('finite shared grammar and selections', () => {
 })
 
 describe('immutable registry identity', () => {
+	// k form of v1's mutation-isolation proofs: declared schemas are frozen, so a caller cannot
+	// change what the executor projects or what a helper returns after materialisation.
+	test('a captured schema cannot be mutated after materialisation, and projection is unchanged', () => {
+		const profile = k.object({ text: k.string() })
+		const items = kTable('items', { profile, secret: k.string() }, { publicFields: ['profile'] })
+		const registry = defineRelations({ items }, () => ({}))
+		const executor = getRelationExecutor(registry)
+		const row = { _id: 'items:1', profile: { text: 'ok' }, secret: 's' }
+		const before = registry.identity
+		expect(executor.project('items', row, () => true)).toEqual({
+			_id: 'items:1',
+			profile: { text: 'ok' },
+		})
+		expect(() => Object.assign(profile.shape, { secret: k.string() })).toThrow(TypeError)
+		expect(() => Object.assign(items.publicDto.shape, { secret: k.string() })).toThrow(TypeError)
+		expect(() => Reflect.deleteProperty(profile.shape, 'text')).not.toThrow()
+		expect(Object.keys(profile.shape)).toEqual(['text'])
+		expect(executor.project('items', row, () => true)).toEqual({
+			_id: 'items:1',
+			profile: { text: 'ok' },
+		})
+		expect(() =>
+			executor.project('items', { ...row, profile: { text: 'ok', secret: 's' } }, () => true),
+		).toThrow()
+		const page = objectOf(registry.tables.items.pageDto({}))
+		expect(() => Object.assign(page.shape, { extra: k.string() })).toThrow(TypeError)
+		expect(registry.identity).toBe(before)
+	})
+	test('helper inputs mutated after use do not change later helpers or the registry', () => {
+		const items = kTable(
+			'items',
+			{ title: k.string(), secret: k.string(), note: k.string() },
+			{
+				publicFields: ['title'],
+			},
+		)
+		const groups = { private: ['secret'] }
+		const registry = defineRelations({ items: withFieldGroups(items, groups) }, () => ({}))
+		groups.private.push('note')
+		groups.private[0] = 'title'
+		const selection = { title: true } as const
+		const first = registry.tables.items.paginationOpts(selection)
+		Reflect.set(selection, 'secret', true)
+		const second = registry.tables.items.paginationOpts({ title: true })
+		expect(second).toBe(first)
+		const unknown = { numItems: 1, cursor: null, filters: { secret: 's' } }
+		expect(first.safeParse(unknown).success).toBe(false)
+		expect(getRelationMetadata(registry).tables.items.fieldGroups).toEqual({ private: ['secret'] })
+		const page = {
+			page: [{ _id: 'items:1', title: 't', secret: 's' }],
+			isDone: true,
+			continueCursor: '',
+		}
+		expect(
+			registry.tables.items.pageDto({}, { fieldGroups: { private: 'required' } }).safeParse(page)
+				.success,
+		).toBe(true)
+	})
 	test('new registries adopt valid source refinement and index changes', () => {
 		const text = k.string().refine((value) => value === 'valid')
 		const items = kTable('items', { text }, { publicFields: ['text'] })
@@ -1070,4 +1129,9 @@ test('snapshot regex validation ignores caller lastIndex changes during construc
 /** A kTable's `table` is a read-only accessor; an own property stands in for a caller-replaced table. */
 function replaceTable(boundary: { readonly tableName: string }, table: TableDefinition): void {
 	Object.defineProperty(boundary, 'table', { value: table, configurable: true })
+}
+
+function objectOf(schema: KType): KObject<KFields> {
+	// SAFETY: pageDto builds a k object; its declared type is the page's KSchema.
+	return schema as KObject<KFields>
 }

@@ -408,6 +408,31 @@ describe('skipConvexValidation', () => {
 		})
 	})
 
+	it('validates customization args before input runs when the function declares args', async () => {
+		const events: string[] = []
+		const builder = kCustomQuery(queryGeneric, {
+			args: { token: v.string() },
+			input: (_ctx, args: { token: string }) => {
+				events.push(`input:${args.token}`)
+				return { ctx: {}, args: {} }
+			},
+		})
+		const fn = builder({
+			args: { x: k.string() },
+			skipConvexValidation: true,
+			handler: (_ctx, args) => {
+				events.push(`handler:${args.x}`)
+				return args.x
+			},
+		})
+		await expect(call(fn, { x: 'a', token: 42 })).rejects.toMatchObject({
+			data: { code: 'VALIDATION', issues: [{ path: ['token'], code: 'invalid_type' }] },
+		})
+		expect(events).toEqual([])
+		expect(await call(fn, { x: 'a', token: 't' })).toBe('a')
+		expect(events).toEqual(['input:t', 'handler:a'])
+	})
+
 	it('keeps the customization-args guard', () => {
 		const builder = kCustomQuery(queryGeneric, {
 			args: { token: v.string() },

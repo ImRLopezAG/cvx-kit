@@ -79,6 +79,8 @@ describe('U11.2 search contract', () => {
 			[{ numItems: 0, cursor: null }, ['numItems']],
 			[{ numItems: 1.5, cursor: null }, ['numItems']],
 			[{ numItems: 1, cursor: null, scanLimit: 0 }, ['scanLimit']],
+			[{ numItems: Number.MAX_SAFE_INTEGER + 1, cursor: null }, ['numItems']],
+			[{ numItems: 1, cursor: null, scanLimit: Number.MAX_SAFE_INTEGER + 1 }, ['scanLimit']],
 		] as const) {
 			try {
 				planSearch(planner, 'docs', 'search_text', 'x', options, [])

@@ -985,3 +985,25 @@ describe('kTable paginationOpts boundary', () => {
 		).toBe(false)
 	})
 })
+
+test('pagination budgets beyond the safe-integer range fail with code VALIDATION', () => {
+	const options = tasks.paginationOpts(selection)
+	for (const field of ['maximumRowsRead', 'maximumBytesRead'] as const) {
+		const parsed = options.safeParse({
+			numItems: 1,
+			cursor: null,
+			[field]: Number.MAX_SAFE_INTEGER + 1,
+		})
+		expect(parsed.success).toBe(false)
+		if (!parsed.success) expect(parsed.issues[0].path).toEqual([field])
+		expect(
+			options.safeParse({ numItems: 1, cursor: null, [field]: Number.MAX_SAFE_INTEGER }).success,
+		).toBe(true)
+	}
+	try {
+		options.parse({ numItems: 1, cursor: null, maximumRowsRead: 1e20 })
+		throw new Error('accepted')
+	} catch (error) {
+		expect(error).toMatchObject({ data: { code: 'VALIDATION' } })
+	}
+})

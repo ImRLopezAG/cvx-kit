@@ -160,8 +160,17 @@ export function nativePagination(): NativePaginationSchema {
 		cursor: k.string().nullable(),
 		endCursor: k.string().nullable().optional(),
 		id: finiteNumber().optional(),
-		maximumRowsRead: finiteNumber().int().refine(positive, POSITIVE).optional(),
-		maximumBytesRead: finiteNumber().int().refine(positive, POSITIVE).optional(),
+		// Safe integers only, as v1's Zod `.int()` required; budgets are client input.
+		maximumRowsRead: finiteNumber()
+			.int()
+			.refine(positive, POSITIVE)
+			.max(Number.MAX_SAFE_INTEGER)
+			.optional(),
+		maximumBytesRead: finiteNumber()
+			.int()
+			.refine(positive, POSITIVE)
+			.max(Number.MAX_SAFE_INTEGER)
+			.optional(),
 		onEmptyBudget: k.literal('split').optional(),
 	}))
 }

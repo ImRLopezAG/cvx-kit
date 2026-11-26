@@ -73,9 +73,16 @@ type ResultValue<Returns> = [Returns] extends [KType]
 	: [Returns] extends [GenericValidator]
 		? Infer<Returns>
 		: unknown
+/**
+ * The registered result: what the handler returns when that already satisfies `returns` (so a
+ * narrower handler value, such as a search page's required `paginationMode`, reaches callers, as
+ * the `k` custom builders do), and the `returns` output otherwise.
+ */
 type ResultOutput<Returns, Returned> = [Returns] extends [void]
 	? EffectValue<Returned>
-	: ResultValue<Returns>
+	: [EffectValue<Returned>] extends [ResultValue<Returns>]
+		? EffectValue<Returned>
+		: ResultValue<Returns>
 type CheckedRequirements<Returned, Services> = [
 	Exclude<CallbackRequirements<NoInfer<Returned>>, Services | Scope.Scope>,
 ] extends [never]

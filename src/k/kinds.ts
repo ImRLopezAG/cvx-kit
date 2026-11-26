@@ -188,7 +188,10 @@ const bytesRoot = new KBytes(null, 'bytes', undefined, undefined)
 const anyRoot = new KAny(null, 'any', undefined, undefined)
 const jsonRoot = new KJson(null, 'json', undefined, undefined)
 
-/** Argument-less factories return one shared root: records are immutable, so sharing is safe. */
+/**
+ * Argument-less factories return one shared root: records are immutable, so sharing is safe. Factories
+ * that take an array or map freeze it in place, so what a schema holds cannot change after declaration.
+ */
 export function string(): KString {
 	return stringRoot
 }
@@ -232,7 +235,7 @@ export function literal<const V extends KLiteralValue>(value: V): KLiteral<V> {
 
 export function enumOf<const V extends readonly [string, ...string[]]>(values: V): KEnum<V> {
 	if (values.length === 0) throw new Error('k.enum() needs at least one value')
-	return new KEnum<V>(null, 'enum', values, undefined)
+	return new KEnum<V>(null, 'enum', Object.freeze(values), undefined)
 }
 
 export function id<T extends string>(table: T): KId<T> {
@@ -244,18 +247,23 @@ export function array<E extends KType>(element: E): KArray<E> {
 }
 
 export function record<K extends KRecordKey, V extends KType>(key: K, value: V): KRecord<K, V> {
-	return new KRecord<K, V>(null, 'record', [key, value], undefined)
+	return new KRecord<K, V>(null, 'record', Object.freeze([key, value]), undefined)
 }
 
 export function union<const M extends readonly [KType, KType, ...KType[]]>(members: M): KUnion<M> {
-	return new KUnion<M>(null, 'union', members, undefined)
+	return new KUnion<M>(null, 'union', Object.freeze(members), undefined)
 }
 
 export function discriminatedUnion<
 	Key extends string,
 	const M extends readonly [KDiscriminatedOption<Key>, ...KDiscriminatedOption<Key>[]],
 >(key: Key, options: M): KDiscriminatedUnion<Key, M> {
-	return new KDiscriminatedUnion<Key, M>(null, 'discriminatedUnion', { key, options }, undefined)
+	return new KDiscriminatedUnion<Key, M>(
+		null,
+		'discriminatedUnion',
+		Object.freeze({ key, options: Object.freeze(options) }),
+		undefined,
+	)
 }
 
 function rootOf(node: KNode): KNode {

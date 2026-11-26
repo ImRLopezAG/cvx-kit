@@ -425,6 +425,51 @@ describe('retained CRUD policy and read projection', () => {
 			}
 		},
 	)
+	it.each([NaN, Infinity, -Infinity])(
+		'rejects a non-finite pagination id (%s) before the read adapter runs',
+		async (id) => {
+			const h = harness()
+			let reads = 0
+			const crud = createEffectCrud({
+				...h.config,
+				read: {
+					...h.config.read,
+					list: () => {
+						reads++
+						return { page: [], isDone: true, continueCursor: '' }
+					},
+				},
+			})
+			await expect(
+				Effect.runPromise(crud.queries.exec('notes.list', { numItems: 1, cursor: null, id }, host)),
+			).rejects.toThrow()
+			expect(reads).toBe(0)
+		},
+	)
+	it('rejects client read budgets beyond the safe-integer range before the read adapter runs', async () => {
+		const h = harness()
+		let reads = 0
+		const crud = createEffectCrud({
+			...h.config,
+			read: {
+				...h.config.read,
+				list: () => {
+					reads++
+					return { page: [], isDone: true, continueCursor: '' }
+				},
+			},
+		})
+		for (const budget of [
+			{ maximumRowsRead: Number.MAX_SAFE_INTEGER + 1 },
+			{ maximumBytesRead: Number.MAX_SAFE_INTEGER + 1 },
+		])
+			await expect(
+				Effect.runPromise(
+					crud.queries.exec('notes.list', { numItems: 1, cursor: null, ...budget }, host),
+				),
+			).rejects.toThrow()
+		expect(reads).toBe(0)
+	})
 	it('defaults the server read budget to maxPageSize before calling the reader', async () => {
 		const h = harness()
 		const received: EffectCrudPagination[] = []

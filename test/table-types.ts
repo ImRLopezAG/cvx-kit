@@ -406,3 +406,12 @@ const invalidCommand: k.input<typeof tasks.tools.insert> = {
 	note: 'n',
 }
 void invalidCommand
+
+// A boundary with no fields accepts no keys, as v1's strict Zod object did (no command fields here).
+const serverOwned = kTable('serverOwned', { secret: k.string() }, { serverFields: ['secret'] })
+// @ts-expect-error command inputs do not contain server-owned fields
+const emptyCommand: k.input<typeof serverOwned.commandInput> = { secret: 'x' }
+const emptyCommandOk: k.input<typeof serverOwned.commandInput> = {}
+void [emptyCommand, emptyCommandOk]
+// @ts-expect-error reserved extension fields cannot be declared
+serverOwned.dto({ extend: { _creationTime: k.number() } })

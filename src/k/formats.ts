@@ -18,27 +18,50 @@ export function isIsoDateTime(value: string): boolean {
 	return match[7] === undefined || (Number(match[8]) <= 23 && Number(match[9]) <= 59)
 }
 
-/** Integer milliseconds since the epoch, not negative. */
+/**
+ * The supported timestamp range: 1970-01-01T00:00:00.000Z through 9999-12-31T23:59:59.999Z, so every
+ * timestamp has a four-digit ISO year and every conversion is total.
+ */
+export const maxTimestamp = 253_402_300_799_999
+
+/** A conversion's failure, reported by the walker as an `invalid_value` issue instead of a throw. */
+export class KConversionFailure {
+	readonly message: string
+
+	constructor(message: string) {
+		this.message = message
+	}
+}
+
+const outOfRange = new KConversionFailure(
+	'Out of range: a timestamp must be from 1970-01-01T00:00:00.000Z to 9999-12-31T23:59:59.999Z',
+)
+
+/** Integer milliseconds within the supported range. */
 export function isTimestamp(value: number): boolean {
-	return Number.isSafeInteger(value) && value >= 0
+	return Number.isInteger(value) && value >= 0 && value <= maxTimestamp
 }
 
-/** UTC midnight of an already validated `YYYY-MM-DD`. */
-export function isoDateToTimestamp(value: string): number {
-	return Date.parse(`${value}T00:00:00Z`)
+/** UTC midnight of an already validated `YYYY-MM-DD`, or a failure before 1970. */
+export function isoDateToTimestamp(value: string): number | KConversionFailure {
+	return inRange(Date.parse(`${value}T00:00:00Z`))
 }
 
-/** Milliseconds of an already validated ISO date-time. */
-export function isoDateTimeToTimestamp(value: string): number {
-	return Date.parse(value)
+/** Milliseconds of an already validated ISO date-time, or a failure outside the supported range. */
+export function isoDateTimeToTimestamp(value: string): number | KConversionFailure {
+	return inRange(Date.parse(value))
 }
 
-export function timestampToIsoDateTime(value: number): string {
-	return new Date(value).toISOString()
+export function timestampToIsoDateTime(value: number): string | KConversionFailure {
+	return isTimestamp(value) ? new Date(value).toISOString() : outOfRange
 }
 
-export function timestampToIsoDate(value: number): string {
-	return new Date(value).toISOString().slice(0, 10)
+export function timestampToIsoDate(value: number): string | KConversionFailure {
+	return isTimestamp(value) ? new Date(value).toISOString().slice(0, 10) : outOfRange
+}
+
+function inRange(time: number): number | KConversionFailure {
+	return isTimestamp(time) ? time : outOfRange
 }
 
 function isCalendarDay(year: string, month: string, day: string): boolean {

@@ -215,6 +215,10 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 			case 'loose':
 				out = { ...out, additionalProperties: true }
 				break
+			case 'strip':
+				// A stripping object accepts unknown keys, so its input side does not forbid them; its output has none.
+				if (!output) out = withoutAdditional(out)
+				break
 			case 'nullable':
 				nullable = true
 				break
@@ -296,6 +300,12 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 		default:
 			throw new Error(`toJsonSchema: '${root.op}' is not a root operation`)
 	}
+}
+
+function withoutAdditional(schema: JsonSchema): JsonSchema {
+	const { additionalProperties, ...rest } = schema
+	void additionalProperties
+	return rest
 }
 
 function objectSchema(fields: KFields, output: boolean): JsonSchema {

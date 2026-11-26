@@ -18,7 +18,7 @@
 // as `k`, imports and parses; the second rewrites with that knowledge, so a
 // type helper on an imported schema and a schema parsed in another file are
 // judged by the whole run, not one file.
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, matchesGlob, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildReport, formatSummary } from './report.mjs'
@@ -203,7 +203,8 @@ function runKnowledge(files, outcomes, cwd) {
 	}
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+// A package bin is a symlink: compare against the resolved script path, or the CLI silently does nothing.
+if (isMain()) {
 	try {
 		const argv = process.argv.slice(2)
 		if (argv.includes('--help') || argv.includes('-h')) console.log(HELP)
@@ -211,5 +212,15 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
 	} catch (error) {
 		console.error(error.message)
 		process.exit(1)
+	}
+}
+
+function isMain() {
+	const script = process.argv[1]
+	if (!script) return false
+	try {
+		return import.meta.url === pathToFileURL(realpathSync(script)).href
+	} catch {
+		return false
 	}
 }

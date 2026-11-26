@@ -99,6 +99,11 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `bun run bench:per-call` (added in 0.2.0, written against the Zod surface). `node scripts/bench-request.mjs` covers first and warm calls.
 - The 0.2.0 lazy pagination helpers built on Zod (`lazyOptional`, recipe capture). `k` pagination boundaries allocate records only and build validators on first use.
 
+### Fixed
+
+- The `cvx-kit-codemod-v2` bin did nothing and exited 0 when run through its package symlink; it now resolves the script path.
+- `toJsonSchema` of a `.strip()` object no longer emits `additionalProperties: false` on the input side, since such an object accepts unknown keys. The output side still does.
+
 ### Performance
 
 - Argument-less `k` scalars carry a prebuilt native validator, and `paginationOpts` builds each selected field's operator schema on first use; selection errors are still raised at the call.

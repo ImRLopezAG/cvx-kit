@@ -135,7 +135,9 @@ describe('toJsonSchema', () => {
 
 	it('keeps strip objects closed and omits partial fields from required', () => {
 		const schema = k.object({ a: k.string(), b: k.number().default(1) })
-		expect(toJsonSchema(schema.strip()).additionalProperties).toBe(false)
+		// A stripping object accepts unknown keys on input and emits none on output.
+		expect('additionalProperties' in toJsonSchema(schema.strip())).toBe(false)
+		expect(toJsonSchema(schema.strip(), { io: 'output' }).additionalProperties).toBe(false)
 		expect(toJsonSchema(schema.partial()).required).toBeUndefined()
 		expect(toJsonSchema(schema).required).toEqual(['a'])
 	})

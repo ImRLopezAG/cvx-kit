@@ -31,12 +31,16 @@ import {
 	type ScalarPredicate,
 } from './querying/filters'
 import { lazyRelationFilterSchema } from './querying/shared/filters'
+import { memoize } from './modules/contracts/lazy'
+import { canonicalNative, sameNative } from './querying/shared/native-json'
+import { lazyOptional } from './querying/shared/lazy'
 
 export type PaginationFiltersInput<Schema extends z.ZodType> =
 	z.input<Schema> extends { filters?: infer Filters } ? Exclude<Filters, undefined> : never
 import type { PaginationValidatorOptions } from './querying/shared/filters'
 
-const paginationRecipe = captureDto(nativePagination)
+// Captured on first use, so a module that never paginates does not pay for it.
+let paginationRecipe: DtoRecipe<typeof nativePagination> | undefined
 
 /** Generated object or discriminated-union boundaries. */
 export interface RelationTable {
@@ -788,15 +792,18 @@ const memberRefs = new WeakMap<AnyField, RelationMember>()
 const throughRefs = new WeakSet<AnyThrough>()
 const throughChecks = new WeakMap<AnyThrough, () => void>()
 const edgeRefs = new WeakSet<AnyEdge>()
-const searchIndexExport = z.object({
-	indexDescriptor: z.string(),
-	searchField: z.string(),
-	filterFields: z.array(z.string()),
-})
-const indexExport = z.object({
-	searchIndexes: z.array(searchIndexExport),
-	stagedSearchIndexes: z.array(searchIndexExport),
-	indexes: z.array(z.object({ indexDescriptor: z.string(), fields: z.array(z.string()) })),
+// Built on the first table materialization, not at import.
+const indexExport = once(() => {
+	const searchIndexExport = z.object({
+		indexDescriptor: z.string(),
+		searchField: z.string(),
+		filterFields: z.array(z.string()),
+	})
+	return z.object({
+		searchIndexes: z.array(searchIndexExport),
+		stagedSearchIndexes: z.array(searchIndexExport),
+		indexes: z.array(z.object({ indexDescriptor: z.string(), fields: z.array(z.string()) })),
+	})
 })
 const reservedEdgeNames = [
 	'and',
@@ -1106,7 +1113,7 @@ export function defineRelations<
 					)
 						throw new Error(`Shared filter field mismatch "${field}"`)
 				}
-				return materializeDto(paginationRecipe).extend({
+				return nativePaginationArgs().extend({
 					filters: contract.schema.optional(),
 					order: z.enum(['asc', 'desc']).optional(),
 				})
@@ -1114,53 +1121,65 @@ export function defineRelations<
 			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): z.ZodType {
 				use(table)
 				assertSelection(selection)
+				// Selection errors keep their call-time timing; the filter validators
+				// build on first use of `filters` (parse, Convex export, `unwrap()`).
+				filterGrammar(internal, table, selection, 0, undefined, true)
+				// Snapshot the caller's selection and options now, as the eager build did.
 				const key = JSON.stringify(selection)
-				let grammar = paginationGrammars.get(key)
-				let fresh: FilterGrammar
-				if (grammar) fresh = restoreFilterGrammar(grammar)
-				else if (!builtGrammars.has(key)) {
-					// A module usually asks for each selection once per request, so the
-					// first build is used directly; capture only pays off on repeats.
-					builtGrammars.add(key)
-					fresh = filterGrammar(internal, table, selection)
-				} else {
-					grammar = captureFilterGrammar(filterGrammar(internal, table, selection))
-					paginationGrammars.set(key, grammar)
-					fresh = restoreFilterGrammar(grammar)
-				}
-				return materializeDto(paginationRecipe).extend({
-					filters: relationFilterSchema(fresh, undefined, options).optional(),
-					order: z.enum(['asc', 'desc']).optional(),
+				const compact: PaginationValidatorOptions | undefined =
+					options?.validator === 'compact' ? { validator: 'compact' } : undefined
+				return lazyPagination(() => {
+					let grammar = paginationGrammars.get(key)
+					let fresh: FilterGrammar
+					if (grammar) fresh = restoreFilterGrammar(grammar)
+					else if (!builtGrammars.has(key)) {
+						// A module usually builds each selection once per request, so the
+						// first build is used directly; capture only pays off on repeats.
+						builtGrammars.add(key)
+						fresh = filterGrammar(internal, table, JSON.parse(key))
+					} else {
+						grammar = captureFilterGrammar(filterGrammar(internal, table, JSON.parse(key)))
+						paginationGrammars.set(key, grammar)
+						fresh = restoreFilterGrammar(grammar)
+					}
+					return relationFilterSchema(fresh, undefined, compact)
 				})
 			},
 			pageDto(selection: SelectionMask, groups: GroupSelection = {}): z.ZodType {
 				use(table)
 				assertSelection(selection)
 				assertGroups(internal, table, groups)
+				assertRowSelection(internal, table, selection)
 				const key = JSON.stringify([selection, groups])
-				let recipe = pageRecipes.get(key)
-				if (!recipe) {
-					// Unselected ordinary rows contain only independently restored DTOs.
-					// Composed relations and groups may share validators across variant
-					// branches, so retain reconstruction to isolate every occurrence.
-					const plain =
-						!metadata[table].branches &&
-						Object.keys(selection).length === 0 &&
-						Object.keys(groups).length === 0
-					const ordinary = plain && ordinaryDtoConstruction()
-					const result = pageResult(rowSchema(internal, table, selection, 0, groups))
-					const reusable = ordinary && ordinaryDtoConstruction()
-					// The first plain build is returned without a recipe; a repeated
-					// request captures one so later calls can reconstruct from it.
-					if (reusable && !builtPages.has(key)) {
-						builtPages.add(key)
-						return result
-					}
-					recipe = captureDto(result)
-					pageRecipes.set(key, recipe)
-					if (reusable) return result
-				}
-				return materializeDto(recipe)
+				// The row validator builds on the first read of `page`. Each call still
+				// returns an independent graph.
+				return pageResult(
+					memoize(() => {
+						// SAFETY: the key is this call's admitted selection and groups, encoded above.
+						const [selected, grouped] = JSON.parse(key) as [SelectionMask, GroupSelection]
+						let recipe = pageRecipes.get(key)
+						if (recipe) return materializeDto(recipe)
+						// Unselected ordinary rows contain only independently restored DTOs.
+						// Composed relations and groups may share validators across variant
+						// branches, so retain reconstruction to isolate every occurrence.
+						const plain =
+							!metadata[table].branches &&
+							Object.keys(selected).length === 0 &&
+							Object.keys(grouped).length === 0
+						const ordinary = plain && ordinaryDtoConstruction()
+						const row = rowSchema(internal, table, selected, 0, grouped)
+						const reusable = ordinary && ordinaryDtoConstruction()
+						// The first plain build is returned without a recipe; a repeated
+						// build captures one so later builds can reconstruct from it.
+						if (reusable && !builtPages.has(key)) {
+							builtPages.add(key)
+							return row
+						}
+						recipe = captureDto(row)
+						pageRecipes.set(key, recipe)
+						return reusable ? row : materializeDto(recipe)
+					}),
+				)
 			},
 		}
 	}
@@ -1442,8 +1461,8 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 				}
 				return Object.freeze(relations)
 			}
-			return materializeDto(paginationRecipe).extend({
-				filters: lazyRelationFilterSchema(grammar(table, 0), filterNodes).optional(),
+			return nativePaginationArgs().extend({
+				filters: lazyRelationFilterSchema(() => grammar(table, 0), filterNodes).optional(),
 				order: z.enum(['asc', 'desc']).optional(),
 			})
 		},
@@ -1580,7 +1599,7 @@ function exportStored(nativeTable: TableDefinition): NativeTableExport {
 function captureIndexes(
 	exported: NativeTableExport,
 ): Pick<StoredTier, 'capturedIndexes' | 'searchIndexList'> {
-	const captured = indexExport.parse(exported)
+	const captured = indexExport().parse(exported)
 	return {
 		searchIndexList: [
 			...captured.searchIndexes.map((index) => ({ ...index, staged: false })),
@@ -1672,7 +1691,9 @@ function completeTable(
 	let dto = captured
 	const dtoNative = nativeJson(dto ? zodToConvex(dto) : admission!.emit())
 	assertNativeValidation(dtoNative)
-	const dtoNativeCanonical = dto ? undefined : canonicalNative(dtoNative)
+	// Only the registry identity reads the canonical encoding.
+	let dtoNativeCanonical: string | undefined
+	const boundaryNative = dto ? undefined : dtoNative
 	const fieldGroups: Record<string, readonly string[]> = Object.create(null)
 	const groupRecipes: Record<string, DtoRecipe> = Object.create(null)
 	const descriptor = Object.getOwnPropertyDescriptor(table, 'fieldGroups')
@@ -1713,7 +1734,7 @@ function completeTable(
 			if (
 				!validators.every(
 					(validator) =>
-						canonicalNative(nativeJson(validator)) === canonicalNative(nativeJson(validators[0])) &&
+						sameNative(nativeJson(validator), nativeJson(validators[0])) &&
 						validator.isOptional === validators[0].isOptional,
 				)
 			)
@@ -1764,7 +1785,9 @@ function completeTable(
 			}
 			return dto
 		},
-		dtoNativeCanonical,
+		get dtoNativeCanonical() {
+			return boundaryNative && (dtoNativeCanonical ??= canonicalNative(boundaryNative))
+		},
 		dtoRecipe,
 		fieldGroups: Object.freeze(fieldGroups),
 		groupRecipes: Object.freeze(groupRecipes),
@@ -2167,12 +2190,25 @@ function restoreFilterGrammar(recipe: FilterGrammarRecipe): FilterGrammar {
 	}
 }
 
+/** Same message and order as scalarPredicateSchema's own kind check, without building it. */
+function assertFilterScalar(validator: GenericValidator): void {
+	if (validator.kind === 'union') for (const member of validator.members) assertFilterScalar(member)
+	else if (!scalarValidator(validator))
+		throw new Error(`Unsupported scalar filter kind "${validator.kind}"`)
+}
+
+/**
+ * The selected filter grammar. With `check`, it runs every lookup and throws
+ * every error of the full build, in the same order, but builds no predicate:
+ * helpers check selections when called and build validators on first use.
+ */
 function filterGrammar(
 	registry: RegistryMetadata,
 	table: string,
 	selection: SelectionMask,
 	depth: number = 0,
 	tag?: string,
+	check = false,
 ): FilterGrammar {
 	const fields: FieldSchemas = {}
 	const relations: FilterGrammar['relations'] = {}
@@ -2187,17 +2223,26 @@ function filterGrammar(
 				const common = Object.fromEntries(
 					Object.entries(selection).filter(([key]) => key !== 'variants'),
 				)
-				variants[tag] = filterGrammar(registry, table, { ...common, ...selected }, depth + 1, tag)
+				variants[tag] = filterGrammar(
+					registry,
+					table,
+					{ ...common, ...selected },
+					depth + 1,
+					tag,
+					check,
+				)
 			}
 			continue
 		}
 		const validator = (tag === undefined ? data.fields : data.branches!.options[tag].fields)[key]
 		const edge = registry.declarations[table]?.[key]
-		if (mask === true && validator) fields[key] = scalarPredicateSchema(validator).optional()
-		else if (mask !== true && edge && depth < 4)
+		if (mask === true && validator) {
+			if (check) assertFilterScalar(validator)
+			else fields[key] = scalarPredicateSchema(validator).optional()
+		} else if (mask !== true && edge && depth < 4)
 			relations[key] = {
 				cardinality: edge.cardinality,
-				target: filterGrammar(registry, edge.target, mask, depth + 1),
+				target: filterGrammar(registry, edge.target, mask, depth + 1, undefined, check),
 			}
 		else throw new Error(`Invalid relation filter selection "${table}.${key}"`)
 	}
@@ -2209,6 +2254,22 @@ function filterGrammar(
 				? { discriminator: data.branches.discriminator, options: variants }
 				: undefined,
 	}
+}
+/** rowSchema's registration reads and selection errors, in its order, without
+ * building validators: each selected edge runs its checks and each reached
+ * table materializes (a registration failure there throws now). */
+function assertRowSelection(
+	registry: RegistryMetadata,
+	table: string,
+	selection: SelectionMask,
+	depth: number = 0,
+): void {
+	for (const [name, mask] of Object.entries(selection)) {
+		const edge = registry.declarations[table]?.[name]
+		if (!edge || depth >= 4) throw new Error(`Unknown or too deep relation "${table}.${name}"`)
+		assertRowSelection(registry, edge.target, mask === true ? {} : mask, depth + 1)
+	}
+	void registry.metadata[table]
 }
 function rowSchema(
 	registry: RegistryMetadata,
@@ -2378,7 +2439,7 @@ function normalizeStored(
 		stored.push(v.object(storage))
 		branches.options[tag] = { fields }
 	}
-	if (canonicalNative(document) !== canonicalNative(nativeJson(v.union(...stored))))
+	if (!sameNative(document, nativeJson(v.union(...stored))))
 		throw new Error(`Native stored document disagrees with boundary "${name}"`)
 	const members = Object.values(branches.options).map((branch) => branch.fields)
 	const fields: Record<string, GenericValidator> = {}
@@ -2405,7 +2466,7 @@ function commonCompatible(left: GenericValidator, right: GenericValidator): bool
 	try {
 		return compatible(left, right)
 	} catch {
-		return canonicalNative(nativeJson(left)) === canonicalNative(nativeJson(right))
+		return sameNative(nativeJson(left), nativeJson(right))
 	}
 }
 
@@ -2509,22 +2570,6 @@ function nativeJson(validator: GenericValidator): ValidatorJSON {
 	return (validator as GenericValidator & { json: ValidatorJSON }).json
 }
 
-function canonicalNative(value: JSONValue): string {
-	if (Array.isArray(value)) return `[${value.map(canonicalNative).join(',')}]`
-	if (value !== null && Object(value) === value) {
-		// SAFETY: native JSON contains only JSON objects, arrays and primitives.
-		const object = value as { [key: string]: JSONValue }
-		let encoded = '{'
-		let separator = ''
-		for (const key of Object.keys(object).sort()) {
-			encoded += `${separator}${JSON.stringify(key)}:${canonicalNative(object[key])}`
-			separator = ','
-		}
-		return `${encoded}}`
-	}
-	return JSON.stringify(value)
-}
-
 function assertNativeValidation(value: JSONValue): void {
 	if (value === null || Object(value) !== value) return
 	// SAFETY: native converter metadata contains only JSON containers and primitives.
@@ -2540,7 +2585,7 @@ function assertStoredDocument(
 ): void {
 	const { _id, _creationTime, ...stored } = fields
 	assertSystemFields(table, fields)
-	if (canonicalNative(document) !== canonicalNative(nativeJson(v.object(stored))))
+	if (!sameNative(document, nativeJson(v.object(stored))))
 		throw new Error(`Native stored document disagrees with boundary "${table}"`)
 }
 function assertSystemFields(table: string, fields: Record<string, GenericValidator>): void {
@@ -2548,8 +2593,8 @@ function assertSystemFields(table: string, fields: Record<string, GenericValidat
 	if (
 		!_id ||
 		!_creationTime ||
-		canonicalNative(nativeJson(_id)) !== canonicalNative(nativeJson(v.id(table))) ||
-		canonicalNative(nativeJson(_creationTime)) !== canonicalNative(nativeJson(v.number())) ||
+		!sameNative(nativeJson(_id), nativeJson(v.id(table))) ||
+		!sameNative(nativeJson(_creationTime), nativeJson(v.number())) ||
 		_id.isOptional !== 'required' ||
 		_creationTime.isOptional !== 'required'
 	)
@@ -2570,35 +2615,40 @@ function normalizeAccessorSource(text: string): string {
 // Compare against this peer's own built-in accessor, using the intrinsic rather
 // than a caller-provided toString. Older Zod clones retain this accessor even
 // after reading shape, because it caches on the original definition.
-const objectAccessorSample = z.object({ field: z.string() })
-const builtinObjectGetters = new Set(
-	[
-		objectAccessorSample,
-		objectAccessorSample.pick({ field: true }),
-		objectAccessorSample.omit({ field: true }),
-		objectAccessorSample.extend({ other: z.string() }),
-		objectAccessorSample.safeExtend({ other: z.string() }),
-		objectAccessorSample.merge(z.object({ other: z.string() })),
-		objectAccessorSample.partial(),
-		objectAccessorSample.required(),
-	].flatMap((schema) => {
-		const getter = Object.getOwnPropertyDescriptor(schema._zod.def, 'shape')?.get
-		return getter ? [normalizeAccessorSource(Function.prototype.toString.call(getter))] : []
-	}),
-)
+// Built on the first preflight, so importing relations constructs no schema.
+const builtinObjectGetters = once(() => {
+	const objectAccessorSample = z.object({ field: z.string() })
+	return new Set(
+		[
+			objectAccessorSample,
+			objectAccessorSample.pick({ field: true }),
+			objectAccessorSample.omit({ field: true }),
+			objectAccessorSample.extend({ other: z.string() }),
+			objectAccessorSample.safeExtend({ other: z.string() }),
+			objectAccessorSample.merge(z.object({ other: z.string() })),
+			objectAccessorSample.partial(),
+			objectAccessorSample.required(),
+		].flatMap((schema) => {
+			const getter = Object.getOwnPropertyDescriptor(schema._zod.def, 'shape')?.get
+			return getter ? [normalizeAccessorSource(Function.prototype.toString.call(getter))] : []
+		}),
+	)
+})
 
 // Stored schemas already passed the native input boundary. Track their graph
 // independently of public DTO admissibility, without running any stored parser.
-const builtinDefaultGetter = normalizeAccessorSource(
-	Function.prototype.toString.call(
-		Object.getOwnPropertyDescriptor(z.string().default('')._zod.def, 'defaultValue')!.get!,
+const builtinFallbackGetters = once(() => ({
+	default: normalizeAccessorSource(
+		Function.prototype.toString.call(
+			Object.getOwnPropertyDescriptor(z.string().default('')._zod.def, 'defaultValue')!.get!,
+		),
 	),
-)
-const builtinPrefaultGetter = normalizeAccessorSource(
-	Function.prototype.toString.call(
-		Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
+	prefault: normalizeAccessorSource(
+		Function.prototype.toString.call(
+			Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
+		),
 	),
-)
+}))
 
 /** Registration-only admissibility traversal; never runs a stored parser. */
 function preflightSchema(dto: z.ZodType, boundary: 'dto' | 'stored'): void {
@@ -2662,7 +2712,7 @@ function preflightSchema(dto: z.ZodType, boundary: 'dto' | 'stored'): void {
 						if (
 							descriptor.set ||
 							normalizeAccessorSource(Function.prototype.toString.call(descriptor.get)) !==
-								(def.type === 'default' ? builtinDefaultGetter : builtinPrefaultGetter)
+								builtinFallbackGetters()[def.type]
 						)
 							throw new Error('Unsupported stored schema accessor')
 						// Admit only the installed fallback accessor without evaluating it.
@@ -2677,7 +2727,7 @@ function preflightSchema(dto: z.ZodType, boundary: 'dto' | 'stored'): void {
 					if (descriptor?.get) {
 						if (
 							descriptor.set ||
-							!builtinObjectGetters.has(
+							!builtinObjectGetters().has(
 								normalizeAccessorSource(Function.prototype.toString.call(descriptor.get)),
 							)
 						)
@@ -2778,4 +2828,18 @@ function frozenNative(native: ValidatorJSON): Readonly<ValidatorJSON> {
 		pending.push(...Object.values(container))
 	}
 	return snapshot
+}
+
+/** A fresh copy of the native pagination fields. */
+function nativePaginationArgs(): typeof nativePagination {
+	return materializeDto((paginationRecipe ??= captureDto(nativePagination)))
+}
+
+/** Pagination args whose filter validators build on first use of `filters`
+ * (parse, Convex export, `unwrap()`); see lazyOptional. */
+function lazyPagination(filters: () => z.ZodType): z.ZodObject {
+	return nativePaginationArgs().extend({
+		filters: lazyOptional(filters),
+		order: z.enum(['asc', 'desc']).optional(),
+	})
 }

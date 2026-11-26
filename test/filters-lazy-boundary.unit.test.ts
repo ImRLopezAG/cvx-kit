@@ -99,6 +99,7 @@ describe('lazy engine filter boundary', () => {
 			const lazy = lazyRelationFilterSchema(grammars().people).optional().safeParse(input)
 			expect(lazy.success, JSON.stringify(input)).toBe(eager.success)
 			if (eager.success) expect(lazy.data, JSON.stringify(input)).toEqual(eager.data)
+			else expect(lazy.error?.issues, JSON.stringify(input)).toEqual(eager.error.issues)
 		}
 	})
 
@@ -111,6 +112,19 @@ describe('lazy engine filter boundary', () => {
 					eager.success,
 				)
 			}
+	})
+
+	test('defers building the private grammar until filters are present', () => {
+		let builds = 0
+		const schema = lazyRelationFilterSchema(() => {
+			builds++
+			return grammars().people
+		}).optional()
+		expect(schema.parse(undefined)).toBeUndefined()
+		expect(builds).toBe(0)
+		expect(schema.parse({ name: 'first' })).toEqual({ name: 'first' })
+		expect(schema.parse({ not: { name: 'second' } })).toEqual({ not: { name: 'second' } })
+		expect(builds).toBe(1)
 	})
 
 	test('reads only the relations an input names', () => {

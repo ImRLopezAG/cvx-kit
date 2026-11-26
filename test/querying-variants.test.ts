@@ -516,6 +516,26 @@ test('wrong-table ledger reference normalizes before fetching any target', async
 	})
 })
 
+test('invalid filters fail before reading a malformed child, which stops relation output at its first row', async () => {
+	const f = variantFixture()
+	const rows = await seedVariants(f)
+	await f.t.run(async ({ db }) => {
+		const raw = corruptVariantRow(db, rows.payments[0]._id, { type: 'unknown' })
+		const { ctx, counts } = f.context(raw)
+		const query = f.querying(ctx).clients.with({ payments: true })
+		// SAFETY: an unrecognized input key deliberately exercises runtime validation.
+		const filters = { unknown: true } as never
+		await expect(query.paginate({ cursor: null, numItems: 1, filters })).rejects.toMatchObject({
+			issues: [{ code: 'unrecognized_keys', keys: ['unknown'], path: ['filters'] }],
+		})
+		expect(counts).toEqual({ next: 0, returned: 0, ranges: 0, gets: 0, closes: 0 })
+		await expect(query.paginate({ cursor: null, numItems: 1 })).rejects.toThrow(
+			'Query execution failed',
+		)
+		expect(counts).toEqual({ next: 2, returned: 2, ranges: 2, gets: 0, closes: 2 })
+	})
+})
+
 test('unknown tag and invalid required branch row fail closed without private evidence', async () => {
 	const f = variantFixture(),
 		rows = await seedVariants(f)

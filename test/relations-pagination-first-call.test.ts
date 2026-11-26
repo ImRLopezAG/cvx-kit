@@ -207,47 +207,57 @@ test('compact options from every call carry compact metadata for the argument bo
 	}
 })
 
-test('first ordinary calls skip recipe capture; later calls capture', () => {
+/** Helpers build their validators on first shape read; force that build now. */
+function built(schema: z.ZodType): z.ZodType {
+	if (!(schema instanceof z.ZodObject)) throw new Error('Expected object schema')
+	void schema.shape
+	return schema
+}
+
+test('first ordinary builds skip recipe capture; later builds capture', () => {
 	const registry = fixture()
 	// Warm per-table first use so only the helper's own capture is counted.
-	registry.tables.items.paginationOpts({ count: true })
-	registry.tables.target.pageDto({})
+	built(registry.tables.items.paginationOpts({ count: true }))
+	built(registry.tables.target.pageDto({}))
 	const before = counts.captureDto
-	registry.tables.items.pageDto({})
-	registry.tables.items.paginationOpts({ title: true, target: { name: true } })
+	built(registry.tables.items.pageDto({}))
+	built(registry.tables.items.paginationOpts({ title: true, target: { name: true } }))
 	expect(counts.captureDto - before).toBe(0)
-	registry.tables.items.pageDto({})
-	registry.tables.items.paginationOpts({ title: true, target: { name: true } })
+	built(registry.tables.items.pageDto({}))
+	built(registry.tables.items.paginationOpts({ title: true, target: { name: true } }))
 	expect(counts.captureDto - before).toBeGreaterThan(0)
 	const third = counts.captureDto
-	registry.tables.items.pageDto({})
-	registry.tables.items.paginationOpts({ title: true, target: { name: true } })
+	built(registry.tables.items.pageDto({}))
+	built(registry.tables.items.paginationOpts({ title: true, target: { name: true } }))
 	expect(counts.captureDto).toBe(third)
 })
 
-test('variant and relation pages keep capturing on the first call', () => {
+test('variant and relation pages keep capturing on the first build', () => {
 	const registry = fixture()
-	registry.tables.items.pageDto({}, { fieldGroups: { private: 'required' } })
-	registry.tables.source.pageDto({})
-	registry.tables.target.pageDto({})
+	built(registry.tables.items.pageDto({}, { fieldGroups: { private: 'required' } }))
+	built(registry.tables.source.pageDto({}))
+	built(registry.tables.target.pageDto({}))
 	for (const build of [
 		() => registry.tables.items.pageDto({ target: true }),
 		() => registry.tables.source.pageDto({ target: true }),
 	]) {
 		const before = counts.captureDto
-		build()
+		const schema = build()
+		// The call itself builds nothing.
+		expect(counts.captureDto).toBe(before)
+		built(schema)
 		expect(counts.captureDto).toBeGreaterThan(before)
 	}
 })
 
 function secondCallMaterializations(trip: boolean) {
 	const registry = fixture()
-	registry.tables.items.pageDto({})
+	built(registry.tables.items.pageDto({}))
 	const previous = z.config().postProcessor
 	if (trip) z.config({ postProcessor: () => {} })
 	try {
 		const before = counts.materializeDto
-		const second = registry.tables.items.pageDto({})
+		const second = built(registry.tables.items.pageDto({}))
 		return { count: counts.materializeDto - before, second }
 	} finally {
 		z.config({ postProcessor: previous })

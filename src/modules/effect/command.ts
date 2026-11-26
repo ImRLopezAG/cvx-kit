@@ -206,7 +206,6 @@ export function createEffectCommand<
 		contract?: Pick<DomainContract, 'errors'>
 		mode?: 'action'
 	}
-	const errorContract = internal.contract?.errors
 	const kind = internal.mode ?? 'command'
 	const exec = <Key extends Extract<keyof Operations, string>>(
 		operation: Key,
@@ -351,7 +350,8 @@ export function createEffectCommand<
 										operation,
 										classification,
 										input: command,
-										contract: errorContract,
+										// Read per failure: reading it at registration forces a thunk-declared contract at import.
+										contract: internal.contract?.errors,
 										entered,
 										current,
 									}),

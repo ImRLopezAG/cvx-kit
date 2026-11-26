@@ -6,6 +6,7 @@ import { harness, managed, scope, seed } from './fixture-querying/scalar'
 import { expect, it } from 'vite-plus/test'
 import {
 	createCursorCodec,
+	prepareCursorBinding,
 	CursorError,
 	CursorConfigurationError,
 	type CursorBinding,
@@ -102,6 +103,24 @@ it('binds every query and immutable security field, excluding page size', () => 
 		),
 	).toBe('')
 })
+it('reuses prepared binding bytes across navigation slots and keeps rotated keys and scopes separate', () => {
+	const old = createCursorCodec(config())
+	const rotated = createCursorCodec({
+		...config(),
+		currentKeyId: 'next',
+		keys: { current: key(), next: new Uint8Array(64).fill(12) },
+	})
+	const operation = prepareCursorBinding(binding())
+	const oldToken = old.seal('opaque', binding())
+	expect(rotated.open(oldToken, operation)).toBe('opaque')
+	expect(rotated.seal('opaque', operation)).toBe(rotated.seal('opaque', binding()))
+	expect(rotated.open(oldToken, operation)).toBe('opaque')
+	const next = rotated.seal('boundary', operation)
+	expect(rotated.open(next, operation)).toBe('boundary')
+	expect(old.seal('opaque', operation)).toBe(oldToken)
+	invalid(() => rotated.open(next, prepareCursorBinding({ ...binding(), tenant: 'other' })))
+})
+
 it('rejects tamper, tag changes, truncation, noncanonical transport, unknown version/key and oversized input uniformly', () => {
 	const codec = createCursorCodec(config()),
 		token = codec.seal('opaque', binding()),

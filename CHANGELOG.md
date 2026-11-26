@@ -46,7 +46,8 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `cvx-kit/json-schema`: `toJsonSchema`, which renders ids as strings.
 - `cvx-kit/zod`: `toZod(schema)` and `.toZod()`, a one-way conversion to Zod 4. The result is a `zod/mini` schema, so the entry bundles Zod's core and not the classic method API: about 152 KB with `k` (73 KB of it Zod), against 815 KB when it was built on classic Zod. Extend a result with `zod/mini` functions. An id converts to `z.string()` typed as the table's `Id`, and `kZodIds.get(schema)?.tableName` names its table; convex-helpers' `zodToConvex` reads such an id as a plain string.
 - `withFieldGroups` in `cvx-kit/relations` and `AgentListArgs` in `cvx-kit/agent-tools`.
-- A codemod, `node tools/codemod-v2/index.mjs <path…> [--write] [--report out.json]`, run from a cvx-kit checkout.
+- A codemod, `npx cvx-kit-codemod-v2 <path…> [--write] [--report out.json]`, shipped in the package as the `cvx-kit-codemod-v2` bin (also `node tools/codemod-v2/index.mjs` from a checkout).
+- The package ships `CHANGELOG.md` and the skill references (`skills/cvx-kit/references/*.md`, including this migration guide), so the docs match the installed version.
 
 ### Added (since 2.0.0-beta.0)
 

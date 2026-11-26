@@ -150,7 +150,13 @@ k.object({ _tag: k.string() }).strip().parse(new NotFound()) // { _tag: 'NotFoun
 k.object({ _tag: k.string() }).parse(new NotFound()) // throws: expected a plain object
 ```
 
-`pick` and `omit` take string keys, not `{ a: true }` masks. All four build a new object over the same field schemas, so retained fields keep their behaviour. Refinements and checks declared on the object itself are not carried over, because they may read fields the new object lacks; declare them again on the derived object.
+`pick` and `omit` take string keys, not `{ a: true }` masks. All four build a new object over the same field schemas, so retained fields keep their behaviour. Refinements and checks declared on the object itself are not carried over, because they may read fields the new object lacks, and that includes `.extend({})` with no fields; declare them again on the derived object.
+
+```ts
+const range = k.object({ from: k.int(), to: k.int() }).refine((r) => r.from <= r.to)
+range.extend({}).parse({ from: 2, to: 1 }) // passes: the refinement is not on the new object
+range.extend({}).refine((r) => r.from <= r.to) // restate it
+```
 
 ```ts
 const base = k.object({ name: k.string().trim().min(1), email: k.string(), note: k.string() })
@@ -217,6 +223,16 @@ const value = documentInput.parse(input) // throws KValidationError
 - `parse` throws `KValidationError`, a `ConvexError` whose `data` is `{ code: 'VALIDATION', issues }`.
 - Each issue is `{ path: (string | number)[], code, message }`. Codes: `invalid_type`, `too_small`, `too_big`, `invalid_format`, `not_integer`, `invalid_value`, `unrecognized_key`, `invalid_union`, `custom`.
 - All issues found in one walk are reported together.
+- When nothing is normalised (no default filled, no normaliser or transform changed a value, no key stripped), `parse` returns the input object itself, not a copy: the result is `===` the input, and keys keep the input's order, not the schema's. Code that compares `JSON.stringify(schema.parse(a))` across inputs, or relies on the output's key order, must sort or rebuild explicitly; code that mutates the result mutates the input. When a value is normalised, the output is a new plain object in schema key order.
+
+```ts
+const user = k.object({ id: k.string(), name: k.string() })
+const input = { name: 'Ada', id: 'u1' }
+user.parse(input) === input // true; JSON.stringify gives {"name":"Ada","id":"u1"}
+const stable = (value: Record<string, unknown>) =>
+	JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))))
+const copy = { ...user.parse(input) } // a copy when it will be mutated
+```
 
 The same error is raised for declared checks on function args, compact filter boundaries and `toPublicDto` projections. Structural failures on function args are raised by Convex itself before the kit runs, with Convex's own error. See [client-failures](client-failures.md) for reading errors on the client.
 

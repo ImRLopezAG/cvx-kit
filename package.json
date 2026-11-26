@@ -18,11 +18,18 @@
 		"type": "git",
 		"url": "git+https://github.com/ImRLopezAG/cvx-kit.git"
 	},
+	"bin": {
+		"cvx-kit-codemod-v2": "./tools/codemod-v2/index.mjs"
+	},
 	"files": [
 		"dist",
 		"src/test.ts",
 		"README.md",
-		"LICENSE"
+		"CHANGELOG.md",
+		"LICENSE",
+		"skills/cvx-kit/references/*.md",
+		"tools/codemod-v2/*.mjs",
+		"tools/codemod-v2/transforms/*.mjs"
 	],
 	"type": "module",
 	"sideEffects": [

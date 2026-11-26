@@ -198,6 +198,22 @@ k.object({ a: k.string() }).strip().parse({ a: 'x', b: 1 }) // { a: 'x' }
 
 What to do: where code relied on stripping (parsing a superset of fields, for example a whole row against a smaller object), add `.strip()` or pick the fields first. There is no loose object at a Convex boundary; see [No v2 form](#constructs-with-no-v2-form).
 
+### Parse returns the input when nothing is normalised
+
+`z.object(...).parse` returned a new object in schema key order. A `k` parse returns the input object itself when nothing is normalised (no default filled, no normaliser or transform changed a value, no key stripped), so the result is `===` the input and keeps the input's key order. Code that compares `JSON.stringify(schema.parse(a))` with a stored string, uses the output as a cache key, or mutates the output changes behaviour. Sort keys before serialising, or copy the result (`{ ...schema.parse(a) }`) before mutating it. See [Parse and issues](k.md#parse-and-issues).
+
+### Derived objects drop object-level checks
+
+`pick`, `omit`, `extend` (also `extend({})`) and `partial` build a new object over the same field schemas. Field checks are kept; a `refine` or `check` declared on the object itself is not, because it may read fields the new object lacks. Zod kept them on `extend`. Restate the check on the derived object.
+
+### Table boundaries and object spread
+
+A table boundary's `table`, `schema`, `publicDto` and the other derived members are built on first read. An object spread copies them, so `{ ...table, table: other }` is a working boundary with one member replaced; it builds every boundary of that table at the spread. 2.0.0-beta.0 dropped them in a spread, and the copy failed at first use in relations (`Expected matching discriminated union boundaries`). See [Replacing a member](table.md#replacing-a-member).
+
+### Kit validation can report what Convex's argument check reported
+
+Where the kit parses a value in full, an illegal value that v1 left to Convex's argument check (a wrong type, an unknown key, a record key Convex rejects) is reported by the kit as a `VALIDATION` error with issues. This happens with `skipConvexValidation: true`, Effect inputs, compact filter boundaries, contracts and `parse`, and for a record key that a normaliser turns into a key Convex rejects. Clients that match Convex's `ArgumentValidationError` text should also handle `{ code: 'VALIDATION', issues }`.
+
 ### Class instances are not plain objects
 
 `z.object` parsed any object, including a class instance such as an Effect tagged error. `k.object` parses plain objects only and reports `expected a plain object, received an instance of …`. Arguments and documents are plain, so only in-memory parses change. Add `.strip()` to parse an instance: it reads only the instance's own enumerable properties into a new plain object. See [Class instances](k.md#class-instances).
@@ -307,6 +323,16 @@ const id = ctx.db.normalizeId('documents', raw) // Id<'documents'> | null
 
 What to do: normalise external strings with `ctx.db.normalizeId('table', raw)` on the server, or type client values as `Id<'table'>` from the generated data model.
 
+Across a component boundary, a host holds a component's ids as plain strings: they are not ids of any host table, so `k.id('approvals')` in a host function or table would fail Convex's check. In the host, declare them as `k.string()` and pass them to the component's functions as strings; `k.id('table')` belongs inside the component, where the table exists.
+
+```ts
+// host
+export const approvalRefs = kTable('approvalRefs', {
+	approvalId: k.string(),
+	orderId: k.id('orders'),
+})
+```
+
 ### Numbers accept NaN and Infinity
 
 A bare `k.number()` accepts `NaN` and `±Infinity`, as native `v.number()` does; `z.number()` rejected them. Any `min`, `max` or `length` bound rejects `NaN`, and `k.int()` and `.int()` reject both `NaN` and infinities. `.int()` checks `Number.isInteger` and no longer caps at the safe-integer range.
@@ -325,6 +351,8 @@ const count = k.int().refine(Number.isSafeInteger, 'Expected a safe integer')
 ### Record keys follow Convex's rule
 
 After the key schema runs (including normalisers), each `k.record` key must be non-empty, at most 1024 characters, printable ASCII, and must not start with `$` or `_`. Otherwise parse reports an `invalid_format` issue at that key. Convex already rejected such keys on write, so the error now comes from the kit before the write. A key normaliser such as `.toLowerCase()` that produces a key Convex would reject fails the same way.
+
+There is no `k` form for an object whose keys are arbitrary JSON (keys starting with `_` or `$` included). The supported form is `k.json()`, plus a check if the value must be an object: `k.json().refine((value) => value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected an object')`. Its parse checks values, not keys. Convex itself still rejects keys it does not allow when such a value is stored or sent as an argument, so rename those keys before they reach Convex.
 
 ### Shared arrays and field objects become read-only
 
@@ -383,6 +411,27 @@ returns: k.object({ ok: k.literal(true) }),
 
 The `cvx-kit/oxlint` rules recognise `k`, `kTable`, `kVariantTable`, `tenantTable`, `createModule` and the `cvx-kit/table` entry where they recognised `z` and `zodTable`. See [oxlint](oxlint.md).
 
+### TypeScript limits
+
+Two compiler limits showed up in a 500-file migration. Both compile once the code is restructured:
+
+- `TS2590` (expression produces a union type that is too complex to represent) on a large inline `.extend({...})` inside `k.discriminatedUnion([...])` or `k.array(...)`. Hoist the extended object to a constant and pass the constant:
+
+  ```ts
+  const cardPayment = basePayment.extend({ type: k.literal('card'), last4: k.string() })
+  const payment = k.discriminatedUnion('type', [cardPayment, bankPayment])
+  ```
+
+- `TS5114` (`SupportedNative` referenced circularly) when a query-engine handle (`querying(ctx).tasks`) is passed as a function argument or used after an Effect `yield*`. Build the query inside the function that runs it, from `ctx`, instead of passing the handle:
+
+  ```ts
+  async function openTasks(ctx: QueryCtx) {
+  	return querying(ctx).tasks.where({ status: 'open' }).paginate({ numItems: 20, cursor: null })
+  }
+  ```
+
+  The kit's own type tests (a handle as a parameter, a generic parameter, and after `yield*`) do not reproduce it, so the filter types are unchanged; report a reproduction if you hit it.
+
 ## Constructs with no v2 form
 
 These are not supported in 2.0. `cvx-kit/zod` does not help: it converts `k` to Zod, one way, so it cannot turn a Zod schema into a `k` schema.
@@ -406,15 +455,17 @@ App code that parses external data with Zod (JWT claims, webhook payloads, third
 
 ## The codemod
 
-The codemod rewrites the mechanical majority of call sites and reports every site it left, by file, line and reason. It lives in the cvx-kit repository at `tools/codemod-v2/` and is not part of the npm package. Run it from a checkout of the cvx-kit repository after `bun install` there (it uses `oxc-parser`, a cvx-kit dependency), passing paths in your app.
+The codemod rewrites the mechanical majority of call sites and reports every site it left, by file, line and reason. It ships in the package as the `cvx-kit-codemod-v2` bin (source in `tools/codemod-v2/`), and its only dependency, `oxc-parser`, is a cvx-kit dependency. Install the 2.0 package first, then run it from the app's root, passing paths in your app. This guide also ships in the package, at `node_modules/cvx-kit/skills/cvx-kit/references/migration-v2.md`.
 
 ```sh
 # 1. Dry run: writes nothing except the optional report
-node path/to/cvx-kit/tools/codemod-v2/index.mjs convex src --report codemod-report.json
+npx cvx-kit-codemod-v2 convex src --report codemod-report.json
 
 # 2. Review the summary and the report, then write
-node path/to/cvx-kit/tools/codemod-v2/index.mjs convex src --write --report codemod-report.json
+npx cvx-kit-codemod-v2 convex src --write --report codemod-report.json
 ```
+
+From a cvx-kit checkout, `node path/to/cvx-kit/tools/codemod-v2/index.mjs` is the same program.
 
 Options: `--write` writes the files (without it nothing is written), `--report <file>` writes the JSON report, `--ext ts,tsx,mts` sets the extensions, `--no-getters` keeps function `args` and `returns` as data properties, `--no-strip-parsed` leaves parsed objects strict (see [Strict objects](#strict-objects-in-the-codemod)), and `--ignore <glob…>` skips paths. `node_modules`, `dist`, `build`, `.next`, `_generated`, `.git` and `.d.ts` files are always skipped. Run it on a clean working tree so the diff is reviewable. Running it twice changes nothing the second time. Pass every directory of the app in one run: the codemod reads all the files twice, so a type helper on an imported schema and a schema parsed in another file are judged with the whole run in view.
 

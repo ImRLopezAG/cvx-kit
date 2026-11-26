@@ -1,6 +1,6 @@
 {
 	"name": "cvx-kit",
-	"version": "2.0.0-beta.1",
+	"version": "2.0.0-beta.2",
 	"description": "Reusable Convex application kit: foundation kernels, approvals component, table boundaries on native Convex validators, WorkOS-backed auth function constructors, and audited command protocol.",
 	"keywords": [
 		"component",

@@ -128,8 +128,8 @@ writeFileSync(
 )
 // Neither project installs zod: the v2 querying surface does not need it.
 for (const [label, convex, helpers, convexTest] of [
-	['current', '1.48.0', '0.1.129', '0.0.65'],
-	['minimum', '1.46.0', '0.1.127', '0.0.65'],
+	['current', '1.51.0', '0.1.137', '0.0.75'],
+	['minimum', '1.46.0', '0.1.130', '0.0.65'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)

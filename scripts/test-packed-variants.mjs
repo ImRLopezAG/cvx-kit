@@ -43,7 +43,7 @@ run('bun', ['pm', 'pack', '--ignore-scripts', '--destination', proof], root, 'pa
 // Neither project installs zod: the v2 core does not need it.
 for (const [label, installer, helpers] of [
 	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers']],
-	['minimum', installerOverride ?? 'npm', '0.1.127'],
+	['minimum', installerOverride ?? 'npm', '0.1.130'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)

@@ -34,6 +34,8 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - A `k.discriminatedUnion` whose options share a discriminator value throws when first used.
 - `k.input` of `k.object({})` is `{ readonly [key: string]: never }`, so an empty input rejects extra properties at the type level.
 
+- `argumentFailure` (added in 0.2.0) no longer has a `'legacy'` policy. The default is `'validation'`, which throws `KValidationError` (`ConvexError({ code: 'VALIDATION', issues })`); `'declared'` and a function hook work as in 0.2.0. `zCustomFunctions` is `kCustomFunctions` in `cvx-kit/registration`.
+
 ### Added
 
 - `cvx-kit/k`: `k` factories (including `k.isoDate()`, `k.isoDateTime()`, `k.timestamp()` and their input conversions), chain methods, `parse`/`safeParse`, `k.infer`/`k.input`/`k.output`, Standard Schema v1 on every schema, and `KValidationError`.
@@ -62,10 +64,39 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 ### Removed
 
 - `cvx-kit/zod-table`, `zodTable`, `zodVariantTable`, `zid`, `jsonSafeZid`, `zodToConvex`, `convexToZod`, `zodContract`, `effectZodApiBuilder`, `EffectZodApiBuilder`, `TableBoundary`, `VariantBoundaryOptions` and `VariantTableBoundary`.
+- `bun run bench:per-call` (added in 0.2.0, written against the Zod surface). `node scripts/bench-request.mjs` covers first and warm calls.
+- The 0.2.0 lazy pagination helpers built on Zod (`lazyOptional`, recipe capture). `k` pagination boundaries allocate records only and build validators on first use.
 
 ### Performance
 
 - Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On the representative benchmark app (about 30 tables, relations, contracts and auth), a function module's bundle fell from 815.8 KB to 220.6 KB, its load time from 28.34 ms to 7.97 ms and its retained heap from 9.37 MB to 2.03 MB. On one consumer app's schema graph, declaring the schemas on import fell from 23.44 ms to 4.78 ms. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
+## [0.2.0] - 2026-11-26
+
+### Breaking
+
+- The `zod` peer range is now `^4.6.7` (was `^4.5.4`). Upgrade zod before installing this release.
+- The `convex-helpers` peer range is now `>=0.1.130 <0.2.0` (was `>=0.1.127`). Earlier helper releases do not type-check against zod 4.6.7 without `skipLibCheck`.
+
+### Added
+
+- `argumentFailure` on `createAuthFunctions` and `createAuthReaders` chooses what is thrown when a function's zod argument schema, or the compact pagination filter guard, rejects its input. `'legacy'` (the default) keeps the `ConvexError({ ZodError: [...] })` payload unchanged. `'declared'` throws the built-in `argumentErrors` contract's `INVALID_ARGUMENTS` envelope, which `decodeFailure`, `matchFailure` and `failureOf` read after `combineErrorContracts(appErrors, argumentErrors)`. A function receives `{ source: 'arguments' | 'filter', issues }` and returns the value to throw, for example the app's own `errors.toConvexError(...)`.
+- `cvx-kit/errors` exports `argumentErrors`, `sanitizeArgumentIssues`, `ARGUMENT_ISSUE_LIMITS` and the `ArgumentIssue`, `ArgumentFailure` and `ArgumentFailurePolicy` types. Issues carry only `path`, `code` and `message`, capped at 20 issues, 32 path segments, 256-character messages and 32 KB in total. cvx-kit never adds the rejected value; messages and path segments are the schema's own, as in the legacy payload.
+- `bun run bench:per-call` (`scripts/bench-per-call.mjs`) measures the first call in a fresh process and a warm loop for argument and result parsing, filtered pagination, relation pages, cursor sealing and Effect execution, with database read and policy-call counts. `--source label=root` compares source trees.
+
+### Changed
+
+- `relations.tables.<table>.paginationOpts(...)` still validates its selection at the call, with the same errors in the same order, but builds the `filters` schema only when it is parsed, unwrapped, converted for Convex or emitted as JSON Schema. `pageDto(...)` still reads every selected edge at the call and builds its row validator on first use. Registration, `.pick` and `.extend` build nothing. Exported Convex validators are unchanged. A module that declares many paginated operations no longer pays for the ones a request does not invoke.
+- Table materialization compares native validator JSON structurally instead of building canonical strings, and module-scope helper schemas in `cvx-kit/relations` are built on first use.
+- Effect command registries no longer read `contract.errors` at registration, so a thunk-declared domain contract is not forced at import.
+- A paginated call without filters no longer builds the private filter grammar. Relation pages reuse child plans, scope digests and predicate classification across rows within one invocation; read counts, policy calls, error order and cursor bytes are unchanged. Cursor binding data is prepared once per pagination operation.
+- The native recipe fast path for pagination DTOs now recognises zod 4.6.7. It was silently disabled on that version.
+- Dependencies: convex 1.51.0, convex-helpers 0.1.137, convex-test 0.0.75, effect 4.1.6, zod 4.6.7, `@convex-dev/workflow` 0.5.0, vite-plus 1.8.0, oxlint 1.95.0, oxc-parser 0.160.0, jsdom 31.0.1, React 19.3.1. The `convex`, `effect` and `react` peer ranges are unchanged.
+
+### Notes
+
+- Measured on a frozen copy of a consumer app, importing one API module (local bundle, median of 11 fresh processes, against 0.1.35): 178 → 135 ms and 34.4 → 21.1 MB retained for a payments module, 243 → 184 ms and 39.9 → 34.8 MB for debts, 200 → 162 ms and 35.2 → 26.4 MB for enrollments, 131 → 119 ms and 24.0 → 19.7 MB for contacts. A search module that declares no relation pagination is unchanged (84 → 86 ms, 10.5 MB). First call of a 25-row relation page in the fixture: 29.2 → 25.5 ms; of a 100-row page: 44.5 → 39.6 ms. Other per-call scenarios are within noise. Building a filter schema now happens in the invoked function, so its first call does that work instead of the import.
+- With effect 4.1, a handler failure that coincides with a failing finalizer is reported in the combined cause as a defect carrying the same value, where 4.0 reported a failure. cvx-kit's error projection already treats combined causes as unknown failures, so declared failures are classified as before.
+- Effect command and query `input` decode failures are not routed through `argumentFailure`; they still reach clients as `UnknownFailure`.
 
 ## [0.1.35] - 2026-11-25
 

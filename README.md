@@ -13,9 +13,9 @@ bun add cvx-kit
 # or: npm install cvx-kit
 ```
 
-Supported versions: Convex `^1.46.0`, convex-helpers `>=0.1.127 <0.2.0`, Bun
+Supported versions: Convex `^1.46.0`, convex-helpers `>=0.1.130 <0.2.0`, Bun
 `1.3+`, and Node.js `24+` with npm `11+`. The library runtime is ESM-only.
-Zod is not required. Install `zod` (`^4.5.4`) only to use the optional
+Zod is not required. Install `zod` (`^4.6.7`) only to use the optional
 `cvx-kit/zod` interop entry; install `effect` (`>=4.0.1 <5`) for
 `cvx-kit/effect`.
 
@@ -361,6 +361,14 @@ from `cvx-kit/querying`. Effect constructors configure
 The declared contract sanitizes unknown failures; do not transport raw exceptions.
 See the [search contract](skills/cvx-kit/references/querying.md#root-full-text-search)
 and [React list protocol](skills/cvx-kit/references/client-list.md).
+
+Argument and compact-filter validation failures throw `KValidationError`
+(`ConvexError({ code: 'VALIDATION', issues })`) by default. Pass `argumentFailure: 'declared'`
+to `createAuthFunctions` / `createAuthReaders` to throw the built-in
+`argumentErrors` `INVALID_ARGUMENTS` envelope instead (bounded `{ path, code, message }`
+issues, never the input), or a function returning the value to throw. Decode it
+with `combineErrorContracts(appErrors, argumentErrors)` from `cvx-kit/errors`; see
+[client failures](skills/cvx-kit/references/client-failures.md#argument-validation-failures).
 
 For manual projection, `tasks.toPublicDto(row)` still omits IDs and unselected
 storage fields. `tasks.toPublicDto(row, true)` or `{ _id: true }` adds the branded

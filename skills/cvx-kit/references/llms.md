@@ -25,7 +25,7 @@ cvx-kit is a reusable Convex application kit: `k` validators on native Convex
 validators, table boundaries, auth-aware function constructors, a trigger
 registry, an audited command protocol (Foundation component), and a
 declarative approvals component. Peer deps: `convex ^1.46.0`,
-`convex-helpers >=0.1.127 <0.2.0`; command implementations also install
+`convex-helpers >=0.1.130 <0.2.0`; command implementations also install
 `effect >=4.0.1 <5` and import `cvx-kit/effect`. Zod is not required; the
 optional `cvx-kit/zod` entry converts `k` schemas to Zod.
 

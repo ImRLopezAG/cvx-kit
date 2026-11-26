@@ -12,7 +12,13 @@ export class KitError extends Error {
 export {
 	defineErrorContract,
 	queryErrors,
+	argumentErrors,
+	sanitizeArgumentIssues,
+	ARGUMENT_ISSUE_LIMITS,
 	combineErrorContracts,
+	type ArgumentIssue,
+	type ArgumentFailure,
+	type ArgumentFailurePolicy,
 	type ErrorContract,
 	type ErrorDefinitions,
 	type ErrorDetailParser,

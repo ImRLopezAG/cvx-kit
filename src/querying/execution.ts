@@ -20,7 +20,12 @@ import type {
 import type { Value } from 'convex/values'
 import type { createPlanner } from './planner'
 import { MAX_DOCUMENT_BYTES, ManagedReadError, type ManagedReadRequest } from './security'
-import { CursorError, type CursorBinding, type createCursorCodec } from './cursors'
+import {
+	CursorError,
+	prepareCursorBinding,
+	type CursorBinding,
+	type createCursorCodec,
+} from './cursors'
 import {
 	rangeForIndex,
 	type NativePagination,
@@ -69,13 +74,29 @@ export async function executeQuery(
 	) => Promise<Record<string, Value> | null>,
 ) {
 	// Authenticate BOTH navigation slots before constructing or consuming native queries.
+	const operationBinding =
+		plan.args.cursor !== null || plan.args.endCursor != null
+			? prepareCursorBinding(binding)
+			: binding
 	const args = {
 		...plan.args,
-		cursor: plan.args.cursor === null ? null : codec.open(plan.args.cursor, binding),
+		cursor: plan.args.cursor === null ? null : codec.open(plan.args.cursor, operationBinding),
 		endCursor:
-			plan.args.endCursor == null ? plan.args.endCursor : codec.open(plan.args.endCursor, binding),
+			plan.args.endCursor == null
+				? plan.args.endCursor
+				: codec.open(plan.args.endCursor, operationBinding),
 	}
-	return executeStream(schema, request, table, plan, planner, codec, binding, args, complete)
+	return executeStream(
+		schema,
+		request,
+		table,
+		plan,
+		planner,
+		codec,
+		operationBinding,
+		args,
+		complete,
+	)
 }
 
 export async function executeStream(
@@ -91,7 +112,7 @@ export async function executeStream(
 		document: Record<string, Value>,
 		permitted: boolean,
 	) => Promise<Record<string, Value> | null>,
-	seal: (raw: string) => string = (raw) => codec.seal(raw, binding),
+	seal?: (raw: string, binding: CursorBinding) => string,
 	transform?: (
 		source: QueryStream<Record<string, Value>>,
 		db: GenericDatabaseReader<any>,
@@ -143,12 +164,15 @@ export async function executeStream(
 					progress,
 					complete,
 				).paginate(args)
+		const sealBinding = result.splitCursor == null ? binding : prepareCursorBinding(binding)
+		const sealBoundary = (raw: string) =>
+			seal ? seal(raw, sealBinding) : codec.seal(raw, sealBinding)
 		const protectedResult = {
 			...result,
 			completeness: result.completeness ?? 'complete',
-			continueCursor: seal(result.continueCursor),
+			continueCursor: sealBoundary(result.continueCursor),
 		}
-		if (result.splitCursor != null) protectedResult.splitCursor = seal(result.splitCursor)
+		if (result.splitCursor != null) protectedResult.splitCursor = sealBoundary(result.splitCursor)
 		return protectedResult
 	} catch (error) {
 		rethrowQueryError(error)

@@ -1,10 +1,5 @@
-import {
-	kCustomAction,
-	kCustomMutation,
-	kCustomQuery,
-	rawFunctionArgs,
-	type KCustomBuilder,
-} from './registration'
+import { kCustomFunctions, rawFunctionArgs, type KCustomBuilder } from './registration'
+import type { ArgumentFailurePolicy } from './modules/contracts/errors'
 import { k } from './k/index'
 import { memoize } from './modules/contracts/lazy'
 import type { JSONValue } from 'convex/values'
@@ -175,6 +170,12 @@ export type AuthReadersConfig<DataModel extends GenericDataModel, Role extends s
 	errors?: ErrorFactory
 	/** Upper bound for include() reads. */
 	maxIncludedQueryRows?: number
+	/**
+	 * How argument validation failures are thrown by every constructor. `'validation'`
+	 * (default) throws `KValidationError` (`ConvexError({ code: 'VALIDATION', issues })`);
+	 * `'declared'` throws `argumentErrors` `INVALID_ARGUMENTS`; a function returns the value to throw.
+	 */
+	argumentFailure?: ArgumentFailurePolicy
 	/**
 	 * Row-level security: tenant isolation (from a table registry) and
 	 * role-level rules, applied structurally inside every auth*, role*,
@@ -441,6 +442,7 @@ export function createAuthFunctions<
 >(config: AuthFunctionsConfig<DataModel, Role>): AuthFunctions<DataModel, Role> {
 	const core = createAuthCore(config)
 	const inputs = createMutationInputs(config, core)
+	const { kCustomMutation } = core.builders
 
 	/** Internal mutation running as the host-derived service principal: triggers, then rules. */
 	function serviceMutation<Extra extends Record<string, unknown> = {}>(
@@ -493,6 +495,7 @@ function readers<DataModel extends GenericDataModel, Role extends string>(
 	config: AuthReadersConfig<DataModel, Role>,
 	core: AuthCore<DataModel, Role>,
 ): AuthReaders<DataModel, Role> {
+	const { kCustomQuery, kCustomAction } = core.builders
 	/** Internal query running as the host-derived service principal, rules applied. */
 	function serviceQuery<Extra extends Record<string, unknown> = {}>(
 		principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
@@ -580,6 +583,7 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 	config: AuthReadersConfig<DataModel, Role>,
 ) {
 	const errors = config.errors ?? defaultErrors
+	const builders = kCustomFunctions({ argumentFailure: config.argumentFailure })
 	const include = createInclude({
 		errors,
 		maxRows: config.maxIncludedQueryRows,
@@ -776,6 +780,7 @@ function createAuthCore<DataModel extends GenericDataModel, Role extends string>
 	}
 
 	return {
+		builders,
 		include,
 		authenticatedUser,
 		secureWriter,

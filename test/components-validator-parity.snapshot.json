@@ -2881,6 +2881,12 @@
 													},
 													"optional": false
 												},
+												"errorData": {
+													"fieldType": {
+														"type": "any"
+													},
+													"optional": true
+												},
 												"kind": {
 													"fieldType": {
 														"type": "literal",
@@ -3010,15 +3016,26 @@
 			},
 			"indexes": [
 				{
-					"fields": ["runId", "stepKey", "actor.actorRef"],
+					"fields": [
+						"runId",
+						"stepKey",
+						"actor.actorRef"
+					],
 					"indexDescriptor": "by_runId_and_stepKey_and_actor_actorRef"
 				},
 				{
-					"fields": ["runId", "stepKey", "decidedAt"],
+					"fields": [
+						"runId",
+						"stepKey",
+						"decidedAt"
+					],
 					"indexDescriptor": "by_runId_and_stepKey_and_decidedAt"
 				},
 				{
-					"fields": ["runId", "decidedAt"],
+					"fields": [
+						"runId",
+						"decidedAt"
+					],
 					"indexDescriptor": "by_runId_and_decidedAt"
 				}
 			],
@@ -3461,15 +3478,24 @@
 			},
 			"indexes": [
 				{
-					"fields": ["resourceType", "resourceRef"],
+					"fields": [
+						"resourceType",
+						"resourceRef"
+					],
 					"indexDescriptor": "by_resourceType_and_resourceRef"
 				},
 				{
-					"fields": ["scopeRef", "state"],
+					"fields": [
+						"scopeRef",
+						"state"
+					],
 					"indexDescriptor": "by_scopeRef_and_state"
 				},
 				{
-					"fields": ["state", "expiresAt"],
+					"fields": [
+						"state",
+						"expiresAt"
+					],
 					"indexDescriptor": "by_state_and_expiresAt"
 				}
 			],

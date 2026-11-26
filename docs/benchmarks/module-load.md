@@ -122,6 +122,20 @@ Unchanged Accord source barely moves, because every function reads its contract 
 
 Tried and reverted: deferring each table boundary's native `defineTable` conversion to first `.table` read. Relation declarations reference nearly every table by field, which forces the conversion while relations evaluate. The deferred path also needs an extra storage preflight so `defineRelations` never evaluates unknown accessors. Accord's payments, search and clients entries measured 137.6/82.5/110.6 ms without it and 139.2/82.4/112.0 ms with it.
 
+### Lazy relation pagination helpers (2026-11-26)
+
+A payments profile (Accord snapshot `a503982bd`, 0.1.35) put ~87 ms under cvx-kit frames. Most of it was `paginationOpts`/`pageDto` building filter grammars, filter boundaries, row DTO capture/restore and Convex conversion at import, for every operation of every contract the module forces.
+
+The relation helpers now check at the call and build on first use:
+
+- `paginationOpts` still runs `use(table)`, `assertSelection` and a no-build pass of the filter grammar at the call. That pass makes the same lookups and throws the same errors in the same order, including `Unsupported scalar filter kind`. `filters` is a real `ZodOptional` whose `def.innerType` is a memoized getter (`src/querying/shared/lazy.ts`). Nothing builds on construction, on `.pick`/`.extend`, on copying `.shape`, or on registration's top-level field capture. The validators build when something parses, unwraps, converts for Convex or emits JSON Schema. Clones share that one build, as the eager `filters` instance was shared before. The selection and the compact option are snapshotted at the call.
+- `pageDto` still runs `use`, `assertSelection` and `assertGroups` at the call. It also walks the selection over declarations: each selected edge runs its checks, and each reached table materializes, so the "selecting it materializes the invalid target" timing holds. `page` is a memoized shape getter, and the row graph is built (and captured or restored) on the first `page` read. Every call still returns an independent graph.
+- Native stored-document and system-field comparisons use a structural comparison (`sameNative`). It is exactly equivalent to comparing the canonical strings, without building them. The canonical DTO encoding is built only for the registry identity. The accessor samples and index-export schema in `relations` build on first use, not at import.
+
+Errors that remain build-time-only are internal invariants checked after a table has already materialized (`Invalid target scope`, `Invalid variant DTO`). They now surface on first parse or export, not at the call.
+
+Pushed `exportArgs`/`exportReturns` are identical: the app-load bench asserts this across sources, and the first-call digests in `test/relations-pagination-first-call.test.ts` are unchanged. `test/relations-lazy-pagination.test.ts` pins what must not build.
+
 ### Dependencies reachable from consumer bundles
 
 `effect` is imported only by `cvx-kit/effect`. A module that imports only `cvx-kit/auth`, `zod-table`, `contracts`, `relations` or `errors` does not reach it. xstate, evlog and mime are not cvx-kit dependencies; they come from the consumer's own imports. `cvx-kit` (root) and `cvx-kit/querying` reach `@noble/ciphers` through cursor sealing. The package is `sideEffects: false`, so unused modules drop out, but modules that are reached keep their top-level code.

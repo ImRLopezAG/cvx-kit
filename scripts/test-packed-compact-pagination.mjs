@@ -66,7 +66,7 @@ const env = {
 // [convex, convex-helpers]: current and peer floors. The Zod version axis is gone: v1 gated a
 // compact-pagination fast path on audited Zod versions, and v2 has no Zod in the core, so the
 // consumer installs none.
-const versions = tuple === 'current' ? ['1.48.0', '0.1.129'] : ['1.46.0', '0.1.127']
+const versions = tuple === 'current' ? ['1.51.0', '0.1.137'] : ['1.46.0', '0.1.130']
 const hash = (b) => createHash('sha256').update(b).digest('hex')
 const json = (name, value) => writeFileSync(join(evidence, name), JSON.stringify(value, null, 2))
 const measurements = {},

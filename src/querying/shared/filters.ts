@@ -95,11 +95,13 @@ export function lazyRelationFilterSchema(
 	// A restriction is a function of the root grammar and the relation names used per grammar, so
 	// that flat set is its key: no larger than the input.
 	function restrict(used: Map<FilterGrammar, Set<string>>): FilterGrammar {
-		const key = JSON.stringify(
-			[...used]
-				.map(([source, names]) => [idOf(source), [...names].sort()] as const)
-				.sort(([a], [b]) => a - b),
-		)
+		const key = used.size
+			? JSON.stringify(
+					[...used]
+						.map(([source, names]) => [idOf(source), [...names].sort()] as const)
+						.sort(([a], [b]) => a - b),
+				)
+			: ''
 		let result = restricted.get(key)
 		if (!result) {
 			result = build(used, grammar, 0, new Map())

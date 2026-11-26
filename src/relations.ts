@@ -26,6 +26,7 @@ import {
 	unionOf,
 	type PaginationValidatorOptions,
 } from './querying/shared/filters'
+import { canonicalNative, sameNative } from './querying/shared/native-json'
 import { pageResult } from './querying/shared/page'
 import type { EnginePaginationResult } from './table'
 
@@ -1678,7 +1679,7 @@ function completeTable(
 			if (
 				!validators.every(
 					(validator) =>
-						canonicalNative(nativeJson(validator)) === canonicalNative(nativeJson(validators[0])) &&
+						sameNative(nativeJson(validator), nativeJson(validators[0])) &&
 						validator.isOptional === validators[0].isOptional,
 				)
 			)
@@ -2231,7 +2232,7 @@ function normalizeStored(
 		stored.push(v.object(storage))
 		branches.options[tag] = { fields }
 	}
-	if (canonicalNative(document) !== canonicalNative(nativeJson(v.union(...stored))))
+	if (!sameNative(document, nativeJson(v.union(...stored))))
 		throw new Error(`Native stored document disagrees with boundary "${name}"`)
 	const members = Object.values(branches.options).map((branch) => branch.fields)
 	const fields: Record<string, GenericValidator> = {}
@@ -2258,7 +2259,7 @@ function commonCompatible(left: GenericValidator, right: GenericValidator): bool
 	try {
 		return compatible(left, right)
 	} catch {
-		return canonicalNative(nativeJson(left)) === canonicalNative(nativeJson(right))
+		return sameNative(nativeJson(left), nativeJson(right))
 	}
 }
 
@@ -2362,22 +2363,6 @@ function nativeJson(validator: GenericValidator): ValidatorJSON {
 	return (validator as GenericValidator & { json: ValidatorJSON }).json
 }
 
-function canonicalNative(value: JSONValue): string {
-	if (Array.isArray(value)) return `[${value.map(canonicalNative).join(',')}]`
-	if (value !== null && Object(value) === value) {
-		// SAFETY: native JSON contains only JSON objects, arrays and primitives.
-		const object = value as { [key: string]: JSONValue }
-		let encoded = '{'
-		let separator = ''
-		for (const key of Object.keys(object).sort()) {
-			encoded += `${separator}${JSON.stringify(key)}:${canonicalNative(object[key])}`
-			separator = ','
-		}
-		return `${encoded}}`
-	}
-	return JSON.stringify(value)
-}
-
 function assertNativeValidation(value: JSONValue): void {
 	if (value === null || Object(value) !== value) return
 	// SAFETY: native converter metadata contains only JSON containers and primitives.
@@ -2393,7 +2378,7 @@ function assertStoredDocument(
 ): void {
 	const { _id, _creationTime, ...stored } = fields
 	assertSystemFields(table, fields)
-	if (canonicalNative(document) !== canonicalNative(nativeJson(v.object(stored))))
+	if (!sameNative(document, nativeJson(v.object(stored))))
 		throw new Error(`Native stored document disagrees with boundary "${table}"`)
 }
 function assertSystemFields(table: string, fields: Record<string, GenericValidator>): void {
@@ -2401,8 +2386,8 @@ function assertSystemFields(table: string, fields: Record<string, GenericValidat
 	if (
 		!_id ||
 		!_creationTime ||
-		canonicalNative(nativeJson(_id)) !== canonicalNative(nativeJson(v.id(table))) ||
-		canonicalNative(nativeJson(_creationTime)) !== canonicalNative(nativeJson(v.number())) ||
+		!sameNative(nativeJson(_id), nativeJson(v.id(table))) ||
+		!sameNative(nativeJson(_creationTime), nativeJson(v.number())) ||
 		_id.isOptional !== 'required' ||
 		_creationTime.isOptional !== 'required'
 	)

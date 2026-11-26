@@ -340,7 +340,11 @@ export function parseFilterPlan<Schema extends KSchema<any, any, any, any, any>>
 	const compiled = planParsedFilters({
 		client: parsed.filters,
 		server: server?.filters,
-		grammar: paginationGrammar(schema),
+		// Unfiltered requests never read the grammar, so they do not build it.
+		grammar:
+			parsed.filters === undefined && server?.filters === undefined
+				? undefined
+				: paginationGrammar(schema),
 		indexes,
 		conditions,
 		ordering,
@@ -398,30 +402,33 @@ export function planParsedFilters(request: ParsedFilterRequest): CompiledFilters
 	)
 	const condition = conditions.find((entry) => entry.value !== null && entry.value !== undefined)
 	let index: QueryIndex | null = null
+	let prefix: CompiledFilters['prefix'] = []
 	if (ordering !== undefined) {
 		if (condition) throw new Error('orderBy cannot be combined with an active when selector')
 		index = sorted.find((entry) => entry.name === ordering) ?? null
 		if (!index) throw new Error(`Unknown ordering index "${ordering}"`)
+		prefix = prefixBindings(index, guaranteed.values)
 	} else if (condition) {
 		index = sorted.find((entry) => entry.name === condition.index) ?? null
-		if (!index || prefixBindings(index, guaranteed.values).length === 0)
+		if (index) prefix = prefixBindings(index, guaranteed.values)
+		if (!prefix.length)
 			throw new Error(`Explicit index "${condition.index}" is incompatible with guaranteed filters`)
 	} else {
 		let length = 0
 		let ranged = false
 		for (const candidate of sorted) {
-			const prefix = prefixBindings(candidate, guaranteed.values)
-			const expanded = sets.has(candidate.fields[prefix.length])
-			const usable = prefix.length + Number(expanded)
+			const candidatePrefix = prefixBindings(candidate, guaranteed.values)
+			const expanded = sets.has(candidate.fields[candidatePrefix.length])
+			const usable = candidatePrefix.length + Number(expanded)
 			const hasRange = ranges.has(candidate.fields[usable])
 			if (usable > length || (usable === length && hasRange && !ranged)) {
 				index = candidate
+				prefix = candidatePrefix
 				length = usable
 				ranged = hasRange
 			}
 		}
 	}
-	const prefix = index ? prefixBindings(index, guaranteed.values) : []
 	const expansion =
 		index && !guaranteed.impossible
 			? expansionForIndex(index, prefix, sets, ordering !== undefined || !!condition)
@@ -432,10 +439,10 @@ export function planParsedFilters(request: ParsedFilterRequest): CompiledFilters
 		residual,
 		bindings: guaranteed.values,
 		ranges,
-		range: index ? rangeForIndex(index, prefixBindings(index, guaranteed.values), ranges) : null,
+		range: index ? rangeForIndex(index, prefix, ranges) : null,
 		unsatisfiable: guaranteed.impossible,
 		index,
-		prefix: index ? prefixBindings(index, guaranteed.values) : [],
+		prefix,
 	}
 }
 export function withinRange(value: FilterScalar, range: FieldRange): boolean {

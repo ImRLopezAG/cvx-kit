@@ -78,7 +78,7 @@ describe('bundle attribution', () => {
 			const { bundle } = built[name]
 			expect(bundle.packages.zod ?? 0, name).toBe(0)
 			for (const file of Object.keys(bundle.files))
-				expect(file).not.toMatch(/src\/zod|convex-helpers\/server\/zod/)
+				expect(file).not.toMatch(/src\/zod|convex-helpers\/(?:dist\/)?server\/zod/)
 		}
 	})
 
@@ -122,7 +122,7 @@ export const native = [t.table, t.dto(true).validator, t.commandInput.validator]
 		})
 		const output = Object.values(result.metafile.outputs).find((item) => item.entryPoint)
 		const zodBytes = Object.entries(output.inputs)
-			.filter(([input]) => /node_modules\/zod\/|convex-helpers\/server\/zod/.test(input))
+			.filter(([input]) => /node_modules\/zod\/|convex-helpers\/(?:dist\/)?server\/zod/.test(input))
 			.reduce((sum, [, { bytesInOutput }]) => sum + bytesInOutput, 0)
 		expect(zodBytes).toBe(0)
 	})

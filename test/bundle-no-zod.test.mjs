@@ -28,7 +28,7 @@ const coreEntries = [
 ]
 /** The lint plugin runs in Node beside native oxc bindings, never in a Convex bundle. */
 const nodeOnly = new Set(['src/oxlint.ts'])
-const zodInputs = [/node_modules\/zod\//, /node_modules\/convex-helpers\/server\/zod4/]
+const zodInputs = [/node_modules\/zod\//, /node_modules\/convex-helpers\/(dist\/)?server\/zod/]
 
 /** Bundle a module that re-exports `entries` like Convex does, and return the input bytes by path. */
 async function bundleInputs(name, entries, imports = [], node = false) {

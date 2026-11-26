@@ -33,6 +33,12 @@ import {
 	type VObject,
 } from 'convex/values'
 import { KValidationError, type KIssue } from './k/issues'
+import {
+	argumentErrors,
+	sanitizeArgumentIssues,
+	type ArgumentFailure,
+	type ArgumentFailurePolicy,
+} from './modules/contracts/errors'
 import { KObject, object } from './k/object'
 import { containsTransform, hasDeclaredBehaviour, runDeclared } from './k/parse'
 import { KSchema } from './k/schema'
@@ -165,7 +171,7 @@ export function kCustomQuery<
 	>,
 ) {
 	// SAFETY: the untyped builder implements exactly the contract KCustomBuilder declares.
-	return customFnBuilder(query, customization) as KCustomBuilder<
+	return customFnBuilder(query, customization, undefined) as KCustomBuilder<
 		'query',
 		CustomArgsValidator,
 		CustomCtx,
@@ -194,7 +200,7 @@ export function kCustomMutation<
 	>,
 ) {
 	// SAFETY: the untyped builder implements exactly the contract KCustomBuilder declares.
-	return customFnBuilder(mutation, customization) as KCustomBuilder<
+	return customFnBuilder(mutation, customization, undefined) as KCustomBuilder<
 		'mutation',
 		CustomArgsValidator,
 		CustomCtx,
@@ -223,7 +229,7 @@ export function kCustomAction<
 	>,
 ) {
 	// SAFETY: the untyped builder implements exactly the contract KCustomBuilder declares.
-	return customFnBuilder(action, customization) as KCustomBuilder<
+	return customFnBuilder(action, customization, undefined) as KCustomBuilder<
 		'action',
 		CustomArgsValidator,
 		CustomCtx,
@@ -232,6 +238,37 @@ export function kCustomAction<
 		Visibility,
 		ExtraArgs
 	>
+}
+
+/** The kCustom* builders, with signatures identical to the module-level exports. */
+export type KCustomFunctionBuilders = Readonly<{
+	kCustomQuery: typeof kCustomQuery
+	kCustomMutation: typeof kCustomMutation
+	kCustomAction: typeof kCustomAction
+}>
+
+/** Registration options beyond the customization. */
+export type KCustomFunctionOptions = Readonly<{
+	/** How rejected arguments are thrown; defaults to `'validation'` (`KValidationError`). */
+	argumentFailure?: ArgumentFailurePolicy
+}>
+
+/**
+ * The kCustom* builders bound to registration options, e.g. an argument failure policy.
+ * Signatures are identical to the module-level builders.
+ */
+export function kCustomFunctions(options?: KCustomFunctionOptions): KCustomFunctionBuilders {
+	const reject = argumentRejecter(options?.argumentFailure)
+	if (reject === undefined) return { kCustomQuery, kCustomMutation, kCustomAction }
+	// SAFETY: identical boundary assertions as the module-level builders, with a bound rejecter.
+	return {
+		kCustomQuery: ((query: any, customization: any) =>
+			customFnBuilder(query, customization, reject)) as typeof kCustomQuery,
+		kCustomMutation: ((mutation: any, customization: any) =>
+			customFnBuilder(mutation, customization, reject)) as typeof kCustomMutation,
+		kCustomAction: ((action: any, customization: any) =>
+			customFnBuilder(action, customization, reject)) as typeof kCustomAction,
+	}
 }
 
 /** Raw function arguments, keyed by the native ctx of one invocation. */
@@ -507,6 +544,7 @@ function hasFields(value: DefaultFunctionArgs | undefined): boolean {
 function customFnBuilder(
 	builder: (args: any) => any,
 	customization: Customization<any, any, any, any, any>,
+	reject: ArgumentRejecter | undefined,
 ) {
 	const customInput: Customization<any, any, any, any, any>['input'] =
 		customization.input ?? NoOp.input
@@ -564,16 +602,24 @@ function customFnBuilder(
 					: undefined
 			const native = nativeDefinition(async (ctx: any, allArgs: any) => {
 				const { keys, run, boundary } = argsState()
-				boundary?.preflight(allArgs)
+				if (boundary) rejecting(reject, 'filter', () => boundary.preflight(allArgs))
 				rawArguments.set(ctx, allArgs)
 				const customArgs = inputKeys.length === 0 ? {} : pick(allArgs, inputKeys)
 				const added = await customInput(
 					ctx,
-					customRun === undefined ? customArgs : customRun()(customArgs),
+					customRun === undefined
+						? customArgs
+						: rejecting(reject, 'arguments', () => customRun()(customArgs)),
 					extra,
 				)
 				const declaredValues = inputKeys.length === 0 ? allArgs : pick(allArgs, keys)
-				return finish(ctx, run === undefined ? declaredValues : run(declaredValues), added)
+				return finish(
+					ctx,
+					run === undefined
+						? declaredValues
+						: rejecting(reject, 'arguments', () => run(declaredValues)),
+					added,
+				)
 			})
 			if (skipConvexValidation) native.args = undefined
 			else Object.defineProperty(native, 'args', { enumerable: true, get: argsValidator })
@@ -591,5 +637,36 @@ function customFnBuilder(
 				return finish(ctx, args, await customInput(ctx, args, extra))
 			}),
 		)
+	}
+}
+
+/** Maps a kit validation failure to what the app's argument failure policy throws. */
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- The app hook returns an arbitrary throwable.
+type ArgumentRejecter = (source: ArgumentFailure['source'], issues: readonly KIssue[]) => unknown
+
+/** Resolved once per builder family; undefined keeps `KValidationError` and adds nothing to a call. */
+function argumentRejecter(policy: ArgumentFailurePolicy | undefined): ArgumentRejecter | undefined {
+	if (policy === undefined || policy === 'validation') return undefined
+	// oxlint-disable-next-line anti-slop/no-unknown-returns -- The app hook returns an arbitrary throwable.
+	const toThrown: (failure: ArgumentFailure) => unknown =
+		policy === 'declared'
+			? (failure) =>
+					argumentErrors.toConvexError('INVALID_ARGUMENTS', { issues: [...failure.issues] })
+			: policy
+	return (source, issues) => toThrown(Object.freeze({ source, issues: sanitizeArgumentIssues(issues) }))
+}
+
+/** Run one validation step; with a policy, a `KValidationError` it raises is rethrown as the policy's value. */
+function rejecting<T>(
+	reject: ArgumentRejecter | undefined,
+	source: ArgumentFailure['source'],
+	step: () => T,
+): T {
+	if (reject === undefined) return step()
+	try {
+		return step()
+	} catch (error) {
+		if (error instanceof KValidationError) throw reject(source, error.data.issues)
+		throw error
 	}
 }

@@ -4,7 +4,7 @@ To move an app from cvx-kit 0.1.x to 2.0 (Zod removed, `k` validators, `kTable`)
 
 ## Current dependency requirements
 
-Install Convex 1.46 or newer and convex-helpers 0.1.127 or newer (below 0.2.0).
+Install Convex 1.46 or newer and convex-helpers 0.1.130 or newer (below 0.2.0).
 These minimums match workflow 0.4.10. Regenerate your lockfile after updating.
 Auth declarations retain native Convex context types across package versions;
 the regression fixture also checks Convex 1.45, which is below the current

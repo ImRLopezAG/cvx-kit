@@ -6,7 +6,6 @@
  * `CvxKitSchemaMethods` augmentation below, so only apps that import `cvx-kit/zod` see it. (A module
  * augmentation of `./k/schema` would not resolve from the built `.d.mts` files.)
  */
-import { zid } from 'convex-helpers/server/zod4'
 import * as z from 'zod/mini'
 import { membersOf } from './k/compile'
 import { maxTimestamp } from './k/formats'
@@ -19,6 +18,16 @@ export type KZod<S extends KType> = z.ZodMiniType<
 	S['validator']['type']
 >
 
+/** Metadata `toZod` records on every converted `k.id`: the table the id belongs to. */
+export type KZodIdMeta = { tableName: string }
+
+/**
+ * The registry holding {@link KZodIdMeta} for converted ids: `kZodIds.get(schema)?.tableName` reads
+ * which table an id schema belongs to. An id converts to a plain `z.string()` (it parses exactly as
+ * `k.id` does), so libraries that convert Zod to Convex validators see a string, not an id.
+ */
+export const kZodIds = z.registry<KZodIdMeta>()
+
 declare global {
 	interface CvxKitSchemaMethods {
 		/** Convert to Zod 4; see {@link toZod}. Installed by importing `cvx-kit/zod`. */
@@ -27,8 +36,8 @@ declare global {
 }
 
 /**
- * Convert a `k` schema to a Zod 4 (`zod/mini`) schema, node by node, with ids from convex-helpers'
- * `zid` so they keep their table typing and convert back through convex-helpers. Carried: structure, strict objects (`strip()` objects strip), `min`, `max`,
+ * Convert a `k` schema to a Zod 4 (`zod/mini`) schema, node by node. Ids keep their table typing in
+ * {@link KZod} and record their table name in {@link kZodIds}. Carried: structure, strict objects (`strip()` objects strip), `min`, `max`,
  * `length`, `regex`, `int`, `trim`, case normalisers, defaults (as `prefault`, so a default runs through the chain like in `k`; a
  * `partial()` field drops its default), ISO date and date-time formats,
  * timestamps and `describe`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a
@@ -107,7 +116,7 @@ function rootSchema(root: KNode, strip: boolean): Mini {
 			return z.iso.datetime({ offset: true })
 		case 'id':
 			// SAFETY: k.id stores its table name as the root argument.
-			return asMini(zid(root.arg as string))
+			return z.string().register(kZodIds, { tableName: root.arg as string })
 		case 'number':
 			return z.number()
 		case 'int':
@@ -160,12 +169,6 @@ function rootSchema(root: KNode, strip: boolean): Mini {
 		default:
 			throw new Error(`toZod: '${root.op}' is not a root operation`)
 	}
-}
-
-/** convex-helpers builds `zid` with classic Zod; it is the same Zod 4 core schema with the same `check` surface. */
-function asMini(schema: z.core.$ZodType): Mini {
-	// SAFETY: every Zod 4 schema carries `_zod`, `check`, `parse` and `safeParse`, which is all this module reads.
-	return schema as Mini
 }
 
 /** Apply one run of chained conveniences: normalisers first, then checks, as `k` parses them. */

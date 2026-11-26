@@ -4,7 +4,7 @@ import type { GenericValidator, JSONValue } from 'convex/values'
 import { z } from 'zod'
 import * as mini from 'zod/mini'
 import { k } from '../src/k'
-import { toZod } from '../src/zod'
+import { kZodIds, toZod } from '../src/zod'
 
 const task = k.object({
 	title: k.string().trim().min(1).max(5),
@@ -113,7 +113,7 @@ describe('toZod', () => {
 		expect(z.globalRegistry.get(toZod(schema))?.description).toBe('name')
 	})
 
-	it('produces zod/mini schemas that convex-helpers converts back to the same native validator', () => {
+	it('produces zod/mini schemas whose ids are strings tagged with their table', () => {
 		const schema = k.object({
 			owner: k.id('users'),
 			title: k.string().min(1),
@@ -124,7 +124,13 @@ describe('toZod', () => {
 		const zod = toZod(schema)
 		expect(zod).toBeInstanceOf(mini.ZodMiniType)
 		expect(zod).not.toBeInstanceOf(z.ZodType)
-		expect(json(zodToConvex(zod))).toEqual(json(schema.validator))
+		const owner = toZod(k.id('users'))
+		expect(kZodIds.get(owner)).toEqual({ tableName: 'users' })
+		expect(owner.safeParse('u1').success).toBe(true)
+		expect(owner.safeParse(1).success).toBe(false)
+		// convex-helpers sees the id as a plain string; every other field converts back unchanged.
+		const asString = k.object({ ...schema.shape, owner: k.string() })
+		expect(json(zodToConvex(zod))).toEqual(json(asString.validator))
 		// A result is extended with zod/mini functions.
 		expect(mini.optional(zod).safeParse(undefined).success).toBe(true)
 	})

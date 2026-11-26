@@ -48,7 +48,7 @@ Whole request without relations, against 0.2.0, medians of 15:
 
 Pushed `exportArgs()` and `exportReturns()` JSON is identical between 0.2.0 and v2 for every function in both fixtures.
 
-The `cvx-kit/zod` interop entry is now built on `zod/mini`. A module that imports `k` and `cvx-kit/zod` bundles to 231.8 KB (153.4 KB of it Zod); built on classic Zod it was 815.4 KB (733.7 KB of Zod). Of the 153 KB, about 85 KB is classic code that convex-helpers' `zid` imports.
+The `cvx-kit/zod` interop entry is now built on `zod/mini`. A module that imports `k` and `cvx-kit/zod` bundled to 231.8 KB (153.4 KB of it Zod); built on classic Zod it was 815.4 KB (733.7 KB of Zod). Of the 153 KB, about 85 KB was classic code that convex-helpers' `zid` imports. Ids now convert to an own `zod/mini` schema, and the same module bundles to 152.2 KB (72.7 KB of Zod, no classic Zod and no convex-helpers); measured in the same session, the `zid` build was 237.4 KB (157.1 KB of Zod).
 
 ## How it is measured
 

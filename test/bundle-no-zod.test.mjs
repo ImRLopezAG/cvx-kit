@@ -86,13 +86,16 @@ describe('v2 bundles', () => {
 			'src/zod.ts',
 		])
 		expect(bytesMatching(inputs, [zodInputs[0]])).toBeGreaterThan(0)
-		expect(bytesMatching(inputs, [zodInputs[1]])).toBeGreaterThan(0)
+		// Ids convert to an own zod/mini schema, so convex-helpers' Zod adapter stays out.
+		expect(bytesMatching(inputs, [zodInputs[1]])).toBe(0)
 	})
 
 	it('build the interop entry on zod/mini, well under the classic bundle', async () => {
 		const inputs = await bundleInputs('interop-size', ['src/k.ts'], ['src/zod.ts'])
-		// Classic Zod is over 700 KB here; zod/mini with convex-helpers' zid is about 150 KB.
-		expect(bytesMatching(inputs, [zodInputs[0]])).toBeLessThan(250_000)
+		// Classic Zod is over 700 KB here; zod/mini alone is about 73 KB.
+		expect(bytesMatching(inputs, [zodInputs[0]])).toBeLessThan(80_000)
+		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/classic\//])).toBe(0)
+		expect(bytesMatching(inputs, [/node_modules\/convex-helpers\//])).toBe(0)
 		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/mini\//])).toBeGreaterThan(0)
 		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/locales\/(?!en\.)/])).toBe(0)
 	})

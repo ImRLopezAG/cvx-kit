@@ -1,14 +1,20 @@
-// Whole-request benchmark, v1 (Zod) against v2 (`k`), restricted to what
-// exists on both sides: ~30 table boundaries, the auth builders and one
-// function module registering five operations of one domain. Relations, the
-// query engine and domain contracts are not on `k` yet and are left out.
+// Whole-request benchmark, v1 (Zod, commit 8d979a5) against v2 (`k`, this
+// checkout), restricted to the table boundaries, the auth builders and one
+// function module registering five operations of one domain (no relations or
+// contracts; scripts/bench-app-load.mjs measures the full app).
+//
+// v1 is not in this tree: its source is extracted from commit 8d979a5 with
+// `git archive` (scripts/bench/v1-source.mjs) and scripts/bench/request/ is
+// copied next to it, so v1-fixture.ts bundles against the v1 `src`. When the
+// commit is unavailable (shallow clone) the v1 rows are skipped with a note.
 //
 // Each case is bundled the way Convex does (browser, ESM, `convex,module`
 // conditions) and imported in fresh `node --expose-gc` processes. Reports
 // bundle bytes by owner, module load, retained heap, phase timings, the cost
 // of exporting every function's validators (deploy analysis) and of calling
 // `create` through Convex's `invokeMutation` hook. Pushed `exportArgs` and
-// `exportReturns` JSON must be identical across every case.
+// `exportReturns` JSON, call results and the rejection of an invalid call must
+// be identical across every case.
 //
 // Usage: node scripts/bench-request.mjs [--runs N] [--json out.json]
 import { execFileSync } from 'node:child_process'
@@ -18,28 +24,41 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { extractV1, V1_COMMIT, versionLine } from './bench/v1-source.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const checkout = path.resolve(here, '..')
 const esbuild = createRequire(path.join(checkout, 'package.json'))('esbuild')
-const fixtureDir = path.join(here, 'bench', 'request')
-const authFile = path.join(checkout, 'src', 'auth.ts')
+const fixturePath = path.join('scripts', 'bench', 'request')
+const fixtureDir = path.join(checkout, fixturePath)
 
-/** Measured cases. `projected` stubs the v1 modules `src/auth.ts` still imports. */
+/** Measured cases. */
 export const caseList = [
-	{ name: 'v1 eager', side: 'v1', variant: 'eager', projected: false },
-	{ name: 'v1 getter', side: 'v1', variant: 'getter', projected: false },
-	{ name: 'v2 eager', side: 'v2', variant: 'eager', projected: false },
-	{ name: 'v2 getter', side: 'v2', variant: 'getter', projected: false },
-	{ name: 'v2 projected eager', side: 'v2', variant: 'eager', projected: true },
-	{ name: 'v2 projected getter', side: 'v2', variant: 'getter', projected: true },
+	{ name: 'v1 eager', side: 'v1', variant: 'eager' },
+	{ name: 'v1 getter', side: 'v1', variant: 'getter' },
+	{ name: 'v2 eager', side: 'v2', variant: 'eager' },
+	{ name: 'v2 getter', side: 'v2', variant: 'getter' },
 ]
 
-/** Bundles one case to `out` like Convex does; returns its size and bytes per owner. */
-export async function buildCase(item, out) {
+/**
+ * Extracts the v1 source and copies the request fixtures beside it. Returns
+ * `{ root, cleanup }`, or `{ reason }` when commit 8d979a5 is unavailable.
+ */
+export function prepareV1() {
+	const v1 = extractV1(['src'])
+	if (v1.reason) return v1
+	fs.cpSync(fixtureDir, path.join(v1.root, fixturePath), { recursive: true })
+	return v1
+}
+
+/** Bundles one case to `out` like Convex does; v1 cases need the `prepareV1()` root. */
+export async function buildCase(item, out, v1Root) {
+	const root = item.side === 'v1' ? v1Root : checkout
+	if (!root) throw new Error(`${item.name}: no v1 source root`)
 	const result = await esbuild.build({
-		absWorkingDir: checkout,
-		entryPoints: [path.join(fixtureDir, `${item.side}-entry.ts`)],
+		absWorkingDir: root,
+		nodePaths: [path.join(checkout, 'node_modules')],
+		entryPoints: [path.join(root, fixturePath, `${item.side}-entry.ts`)],
 		bundle: true,
 		platform: 'browser',
 		format: 'esm',
@@ -57,14 +76,13 @@ export async function buildCase(item, out) {
 		logLevel: 'error',
 		external: ['node:*'],
 		metafile: true,
-		plugins: item.projected ? [withoutV1AuthImports()] : [],
 	})
 	const bytes = fs.statSync(out).size
 	const output = Object.values(result.metafile.outputs).find((entry) => entry.entryPoint)
 	const packages = {}
 	const files = {}
 	for (const [input, { bytesInOutput }] of Object.entries(output.inputs)) {
-		const owner = owns(input)
+		const owner = owns(input, root)
 		packages[owner] = (packages[owner] ?? 0) + bytesInOutput
 		files[input] = bytesInOutput
 	}
@@ -74,43 +92,16 @@ export async function buildCase(item, out) {
 	return { bytes, packages, files }
 }
 
-/** Owner of one metafile input: a package, `src/k`, the rest of `src`, or the fixture. */
-export function owns(input) {
-	if (input.startsWith('stub:')) return '(stub)'
+/** Owner of one metafile input under `root`: a package, `src/k`, the rest of `src`, or the fixture. */
+export function owns(input, root = checkout) {
 	const match = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(input)
 	if (match) return match[1]
-	const file = path.resolve(checkout, input)
-	if (file.startsWith(fixtureDir + path.sep)) return 'fixture'
-	if (file === path.join(checkout, 'src', 'k.ts')) return 'src/k'
-	if (file.startsWith(path.join(checkout, 'src', 'k') + path.sep)) return 'src/k'
-	if (file.startsWith(path.join(checkout, 'src') + path.sep)) return 'src (rest)'
+	const file = path.resolve(root, input)
+	if (file.startsWith(path.join(root, fixturePath) + path.sep)) return 'fixture'
+	if (file === path.join(root, 'src', 'k.ts')) return 'src/k'
+	if (file.startsWith(path.join(root, 'src', 'k') + path.sep)) return 'src/k'
+	if (file.startsWith(path.join(root, 'src') + path.sep)) return 'src (rest)'
 	return 'other'
-}
-
-/**
- * Replaces the v1 imports of `src/auth.ts` (`zod` and `./zod-registration`; the
- * `convex-helpers/server/zod4` import is type-only) with stubs that throw when
- * used, so any v1 code the v2 path still reaches fails loudly.
- */
-function withoutV1AuthImports() {
-	const stubs = {
-		zod: 'export const z = new Proxy({}, { get() { throw new Error("zod is stubbed out") } })',
-		'./zod-registration':
-			'const stubbed = () => { throw new Error("zod-registration is stubbed out") }\n' +
-			'export const rawFunctionArgs = stubbed, zCustomAction = stubbed, zCustomMutation = stubbed, zCustomQuery = stubbed',
-	}
-	return {
-		name: 'cvx-without-v1-auth-imports',
-		setup(build) {
-			build.onResolve({ filter: /^(zod|\.\/zod-registration)$/ }, (args) =>
-				args.importer === authFile ? { path: args.path, namespace: 'stub' } : undefined,
-			)
-			build.onLoad({ filter: /.*/, namespace: 'stub' }, (args) => ({
-				contents: stubs[args.path],
-				loader: 'js',
-			}))
-		},
-	}
 }
 
 /** Valid JSON args for each operation, as the Convex client would send them. */
@@ -236,29 +227,26 @@ async function main() {
 
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvx-request-'))
 	const notes = []
+	const v1 = prepareV1()
+	if (v1.reason) notes.push(`v1 rows skipped: ${v1.reason}.`)
 	let cases
 	try {
 		cases = []
 		for (const item of caseList) {
+			if (item.side === 'v1' && v1.reason) continue
 			const out = path.join(dir, `${item.name.replaceAll(' ', '-')}.mjs`)
-			cases.push({ ...item, out, bundle: await buildCase(item, out), samples: [] })
+			cases.push({ ...item, out, bundle: await buildCase(item, out, v1.root), samples: [] })
 		}
 		const loader = writeLoader(dir)
 
-		// Parity: every real case must match v1 eager exactly. A projected case that
-		// does not match is dropped from the report rather than failing the run.
+		// Parity: every case must match the first (v1 eager when v1 is available) exactly.
 		const reference = runChild(loader, cases[0].out, 'check')
-		const failed = new Set()
-		for (const item of cases.slice(1)) {
-			try {
-				assertParity(reference, runChild(loader, item.out, 'check'), item.name)
-			} catch (error) {
-				if (!item.projected) throw error
-				notes.push(`${item.name}: not reported (${error.message.split('\n')[0]})`)
-				failed.add(item)
-			}
-		}
-		cases = cases.filter((item) => !failed.has(item))
+		for (const item of cases.slice(1))
+			assertParity(
+				reference,
+				runChild(loader, item.out, 'check'),
+				`${item.name} against ${cases[0].name}`,
+			)
 
 		for (let round = 0; round < runs; round++) {
 			// Rotate the starting case each round to spread machine drift across cases.
@@ -272,6 +260,7 @@ async function main() {
 		}
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true })
+		v1.cleanup?.()
 	}
 
 	for (const item of cases)
@@ -308,36 +297,20 @@ async function main() {
 
 	const percent = (from, to) => `${(((to - from) / from) * 100).toFixed(1)}%`
 	const find = (name) => cases.find((item) => item.name === name)
-	for (const variant of ['eager', 'getter'])
-		for (const name of [`v2 ${variant}`, `v2 projected ${variant}`]) {
-			const v1 = find(`v1 ${variant}`)
-			const v2 = find(name)
-			if (!v2) continue
-			lines.push(
-				`${name} vs v1 ${variant}: load ms ${percent(v1.median.load, v2.median.load)}, retained MB ${percent(v1.median.retainedMB, v2.median.retainedMB)}, bundle KB ${percent(v1.bundle.bytes, v2.bundle.bytes)}`,
-			)
-		}
-
-	const real = find('v2 eager')
-	const projected = find('v2 projected eager')
-	if (projected) {
-		const carried = owners
-			.map((owner) => [
-				owner,
-				(real.bundle.packages[owner] ?? 0) - (projected.bundle.packages[owner] ?? 0),
-			])
-			.filter(([owner, bytes]) => bytes !== 0 && owner !== '(stub)')
-			.map(([owner, bytes]) => `${owner} ${kb(bytes)} KB`)
+	for (const variant of ['eager', 'getter']) {
+		const before = find(`v1 ${variant}`)
+		const after = find(`v2 ${variant}`)
+		if (!before || !after) continue
+		const change = (key) => percent(before.median[key], after.median[key])
 		lines.push(
-			'',
-			`Carried by src/auth.ts's v1 imports in the v2 bundle (v2 eager minus v2 projected eager): ${carried.join(', ')}`,
+			`v2 ${variant} vs v1 ${variant}: load ms ${change('load')}, retained MB ${change('retainedMB')}, bundle KB ${percent(before.bundle.bytes, after.bundle.bytes)}, export ms ${change('exportMs')}, first call ms ${change('firstCall')}, warm call ${change('warmCallUs')}`,
 		)
 	}
 	lines.push(
 		'',
 		`Parity: exportArgs()/exportReturns() JSON of all 5 functions, call results and the rejected invalid call match across ${cases.length} cases.`,
 		...notes,
-		`node ${process.version}, ${process.platform} ${process.arch}, ${os.cpus()[0]?.model ?? 'unknown cpu'}, runs=${runs}, warm calls=${warmCalls}`,
+		`node ${process.version}, ${process.platform} ${process.arch}, ${os.cpus()[0]?.model ?? 'unknown cpu'}, runs=${runs}, warm calls=${warmCalls}; v1 = commit ${V1_COMMIT}; ${versionLine()}`,
 	)
 	console.log(lines.join('\n'))
 
@@ -353,11 +326,10 @@ async function main() {
 					runs,
 					warmCalls,
 					notes,
-					cases: cases.map(({ name, side, variant, projected, bundle, samples, median }) => ({
+					cases: cases.map(({ name, side, variant, bundle, samples, median }) => ({
 						name,
 						side,
 						variant,
-						projected,
 						bundle: { bytes: bundle.bytes, packages: bundle.packages },
 						samples,
 						median,

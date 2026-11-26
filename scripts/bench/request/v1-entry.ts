@@ -1,6 +1,7 @@
 // One Convex function module of the v1 app: it declares the tables, builds the
 // auth builders and registers the five operations of one domain. Convex
-// evaluates this graph on every request.
+// evaluates this graph on every request. Bundles only against the v1 source
+// extracted from commit 8d979a5 (see v1-fixture.ts).
 import { defineAppAuth, defineAppTables, defineOperations } from './v1-fixture'
 import { registerOperations, type AuthBuilders } from './register'
 

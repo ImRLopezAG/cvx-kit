@@ -1,10 +1,16 @@
 // Eager consumer: module-level schemas, native table maps and API contract reads.
 // Shares the table/edge workload with the deferred module-load fixture.
-import { z } from 'zod'
+// The v1 (Zod) twin is this file at commit 8d979a5: `z.strictObject` becomes
+// `k.object`, `.refine(() => true)` becomes `.refine(() => true)` and
+// `z.toJSONSchema(s, { io: 'input' })` becomes `toJsonSchema(s)`, so the
+// snapshot is compared between cases of one kit version, not across versions.
 import { defineSchema } from 'convex/server'
-import { createModule } from '../../src/zod-table'
+import { k, type KType } from '../../src/k'
+import { KObject } from '../../src/k/object'
+import { toJsonSchema } from '../../src/json-schema'
+import { createModule } from '../../src/namespace'
 import { defineDomainContract } from '../../src/contracts'
-import { defineTables, register } from './relations-fixture'
+import { defineTables, register } from '../../test/fixture-querying/bench-relations'
 
 declare const __CVX_BENCH_LAZY_CONTRACTS__: boolean
 
@@ -12,19 +18,19 @@ const start = performance.now()
 export const tables = defineTables(true)
 const declared = performance.now()
 // Cross-domain DTOs commonly use another table's document ID at module scope.
-export const references: Record<string, z.ZodObject<{ targetId: z.ZodType }>> = {}
+export const references: Record<string, KObject<{ targetId: KType }>> = {}
 for (const [name, boundary] of Object.entries(tables.tables)) {
 	const schema = boundary.schema
-	if (schema instanceof z.ZodObject) {
-		references[name] = z.strictObject({ targetId: schema.shape._id })
+	if (schema instanceof KObject) {
+		references[name] = k.object({ targetId: schema.shape._id })
 	}
 }
 export const domains = Object.fromEntries(
 	Object.entries(tables.entities).map(([name, boundary]) => [
 		name,
 		{
-			detail: boundary.publicDto.extend({ label: z.string() }),
-			command: boundary.commandInput.superRefine(() => {}),
+			detail: boundary.publicDto.extend({ label: k.string() }),
+			command: boundary.commandInput.refine(() => true),
 			update: boundary.updateSchema,
 			tools: boundary.tools,
 		},
@@ -33,7 +39,7 @@ export const domains = Object.fromEntries(
 export const detail = tables.tables.tasks.publicDto.extend({
 	owner: tables.tables.entity0.publicDto,
 })
-export const command = tables.tables.tasks.commandInput.superRefine(() => {})
+export const command = tables.tables.tasks.commandInput.refine(() => true)
 export const update = tables.tables.tasks.updateSchema
 export const tools = tables.tables.tasks.tools
 export const native = defineSchema(
@@ -63,7 +69,7 @@ export const api = contracts.map((contract) => ({
 }))
 const contracted = performance.now()
 export const timings = {
-	zodTables: declared - start,
+	tables: declared - start,
 	composition: composed - declared,
 	defineRelations: registered - composed,
 	contracts: contracted - registered,
@@ -90,7 +96,7 @@ export function snapshot() {
 			Object.entries(domains).map(([key, domain]) => [
 				key,
 				{
-					detail: z.toJSONSchema(domain.detail, { io: 'input', unrepresentable: 'any' }),
+					detail: toJsonSchema(domain.detail),
 					parsedDetail: domain.detail.parse({ ...row, label: 'Label' }),
 					parsedCommand: domain.command.parse(commandValue),
 					parsedUpdate: domain.update.parse({ title: 'Changed' }),
@@ -99,13 +105,10 @@ export function snapshot() {
 						id: `${key}:1`,
 						data: { title: 'Changed' },
 					}),
-					command: z.toJSONSchema(domain.command, { io: 'input', unrepresentable: 'any' }),
-					update: z.toJSONSchema(domain.update, { io: 'input', unrepresentable: 'any' }),
+					command: toJsonSchema(domain.command),
+					update: toJsonSchema(domain.update),
 					tools: Object.fromEntries(
-						Object.entries(domain.tools).map(([name, schema]) => [
-							name,
-							z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }),
-						]),
+						Object.entries(domain.tools).map(([name, schema]) => [name, toJsonSchema(schema)]),
 					),
 				},
 			]),
@@ -114,26 +117,23 @@ export function snapshot() {
 			Object.entries(references).map(([key, schema]) => [
 				key,
 				{
-					json: z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }),
+					json: toJsonSchema(schema),
 					parsed: schema.parse({ targetId: `${key}:1` }),
 					invalid: schema.safeParse({ targetId: 42 }).success,
 				},
 			]),
 		),
-		detail: z.toJSONSchema(detail, { io: 'input', unrepresentable: 'any' }),
-		command: z.toJSONSchema(command, { io: 'input', unrepresentable: 'any' }),
-		update: z.toJSONSchema(update, { io: 'input', unrepresentable: 'any' }),
+		detail: toJsonSchema(detail),
+		command: toJsonSchema(command),
+		update: toJsonSchema(update),
 		tools: Object.fromEntries(
-			Object.entries(tools).map(([key, schema]) => [
-				key,
-				z.toJSONSchema(schema, { io: 'input', unrepresentable: 'any' }),
-			]),
+			Object.entries(tools).map(([key, schema]) => [key, toJsonSchema(schema)]),
 		),
 		api: api.map(({ args: input, returns: output }, index) => {
 			const page = { page: [{ ...row, _id: `entity${index}:1` }], isDone: true, continueCursor: '' }
 			return {
-				input: z.toJSONSchema(input, { io: 'input', unrepresentable: 'any' }),
-				output: z.toJSONSchema(output, { io: 'input', unrepresentable: 'any' }),
+				input: toJsonSchema(input),
+				output: toJsonSchema(output),
 				parsedInput: input.parse(args),
 				parsedOutput: output.parse(page),
 				invalidInput: input.safeParse({ ...args, filters: { internal: 'secret' } }).success,

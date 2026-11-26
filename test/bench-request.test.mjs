@@ -9,29 +9,34 @@ import {
 	buildCase,
 	caseList,
 	owns,
+	prepareV1,
 	runChild,
 	writeLoader,
 } from '../scripts/bench-request.mjs'
 
 const checkout = resolve(import.meta.dirname, '..')
 const dir = mkdtempSync(join(tmpdir(), 'cvx-bench-request-test-'))
-afterAll(() => rmSync(dir, { recursive: true, force: true }))
+// v1 is extracted from commit 8d979a5 with `git archive`; in a shallow clone it is unavailable and
+// only the v2 cases are built and checked.
+const v1 = prepareV1()
+afterAll(() => {
+	rmSync(dir, { recursive: true, force: true })
+	v1.cleanup?.()
+})
 
-// The v1 fixture imports the removed v1 modules; until the bench rebuilds its v1 side from the base
-// commit, only the v2 cases are built and checked here.
-const v2Cases = caseList.filter((item) => item.side === 'v2')
+const cases = caseList.filter((item) => item.side === 'v2' || !v1.reason)
 const built = {}
 let loader
 beforeAll(async () => {
 	loader = writeLoader(dir)
-	for (const item of v2Cases) {
+	for (const item of cases) {
 		const out = join(dir, `${item.name.replaceAll(' ', '-')}.mjs`)
-		built[item.name] = { out, bundle: await buildCase(item, out) }
+		built[item.name] = { out, bundle: await buildCase(item, out, v1.root) }
 	}
 }, 60_000)
 
 describe('request fixtures', () => {
-	it.each(v2Cases.map((item) => item.name))(
+	it.each(cases.map((item) => item.name))(
 		'%s bundles, evaluates, registers five functions and calls each one',
 		(name) => {
 			const check = runChild(loader, built[name].out, 'check')
@@ -47,9 +52,17 @@ describe('request fixtures', () => {
 
 	it('push identical exportArgs/exportReturns JSON and call results from every v2 variant', () => {
 		const reference = runChild(loader, built['v2 eager'].out, 'check')
-		for (const name of Object.keys(built).filter((key) => key !== 'v2 eager'))
-			assertParity(reference, runChild(loader, built[name].out, 'check'), name)
+		assertParity(reference, runChild(loader, built['v2 getter'].out, 'check'), 'v2 getter')
 	})
+
+	it.skipIf(Boolean(v1.reason))(
+		'v2 pushes the same exportArgs/exportReturns JSON and call results as v1 (8d979a5)',
+		() => {
+			const reference = runChild(loader, built['v1 eager'].out, 'check')
+			for (const name of ['v1 getter', 'v2 eager', 'v2 getter'])
+				assertParity(reference, runChild(loader, built[name].out, 'check'), name)
+		},
+	)
 
 	it('parity check fails on a differing export', () => {
 		const reference = runChild(loader, built['v2 eager'].out, 'check')
@@ -60,13 +73,19 @@ describe('request fixtures', () => {
 })
 
 describe('bundle attribution', () => {
-	it('v2 carries no Zod, with or without the v1-import projection', () => {
-		for (const name of ['v2 eager', 'v2 projected eager']) {
+	it('v2 carries no Zod', () => {
+		for (const name of ['v2 eager', 'v2 getter']) {
 			const { bundle } = built[name]
 			expect(bundle.packages.zod ?? 0, name).toBe(0)
 			for (const file of Object.keys(bundle.files))
 				expect(file).not.toMatch(/src\/zod|convex-helpers\/server\/zod/)
 		}
+	})
+
+	it.skipIf(Boolean(v1.reason))('v1 (8d979a5) carries Zod and the v1 table module', () => {
+		const { bundle } = built['v1 eager']
+		expect(bundle.packages.zod).toBeGreaterThan(500_000)
+		expect(Object.keys(bundle.files).some((file) => file.endsWith('src/zod-table.ts'))).toBe(true)
 	})
 
 	it('attributes inputs to their owner', () => {
@@ -75,6 +94,8 @@ describe('bundle attribution', () => {
 		expect(owns('src/k/parse.ts')).toBe('src/k')
 		expect(owns('src/table.ts')).toBe('src (rest)')
 		expect(owns('scripts/bench/request/v2-fixture.ts')).toBe('fixture')
+		expect(owns('/tmp/v1/scripts/bench/request/v1-fixture.ts', '/tmp/v1')).toBe('fixture')
+		expect(owns('/tmp/v1/src/zod-table.ts', '/tmp/v1')).toBe('src (rest)')
 	})
 
 	it('the v2 table graph alone (src/table.ts and src/k.ts) has no Zod bytes', async () => {

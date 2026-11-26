@@ -63,8 +63,10 @@ const env = {
 	TMPDIR: join(evidence, 'tmp'),
 	CI: '1',
 }
-const versions =
-	tuple === 'current' ? ['1.48.0', '0.1.129', '4.6.5'] : ['1.46.0', '0.1.127', '4.5.4']
+// [convex, convex-helpers]: current and peer floors. The Zod version axis is gone: v1 gated a
+// compact-pagination fast path on audited Zod versions, and v2 has no Zod in the core, so the
+// consumer installs none.
+const versions = tuple === 'current' ? ['1.48.0', '0.1.129'] : ['1.46.0', '0.1.127']
 const hash = (b) => createHash('sha256').update(b).digest('hex')
 const json = (name, value) => writeFileSync(join(evidence, name), JSON.stringify(value, null, 2))
 const measurements = {},
@@ -113,7 +115,6 @@ try {
 				'cvx-kit': 'file:' + artifact,
 				convex: versions[0],
 				'convex-helpers': versions[1],
-				zod: versions[2],
 				typescript: '7.0.2',
 				'@types/node': '26.6.5',
 				effect: '4.0.2',
@@ -125,13 +126,14 @@ try {
 		JSON.stringify({ functions: 'convex/', codegen: { staticApi: true, fileType: 'js/dts' } }),
 	)
 	await command('install', 'bun', ['--no-env-file', 'install', '--ignore-scripts'])
+	assert.equal(existsSync(join(app, 'node_modules/zod')), false, 'zod was installed')
 	json('identity.json', {
 		artifact,
 		artifactSha256: hash(readFileSync(artifact)),
 		backend: binary,
 		backendSha256: hash(readFileSync(binary)),
 		packages: Object.fromEntries(
-			['cvx-kit', 'convex', 'convex-helpers', 'zod', 'typescript'].map((n) => [
+			['cvx-kit', 'convex', 'convex-helpers', 'typescript'].map((n) => [
 				n,
 				JSON.parse(readFileSync(join(app, 'node_modules', n, 'package.json'))).version,
 			]),

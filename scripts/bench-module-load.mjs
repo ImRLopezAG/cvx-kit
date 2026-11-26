@@ -1,11 +1,18 @@
 // Interleave fresh-process imports of identical fixtures across source roots.
-// Usage: node scripts/bench-module-load.mjs RECEIPT_DIR RUNS label=root ...
+// Usage: node scripts/bench-module-load.mjs RECEIPT_DIR RUNS label=root ... [--jit]
+// Each root needs `src/` and its own `scripts/bench/*-entry.ts` fixtures. The
+// root `@v1` is the v1 (Zod) kit and fixtures of commit 8d979a5, extracted with
+// `git archive` (scripts/bench/v1-source.mjs), e.g. `v1=@v1 v2=.`.
+// Snapshots must agree between the cases of one source; v1 and v2 describe
+// their schemas with different JSON Schema converters, so they are not compared
+// with each other.
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
+import { extractV1, versionLine } from './bench/v1-source.mjs'
 
 const args = process.argv.slice(2)
 const jit = args.includes('--jit')
@@ -19,11 +26,21 @@ const here = path.dirname(new URL(import.meta.url).pathname)
 const esbuild = createRequire(path.join(here, '..', 'package.json'))('esbuild')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cvx-module-load-'))
 const cases = []
+const extracted = []
 try {
 	for (const source of sources) {
 		const split = source.indexOf('=')
 		const label = source.slice(0, split)
-		const root = path.resolve(source.slice(split + 1))
+		let root = path.resolve(source.slice(split + 1))
+		if (source.slice(split + 1) === '@v1') {
+			const v1 = extractV1(['src', 'scripts/bench'])
+			if (v1.reason) {
+				console.error(`${label}: skipped, ${v1.reason}`)
+				continue
+			}
+			extracted.push(v1)
+			root = v1.root
+		}
 		for (const workload of ['module-load', 'eager-module-load']) {
 			for (const lazy of [false, true]) {
 				// 0.1.25 has no thunk API; its identical object workload is the reference.
@@ -50,7 +67,7 @@ try {
 					logLevel: 'error',
 					external: ['node:*'],
 				})
-				cases.push({ name, out, samples: [] })
+				cases.push({ name, label, out, samples: [] })
 			}
 		}
 	}
@@ -63,7 +80,7 @@ const sample = { load: performance.now() - start, ...m.timings }
 console.log(JSON.stringify({ sample, snapshot: process.argv[3] === 'snapshot' ? m.snapshot?.() : undefined }))
 `,
 	)
-	let expected
+	const expected = {}
 	for (let round = 0; round < runs; round++) {
 		// Rotate the starting case each round to spread drift across all versions.
 		for (let offset = 0; offset < cases.length; offset++) {
@@ -83,8 +100,8 @@ console.log(JSON.stringify({ sample, snapshot: process.argv[3] === 'snapshot' ? 
 			)
 			item.samples.push(sample)
 			if (snapshot) {
-				expected ??= snapshot
-				assert.deepEqual(snapshot, expected, `Output differs: ${item.name}`)
+				expected[item.label] ??= snapshot
+				assert.deepEqual(snapshot, expected[item.label], `Output differs: ${item.name}`)
 			}
 		}
 	}
@@ -111,7 +128,11 @@ console.log(JSON.stringify({ sample, snapshot: process.argv[3] === 'snapshot' ? 
 	}))
 	fs.writeFileSync(
 		path.join(receipt, 'results.json'),
-		JSON.stringify({ node: process.version, jit, runs, sources, results }, null, 2),
+		JSON.stringify(
+			{ node: process.version, versions: versionLine(), jit, runs, sources, results },
+			null,
+			2,
+		),
 	)
 	fs.writeFileSync(path.join(receipt, 'output.json'), JSON.stringify(expected, null, 2))
 	console.log(
@@ -128,4 +149,5 @@ console.log(JSON.stringify({ sample, snapshot: process.argv[3] === 'snapshot' ? 
 	)
 } finally {
 	fs.rmSync(dir, { recursive: true, force: true })
+	for (const v1 of extracted) v1.cleanup()
 }

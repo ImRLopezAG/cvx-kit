@@ -1,7 +1,7 @@
 // Times each registration phase inside one cold jitless load. Phases are named
 // functions so CPU profiles can attribute them.
 import { getRelationExecutor } from '../../src/relations'
-import { defineTables, register } from './relations-fixture'
+import { defineTables, register } from '../../test/fixture-querying/bench-relations'
 
 const now = () => performance.now()
 function touchTasks(relations: ReturnType<typeof register>) {
@@ -42,7 +42,7 @@ const identity = readIdentity(relations)
 const t5 = now()
 
 export const timings = {
-	zodTables: t1 - t0,
+	tables: t1 - t0,
 	defineRelations: t2 - t1,
 	touchTasks: t3 - t2,
 	scopeTasks: t4a - t3,

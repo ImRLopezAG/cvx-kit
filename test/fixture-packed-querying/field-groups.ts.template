@@ -3,12 +3,12 @@ import { convexTest } from 'convex-test'
 import { defineSchema, queryGeneric, mutationGeneric, actionGeneric, internalQueryGeneric, internalMutationGeneric, internalActionGeneric, anyApi, type DataModelFromSchemaDefinition, type GenericQueryCtx } from 'convex/server'
 import { k } from 'cvx-kit/k'
 import { kTable } from 'cvx-kit/table'
-import { defineRelations } from 'cvx-kit/relations'
+import { defineRelations, withFieldGroups } from 'cvx-kit/relations'
 import { createQueryEngine } from 'cvx-kit/querying'
 import { createAuthFunctions } from 'cvx-kit/auth'
 
 const records = kTable('records', { title: k.string(), amount: k.int64(), transformed: k.number(), secret: k.string() }, { publicFields: ['title'] })
-const relations = defineRelations({ records: { ...records, fieldGroups: { finance: ['amount', 'transformed'] as const } } }, () => ({}))
+const relations = defineRelations({ records: withFieldGroups(records, { finance: ['amount', 'transformed'] as const }) }, () => ({}))
 const schema = defineSchema({ records: records.table })
 type DM = DataModelFromSchemaDefinition<typeof schema>
 const builders = { query: queryGeneric, mutation: mutationGeneric, action: actionGeneric, internalQuery: internalQueryGeneric, internalMutation: internalMutationGeneric, internalAction: internalActionGeneric }

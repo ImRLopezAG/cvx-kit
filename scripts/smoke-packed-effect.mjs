@@ -169,7 +169,6 @@ try {
 					'@convex-dev/workflow': manifest.dependencies['@convex-dev/workflow'],
 					convex: manifest.devDependencies.convex,
 					effect: manifest.devDependencies.effect,
-					zod: manifest.devDependencies.zod,
 					'convex-helpers': manifest.devDependencies['convex-helpers'],
 				},
 				devDependencies: {

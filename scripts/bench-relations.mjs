@@ -1,14 +1,22 @@
 // Bundles the registration benchmark like Convex 1.48 does, then reports the
 // median of cold jitless loads.
-// Usage: node scripts/bench-relations.mjs [repoRoot] [runs] [entry: relations | relations-page | module-load]
+// Usage: node scripts/bench-relations.mjs [repoRoot] [runs] [entry: relations | relations-page | module-load | eager-module-load]
 // Append lazy-contracts to measure the optional thunk form on module-load.
+// repoRoot `@v1` measures the v1 (Zod) kit and fixtures of commit 8d979a5,
+// extracted with `git archive` (scripts/bench/v1-source.mjs).
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { extractV1 } from './bench/v1-source.mjs'
 
-const root = path.resolve(process.argv[2] ?? '.')
+const v1 = process.argv[2] === '@v1' ? extractV1(['src', 'scripts/bench']) : undefined
+if (v1?.reason) {
+	console.error(`v1 skipped: ${v1.reason}`)
+	process.exit(0)
+}
+const root = v1?.root ?? path.resolve(process.argv[2] ?? '.')
 const runs = Number(process.argv[3] ?? 7)
 const entry = process.argv[4] ?? 'relations'
 const here = path.dirname(new URL(import.meta.url).pathname)
@@ -54,3 +62,4 @@ const result = Object.fromEntries(
 )
 console.log(JSON.stringify(result))
 fs.rmSync(dir, { recursive: true, force: true })
+v1?.cleanup()

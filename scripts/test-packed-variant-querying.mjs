@@ -113,12 +113,12 @@ function selfCheck() {
 	}
 	for (const path of sources) assert.doesNotMatch(readFileSync(path, 'utf8'), /from ['"]cvx-kit\/(?:src|dist|internal)/)
 	assert.match(schema, /timestamps: false/)
-	assert.match(schema, /createdAt: z\.int\(\)\.nonnegative\(\)/)
-	assert.match(schema, /recordedAt: z\.int\(\)\.nonnegative\(\)/)
+	assert.match(schema, /createdAt: k\.int\(\)\.min\(0\)/)
+	assert.match(schema, /recordedAt: k\.int\(\)\.min\(0\)/)
 	assert.equal((schema.match(/\.index\('by_rel'/g) ?? []).length, 1, 'Only tasks owns by_rel')
 	for (const table of ['tasks', 'leads', 'contacts', 'clients', 'creditors', 'deals', 'payments', 'ledger']) {
 		assert.ok(relations.split(`r.tasks.rel.forTable('${table}')`).length >= 3, `Missing forward/inverse member ${table}`)
-		assert.ok(schema.includes(`zid('${table}')`))
+		assert.ok(schema.includes(`k.id('${table}')`))
 		assert.ok(app.includes(`export const inverse${table[0].toUpperCase() + table.slice(1)}`))
 	}
 	for (const fragment of ['branch-only source narrowing', 'narrowed source junction', 'narrowed junction leg', 'native member must also be registered', 'mixed scalar-ID union', 'wrong native target table', 'explicit timestamp excluded']) assert.ok(types.includes(fragment), fragment)
@@ -136,7 +136,7 @@ function selfCheck() {
 const args = process.argv.slice(2)
 if (args.length === 1 && args[0] === '--help') {
 	console.log(
-		'Usage: node scripts/test-packed-variant-querying.mjs [--package cvx-kit@EXACT_VERSION | --self-check]\nDefault packs the existing built artifact without building. Registry mode never falls back to the checkout. Both modes run current peers and minimum helpers/Zod peers on isolated native backends.',
+		'Usage: node scripts/test-packed-variant-querying.mjs [--package cvx-kit@EXACT_VERSION | --self-check]\nDefault packs the existing built artifact without building. Registry mode never falls back to the checkout. Both modes run current peers and minimum helpers peers on isolated native backends, without zod installed.',
 	)
 	process.exit(0)
 }
@@ -224,9 +224,9 @@ async function availablePort(requested = 0) {
 	)
 	return port
 }
-for (const [label, installer, helpers, zod] of [
-	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
-	['minimum', installerOverride ?? 'npm', '0.1.127', '4.5.4'],
+for (const [label, installer, helpers] of [
+	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers']],
+	['minimum', installerOverride ?? 'npm', '0.1.127'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -246,7 +246,6 @@ for (const [label, installer, helpers, zod] of [
 					'cvx-kit': `file:${tarball}`,
 					convex: '1.46.0',
 					'convex-helpers': helpers,
-					zod,
 					typescript: manifest.devDependencies.typescript,
 					'@types/node': manifest.devDependencies['@types/node'],
 				},
@@ -276,8 +275,9 @@ for (const [label, installer, helpers, zod] of [
 		),
 	)
 	run(installer, ['install', '--ignore-scripts'], fixture, `${label}-install`)
+	assert.equal(existsSync(join(fixture, 'node_modules/zod')), false, `${label}: zod was installed`)
 	const versions = Object.fromEntries(
-		['cvx-kit', 'convex', 'convex-helpers', 'zod', 'typescript'].map((name) => [
+		['cvx-kit', 'convex', 'convex-helpers', 'typescript'].map((name) => [
 			name,
 			JSON.parse(readFileSync(join(fixture, 'node_modules', name, 'package.json'), 'utf8')).version,
 		]),

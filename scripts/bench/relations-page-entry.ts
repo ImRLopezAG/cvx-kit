@@ -4,7 +4,7 @@
 // CPU profiles can attribute them.
 import { defineSchema } from 'convex/server'
 import { createPlanner } from '../../src/querying/planner'
-import { defineTables, register } from './relations-fixture'
+import { defineTables, register } from '../../test/fixture-querying/bench-relations'
 
 const now = () => performance.now()
 const { tables, targets } = defineTables()

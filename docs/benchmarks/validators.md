@@ -1,48 +1,178 @@
-# Validator layer benchmark
+# cvx-kit 2 benchmark record
 
-Compares four ways of declaring the same schemas: classic Zod 4, `zod/mini`, plain Convex `v.*`, and `k` (`src/k`).
-Convex re-evaluates a function's import graph on every call, so the cost that matters is declaring schemas at module load.
+v1 is cvx-kit 0.1.35 (Zod, commit `8d979a5`). v2 is this tree (`k`, `kTable`, `kVariantTable`, no Zod in the core).
+
+## Summary: the full representative app
+
+The app has 30 table boundaries (28 entity tables and two variant tables), relations with 34 joins, three thunk domain contracts with compact relation pagination over the variant tables, and auth builders with triggers and tenancy; one function module registers the 14 operations of one contract.
+Figures are for the `eager` variant (`args` and `returns` declared as properties); the `getter` variant is in the full tables below.
+
+| metric | v1 | v2 | change |
+|---|---:|---:|---:|
+| bundle KB | 815.8 | 218.1 | -73.3% |
+| Zod KB in bundle | 582.1 | 0.0 | -100% |
+| module load ms | 27.42 | 7.89 | -71.2% |
+| retained heap MB | 9.36 | 2.12 | -77.3% |
+| first validator build for one function (`listPayments`) ms | 3.04 | 3.32 | +9.0% |
+| first call ms (whole request without relations, `create`) | 1.53 | 0.84 | -45.2% |
+| tsc instantiations (fixture and the kit source it imports) | 804,286 | 257,654 | -68.0% |
+
+The first-call row comes from the smaller request fixture in section (d), because the full app's harness builds validators but does not call a function.
 
 ## How it is measured
 
-`node scripts/bench-validators.mjs` emits one module per flavor from a neutral descriptor, bundles it the way Convex does (esbuild, browser, ESM, `convex,module` conditions), and imports it in fresh processes.
+- Every case is bundled the way Convex does: esbuild, browser platform, ESM, `convex,module` conditions, syntax and identifier minification, names kept, `process.env.NODE_ENV` set to `"production"`.
+- Each sample imports the bundle in a fresh `node --expose-gc` process. Load ms is the time of the dynamic `import`. Retained MB is heap after a forced GC minus heap before the import. Medians of 15 rounds; the starting case rotates each round.
+- v1 is not in this tree. The benches extract `git archive 8d979a5 src scripts/bench` into a temp directory and bundle the v1 fixture against that tree (`scripts/bench/v1-source.mjs`). Both sides resolve `zod` 4.6.5, `convex` 1.48.0 and `convex-helpers` 0.1.129 from this checkout's `node_modules`. In a shallow clone the v1 rows are skipped with a note.
+- Before measuring, each bench checks that v1 and v2 push byte-identical `exportArgs()` and `exportReturns()` JSON for every function.
+- Machine: Apple M5, darwin arm64, node v26.13.1, TypeScript 7.0.2.
+
+Commands:
+
+```text
+node scripts/bench-app-load.mjs --runs 15 --types
+node scripts/bench-request.mjs --runs 15
+node scripts/bench-validators.mjs --runs 15
+node scripts/bench-validators.mjs --runs 15 --descriptor <path outside the repo>
+```
+
+`bun run bench:app-load` measures v2 only and checks the medians against `scripts/bench/app-load-budget.json` (about 25% above the medians below for load and retained heap, about 10% for bundle size), so CI needs no git history.
+
+## Full app (`scripts/bench-app-load.mjs`)
+
+The v2 app is `scripts/bench/app-fixture.ts` with its entry `scripts/bench/app-module-load-entry.ts`; the v1 app is the same two files at `8d979a5`.
+The translation is field for field: `z.object` and `z.strictObject` become `k.object`, `zid` becomes `k.id`, `zodTable` and `zodVariantTable` become `kTable` and `kVariantTable`, and Zod's `.pick({ filters: true, order: true })` becomes `.pick('filters', 'order')`.
+
+Phases: `tables` declares the 30 boundaries, `defineRelations` registers the joins, `contractsAndAuth` declares three domain contracts and the auth builders, `registration` registers the 14 functions. `invoke` reads `exportArgs()` and `exportReturns()` of `listPayments`, which builds its validators on first read.
+
+| case | functions | bundle KB | zod KB | load ms | retained MB | tables ms | defineRelations ms | contractsAndAuth ms | registration ms | invoke ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| v1-eager | 14 | 815.8 | 582.1 | 27.42 | 9.36 | 3.68 | 1.52 | 0.25 | 9.83 | 3.04 |
+| v1-getter | 14 | 815.9 | 582.1 | 17.95 | 6.41 | 3.68 | 1.53 | 0.25 | 0.23 | 7.93 |
+| v2-eager | 14 | 218.1 | 0.0 | 7.89 | 2.12 | 0.69 | 1.78 | 0.26 | 2.30 | 3.32 |
+| v2-getter | 14 | 218.2 | 0.0 | 5.82 | 1.84 | 0.69 | 1.79 | 0.26 | 0.24 | 4.69 |
+
+Bytes in the bundle by owner:
+
+| bytes | v1-eager | v1-getter | v2-eager | v2-getter |
+|---|---:|---:|---:|---:|
+| zod | 596021 | 596021 | 0 | 0 |
+| convex | 73158 | 73158 | 72983 | 72983 |
+| convex-helpers | 16579 | 16579 | 15162 | 15162 |
+| cvx-kit | 124794 | 124794 | 125546 | 125546 |
+| fixture | 6515 | 6615 | 6565 | 6665 |
+| (glue) | 18337 | 18337 | 3037 | 3037 |
+| total | 835404 | 835504 | 223293 | 223393 |
+
+```text
+v2-eager vs v1-eager: load ms -71.2%, retained MB -77.3%, bundle KB -73.3%, invoke ms 9.0%
+v2-getter vs v1-getter: load ms -67.6%, retained MB -71.2%, bundle KB -73.3%, invoke ms -40.8%
+```
+
+Export parity: `exportArgs()`/`exportReturns()` JSON of all 14 functions is identical across v1-eager, v1-getter, v2-eager and v2-getter. No normalisation was applied; the fixture declares no `tools.*` ids and no `.optional().default()` field, the two documented v1 to v2 validator differences.
+
+### Type cost
+
+`--types` runs `tsc --extendedDiagnostics` (strict, bundler resolution, `skipLibCheck`) on each side's entry. The kit is imported as source on both sides, so the figures include checking the kit's own files.
+
+| types | files | Types | Instantiations | Check ms |
+|---|---:|---:|---:|---:|
+| v1 | 372 | 301869 | 804286 | 231 |
+| v2 | 284 | 101625 | 257654 | 81 |
+
+Both sides typecheck with zero errors. The v1 fixture at `8d979a5` was only ever bundled and has three type errors: in `appSchemaTables` a union of `.index` overloads is not callable, and the `{ ...entities, payments, ledger }` spread in `defineAppTables` drops the generated index signature, so `tables[domain]` is untyped. For `--types` only, the bench applies to the extracted v1 copy the two edits the v2 fixture carries (`v1TypePatches` in the script): `Object.assign(entities, { payments, ledger })`, and `appSchemaTables` indexing the variant tables by name. The entry never calls `appSchemaTables`, and the runtime figures use the unedited v1 fixture.
+
+## Whole request without relations (`scripts/bench-request.mjs`)
+
+The fixtures in `scripts/bench/request/` declare the 30 table boundaries and the auth builders of the app above, without relations or contracts, and register five operations of one domain through `authMutation` and `authQuery`: `create`, `update`, `get`, `list` and `archive`.
+Export ms is `exportArgs()` plus `exportReturns()` on all five functions, the deploy-analysis path.
+First-call and warm-call time is `create` invoked through Convex's `invokeMutation` hook with JSON args and a stubbed identity syscall; warm is the mean of 200 further calls.
+The bench also checks that both sides return the same results for valid calls and reject a `create` whose title fails `min(1)`.
+
+| case | bundle KB | zod KB | load ms | retained MB | tables ms | auth ms | registration ms | export ms | first-call ms | warm-call µs |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| v1 eager | 752.5 | 581.9 | 14.93 | 4.28 | 3.94 | 0.13 | 0.45 | 0.61 | 1.53 | 27.5 |
+| v1 getter | 752.5 | 581.9 | 14.71 | 4.21 | 3.96 | 0.13 | 0.16 | 0.94 | 1.65 | 28.1 |
+| v2 eager | 179.1 | 0.0 | 3.58 | 0.97 | 0.71 | 0.15 | 0.32 | 0.67 | 0.84 | 25.3 |
+| v2 getter | 179.1 | 0.0 | 3.40 | 1.51 | 0.71 | 0.15 | 0.15 | 0.85 | 0.84 | 25.2 |
+
+| bytes | v1 eager | v1 getter | v2 eager | v2 getter |
+|---|---:|---:|---:|---:|
+| (glue) | 18190 | 18190 | 2926 | 2926 |
+| convex | 73128 | 73128 | 72942 | 72942 |
+| convex-helpers | 16579 | 16579 | 15162 | 15162 |
+| fixture | 4614 | 4614 | 4609 | 4609 |
+| src (rest) | 62178 | 62178 | 58116 | 58116 |
+| src/k | 0 | 0 | 29635 | 29635 |
+| zod | 595906 | 595906 | 0 | 0 |
+| total | 770595 | 770595 | 183390 | 183390 |
+
+```text
+v2 eager vs v1 eager: load ms -76.0%, retained MB -77.3%, bundle KB -76.2%, export ms 9.8%, first call ms -45.2%, warm call -8.3%
+v2 getter vs v1 getter: load ms -76.9%, retained MB -64.2%, bundle KB -76.2%, export ms -9.6%, first call ms -49.2%, warm call -10.1%
+```
+
+Parity: `exportArgs()`/`exportReturns()` JSON of all five functions, the call results and the rejected invalid call match across the four cases.
+
+## Schema layer: four flavors (`scripts/bench-validators.mjs`)
+
+The same schemas written with classic Zod 4, `zod/mini`, plain Convex `v.*` and `k`, each emitted from a neutral descriptor with one table definition and one function registration per group.
 
 - **declare** is the time and retained heap of importing the module.
 - **+native** also builds every native Convex validator, plus a `defineTable` and a query registration per group. Convex needs these at deploy analysis and schema export, not on each call.
 - **Types** and **Instantiations** come from `tsc --extendedDiagnostics` on the emitted source.
-- Figures are medians of 15 rounds with the starting flavor rotated. Machine: node v26.13.1, darwin arm64. Zod 4.6.5, convex 1.48.0.
 
 The `convex` flavor cannot express checks or defaults, so it declares structure only. The Zod flavors and `k` declare the same checks.
 
-## Synthetic workload
+### Synthetic workload
 
-400 schemas and 57 table-and-function groups, generated with seed 1 from the call-site mix of two consumer apps.
+400 schemas and 57 table-and-function groups, generated with seed 1 from the call-site mix of two consumer apps. Re-run on the final tree.
 
 | flavor | bundle KB | zod KB | declare ms | declare MB | +native ms | +native MB | Types | Instantiations |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| zod | 853.1 | 581.9 | 32.26 | 17.18 | 42.27 | 18.29 | 240071 | 2139108 |
-| zod-mini | 324.3 | 115.5 | 19.71 | 10.86 | 31.29 | 11.96 | 220446 | 2145139 |
-| convex | 276.5 | 0.0 | 9.63 | 2.49 | 10.13 | 2.58 | 43200 | 296109 |
-| k | 264.3 | 0.0 | 6.63 | 2.17 | 11.26 | 3.45 | 63040 | 339573 |
+| zod | 853.1 | 581.9 | 32.17 | 17.19 | 42.36 | 18.30 | 240071 | 2139108 |
+| zod-mini | 324.3 | 115.5 | 19.80 | 10.86 | 31.22 | 11.97 | 220446 | 2145139 |
+| convex | 276.5 | 0.0 | 9.71 | 2.49 | 10.16 | 2.58 | 43200 | 296109 |
+| k | 288.4 | 0.0 | 7.13 | 2.39 | 11.56 | 3.67 | 70897 | 369471 |
 
-## A real module's schema graph
+| bytes | zod | zod-mini | convex | k |
+|---|---:|---:|---:|---:|
+| (glue) | 13542 | 10532 | 9570 | 9766 |
+| convex | 59263 | 59230 | 59055 | 59103 |
+| convex-helpers | 4731 | 4731 | 0 | 0 |
+| schemas | 200170 | 139329 | 214521 | 197173 |
+| src/k | 0 | 0 | 0 | 29264 |
+| zod | 595868 | 118257 | 0 | 0 |
+| total | 873574 | 332079 | 283146 | 295306 |
+
+### A real module's schema graph
 
 The schemas a consumer app's finance contracts declare on import, with the tables they reference: 350 schemas and 11 groups.
-The descriptor is kept outside this repository because the app is private.
+The descriptor is kept outside this repository because the app is private; it was re-run on the final tree.
 Refinements, 39 in that module, have no descriptor form and are left out of every flavor.
 
 | flavor | bundle KB | zod KB | declare ms | declare MB | +native ms | +native MB | Types | Instantiations |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| zod | 782.4 | 581.9 | 23.05 | 10.55 | 35.72 | 11.93 | 124840 | 1319951 |
-| zod-mini | 285.2 | 115.5 | 13.33 | 6.31 | 26.05 | 7.67 | 116772 | 1319919 |
-| convex | 201.3 | 0.0 | 6.06 | 1.54 | 6.42 | 1.57 | 20595 | 194063 |
-| k | 196.5 | 0.0 | 4.24 | 1.43 | 7.23 | 2.07 | 34512 | 220395 |
+| zod | 782.4 | 581.9 | 23.12 | 10.56 | 35.32 | 11.93 | 124840 | 1319951 |
+| zod-mini | 285.2 | 115.5 | 13.44 | 6.32 | 26.14 | 7.68 | 116772 | 1319919 |
+| convex | 201.3 | 0.0 | 6.11 | 1.54 | 6.39 | 1.57 | 20595 | 194063 |
+| k | 220.6 | 0.0 | 4.64 | 1.61 | 7.84 | 2.25 | 42004 | 240646 |
 
-`k` itself is 4.7 KB of the bundle. The Zod flavor carries 582 KB of Zod, and `zod/mini` still carries 115 KB because the Convex id helper imports classic Zod.
+| bytes | zod | zod-mini | convex | k |
+|---|---:|---:|---:|---:|
+| (glue) | 16410 | 13400 | 12425 | 12623 |
+| convex | 59325 | 59281 | 59132 | 59156 |
+| convex-helpers | 4731 | 4731 | 0 | 0 |
+| schemas | 124774 | 96340 | 134572 | 124807 |
+| src/k | 0 | 0 | 0 | 29322 |
+| zod | 595913 | 118261 | 0 | 0 |
+| total | 801153 | 292013 | 206129 | 225908 |
 
-## Gate
+`zod/mini` still carries 115 KB of Zod because the Convex id helper imports classic Zod.
 
-The plan allowed v2 to proceed only if none of four stop conditions held. Measured on the real module's graph:
+## Spike gate (as recorded at the prototype stage)
+
+The plan allowed v2 to proceed only if none of four stop conditions held. Measured on the real module's graph with the prototype `k` (which was 4.7 KB of the bundle):
 
 | Stop condition | Threshold | Measured | Holds |
 |---|---|---|---|
@@ -51,59 +181,24 @@ The plan allowed v2 to proceed only if none of four stop conditions held. Measur
 | `k` costs too much over plain `v.*` | more than 15% slower | 30% faster to declare; 12.6% slower when every native validator is forced | no |
 | Type cost regresses | more instantiations than classic Zod | 220,395 against 1,319,951 | no |
 
-Retained heap falls from 10.55 MB to 1.43 MB.
+The same conditions on the final `k` (table above): 79.9% lower than classic Zod (23.12 ms to 4.64 ms); `zod/mini` 41.9% against `k` 79.9%; 24.1% faster than `v.*` to declare and 22.7% slower when every native validator is forced; 240,646 instantiations against 1,319,951.
 
-## Limits of this measurement
+## What did not improve or got worse
 
-- It measures the schema layer. A whole request also loads the kit's tables, relations and query engine; the per-request figures are in `docs/benchmarks/module-load.md`.
-- `k`'s type figures include checking `src/k` itself, about 21,000 instantiations, while Zod and Convex ship declaration files that `skipLibCheck` skips.
-- `k` declares faster than plain `v.*` because it records a chain and builds nothing else until a validator is read.
+- The finished `k` is larger and slower than the prototype the gate passed on. On the real module's graph, `src/k` grew from 4.7 KB to 29.3 KB of the bundle, declare time from 4.24 ms to 4.64 ms, forced-native time from 7.23 ms to 7.84 ms and instantiations from 220,395 to 240,646. On the synthetic workload the `k` bundle went from 264.3 KB to 288.4 KB, which is now 11.9 KB more than plain `v.*` (276.5 KB).
+- With every native validator forced, `k` is 13.8% slower than plain `v.*` on the synthetic workload (11.56 ms against 10.16 ms) and 22.7% slower on the real module's graph (7.84 ms against 6.39 ms). The second figure is above the gate's 15% threshold; the gate was decided on declare time, where `k` is faster than `v.*` (4.64 ms against 6.11 ms).
+- Building validators on first read is not faster. In the full app, building `listPayments`'s validators takes 3.32 ms against 3.04 ms in v1 (+9.0%, eager). In the request fixture, exporting all five functions' validators takes 0.67 ms against 0.61 ms (+9.8%, eager) and 0.85 ms against 0.94 ms (-9.6%, getter): the deploy-analysis cost is the same within noise.
+- `defineRelations` is slower: 1.78 ms against 1.52 ms (+17.1%, eager) and 1.79 ms against 1.53 ms (getter).
+- `contractsAndAuth` is unchanged (0.26 ms against 0.25 ms), and auth construction in the request fixture is 0.15 ms against 0.13 ms.
+- The warm call is 8.3% (eager) to 10.1% (getter) faster; a call spends most of its time in the auth and row-level-security wrappers, and in production Convex checks argument structure outside the isolate.
+- The kit's own code is not smaller. cvx-kit contributes 125,546 bytes to the v2 app bundle against 124,794 in v1 (+0.6%); the bundle shrinks because Zod (596,021 bytes), its ESM glue and part of `convex-helpers` leave it.
+- In the request fixture the v2 getter variant retains more heap than the v2 eager variant (1.51 MB against 0.97 MB), unlike v1 (4.21 MB against 4.28 MB). This was not investigated.
 
-## Whole request: tables, auth and one function module
+## Limits of the measurement
 
-`node scripts/bench-request.mjs --runs 15` compares one Convex function module of the same app declared with v1 (Zod, `zodTable`, `createAuthFunctions`) and with v2 (`k`, `kTable`, `createKAuthFunctions`).
-The fixtures in `scripts/bench/request/` declare the 30 table boundaries of `scripts/bench/app-fixture.ts` (28 entity tables and two variant tables) and its auth builders with the same triggers and tenancy settings, then register five operations of one domain through `authMutation` and `authQuery`: `create`, `update`, `get`, `list` and `archive`.
-Relations, the query engine and domain contracts are not on `k` yet, so the fixture leaves them out; `docs/benchmarks/module-load.md` covers the full v1 app with them.
-`eager` declares `args` and `returns` as properties, `getter` as accessors.
-Each case is bundled the way Convex does and loaded in a fresh process per sample.
-Export ms is `exportArgs()` plus `exportReturns()` on all five functions, the deploy-analysis path where native validators are built.
-First-call and warm-call time is `create` invoked through Convex's `invokeMutation` hook with JSON args and a stubbed identity syscall; warm is the mean of 200 further calls.
-Before measuring, the bench checks that every case pushes byte-identical `exportArgs` and `exportReturns` JSON for all five functions, returns the same results for valid calls and rejects a `create` whose title fails `min(1)`. No normalisation was needed.
-
-| case | bundle KB | zod KB | load ms | retained MB | tables ms | auth ms | registration ms | export ms | first-call ms | warm-call µs |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| v1 eager | 767.1 | 581.9 | 15.40 | 4.43 | 3.95 | 0.16 | 0.46 | 0.60 | 1.68 | 28.4 |
-| v1 getter | 767.1 | 581.9 | 15.07 | 4.36 | 3.99 | 0.16 | 0.16 | 0.93 | 1.78 | 28.6 |
-| v2 eager | 749.3 | 581.9 | 10.24 | 3.75 | 0.70 | 0.16 | 0.32 | 0.64 | 0.79 | 25.5 |
-| v2 getter | 749.3 | 581.9 | 10.16 | 3.73 | 0.70 | 0.16 | 0.16 | 0.81 | 0.86 | 25.4 |
-| v2 projected eager | 163.4 | 0.0 | 3.54 | 0.94 | 0.73 | 0.18 | 0.32 | 0.62 | 0.81 | 25.6 |
-| v2 projected getter | 163.4 | 0.0 | 3.35 | 0.92 | 0.71 | 0.18 | 0.16 | 0.79 | 0.84 | 25.8 |
-
-| bytes | v1 eager | v1 getter | v2 eager | v2 getter | v2 projected eager | v2 projected getter |
-|---|---:|---:|---:|---:|---:|---:|
-| (glue) | 6879 | 6879 | 6667 | 6667 | 2840 | 2840 |
-| (stub) | 0 | 0 | 0 | 0 | 79 | 79 |
-| convex | 73128 | 73128 | 73035 | 73035 | 72942 | 72942 |
-| convex-helpers | 16579 | 16579 | 14292 | 14292 | 14292 | 14292 |
-| fixture | 4614 | 4614 | 4609 | 4609 | 4609 | 4609 |
-| src (rest) | 59297 | 59297 | 43372 | 43372 | 43267 | 43267 |
-| src/k | 29069 | 29069 | 29379 | 29379 | 29294 | 29294 |
-| zod | 595897 | 595897 | 595902 | 595902 | 0 | 0 |
-| total | 785463 | 785463 | 767256 | 767256 | 167323 | 167323 |
-
-```text
-v2 eager vs v1 eager: load ms -33.5%, retained MB -15.3%, bundle KB -2.3%
-v2 projected eager vs v1 eager: load ms -77.0%, retained MB -78.8%, bundle KB -78.7%
-v2 getter vs v1 getter: load ms -32.6%, retained MB -14.3%, bundle KB -2.3%
-v2 projected getter vs v1 getter: load ms -77.8%, retained MB -78.9%, bundle KB -78.7%
-
-node v26.13.1, darwin arm64, Apple M5, runs=15, warm calls=200
-```
-
-Until the cutover unit, `src/auth.ts` imports `zod` and `./zod-registration` for its v1 constructors.
-The v2 bundle uses neither, but Zod's modules are not marked side-effect free, so the import keeps all 581.9 KB of Zod in it; the v1 kit modules themselves (`src/zod-registration.ts`, `src/zod-convex.ts`) are tree-shaken to 0 bytes.
-The same import pattern puts 29 KB of `src/k` into the v1 bundle.
-The projected rows bundle the v2 entry with those two imports of `src/auth.ts` replaced by stubs that throw on any use; the five functions still register, export the same JSON and answer every call identically, so the rows show v2 once the cutover removes the imports.
-
-What did not improve: export ms is the same on both sides (0.60 against 0.64 ms eager), because both build the same native validators on first read; and the warm call is 10% faster at most, since a call spends most of its time in the auth and row-level-security wrappers, and in production Convex checks argument structure outside the isolate.
-The gain is at module load: declaring the 30 tables drops from about 4 ms to 0.7 ms, and Zod's own evaluation accounts for most of the remaining load difference between v2 and projected v2.
+- Local machine (Apple M5), not a deployed Convex isolate. The earlier observation is that a deployed isolate takes roughly four times the local figure.
+- The app is synthetic: generated tables and contracts shaped like a consumer app, not a consumer app.
+- Medians of 15 fresh-process rounds; sub-millisecond phases are close to timer and scheduling noise.
+- Type figures check the kit as source on both sides, so they include the kit's own files, which a consumer would read as declaration files under `skipLibCheck`.
+- The consumer-app figures that motivated this work (175–250 ms and 24–40 MB per API module) were measured on a real app that has not been migrated to v2, so the gain on a real app is not yet measured.
+- The 0.1.x per-request figures, before v2, are in `docs/benchmarks/module-load.md`.

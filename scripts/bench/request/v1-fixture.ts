@@ -1,6 +1,8 @@
 // v1 (Zod) side of the whole-request benchmark: the table boundaries and auth
-// builders of scripts/bench/app-fixture.ts, without relations or contracts,
-// which have no `k` counterpart yet. v2-fixture.ts declares the same app on `k`.
+// builders of the representative app, without relations or contracts.
+// v2-fixture.ts declares the same app on `k`. v1 is no longer in this tree:
+// this file only bundles against the v1 source of commit 8d979a5, which
+// `scripts/bench-request.mjs` extracts with `git archive` and copies it next to.
 import { z } from 'zod'
 import {
 	actionGeneric,

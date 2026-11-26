@@ -63,7 +63,6 @@ try {
 				dependencies: {
 					'cvx-kit': `file:${tarball}`,
 					convex: packageManifest.devDependencies.convex,
-					zod: packageManifest.devDependencies.zod,
 					'convex-helpers': packageManifest.devDependencies['convex-helpers'],
 				},
 				devDependencies: {

@@ -1,5 +1,7 @@
 // Registration benchmark fixture: an Accord-sized registry (88 tables) with an
 // edge graph, a polymorphic ID field, field groups and a variant table.
+// Shared by the relation tests and the scripts/bench/*-entry.ts benchmarks; the
+// v1 (Zod) version is scripts/bench/relations-fixture.ts at commit 8d979a5.
 import { k } from '../../src/k'
 import { kTable, kVariantTable } from '../../src/table'
 import { defineRelations } from '../../src/relations'

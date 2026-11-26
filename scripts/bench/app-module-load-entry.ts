@@ -1,6 +1,7 @@
 // One Convex function module of the representative app: it imports the shared
 // table boundaries, relations and auth builders, and registers every operation
 // of one domain contract. Convex evaluates this graph on every request.
+// The v1 twin is this file at commit 8d979a5; both register the same functions.
 import {
 	defineAppAuth,
 	defineAppContract,
@@ -53,7 +54,8 @@ for (const [kind, builder] of [
 const registered = performance.now()
 
 export const timings = {
-	zodTables: declared - start,
+	// The v1 entry (8d979a5) names this phase `zodTables`; the harness reads both.
+	tables: declared - start,
 	defineRelations: related - declared,
 	contractsAndAuth: authorized - related,
 	registration: registered - authorized,

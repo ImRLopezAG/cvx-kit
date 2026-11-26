@@ -1,5 +1,7 @@
 # Module-load benchmark
 
+> This file records the 0.1.x (Zod) performance pass. The v1 against v2 figures are in [`validators.md`](validators.md). The fixtures it names have since moved to `k`; their v1 versions are at commit `8d979a5`.
+
 These are local bundled-import measurements, not deployed Convex latency. No database, provider or handler runs. The timer includes loading/evaluating the bundle and its consumer declarations, excluding process startup, bundling and output verification.
 
 ## Workloads

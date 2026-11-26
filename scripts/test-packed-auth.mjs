@@ -41,20 +41,19 @@ try {
 					convex,
 					'convex-helpers': manifest.devDependencies['convex-helpers'],
 					effect: manifest.devDependencies.effect,
-					zod: manifest.devDependencies.zod,
 					typescript: manifest.devDependencies.typescript,
 					'@types/node': manifest.devDependencies['@types/node'],
 				},
 			}),
 		)
-		writeFileSync(
-			join(fixture, 'auth.ts'),
-			readFileSync(join(root, 'test/auth-native-context-types.ts')),
-		)
-		writeFileSync(
-			join(fixture, 'shared-auth.ts'),
-			readFileSync(join(root, 'test/effect-auth-types.ts')),
-		)
+		for (const [name, source] of [
+			['auth.ts', 'test/auth-native-context-types.ts'],
+			['shared-auth.ts', 'test/effect-auth-types.ts'],
+		]) {
+			const text = readFileSync(join(root, source), 'utf8').replaceAll("'../src/k'", "'cvx-kit/k'")
+			if (text.includes("'../src/")) throw new Error(`${source} imports an unmapped ../src module`)
+			writeFileSync(join(fixture, name), text)
+		}
 		writeFileSync(
 			join(fixture, 'tsconfig.json'),
 			JSON.stringify({
@@ -71,7 +70,7 @@ try {
 		)
 		run(installerOverride ?? 'bun', ['install', '--ignore-scripts'], fixture)
 		run('bun', ['x', '--no-install', 'tsc', '--project', 'tsconfig.json'], fixture)
-		console.log(`Packed auth native contexts pass on Convex ${convex}`)
+		console.log(`Packed auth native contexts pass on Convex ${convex} (zod not installed)`)
 	}
 } finally {
 	rmSync(temporary, { recursive: true, force: true })

@@ -234,3 +234,31 @@ The same conditions on the final `k` (table above): 79.6% lower than classic Zod
 - Type figures check the kit as source on both sides, so they include the kit's own files, which a consumer would read as declaration files under `skipLibCheck`.
 - The consumer-app figures that motivated this work (175–250 ms and 24–40 MB per API module) were measured on a real app that has not been migrated to v2, so the gain on a real app is not yet measured.
 - The 0.1.x per-request figures, before v2, are in `docs/benchmarks/module-load.md`.
+
+## After the import-cost pass
+
+Measured in one session (`node scripts/bench-app-load.mjs --no-v1 --source before=<daead3c src> --source after=<this checkout>`), medians of 15 fresh processes:
+
+| case | bundle KB | cvx-kit KB | load ms | retained MB | defineRelations ms | registration ms |
+|---|---:|---:|---:|---:|---:|---:|
+| before, eager | 231.6 | 135.8 | 8.37 | 2.06 | 1.24 | 2.51 |
+| before, getter | 231.7 | 135.8 | 6.06 | 1.75 | 1.23 | 0.28 |
+| after, eager | 229.6 | 134.9 | 8.26 | 2.05 | 1.22 | 2.52 |
+| after, getter | 229.7 | 134.9 | 6.10 | 1.74 | 1.22 | 0.48 |
+
+The bundle shrinks by 2.0 KB (0.8 KB of kit code, 1.2 KB of module glue); the load-time differences are within run-to-run noise. The gain a consumer gets from this pass is the getter form for `args` and `returns` (8.37 ms to 6.06 ms here), now the documented default and what the codemod writes. The `cvx-kit/zod` interop entry drops convex-helpers' `zid` and classic Zod: `k` plus the entry bundles to 152.2 KB, down from 237.4 KB.
+
+Kit bytes (esbuild `bytesInOutput` under `src/`, same options as the bench) for minimal function modules, before and after:
+
+| entry | before KB | after KB |
+|---|---:|---:|
+| `k` and `kTable`, two tables | 49.8 | 49.8 |
+| plus one `createAuthFunctions` query | 91.1 | 90.3 |
+| plus relations and a paginated query | 127.5 | 126.7 |
+| benchmark app module | 135.7 | 134.9 |
+
+Most of the kit code in the app module is used by it: `relations.ts` (34.9 KB), `k/parse.ts` (15.5 KB), `table.ts` (15.2 KB, which includes table-level `paginationOpts`), auth, managed query security and registration. Their module-level state is already built on first use (`once`/`memoize`), and `sideEffects` already lets unused entries drop. The only module-level values that defeated tree-shaking were the two built-in error contracts, now marked pure.
+
+Relations were already per-table lazy: defining the app's relations reads each referenced table's `k` schema for its field names (all 30 tables here, because the app's edges name all of them) and builds no native validator; a first `paginationOpts` or `pageDto` on `payments` reads the native table and DTO of `payments` only. `test/relations-lazy.test.ts` (R22) pins this, so that phase changed nothing.
+
+On the request fixture (`node scripts/bench-request.mjs`), the v2 bundle fell from 190.5 KB to 189.7 KB; the session's first run of that bench was taken under load, so its timings are not compared.

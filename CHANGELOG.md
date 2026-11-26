@@ -60,6 +60,8 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - With `skipConvexValidation`, the kit validates customization-declared args before the customization's `input` runs.
 - Pagination budgets (`maximumRowsRead`, `maximumBytesRead`) and search `numItems` are safe integers, and the Effect CRUD list `id` is finite, as in 0.1.x.
 - An Effect builder's registered return type is the handler's value when that satisfies `returns`, and the `returns` output otherwise.
+- Getter-declared `args` and `returns` (`get args() { return ... }`) are the documented default: a call builds only the function it invokes (benchmark app load 8.37 ms with properties, 6.06 ms with getters). The property form stays supported. The v2 codemod writes getters for function definitions unless the value is a plain reference; `--no-getters` opts out.
+- `toZod` converts `k.id` to `z.string()` typed as the table's `Id` instead of convex-helpers' `zid`; the table name is in the new `kZodIds` registry. convex-helpers' `zodToConvex` now reads a converted id as a string.
 
 ### Removed
 
@@ -70,6 +72,9 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 ### Performance
 
 - Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On the representative benchmark app (about 30 tables, relations, contracts and auth), a function module's bundle fell from 815.8 KB to 220.6 KB, its load time from 28.34 ms to 7.97 ms and its retained heap from 9.37 MB to 2.03 MB. On one consumer app's schema graph, declaring the schemas on import fell from 23.44 ms to 4.78 ms. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
+- `cvx-kit/zod` no longer pulls classic Zod or convex-helpers into a bundle: `k` plus the interop entry fell from 237.4 KB (157.1 KB of Zod) to 152.2 KB (72.7 KB of Zod).
+- The built-in `queryErrors` and `argumentErrors` contracts are marked pure, so a module that does not read one drops it (about 0.8 KB of kit code in the benchmark app's function module).
+
 ## [0.2.0] - 2026-11-26
 
 ### Breaking

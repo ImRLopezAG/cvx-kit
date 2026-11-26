@@ -162,3 +162,47 @@ describe('timestamp range', () => {
 		expect(k.isoDateTime().toTimestamp().parse('9999-12-31T23:59:59.999Z')).toBe(max)
 	})
 })
+
+describe('class instances', () => {
+	class TaggedError extends Error {
+		readonly _tag = 'X'
+	}
+	class Shadowed {
+		get _tag(): string {
+			return 'from-prototype'
+		}
+	}
+
+	it('a .strip() object reads only own enumerable properties into a fresh plain object', () => {
+		const schema = k.object({ _tag: k.string() }).strip()
+		const out = schema.parse(new TaggedError('boom'))
+		expect(out).toEqual({ _tag: 'X' })
+		expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+		expect(schema.safeParse(new Shadowed())).toMatchObject({
+			success: false,
+			issues: [{ path: ['_tag'], code: 'invalid_type' }],
+		})
+		const polluted = Object.create({ _tag: 'inherited' })
+		expect(schema.safeParse(polluted).success).toBe(false)
+	})
+
+	it('a strict object, a record and a discriminated union still reject them with a plain-object message', () => {
+		const strict = k.object({ _tag: k.string() }).safeParse(new TaggedError())
+		expect(strict).toMatchObject({
+			success: false,
+			issues: [
+				{
+					code: 'invalid_type',
+					message: 'Invalid input: expected a plain object, received an instance of TaggedError',
+				},
+			],
+		})
+		expect(k.record(k.string(), k.any()).safeParse(new Map())).toMatchObject({
+			success: false,
+			issues: [{ message: 'Invalid input: expected a plain record, received an instance of Map' }],
+		})
+		expect(k.object({}).safeParse([])).toMatchObject({
+			issues: [{ message: 'Invalid input: expected object, received array' }],
+		})
+	})
+})

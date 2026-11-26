@@ -75,7 +75,7 @@ import { tables } from './domain/payments/table'
 export default defineSchema(tables)
 ```
 
-Declare indexes before compiling relations. `payments.table` is built once and `.index(...)` adds to that same definition, so registering the boundary itself sees the indexes. Do not spread a boundary (`{ ...payments, table }`): its `table` and schema boundaries are accessors, and a spread does not copy them. Registration verifies the exact native
+Declare indexes before compiling relations. `payments.table` is built once and `.index(...)` adds to that same definition, so registering the boundary itself sees the indexes. A spread copy (`{ ...payments, table }`) also works: the boundary's members are enumerable accessors, so the spread copies them and only `table` is replaced. Registration verifies the exact native
 table owners, every branch's storage validators, public masks, and supporting
 indexes. The legacy two-argument helper does not generate the required registry
 boundaries. Do not flatten a variant into an object of optional properties.

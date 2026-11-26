@@ -132,7 +132,7 @@ New in 2.0: `cvx-kit/k` (`k`, `KValidationError` and the schema types), `cvx-kit
 | `.startsWith`, `.endsWith`, `.includes`                              | `.regex(...)`                                                     |                                                                                        |
 | `z.email()`, `z.url()`, `z.uuid()`, `.email()`, other string formats | `k.string().regex(pattern, message)`                              | there are no format helpers                                                            |
 | `.trim()`, `.toLowerCase()`, `.toUpperCase()`, `.overwrite(fn)`      | same                                                              | allowed on table fields                                                                |
-| `.refine(fn, message)`, `.refine(fn, { message, path })`             | same                                                              | synchronous only                                                                       |
+| `.refine(fn, message)`, `.refine(fn, { message, path })`             | same                                                              | synchronous only; a type-guard `fn` narrows the type, as in Zod                        |
 | `.superRefine((value, ctx) => ctx.addIssue({...}))`                  | `.check((value, ctx) => ctx.addIssue({ message, path?, code? }))` |                                                                                        |
 | `.transform(fn)`, `.pipe(schema)`                                    | same                                                              | input positions only                                                                   |
 | `.describe(text)`                                                    | same                                                              |                                                                                        |
@@ -188,6 +188,10 @@ k.object({ a: k.string() }).strip().parse({ a: 'x', b: 1 }) // { a: 'x' }
 ```
 
 What to do: where code relied on stripping (parsing a superset of fields, for example a whole row against a smaller object), add `.strip()` or pick the fields first. There is no loose object at a Convex boundary; see [No v2 form](#constructs-with-no-v2-form).
+
+### Class instances are not plain objects
+
+`z.object` parsed any object, including a class instance such as an Effect tagged error. `k.object` parses plain objects only and reports `expected a plain object, received an instance of …`. Arguments and documents are plain, so only in-memory parses change. Add `.strip()` to parse an instance: it reads only the instance's own enumerable properties into a new plain object. See [Class instances](k.md#class-instances).
 
 ### Return values are not parsed or stripped
 
@@ -278,7 +282,7 @@ export const documents = kTable(
 Other table changes:
 
 - `insert(...)`, `update(...)`, `pick` and `omit` take string keys: `documents.insert('secretNote')` instead of `documents.insert({ secretNote: true })`. The codemod rewrites `pick`/`omit` masks on schemas it can prove, but not `insert`/`update` call sites on tables.
-- `table` and the schema boundaries are built lazily on first read and are read-only accessors. `{ ...documents, fieldGroups }` does not copy them; use `withFieldGroups(documents, fieldGroups)` from `cvx-kit/relations`.
+- `table` and the schema boundaries are built lazily on first read, as enumerable accessors. An object spread copies them, so `{ ...documents, table: other }` is a working boundary with `table` replaced; the spread builds every boundary of that table at that point instead of on first use (see [Replacing a member](table.md#replacing-a-member)). Use `withFieldGroups(documents, fieldGroups)` from `cvx-kit/relations` for field groups. In 2.0.0-beta.0 a spread dropped these members, and the first use failed in relations with `Expected matching discriminated union boundaries`; upgrade past that beta.
 - Ids need no shared helper registry. v1 kept id metadata in a convex-helpers instance registry, so two installed helper copies could turn an id into `v.any()`; `k.id` is a native `v.id` and has no such requirement.
 - `tools.*` keep ids as `k.id(...)`. `toJsonSchema` renders them as strings, which is what `jsonSafeZid` existed for.
 - A one-value enum, `k.json()`, every nullable/optional ordering, the timestamps and the tenant field are stored exactly as v1 stored them.

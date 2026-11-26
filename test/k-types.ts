@@ -65,7 +65,23 @@ const kindAssertions: [
 	Assert<Equal<ReturnType<(typeof task)['shape']['title']['optional']>['unwrap'], () => KString>>,
 	Assert<Equal<NativeOf<(typeof task)['shape']['title']>, VString<string>>>,
 ] = [
-	true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
+	true,
 ]
 void kindAssertions
 
@@ -101,3 +117,63 @@ const table = defineTable(task.validator).index('by_owner', ['owner.id', 'status
 // @ts-expect-error unknown nested field path
 table.index('by_missing', ['owner.missing'])
 void table
+
+const anyBesideDefault = k.object({
+	a: k.any(),
+	j: k.json(),
+	o: k.any().optional(),
+	oj: k.json().optional(),
+	d: k.any().default(1),
+	n: k.number().default(3),
+})
+const anyWithoutDefault = k.object({ a: k.any(), j: k.json(), o: k.any().optional() })
+
+const anyFieldAssertions: [
+	Assert<
+		Equal<
+			k.output<typeof anyBesideDefault>,
+			{ a: any; j: JSONValue; d: any; n: number; o?: any; oj?: JSONValue }
+		>
+	>,
+	Assert<Equal<k.infer<typeof anyBesideDefault>, k.output<typeof anyBesideDefault>>>,
+	Assert<
+		Equal<
+			k.input<typeof anyBesideDefault>,
+			{ a: any; j: JSONValue; o?: any; oj?: JSONValue; d?: any; n?: number }
+		>
+	>,
+	Assert<Equal<k.output<typeof anyWithoutDefault>, { a: any; j: JSONValue; o?: any }>>,
+	Assert<Equal<k.input<typeof anyWithoutDefault>, { a: any; j: JSONValue; o?: any }>>,
+] = [true, true, true, true, true]
+void anyFieldAssertions
+
+type TimeOfDay = `${number}:${number}`
+function isTimeOfDay(value: string): value is TimeOfDay {
+	return /^\d{2}:\d{2}$/.test(value)
+}
+const timeOfDay = k.string().refine(isTimeOfDay, 'Expected HH:MM')
+const optionalTime = k.string().min(5).refine(isTimeOfDay).max(5).optional()
+const plainRefine = k.string().refine((value) => value.length > 0)
+const transformedGuard = k
+	.string()
+	.transform((value) => value.length)
+	.refine((value): value is 1 => value === 1)
+const inObject = k.object({ at: timeOfDay, maybe: optionalTime })
+const nullableTime = timeOfDay.nullable()
+const parsedTime = timeOfDay.parse('09:30')
+
+const refineAssertions: [
+	Assert<Equal<k.output<typeof timeOfDay>, TimeOfDay>>,
+	Assert<Equal<k.input<typeof timeOfDay>, TimeOfDay>>,
+	Assert<Equal<typeof parsedTime, TimeOfDay>>,
+	Assert<Equal<k.input<typeof inObject>, { at: TimeOfDay; maybe?: TimeOfDay }>>,
+	Assert<Equal<k.output<typeof nullableTime>, TimeOfDay | null>>,
+	Assert<Equal<k.input<typeof nullableTime>, TimeOfDay | null>>,
+	Assert<Equal<k.output<typeof optionalTime>, TimeOfDay | undefined>>,
+	Assert<Equal<k.output<typeof plainRefine>, string>>,
+	Assert<Equal<typeof plainRefine, KString>>,
+	Assert<Equal<k.output<typeof transformedGuard>, 1>>,
+	Assert<Equal<k.input<typeof transformedGuard>, string>>,
+	Assert<Equal<k.output<typeof inObject>, { at: TimeOfDay; maybe?: TimeOfDay }>>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true]
+void refineAssertions

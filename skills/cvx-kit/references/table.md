@@ -78,7 +78,20 @@ Both tables contain `ref` and `nextActivity` ahead of their own fields, plus the
 
 Every schema-valued boundary is a strict `k` object. `insert` and `update` take field names as strings: `documents.insert('secretNote')`, not `insert({ secretNote: true })`.
 
-Each boundary is built when it is first read and then reused. `table`, `storage` and the other schema boundaries are read-only accessors on the boundary object, so an object spread (`{ ...documents }`) does not copy them. To add field groups for the query engine, wrap the boundary with `withFieldGroups(documents, { ... })` from `cvx-kit/relations` (see [querying](querying.md)).
+Each boundary is built when it is first read and then reused. `table`, `storage`, `schema`, `insertSchema`, `updateSchema`, `commandInput`, `publicDto` and `tools` are enumerable accessors on the boundary object (on `kTable`, `createTable`, `tenantTable` and both `kVariantTable` forms), so a boundary that is never spread builds only what is read.
+
+### Replacing a member
+
+An object spread copies every member, so a copy with one member replaced is a working boundary:
+
+```ts
+export const documents = {
+	...documentsTable,
+	table: documentsTable.table.index('by_owner', ['ownerId']),
+}
+```
+
+The spread reads each accessor once, so the copy holds every derived schema and its `table` is the one you passed. That builds the boundaries at the spread instead of on first use, a one-time cost per copied table. To add indexes alone, call `.index(...)` on the boundary's own `table` instead: it returns the same definition, so no copy is needed. To add field groups for the query engine, wrap the boundary with `withFieldGroups(documents, { ... })` from `cvx-kit/relations` (see [querying](querying.md)).
 
 ## Defaults
 

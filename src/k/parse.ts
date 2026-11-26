@@ -395,7 +395,11 @@ function walkRoot(
 			// SAFETY: checked above, or already validated natively at a function boundary.
 			return walkArray(root, value as unknown[], context, full)
 		case 'object':
-			if (full && !isPlainObject(value)) return invalidType(context, 'object', value)
+			if (full && !isPlainObject(value)) {
+				if (strip && isInstance(value))
+					return walkObject(root, ownSnapshot(value), context, full, strip)
+				return invalidType(context, 'object', value)
+			}
 			// SAFETY: checked above, or already validated natively at a function boundary.
 			return walkObject(root, value as Record<string, unknown>, context, full, strip)
 		case 'record':
@@ -696,9 +700,12 @@ function setOwn(target: Record<string, unknown>, key: string, value: unknown): v
 }
 
 function invalidType(context: WalkContext, expected: string, value: unknown): typeof FAIL {
+	const instance = isInstance(value) && (expected === 'object' || expected === 'record')
 	context.add(
 		'invalid_type',
-		`Invalid input: expected ${expected}, received ${receivedOf(value)}`,
+		instance
+			? `Invalid input: expected a plain ${expected}, received an instance of ${instanceName(value)}`
+			: `Invalid input: expected ${expected}, received ${receivedOf(value)}`,
 		undefined,
 	)
 	return FAIL
@@ -709,6 +716,36 @@ function receivedOf(value: unknown): string {
 	if (Array.isArray(value)) return 'array'
 	if (value instanceof ArrayBuffer) return 'ArrayBuffer'
 	return typeof value
+}
+
+/**
+ * An object that is not plain: a class instance (an Effect tagged error, an SDK error), a `Date`, a
+ * `Map`. Arrays and `ArrayBuffer`s have their own messages and are never read as objects.
+ */
+function isInstance(value: unknown): value is Record<string, unknown> {
+	return (
+		value !== null &&
+		typeof value === 'object' &&
+		!Array.isArray(value) &&
+		!(value instanceof ArrayBuffer) &&
+		!isPlainObject(value)
+	)
+}
+
+function instanceName(value: Record<string, unknown>): string {
+	const name: unknown = Object.getPrototypeOf(value)?.constructor?.name
+	return typeof name === 'string' && name !== '' ? name : 'a class'
+}
+
+/**
+ * A `.strip()` object parses a class instance from its own enumerable properties only, copied into a
+ * fresh plain object: nothing is read through the prototype chain, and the output never keeps the
+ * instance's prototype. Arguments and stored documents are plain, so this only affects in-memory parses.
+ */
+function ownSnapshot(value: Record<string, unknown>) {
+	const snapshot: Record<string, unknown> = {}
+	for (const key of Object.keys(value)) setOwn(snapshot, key, value[key])
+	return snapshot
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

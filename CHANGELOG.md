@@ -23,7 +23,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `k.object` is always strict: parse rejects unknown keys where `z.object` stripped them. `.strip()` restores stripping. Loose objects, `catchall`, `catch`, recursive schemas, tuples, `custom`/`instanceof`, `coerce`/`preprocess` and `meta` are not supported in 2.0.
 - The kit no longer parses return values. Convex validates them against the output-side validator, so a handler that returns more fields than `returns` declares now fails; return `toPublicDto(row)`. A transforming `returns` schema is rejected, return refinements do not run, and `returns` must be a schema, not a plain field object.
 - `transform` and `pipe` are rejected on table fields and return shapes; `trim`, `toLowerCase`, `toUpperCase` and `overwrite` stay allowed everywhere. Refinements and checks are synchronous; `superRefine` becomes `check`.
-- `insert`, `update`, `pick` and `omit` take string keys instead of `{ key: true }` masks. Table boundaries are read-only accessors built on first read, so an object spread does not copy them; use `withFieldGroups` for field groups.
+- `insert`, `update`, `pick` and `omit` take string keys instead of `{ key: true }` masks. Table boundaries are accessors built on first read; an object spread copies them (building each), so `{ ...table, table: other }` replaces one member. Use `withFieldGroups` for field groups.
 - Ids are branded on input: `k.input` keeps `Id<'table'>`.
 - `k.number()` accepts `NaN` and infinities, as native `v.number()` does, and `int()` no longer caps at the safe-integer range.
 - Out-of-range search options fail with `VALIDATION` instead of `SearchError('SEARCH_OPTIONS_UNSUPPORTED')`.
@@ -33,6 +33,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - Containers passed to `k.enum`, `k.union`, `k.discriminatedUnion`, `k.record` and `refine` options are frozen at declaration, and an object's field map is frozen when `.shape` is first read; `withFieldGroups` copies and freezes its map. Mutating a shared array or field object afterwards throws.
 - A `k.discriminatedUnion` whose options share a discriminator value throws when first used.
 - `k.input` of `k.object({})` is `{ readonly [key: string]: never }`, so an empty input rejects extra properties at the type level.
+- `k.object` parses plain objects only. A class instance fails with `expected a plain object, received an instance of …`; a `.strip()` object parses one from its own enumerable properties.
 
 - `argumentFailure` (added in 0.2.0) no longer has a `'legacy'` policy. The default is `'validation'`, which throws `KValidationError` (`ConvexError({ code: 'VALIDATION', issues })`); `'declared'` and a function hook work as in 0.2.0. `zCustomFunctions` is `kCustomFunctions` in `cvx-kit/registration`.
 
@@ -46,6 +47,13 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `cvx-kit/zod`: `toZod(schema)` and `.toZod()`, a one-way conversion to Zod 4. The result is a `zod/mini` schema, so the entry bundles Zod's core and not the classic method API: about 152 KB with `k` (73 KB of it Zod), against 815 KB when it was built on classic Zod. Extend a result with `zod/mini` functions. An id converts to `z.string()` typed as the table's `Id`, and `kZodIds.get(schema)?.tableName` names its table; convex-helpers' `zodToConvex` reads such an id as a plain string.
 - `withFieldGroups` in `cvx-kit/relations` and `AgentListArgs` in `cvx-kit/agent-tools`.
 - A codemod, `node tools/codemod-v2/index.mjs <path…> [--write] [--report out.json]`, run from a cvx-kit checkout.
+
+### Fixed (since 2.0.0-beta.0)
+
+- An object spread of a table boundary (`{ ...table, table: other }`) keeps `schema`, `publicDto`, `storage` and the other lazy members, for `kTable`, `createTable`, `tenantTable` and `kVariantTable`.
+- `k.object` rejected class instances with `expected object, received object`; see the plain-object entry above.
+- `k.infer` of an object holding a `k.any()` field beside a defaulted field made the `any` field optional.
+- `refine` with a type-guard predicate narrows the schema's type.
 
 ### Changed
 

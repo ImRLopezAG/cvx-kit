@@ -22,6 +22,7 @@ export type {
 	KNull,
 	KNumber,
 	KRecord,
+	KRecordKey,
 	KString,
 	KUnion,
 } from './k/kinds'
@@ -30,6 +31,7 @@ export type { KObject } from './k/object'
 export type {
 	KCheckContext,
 	KDefault,
+	KNarrowed,
 	KNullable,
 	KOptional,
 	KPipe,

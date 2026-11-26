@@ -86,7 +86,15 @@ export abstract class KSchema<
 		return new KDefault(this, 'default', value as KArg, undefined)
 	}
 
-	/** A check on the parsed value; `options.path` attaches the issue below this value (object refinements). */
+	/**
+	 * A check on the parsed value; `options.path` attaches the issue below this value (object
+	 * refinements). A type-guard predicate narrows the output, and the input when no transform sits inside.
+	 */
+	refine<U extends Out>(
+		check: (value: Out) => value is U,
+		message?: string | KRefineOptions,
+	): KNarrowed<this, U>
+	refine(check: (value: Out) => boolean, message?: string | KRefineOptions): this
 	refine(check: (value: Out) => boolean, message?: string | KRefineOptions): this {
 		return this.link('refine', check, frozenMessage(message))
 	}
@@ -157,6 +165,34 @@ export abstract class KSchema<
 		// SAFETY: the record below a wrapper record is the schema the wrapper's class names as W.
 		return wrappedBy(this, op) as W
 	}
+}
+
+/**
+ * A schema whose `refine` took a type guard: the same chain with its output (and, without a transform,
+ * its input) narrowed to `U`. An intersection, not an `Omit`, so methods returning `this` keep the
+ * narrowing; the narrowed members come first, so `parse` resolves to the narrowed overload.
+ */
+export type KNarrowed<S extends KType, U> = KNarrowing<S, U, S['_t']> & S
+
+/** The members a type-guard `refine` narrows; an interface, so schemas compare by its variance. */
+export interface KNarrowing<S extends KType, U, T extends boolean> {
+	readonly _output: U
+	readonly _input: T extends true ? S['validator']['type'] : U
+	readonly validator: T extends true ? S['validator'] : S['validator'] & { readonly type: U }
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
+	parse(input: unknown): U
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- safeParse is the decoding boundary for undecoded input.
+	safeParse(input: unknown): KSafeParseResult<U>
+	optional(): KNarrowedWrapper<KOptional<S>, U | undefined, T> & KOptional<S>
+	nullable(): KNarrowedWrapper<KNullable<S>, U | null, T> & KNullable<S>
+}
+
+/** `optional()` or `nullable()` of a narrowed schema: the wrapper with its output and input retyped. */
+interface KNarrowedWrapper<W extends KType, U, T extends boolean> {
+	readonly _output: U
+	readonly validator: T extends true ? W['validator'] : W['validator'] & { readonly type: U }
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
+	parse(input: unknown): U
 }
 
 /** The context handed to `.check()`; `addIssue` may be called any number of times. */

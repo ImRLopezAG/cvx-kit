@@ -126,11 +126,23 @@ export type KAnyTransform<F extends KFields> = true extends F[keyof F]['_t'] ? t
 /** Output of an object that holds a default or transform somewhere: a defaulted field is required. */
 export type KObjectOutput<F extends KFields> = Flat<
 	{
-		[K in keyof F as undefined extends F[K]['_output'] ? K : never]?: Exclude<
+		[K in keyof F as KOptionalOutput<F[K]> extends true ? K : never]?: Exclude<
 			F[K]['_output'],
 			undefined
 		>
-	} & { [K in keyof F as undefined extends F[K]['_output'] ? never : K]: F[K]['_output'] }
+	} & { [K in keyof F as KOptionalOutput<F[K]> extends true ? never : K]: F[K]['_output'] }
 >
+
+/**
+ * Whether a field is optional on the output side. `undefined extends any` holds, so an `any` output
+ * (`k.any()`) reads the output-side native validator's optionality instead of its value type.
+ */
+export type KOptionalOutput<S extends KType> = 0 extends 1 & S['_output']
+	? OutputNativeOf<S>['isOptional'] extends 'optional'
+		? true
+		: false
+	: undefined extends S['_output']
+		? true
+		: false
 
 export type Flat<T> = { [K in keyof T]: T[K] }

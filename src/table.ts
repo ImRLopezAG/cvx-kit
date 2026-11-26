@@ -581,6 +581,7 @@ class TableRecord {
 		this.#writeKeys = Object.keys(columns).filter((key) => !omitted.has(key))
 		this.#commandKeys = [...(options.commandFields ?? [])]
 		this.#publicKeys = [...(options.publicFields ?? [])]
+		Object.defineProperties(this, tableAccessors)
 	}
 
 	get table(): TableDefinition {
@@ -695,6 +696,7 @@ class LegacyVariantRecord {
 		this.tableName = tableName
 		this.storage = storage
 		this.insertSchema = storage
+		Object.defineProperties(this, legacyAccessors)
 	}
 
 	get table(): TableDefinition {
@@ -840,6 +842,7 @@ class VariantBoundaryRecord {
 			if (!branches.has(tag)) throw new Error(`Unknown variant configuration "${tag}"`)
 		}
 		this.#branches = branches
+		Object.defineProperties(this, variantAccessors)
 	}
 
 	get table(): TableDefinition {
@@ -914,6 +917,40 @@ type VariantTools = {
 	readonly insert: RuntimeUnion
 	readonly update: RuntimeObject
 }
+
+/**
+ * The lazy members of every boundary, as own enumerable accessors that forward to the class getters.
+ * An object spread (`{ ...table, table: other }`) then copies them: it reads each one once, so the
+ * copy holds the derived schemas, while a boundary that is never spread still builds each on first read.
+ * One shared descriptor map per class, so declaring a table adds no per-member closures.
+ */
+const lazyMembers = [
+	'table',
+	'storage',
+	'schema',
+	'insertSchema',
+	'updateSchema',
+	'commandInput',
+	'publicDto',
+	'tools',
+] as const
+
+function ownAccessors(
+	prototype: TableRecord | LegacyVariantRecord | VariantBoundaryRecord,
+	names: readonly string[],
+): PropertyDescriptorMap {
+	const descriptors: PropertyDescriptorMap = {}
+	for (const name of names) {
+		const getter = Object.getOwnPropertyDescriptor(prototype, name)?.get
+		if (getter === undefined) throw new Error(`cvx-kit/table: no lazy member "${name}"`)
+		descriptors[name] = { get: getter, enumerable: true, configurable: true }
+	}
+	return descriptors
+}
+
+const tableAccessors = ownAccessors(TableRecord.prototype, lazyMembers)
+const legacyAccessors = ownAccessors(LegacyVariantRecord.prototype, ['table'])
+const variantAccessors = ownAccessors(VariantBoundaryRecord.prototype, lazyMembers)
 
 function tableBoundary<B>(tableName: string, columns: KFields, options: RuntimeTableOptions): B {
 	assertNoTransforms(tableName, columns)

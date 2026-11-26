@@ -90,24 +90,24 @@ A shared array or field object therefore becomes read-only: a later `push` or pr
 
 Every method returns a new immutable schema. Reusing a schema in several places is safe.
 
-| Method                                          | On                          | Effect                                                                       |
-| ----------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------- |
-| `.optional()`                                   | all                         | may be `undefined`; natively `v.optional(...)`                               |
-| `.nullable()`                                   | all                         | may be `null`; natively `v.union(T, v.null())`                               |
-| `.default(value)`                               | all                         | fills `value` when the input is `undefined`; see [Defaults](#defaults)       |
-| `.min(n, message?)` / `.max(n, message?)`       | string, number, array       | inclusive length or value bound                                              |
-| `.length(n, message?)`                          | string, array               | exact length                                                                 |
-| `.regex(pattern, message?)`                     | string                      | the pattern must match                                                       |
-| `.int(message?)`                                | number                      | `Number.isInteger` must hold                                                 |
-| `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                      | type-preserving normalisers                                                  |
-| `.overwrite(fn)`                                | all                         | a type-preserving normaliser: `fn(value)` replaces the value                 |
-| `.refine(fn, message?)`                         | all                         | `fn(value)` must return `true`; `message` is a string or `{ message, path }` |
-| `.check((value, ctx) => …)`                     | all                         | adds any number of issues with `ctx.addIssue({ message, path?, code? })`     |
-| `.transform(fn)`                                | all                         | a type-changing step; see [Transforms](#transforms)                          |
-| `.pipe(schema)`                                 | all                         | parse this schema's output with `schema`; a transform kind                   |
-| `.describe(text)`                               | all                         | a description for JSON Schema and tooling; `.description` reads it           |
-| `.unwrap()`                                     | optional, nullable, default | the schema below the wrapper                                                 |
-| `.strip()`                                      | object                      | parse removes unknown keys instead of reporting them                         |
+| Method                                          | On                          | Effect                                                                                                                                                                    |
+| ----------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.optional()`                                   | all                         | may be `undefined`; natively `v.optional(...)`                                                                                                                            |
+| `.nullable()`                                   | all                         | may be `null`; natively `v.union(T, v.null())`                                                                                                                            |
+| `.default(value)`                               | all                         | fills `value` when the input is `undefined`; see [Defaults](#defaults)                                                                                                    |
+| `.min(n, message?)` / `.max(n, message?)`       | string, number, array       | inclusive length or value bound                                                                                                                                           |
+| `.length(n, message?)`                          | string, array               | exact length                                                                                                                                                              |
+| `.regex(pattern, message?)`                     | string                      | the pattern must match                                                                                                                                                    |
+| `.int(message?)`                                | number                      | `Number.isInteger` must hold                                                                                                                                              |
+| `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                      | type-preserving normalisers                                                                                                                                               |
+| `.overwrite(fn)`                                | all                         | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                              |
+| `.refine(fn, message?)`                         | all                         | `fn(value)` must return `true`; `message` is a string or `{ message, path }`; a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
+| `.check((value, ctx) => …)`                     | all                         | adds any number of issues with `ctx.addIssue({ message, path?, code? })`                                                                                                  |
+| `.transform(fn)`                                | all                         | a type-changing step; see [Transforms](#transforms)                                                                                                                       |
+| `.pipe(schema)`                                 | all                         | parse this schema's output with `schema`; a transform kind                                                                                                                |
+| `.describe(text)`                               | all                         | a description for JSON Schema and tooling; `.description` reads it                                                                                                        |
+| `.unwrap()`                                     | optional, nullable, default | the schema below the wrapper                                                                                                                                              |
+| `.strip()`                                      | object                      | parse removes unknown keys instead of reporting them                                                                                                                      |
 
 Checks and normalisers run in declaration order after the structure is valid: normalisers first, then checks. Messages are optional; each check has a default message.
 
@@ -131,6 +131,18 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 | `.omit('a', 'b')`            | a new object without those fields                                                                 |
 | `.extend({ c: k.string() })` | a new object with added or replaced fields                                                        |
 | `.partial()`                 | every field optional; a defaulted field becomes plain optional, so an omitted field stays omitted |
+
+### Class instances
+
+Parse accepts plain objects only (prototype `Object.prototype` or `null`), so a class instance, a `Date` or a `Map` fails with `Invalid input: expected a plain object, received an instance of TaggedError`. Function arguments and stored documents are always plain, so this only matters when you `parse` an in-memory value such as an Effect tagged error or an SDK error. A `.strip()` object accepts an instance: it reads the instance's own enumerable properties into a fresh plain object and drops the rest, so nothing is read through the prototype chain (a class getter or an inherited field counts as missing) and the output never keeps the instance's prototype.
+
+```ts
+class NotFound extends Error {
+	readonly _tag = 'NotFound'
+}
+k.object({ _tag: k.string() }).strip().parse(new NotFound()) // { _tag: 'NotFound' }
+k.object({ _tag: k.string() }).parse(new NotFound()) // throws: expected a plain object
+```
 
 `pick` and `omit` take string keys, not `{ a: true }` masks. All four build a new object over the same field schemas, so retained fields keep their behaviour. Refinements and checks declared on the object itself are not carried over, because they may read fields the new object lacks; declare them again on the derived object.
 
@@ -222,7 +234,7 @@ function issuesOf(error: unknown) {
 | `NativeOf<typeof S>`                       | the input-side native validator type                                                                         |
 | `OutputNativeOf<typeof S>`                 | the output-side native validator type                                                                        |
 
-Input and output types differ only for a schema that declares a default or a transform. `k.input` of an object with no fields, `k.object({})`, is `{ readonly [key: string]: never }`, so an empty command input rejects extra properties at the type level. Ids are branded on input too: a caller passes an `Id<'users'>`, not a plain string.
+Input and output types differ only for a schema that declares a default or a transform. A `k.any()` field stays required beside a defaulted field (only `.optional()` makes it optional). `k.input` of an object with no fields, `k.object({})`, is `{ readonly [key: string]: never }`, so an empty command input rejects extra properties at the type level. Ids are branded on input too: a caller passes an `Id<'users'>`, not a plain string.
 
 ## Native validators
 

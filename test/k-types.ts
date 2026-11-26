@@ -153,20 +153,30 @@ function isTimeOfDay(value: string): value is TimeOfDay {
 }
 const timeOfDay = k.string().refine(isTimeOfDay, 'Expected HH:MM')
 const optionalTime = k.string().min(5).refine(isTimeOfDay).max(5).optional()
+const optionalGuard = k
+	.string()
+	.optional()
+	.refine((value): value is TimeOfDay | undefined => value === undefined || isTimeOfDay(value))
+const nullableGuard = k
+	.string()
+	.nullable()
+	.refine((value): value is TimeOfDay | null => value === null || isTimeOfDay(value))
 const plainRefine = k.string().refine((value) => value.length > 0)
 const transformedGuard = k
 	.string()
 	.transform((value) => value.length)
 	.refine((value): value is 1 => value === 1)
-const inObject = k.object({ at: timeOfDay, maybe: optionalTime })
-const nullableTime = timeOfDay.nullable()
+const inObject = k.object({ at: timeOfDay, maybe: optionalGuard, empty: nullableGuard })
+const nullableTime = nullableGuard
 const parsedTime = timeOfDay.parse('09:30')
 
 const refineAssertions: [
 	Assert<Equal<k.output<typeof timeOfDay>, TimeOfDay>>,
 	Assert<Equal<k.input<typeof timeOfDay>, TimeOfDay>>,
 	Assert<Equal<typeof parsedTime, TimeOfDay>>,
-	Assert<Equal<k.input<typeof inObject>, { at: TimeOfDay; maybe?: TimeOfDay }>>,
+	Assert<
+		Equal<k.input<typeof inObject>, { at: TimeOfDay; maybe?: TimeOfDay; empty: TimeOfDay | null }>
+	>,
 	Assert<Equal<k.output<typeof nullableTime>, TimeOfDay | null>>,
 	Assert<Equal<k.input<typeof nullableTime>, TimeOfDay | null>>,
 	Assert<Equal<k.output<typeof optionalTime>, TimeOfDay | undefined>>,
@@ -174,8 +184,11 @@ const refineAssertions: [
 	Assert<Equal<typeof plainRefine, KString>>,
 	Assert<Equal<k.output<typeof transformedGuard>, 1>>,
 	Assert<Equal<k.input<typeof transformedGuard>, string>>,
-	Assert<Equal<k.output<typeof inObject>, { at: TimeOfDay; maybe?: TimeOfDay }>>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true]
+	Assert<
+		Equal<k.output<typeof inObject>, { at: TimeOfDay; maybe?: TimeOfDay; empty: TimeOfDay | null }>
+	>,
+	Assert<Equal<k.output<ReturnType<typeof timeOfDay.nullable>>, TimeOfDay | null>>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true]
 void refineAssertions
 
 const zodParityObject = k.object({ a: k.string(), b: k.number().optional(), c: k.id('users') })

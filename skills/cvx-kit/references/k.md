@@ -115,6 +115,16 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 
 Checks and normalisers run in declaration order after the structure is valid: normalisers first, then checks. Messages are optional; each check has a default message.
 
+A type-guard `refine` narrows the schema and everything chained on it, including an object field that uses it. For an optional or nullable field, write the guard on the wrapped schema so the field's native type narrows too; `.refine(guard).optional()` narrows the output only:
+
+```ts
+const at = k.string().refine(isTimeOfDay) // TimeOfDay
+const maybeAt = k
+	.string()
+	.optional()
+	.refine((value): value is TimeOfDay | undefined => value === undefined || isTimeOfDay(value))
+```
+
 Refinements, checks, normalisers and transforms are synchronous. A `refine` callback that returns a promise fails with an `Invalid input` issue, a `check` that returns one adds `A check must be synchronous`, and a `transform` or `overwrite` that returns one fails with a `custom` issue saying async callbacks are not supported. Do asynchronous work in the handler.
 
 ```ts

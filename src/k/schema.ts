@@ -171,6 +171,11 @@ export abstract class KSchema<
  * A schema whose `refine` took a type guard: the same chain with its output (and, without a transform,
  * its input) narrowed to `U`. An intersection, not an `Omit`, so methods returning `this` keep the
  * narrowing; the narrowed members come first, so `parse` resolves to the narrowed overload.
+ *
+ * `optional()` and `nullable()` keep the output narrowed but not the native validator's type, which
+ * plain objects read for `k.infer`; write the guard on the wrapped schema to narrow both
+ * (`.optional().refine((v): v is U | undefined => …)`). Narrowing them too costs about 6% more type
+ * instantiations on the app benchmark, because the wrappers make every schema class non-covariant.
  */
 export type KNarrowed<S extends KType, U> = KNarrowing<S, U, S['_t']> & S
 
@@ -183,16 +188,6 @@ export interface KNarrowing<S extends KType, U, T extends boolean> {
 	parse(input: unknown): U
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- safeParse is the decoding boundary for undecoded input.
 	safeParse(input: unknown): KSafeParseResult<U>
-	optional(): KNarrowedWrapper<KOptional<S>, U | undefined, T> & KOptional<S>
-	nullable(): KNarrowedWrapper<KNullable<S>, U | null, T> & KNullable<S>
-}
-
-/** `optional()` or `nullable()` of a narrowed schema: the wrapper with its output and input retyped. */
-interface KNarrowedWrapper<W extends KType, U, T extends boolean> {
-	readonly _output: U
-	readonly validator: T extends true ? W['validator'] : W['validator'] & { readonly type: U }
-	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
-	parse(input: unknown): U
 }
 
 /**

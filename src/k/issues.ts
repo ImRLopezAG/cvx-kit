@@ -44,12 +44,18 @@ export class KValidationError extends ConvexError<KValidationData> {
 	 * backend's log read like a crash. Effect's `SchemaError` does the same. Other errors keep their stack.
 	 */
 	constructor(issues: KIssue[]) {
-		const limit = Error.stackTraceLimit
-		Error.stackTraceLimit = 0
+		const limit = v8Error.stackTraceLimit
+		v8Error.stackTraceLimit = 0
 		try {
 			super({ code: 'VALIDATION', issues })
 		} finally {
-			Error.stackTraceLimit = limit
+			v8Error.stackTraceLimit = limit
 		}
 	}
 }
+
+/**
+ * `Error` with V8's `stackTraceLimit`, typed here so `src/k` typechecks without Node's typings (it is
+ * bundled for Convex's runtime). Writing it where the runtime lacks it is harmless.
+ */
+const v8Error: { stackTraceLimit?: number; readonly prototype: Error } = Error

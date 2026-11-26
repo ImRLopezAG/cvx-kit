@@ -23,9 +23,11 @@ import type {
 } from './types'
 
 /**
- * A strict object. `pick`, `omit`, `extend` and `partial` build a new object root over the same field
- * schema instances, so retained fields keep their checks, defaults and normalisers; refinements declared
- * on the object itself are not carried over, because they may read fields the new object lacks.
+ * A strict object. `pick`, `omit`, `extend`, `partial` and `required` build a new object root over the
+ * same field schema instances, so retained fields keep their checks, defaults and normalisers. An
+ * object-level `refine`, `check` or `overwrite` may read fields the new object lacks or makes optional,
+ * so on a receiver that has one these methods throw unless the last argument opts in:
+ * `{ dropChecks: true }` drops them, and `extend(fields, { keepChecks: true })` re-attaches them.
  */
 export class KObject<F extends KFields> extends KSchema<
 	KAnyDiffers<F> extends true ? KObjectOutput<F> : ObjectType<KNativeFields<F>>,
@@ -46,31 +48,49 @@ export class KObject<F extends KFields> extends KSchema<
 		return Object.freeze(fieldsOf(this))
 	}
 
-	pick<K extends keyof F & string>(...keys: K[]): KObject<Pick<F, K>> {
+	pick<K extends keyof F & string>(...keys: K[]): KObject<Pick<F, K>>
+	pick<K extends keyof F & string>(...keys: KMaskArgs<K>): KObject<Pick<F, K>>
+	pick<K extends keyof F & string>(...keys: KMaskArgs<K>): KObject<Pick<F, K>> {
+		const names = maskKeys(this, 'pick', keys)
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
-		for (const key of keys) out[key] = fields[key]
+		for (const key of names) out[key] = fields[key]
 		return object(retyped<Pick<F, K>>(out))
 	}
 
-	omit<K extends keyof F & string>(...keys: K[]): KObject<Omit<F, K>> {
+	omit<K extends keyof F & string>(...keys: K[]): KObject<Omit<F, K>>
+	omit<K extends keyof F & string>(...keys: KMaskArgs<K>): KObject<Omit<F, K>>
+	omit<K extends keyof F & string>(...keys: KMaskArgs<K>): KObject<Omit<F, K>> {
+		const dropped = new Set<string>(maskKeys(this, 'omit', keys))
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
-		const dropped = new Set<string>(keys)
 		for (const key in fields) if (!dropped.has(key)) out[key] = fields[key]
 		return object(retyped<Omit<F, K>>(out))
 	}
 
-	/** Add or replace fields; a key present in both takes the new schema. */
-	extend<E extends KFields>(fields: E): KObject<Flat<Omit<F, keyof E> & E>> {
-		return object(retyped<Flat<Omit<F, keyof E> & E>>({ ...fieldsOf(this), ...fields }))
+	/**
+	 * Add or replace fields; a key present in both takes the new schema. `{ keepChecks: true }` runs the
+	 * receiver's object-level checks against the extended value, in their declared order.
+	 */
+	extend<E extends KFields>(
+		fields: E,
+		options?: KExtendOptions,
+	): KObject<Flat<Omit<F, keyof E> & E>> {
+		const kept = derivedChecks(this, 'extend', options)
+		let out: KObject<Flat<Omit<F, keyof E> & E>> = object(
+			retyped<Flat<Omit<F, keyof E> & E>>({ ...fieldsOf(this), ...fields }),
+		)
+		if (options !== undefined && 'keepChecks' in options)
+			for (const record of kept) out = out.link(record.op, record.arg, record.message)
+		return out
 	}
 
 	/**
 	 * Every field optional, for patches: a field that had a default becomes plain optional, so an omitted
 	 * field stays omitted instead of overwriting a stored value. Other field behaviour is kept.
 	 */
-	partial(): KObject<{ [K in keyof F]: KOptional<F[K]> }> {
+	partial(options?: KDeriveOptions): KObject<{ [K in keyof F]: KOptional<F[K]> }> {
+		derivedChecks(this, 'partial', options)
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
 		for (const key in fields) out[key] = optionalOf(fields[key])
@@ -81,15 +101,19 @@ export class KObject<F extends KFields> extends KSchema<
 	 * Fields made required again, the inverse of `partial()`: an optional field loses its top
 	 * `optional()` wrappers. With no keys every field is affected. Other field behaviour, defaults included, is kept.
 	 */
-	required<K extends keyof F & string = keyof F & string>(
-		...keys: K[]
-	): KObject<{ [P in keyof F]: P extends K ? KRequiredField<F[P]> : F[P] }> {
+	required<K extends keyof F & string = keyof F & string>(...keys: K[]): KRequiredObject<F, K>
+	required(options: KDeriveOptions): KRequiredObject<F, keyof F & string>
+	required<K extends keyof F & string>(
+		...keys: [...keys: K[], options: KDeriveOptions]
+	): KRequiredObject<F, K>
+	required(...keys: (string | KDeriveOptions)[]): KType {
+		const names = maskKeys(this, 'required', keys)
 		const fields = fieldsOf(this)
-		const chosen = keys.length === 0 ? null : new Set<string>(keys)
+		const chosen = names.length === 0 ? null : new Set<string>(names)
 		const out: Record<string, KType> = {}
 		for (const key in fields)
 			out[key] = chosen === null || chosen.has(key) ? requiredOf(fields[key]) : fields[key]
-		return object(retyped<{ [P in keyof F]: P extends K ? KRequiredField<F[P]> : F[P] }>(out))
+		return object(out)
 	}
 
 	/** A `k.enum` of the field names, in declaration order. */
@@ -103,6 +127,20 @@ export class KObject<F extends KFields> extends KSchema<
 		return this.link('strip', undefined, undefined)
 	}
 }
+
+/** The result of `required(...keys)`. */
+export type KRequiredObject<F extends KFields, K extends string> = KObject<{
+	[P in keyof F]: P extends K ? KRequiredField<F[P]> : F[P]
+}>
+
+/** The opt-in that lets a derived object drop the receiver's object-level checks. */
+export type KDeriveOptions = { readonly dropChecks: true }
+
+/** `extend` may also keep them: `{ keepChecks: true }`. */
+export type KExtendOptions = KDeriveOptions | { readonly keepChecks: true }
+
+/** The keys of `pick`, `omit` and `required`, optionally followed by `{ dropChecks: true }`. */
+export type KMaskArgs<K extends string> = [...keys: K[], options: KDeriveOptions]
 
 /**
  * The input type of a strict object. With no fields, `{}` would admit any object literal, so it is a
@@ -235,6 +273,40 @@ function checkedKeys(keys: readonly string[], factory: string): readonly string[
 				`${factory}() key '${key}' is not a valid Convex field name: non-empty printable ASCII, at most 1024 characters, not starting with '$'`,
 			)
 	return keys
+}
+
+/** The keys of a mask call, after checking the receiver's object-level checks against its options. */
+function maskKeys(node: KNode, method: string, args: readonly (string | KDeriveOptions)[]): string[] {
+	const keys: string[] = []
+	let options: KDeriveOptions | undefined
+	for (const arg of args) {
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a mask call's trailing argument may be its options object.
+		if (typeof arg === 'string') keys.push(arg)
+		else options = arg
+	}
+	derivedChecks(node, method, options)
+	return keys
+}
+
+/**
+ * The object-level checks of a receiver, oldest first. A derivation that would lose them throws at
+ * declaration unless its options opt in, so cross-field validation is never dropped silently.
+ */
+function derivedChecks(
+	node: KNode,
+	method: string,
+	options: KExtendOptions | undefined,
+): readonly KNode[] {
+	const checks: KNode[] = []
+	for (let current = node; current.prev !== null; current = current.prev)
+		if (current.op === 'refine' || current.op === 'check' || current.op === 'overwrite')
+			checks.unshift(current)
+	if (checks.length === 0 || options !== undefined) return checks
+	const count = checks.length === 1 ? '1 object-level check' : `${checks.length} object-level checks`
+	const keep = method === 'extend' ? ", or pass { keepChecks: true } to run them on the extended object" : ''
+	throw new Error(
+		`k.object().${method}() would drop ${count} (refine, check or overwrite on the object): pass { dropChecks: true } to drop ${checks.length === 1 ? 'it' : 'them'}${keep}`,
+	)
 }
 
 /** The field map built by pick, omit, extend or partial, under the type its method states. */

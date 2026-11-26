@@ -219,3 +219,26 @@ const elementArray = k.array(k.string())
 const defaultedString = k.string().default('x')
 const positiveNumber = k.number().positive().nonnegative().negative().nonpositive().finite().safe()
 void zodParityAssertions
+
+const deriveRange = k.object({ from: k.number(), to: k.number().optional() }).refine(() => true)
+const derivePicked = deriveRange.pick('from', { dropChecks: true })
+const deriveOmitted = deriveRange.omit('to', { dropChecks: true })
+const deriveRequired = deriveRange.required({ dropChecks: true })
+const deriveRequiredSome = deriveRange.required('to', { dropChecks: true })
+const derivePartial = deriveRange.partial({ dropChecks: true })
+const deriveKept = deriveRange.extend({}, { keepChecks: true })
+const deriveAssertions: [
+	Assert<Equal<k.output<typeof derivePicked>, { from: number }>>,
+	Assert<Equal<k.output<typeof deriveOmitted>, { from: number }>>,
+	Assert<Equal<k.output<typeof deriveRequired>, { from: number; to: number }>>,
+	Assert<Equal<k.output<typeof deriveRequiredSome>, { from: number; to: number }>>,
+	Assert<Equal<k.output<typeof derivePartial>, { from?: number; to?: number }>>,
+	Assert<Equal<k.output<typeof deriveKept>, { from: number; to?: number }>>,
+] = [true, true, true, true, true, true]
+void deriveAssertions
+// @ts-expect-error keepChecks is only offered by extend.
+deriveRange.pick('from', { keepChecks: true })
+// @ts-expect-error keepChecks is only offered by extend.
+deriveRange.partial({ keepChecks: true })
+// @ts-expect-error a mask key must be a field.
+deriveRange.omit('missing', { dropChecks: true })

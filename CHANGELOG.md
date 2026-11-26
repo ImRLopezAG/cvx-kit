@@ -34,6 +34,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - Containers passed to `k.enum`, `k.union`, `k.discriminatedUnion`, `k.record` and `refine` options are frozen at declaration, and an object's field map is frozen when `.shape` is first read; `withFieldGroups` copies and freezes its map. Mutating a shared array or field object afterwards throws.
 - A `k.discriminatedUnion` whose options share a discriminator value throws when first used.
 - `k.input` of `k.object({})` is `{ readonly [key: string]: never }`, so an empty input rejects extra properties at the type level.
+- `pick`, `omit`, `extend` (including `extend({})`), `partial` and `required` on an object with object-level `refine`/`check`/`overwrite` throw at declaration instead of silently dropping them. Pass `{ dropChecks: true }` as the last argument to drop them, or `extend(fields, { keepChecks: true })` to keep them. The codemod reports such sites as `derive-drops-checks`.
 - `k.object` parses plain objects only. A class instance fails with `expected a plain object, received an instance of …`; a `.strip()` object parses one from its own enumerable properties.
 
 - `argumentFailure` (added in 0.2.0) no longer has a `'legacy'` policy. The default is `'validation'`, which throws `KValidationError` (`ConvexError({ code: 'VALIDATION', issues })`); `'declared'` and a function hook work as in 0.2.0. `zCustomFunctions` is `kCustomFunctions` in `cvx-kit/registration`.

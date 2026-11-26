@@ -140,8 +140,8 @@ New in 2.0: `cvx-kit/k` (`k`, `KValidationError` and the schema types, including
 | `.transform(fn)`, `.pipe(schema)`                                    | same                                                                                        | input positions only                                                                   |
 | `.describe(text)`                                                    | same                                                                                        |                                                                                        |
 | `.meta({...})`                                                       | `.describe(text)`                                                                           | only a description is kept                                                             |
-| `.pick({ a: true })`, `.omit({ a: true })`                           | `.pick('a')`, `.omit('a')`                                                                  | string keys                                                                            |
-| `.extend({...})`, `.partial()`, `.shape`                             | same                                                                                        | `partial()` fills no defaults                                                          |
+| `.pick({ a: true })`, `.omit({ a: true })`                           | `.pick('a')`, `.omit('a')`                                                                  | string keys; on a refined object add `{ dropChecks: true }`, see [Derived objects](#derived-objects-refuse-to-drop-object-level-checks) |
+| `.extend({...})`, `.partial()`, `.shape`                             | same                                                                                        | `partial()` fills no defaults; on a refined object pass `{ dropChecks: true }` or `extend(fields, { keepChecks: true })` |
 | `.required()`, `.required({ a: true })`                              | `.required()`, `.required('a')`                                                             | string keys; removes the fields' `optional()` wrappers                                 |
 | `.keyof()`                                                           | same                                                                                        | a `k.enum` of the keys                                                                 |
 | `z.array(x).element`                                                 | `k.array(x).element`                                                                        |                                                                                        |
@@ -203,9 +203,11 @@ What to do: where code relied on stripping (parsing a superset of fields, for ex
 
 `z.object(...).parse` returned a new object in schema key order. A `k` parse returns the input object itself when nothing is normalised (no default filled, no normaliser or transform changed a value, no key stripped), so the result is `===` the input and keeps the input's key order. Code that compares `JSON.stringify(schema.parse(a))` with a stored string, uses the output as a cache key, or mutates the output changes behaviour. Sort keys before serialising, or copy the result (`{ ...schema.parse(a) }`) before mutating it. See [Parse and issues](k.md#parse-and-issues).
 
-### Derived objects drop object-level checks
+### Derived objects refuse to drop object-level checks
 
-`pick`, `omit`, `extend` (also `extend({})`) and `partial` build a new object over the same field schemas. Field checks are kept; a `refine` or `check` declared on the object itself is not, because it may read fields the new object lacks. Zod kept them on `extend`. Restate the check on the derived object.
+`pick`, `omit`, `extend` (also `extend({})`), `partial` and `required` build a new object over the same field schemas; field checks are kept. On an object with a `refine`, `check` or `overwrite` declared on the object itself, they throw at declaration instead of silently dropping it: `k.object().extend() would drop 1 object-level check …`. Zod kept refinements through `extend` in some versions and dropped them in others, and Zod 4 throws on `.pick`/`.omit` of a refined object.
+
+What to do: at each site, pass `{ dropChecks: true }` as the last argument to drop the checks (`schema.pick('a', 'b', { dropChecks: true })`), or on `extend`, `{ keepChecks: true }` to run them on the extended object. The codemod reports each mask or extend call on a refined object it can see as `derive-drops-checks`.
 
 ### Table boundaries and object spread
 
@@ -508,6 +510,7 @@ The report holds `summary` (file counts by status), `declarations` (rewritten an
 | `unknown-method`         | a chain method with no `k` form (for example `.gt()`, `.multipleOf()`)                                                                     | Use the [Zod to `k` map](#zod-to-k-map).                                                |
 | `zod-check`              | Zod's `.check(...)`: check functions, or a callback reading `ctx.value`/`ctx.issues`                                                       | Rewrite as `.check((value, ctx) => ctx.addIssue({ message }))`, then run again.         |
 | `type-helper-unknown`    | `z.infer`/`z.input`/`z.output` of a schema not known to be `k` after the run                                                               | Migrate that schema (or pass its file in the same run), then run again; or keep it Zod. |
+| `derive-drops-checks`    | `.pick`/`.omit`/`.extend`/`.partial`/`.required` on an object with an object-level `.refine`/`.superRefine`/`.check` in the same file | Pass `{ dropChecks: true }`, or `{ keepChecks: true }` on `extend`; see [Derived objects](#derived-objects-refuse-to-drop-object-level-checks). |
 | `unproven-mask`          | `.pick({ a: true })`/`.omit({ … })` on a value the codemod cannot prove is a schema or table (an import from outside the run, a parameter) | Pass string keys if it is a `k` schema. Does not hold the rest of the statement as Zod. |
 | `unproven-strict`        | `.strict()` on such a value                                                                                                                | Remove it if it is a `k` schema. Does not hold the rest of the statement as Zod.        |
 | `mask-dynamic`           | `.pick`/`.omit` with a mask that is not a literal `{ key: true }` object                                                                   | Pass string keys.                                                                       |
@@ -544,7 +547,7 @@ Limits:
 2. Record the current pushed schema (see the checklist below) before changing code.
 3. Upgrade cvx-kit and the peers, then run the codemod in dry-run mode and read the report.
 4. Run it with `--write`, then fix the reported sites and the type errors, starting from leaf modules of the import graph: shared constants and field schemas first, then table modules, then contracts and registries, then function modules. A module's errors often come from a schema it imports, so fixing leaves first avoids chasing the same error in many files.
-5. Fix the behaviour changes: returns that relied on stripping, `ZodError` readers, ids typed as `string`, async refinements.
+5. Fix the behaviour changes: returns that relied on stripping, derived objects of refined objects, `ZodError` readers, ids typed as `string`, async refinements.
 6. Verify, then deploy.
 
 A function module gets faster only once its whole import graph is Zod-free. One module that still imports `zod` (an app helper, a shared schema, `cvx-kit/zod`) puts Zod into the bundle of every function module that imports it. Find those modules with the bundle check below and move Zod-using code out of shared schema files.

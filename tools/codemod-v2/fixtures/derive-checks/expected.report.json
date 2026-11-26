@@ -1,0 +1,21 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 3,
+			"code": "mixed-reference"
+		},
+		{
+			"line": 7,
+			"code": "derive-drops-checks"
+		},
+		{
+			"line": 10,
+			"code": "super-refine"
+		},
+		{
+			"line": 11,
+			"code": "derive-drops-checks"
+		}
+	]
+}

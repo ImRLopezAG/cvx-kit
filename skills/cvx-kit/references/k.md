@@ -172,12 +172,18 @@ k.object({ _tag: k.string() }).strip().parse(new NotFound()) // { _tag: 'NotFoun
 k.object({ _tag: k.string() }).parse(new NotFound()) // throws: expected a plain object
 ```
 
-`pick` and `omit` take string keys, not `{ a: true }` masks. All four build a new object over the same field schemas, so retained fields keep their behaviour. Refinements and checks declared on the object itself are not carried over, because they may read fields the new object lacks, and that includes `.extend({})` with no fields; declare them again on the derived object.
+`pick` and `omit` take string keys, not `{ a: true }` masks. `pick`, `omit`, `extend`, `partial` and `required` build a new object over the same field schemas, so retained fields keep their behaviour. A `refine`, `check` or `overwrite` declared on the object itself may read fields the new object lacks or makes optional, so on an object that has one these methods throw at declaration, naming the method and how many checks would be dropped. Say what you want with a last argument:
+
+- `{ dropChecks: true }` on any of the five drops them: `range.pick('from', { dropChecks: true })`, `range.partial({ dropChecks: true })`, `range.required('to', { dropChecks: true })`.
+- `{ keepChecks: true }`, on `extend` only, re-attaches them to the extended object in their declared order; they run against the extended value. Use it when the extension does not redefine a field the check reads.
+
+`strip()`, `describe()`, `optional()` and `nullable()` derive no new shape and keep the checks. Checks on a field's own schema always travel with the field.
 
 ```ts
 const range = k.object({ from: k.int(), to: k.int() }).refine((r) => r.from <= r.to)
-range.extend({}).parse({ from: 2, to: 1 }) // passes: the refinement is not on the new object
-range.extend({}).refine((r) => r.from <= r.to) // restate it
+range.extend({}) // throws: extend() would drop 1 object-level check
+range.extend({ note: k.string() }, { keepChecks: true }) // still checks from <= to
+range.pick('from', { dropChecks: true }) // no check
 ```
 
 ```ts

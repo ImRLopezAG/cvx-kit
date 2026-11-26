@@ -259,13 +259,37 @@ export function processBoundChain(ctx, unit, id, table) {
 	return true
 }
 
+/** Steps that record an object-level check; a derived object in `k` throws unless told what to do with it. */
+const CHECK_STEPS = new Set(['refine', 'superRefine', 'check'])
+
+/**
+ * Whether the schema before step `end` of a chain carries an object-level check: a check step after
+ * its last object-building step, or, with none, a check on the binding at its root.
+ */
+export function carriesObjectChecks(ctx, chain, end = chain.steps.length) {
+	const { root, steps } = chain
+	for (let index = end - 1; index >= 0; index--) {
+		const step = steps[index]
+		if (step.kind !== 'member') continue
+		if (CHECK_STEPS.has(step.name)) return true
+		if (OBJECT_STEPS.has(step.name)) return false
+	}
+	return root.type === 'Identifier' && ctx.refinedBindings.has(root.name)
+}
+
 function processSteps(ctx, unit, steps, from, outer) {
+	const chain = chainOf(outer)
 	let index = from
 	while (index < steps.length) {
 		const step = steps[index]
 		if (step.kind !== 'member' || step.name === null) return
 		const call = steps[index + 1]?.kind === 'call' ? steps[index + 1].node : null
 		const site = { start: step.node.property.start, end: (call ?? step.node).end }
+		if (call && OBJECT_STEPS.has(step.name) && carriesObjectChecks(ctx, chain, index)) {
+			addSkip(ctx, unit, site, 'derive-drops-checks')
+			index += 2
+			continue
+		}
 		if (!call) {
 			if (step.name === 'shape') {
 				index += 2

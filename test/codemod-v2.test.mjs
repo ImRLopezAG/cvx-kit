@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vite-plus/test'
-import { run } from '../tools/codemod-v2/index.mjs'
+import { HELP, parseArguments, run } from '../tools/codemod-v2/index.mjs'
 import { transformSource } from '../tools/codemod-v2/transform.mjs'
 
 const FIXTURES = 'tools/codemod-v2/fixtures'
@@ -80,8 +80,65 @@ describe('codemod-v2 fixtures', () => {
 
 	it('counts z.object sites as informational object-now-strict', () => {
 		const outcome = transformSource('strict.ts', fixture('strict-object', 'input.ts'))
-		expect(outcome.info.map((site) => site.code)).toEqual(['object-now-strict'])
+		expect(outcome.info.map((site) => site.code)).toEqual(['int-safe-preserved', 'object-now-strict'])
 		expect(outcome.status).toBe('rewritten')
+	})
+})
+
+describe('codemod-v2 number bounds', () => {
+	const source = [
+		"import { z } from 'zod'",
+		'',
+		'export const Payment = z.object({',
+		'	cents: z.int().positive(),',
+		'	units: z.number().int(),',
+		'	before: z.number(),',
+		'	floor: z.number().min(0),',
+		'	rate: z.number().finite(),',
+		'	safe: z.int().safe(),',
+		'})',
+		'',
+	].join('\n')
+
+	it("keeps v1's refusals by default and reports them as informational", () => {
+		const outcome = transformSource('payment.ts', source)
+		expect(outcome.output).toContain('\tcents: k.int().safe().positive(),')
+		expect(outcome.output).toContain('\tunits: k.int().safe(),')
+		expect(outcome.output).toContain('\tbefore: k.number().finite(),')
+		expect(outcome.output).toContain('\tfloor: k.number().finite().min(0),')
+		expect(outcome.output).toContain('\trate: k.number().finite(),')
+		expect(outcome.output).toContain('\tsafe: k.int().safe(),')
+		expect(outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'))
+			.toEqual([
+				'int-safe-preserved',
+				'int-safe-preserved',
+				'number-finite-preserved',
+				'number-finite-preserved',
+			])
+		expect(outcome.status).toBe('rewritten')
+		expect(transformSource('payment.ts', outcome.output).output).toBe(outcome.output)
+	})
+
+	it('emits the bare native forms with --native-number-bounds and reports each site', () => {
+		const outcome = transformSource('payment.ts', source, { nativeNumberBounds: true })
+		expect(outcome.output).toContain('\tcents: k.int().positive(),')
+		expect(outcome.output).toContain('\tunits: k.number().int(),')
+		expect(outcome.output).toContain('\tbefore: k.number(),')
+		expect(outcome.output).toContain('\tfloor: k.number().min(0),')
+		expect(outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'))
+			.toEqual([
+				'int-no-longer-safe',
+				'int-no-longer-safe',
+				'number-now-accepts-nan',
+				'number-now-accepts-nan',
+			])
+	})
+
+	it('accepts the flag on the command line and documents it in --help', () => {
+		expect(parseArguments(['src', '--native-number-bounds']).nativeNumberBounds).toBe(true)
+		expect(parseArguments(['src']).nativeNumberBounds).toBe(false)
+		expect(HELP).toContain('--native-number-bounds')
+		expect(HELP).toContain('number-now-accepts-nan')
 	})
 })
 

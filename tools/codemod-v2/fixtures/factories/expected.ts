@@ -2,14 +2,14 @@ import { k } from 'cvx-kit'
 
 export const Everything = k.object({
 	s: k.string().trim().toLowerCase().regex(/^a/).describe('s'),
-	n: k.number(),
-	i: k.int(),
+	n: k.number().finite(),
+	i: k.int().safe(),
 	big: k.int64(),
 	nil: k.null(),
 	lit: k.literal('x'),
 	kind: k.enum(['a', 'b']),
 	list: k.array(k.string()).length(2),
-	either: k.union([k.string(), k.number()]),
+	either: k.union([k.string(), k.number().finite()]),
 	map: k.record(k.string(), k.any()),
 	raw: k.any(),
 	doc: k.json(),
@@ -29,6 +29,6 @@ export const Upper = k
 export const Piped = k
 	.string()
 	.transform((value) => value.length)
-	.pipe(k.number())
+	.pipe(k.number().finite())
 export const Inner = Extended.unwrap
 export const parsed = Everything.parse({})

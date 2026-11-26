@@ -336,12 +336,16 @@ export const approvalRefs = kTable('approvalRefs', {
 
 ### Numbers accept NaN and Infinity
 
-A bare `k.number()` accepts `NaN` and `±Infinity`, as native `v.number()` does; `z.number()` rejected them. Any `min`, `max` or `length` bound rejects `NaN`, and `k.int()` and `.int()` reject both `NaN` and infinities. `.int()` checks `Number.isInteger` and no longer caps at the safe-integer range.
+A bare `k.number()` accepts `NaN` and `±Infinity`, as native `v.number()` does; `z.number()` rejected them. Any `min`, `max` or `length` bound rejects `NaN`, and `k.int()` and `.int()` reject both `NaN` and infinities. `.int()` checks `Number.isInteger` and no longer caps at the safe-integer range, so `Number.MAX_SAFE_INTEGER + 1` cents is an integer. Add `.finite()` and `.safe()` to keep v1's refusals:
 
 ```ts
-const amount = k.number().refine(Number.isFinite, 'Expected a finite number')
-const count = k.int().refine(Number.isSafeInteger, 'Expected a safe integer')
+const amount = k.number().finite()
+const cents = k.int().safe()
 ```
+
+The codemod does this by default: `z.int()` and `z.number().int()` become `k.int().safe()`, and `z.number()` (with or without bounds such as `.min(0)`) becomes `k.number().finite()`, reported under the informational codes `int-safe-preserved` and `number-finite-preserved`. With `--native-number-bounds` it emits `k.int()` and `k.number()` instead and reports each site as `int-no-longer-safe` or `number-now-accepts-nan`.
+
+What the default costs: a bare `k.number()` runs no kit code on a call (Convex validates it), while `.finite()` is a kit check. Measured on the kit's argument path (`runDeclared`, Node 26, Apple M5), an args object of ten fields costs about 1 ns per call with `k.number()`, 250 ns with `k.number().finite()`, 180 ns with `k.int()` (whose integer check is already kit code, since Convex has no integer number type) and 290 ns with `k.int().safe()`. So `.safe()` adds about 11 ns per field to an `k.int()` that already runs, and `.finite()` turns a field with no kit work into one with some. That is small next to a database read, so keep the default for money, counts and time bounds and use the flag only where the per-call check is measured to matter.
 
 ### Dates
 
@@ -468,12 +472,13 @@ npx cvx-kit-codemod-v2 convex src --write --report codemod-report.json
 
 From a cvx-kit checkout, `node path/to/cvx-kit/tools/codemod-v2/index.mjs` is the same program.
 
-Options: `--write` writes the files (without it nothing is written), `--report <file>` writes the JSON report, `--ext ts,tsx,mts` sets the extensions, `--no-getters` keeps function `args` and `returns` as data properties, `--no-strip-parsed` leaves parsed objects strict (see [Strict objects](#strict-objects-in-the-codemod)), and `--ignore <glob…>` skips paths. `node_modules`, `dist`, `build`, `.next`, `_generated`, `.git` and `.d.ts` files are always skipped. Run it on a clean working tree so the diff is reviewable. Running it twice changes nothing the second time. Pass every directory of the app in one run: the codemod reads all the files twice, so a type helper on an imported schema and a schema parsed in another file are judged with the whole run in view.
+Options: `--write` writes the files (without it nothing is written), `--report <file>` writes the JSON report, `--ext ts,tsx,mts` sets the extensions, `--no-getters` keeps function `args` and `returns` as data properties, `--no-strip-parsed` leaves parsed objects strict (see [Strict objects](#strict-objects-in-the-codemod)), `--native-number-bounds` emits bare `k.int()`/`k.number()` instead of `k.int().safe()`/`k.number().finite()` (see [Numbers](#numbers-accept-nan-and-infinity)), `--ignore <glob…>` skips paths, and `--help` prints the options. `node_modules`, `dist`, `build`, `.next`, `_generated`, `.git` and `.d.ts` files are always skipped. Run it on a clean working tree so the diff is reviewable. Running it twice changes nothing the second time. Pass every directory of the app in one run: the codemod reads all the files twice, so a type helper on an imported schema and a schema parsed in another file are judged with the whole run in view.
 
 What it rewrites:
 
 - `import { z } from 'zod'` → `import { k } from 'cvx-kit'`, dropping the Zod import when nothing uses it. A file that already imports `k` from `cvx-kit` or `cvx-kit/k` keeps that import, so a re-run after fixing reported sites picks up the rest.
-- Factories (`z.object`, `z.strictObject` → `k.object`, `z.bigint` → `k.int64`, `z.unknown` → `k.any`, `z.iso.date` → `k.isoDate`, `z.iso.datetime` → `k.isoDateTime`, and the rest by name).
+- Number bounds: `z.int()` and `z.number().int()` → `k.int().safe()`, `z.number()` → `k.number().finite()`, unless `--native-number-bounds` is passed.
+- Factories (`z.object`, `z.strictObject` → `k.object`, `z.bigint` → `k.int64`, `z.partialRecord` → `k.partialRecord`, `z.unknown` → `k.any`, `z.iso.date` → `k.isoDate`, `z.iso.datetime` → `k.isoDateTime`, and the rest by name).
 - Chains: `.nullish()` → `.nullable().optional()`, `.nonempty()` → `.min(1)`, `.strict()` removed, `.pick({ a: true })`/`.omit({ a: true })` → string keys. `.positive()`, `.negative()`, `.nonnegative()`, `.nonpositive()`, `.finite()`, `.safe()`, `.required()`, `.keyof()`, `.exclude()`, `.extract()`, `.removeDefault()` and a `k`-form `.check((value, ctx) => …)` are kept as written.
 - The same chain rewrites on a chain that starts at a schema the codemod can see is `k` (declared with `k.` in the file, or rewritten in this run) or at a table boundary member (`ledger.storage.pick({ amount: true })` → `.pick('amount')`), including tables already declared with `kTable`.
 - `zid('t')` → `k.id('t')`; the table callback form `(id) => ({ … })` → a plain object, for `zodTable`, `createTable(...)`, `tenantTable` and `zodVariantTable`.

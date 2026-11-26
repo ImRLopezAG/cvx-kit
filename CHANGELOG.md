@@ -64,6 +64,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `k.object` rejected class instances with `expected object, received object`; see the plain-object entry above.
 - `k.infer` of an object holding a `k.any()` field beside a defaulted field made the `any` field optional.
 - `refine` with a type-guard predicate narrows the schema's type.
+- Codemod: v1's number refusals are kept. `z.int()` and `z.number().int()` become `k.int().safe()` and `z.number()` becomes `k.number().finite()` (informational `int-safe-preserved`, `number-finite-preserved`); `--native-number-bounds` emits the bare forms and reports `int-no-longer-safe` / `number-now-accepts-nan`. The codemod prints its options with `--help`.
 
 ### Changed
 

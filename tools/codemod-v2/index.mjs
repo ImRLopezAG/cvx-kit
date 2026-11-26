@@ -2,9 +2,16 @@
 // cvx-kit v2 codemod: rewrites the mechanical majority of Zod schema and kit
 // table call sites to `k` and reports every site it left for manual work.
 // Usage: cvx-kit-codemod-v2 <path…> [--write] [--report out.json]
-//          [--ext ts,tsx,mts] [--no-getters] [--no-strip-parsed] [--ignore glob…]
+//          [--ext ts,tsx,mts] [--no-getters] [--no-strip-parsed] [--native-number-bounds]
+//          [--ignore glob…]
 // --no-getters keeps function `args` / `returns` as data properties.
 // --no-strip-parsed leaves parsed object schemas strict instead of adding `.strip()`.
+// By default `z.int()` / `.int()` become `k.int().safe()` and `z.number()` becomes
+// `k.number().finite()`, keeping v1's refusal of unsafe integers, NaN and infinities
+// (reported as `int-safe-preserved` / `number-finite-preserved`). That check is kit code run on
+// every call. --native-number-bounds emits bare `k.int()` / `k.number()` instead, which
+// Convex validates with no kit code, and reports each site as `int-no-longer-safe` /
+// `number-now-accepts-nan`.
 // Without --write it is a dry run and writes nothing but the optional report.
 //
 // The run reads every file twice: the first pass records what each file exports
@@ -16,6 +23,29 @@ import { dirname, join, matchesGlob, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildReport, formatSummary } from './report.mjs'
 import { transformSource } from './transform.mjs'
+
+export const HELP = `Usage: cvx-kit-codemod-v2 <path…> [options]
+
+Rewrites Zod schema and kit table call sites to k and reports the sites left for manual work.
+Without --write it is a dry run and writes nothing but the optional report.
+
+  --write                 write the rewritten files
+  --report <file>         write the JSON report
+  --ext ts,tsx,mts        file extensions to scan
+  --no-getters            keep function args / returns as data properties
+  --no-strip-parsed       leave parsed object schemas strict instead of adding .strip()
+  --native-number-bounds  emit bare k.int() / k.number() (see below)
+  --ignore <glob…>        skip matching paths
+  --help                  print this help
+
+Number bounds: Zod's z.int() and .int() refuse integers outside the safe range and z.number()
+refuses NaN and infinities; native Convex v.number() accepts them. By default the codemod keeps
+v1's refusals: k.int().safe() and k.number().finite(), reported as int-safe-preserved and
+number-finite-preserved. Those checks are kit code that runs on every call. With
+--native-number-bounds it emits k.int() and k.number(), which Convex validates with no kit code,
+and reports each site as int-no-longer-safe or number-now-accepts-nan: review money, counts and
+time bounds before choosing it.
+`
 
 const SKIPPED_DIRECTORIES = new Set([
 	'node_modules',
@@ -35,11 +65,14 @@ export function parseArguments(argv) {
 		ignore: [],
 		getters: true,
 		stripParsed: true,
+		nativeNumberBounds: false,
 	}
 	let list = options.paths
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index]
-		if (arg === '--write') {
+		if (arg === '--help' || arg === '-h') {
+			options.help = true
+		} else if (arg === '--write') {
 			options.write = true
 			list = options.paths
 		} else if (arg === '--report') {
@@ -54,12 +87,16 @@ export function parseArguments(argv) {
 		} else if (arg === '--no-strip-parsed') {
 			options.stripParsed = false
 			list = options.paths
+		} else if (arg === '--native-number-bounds') {
+			options.nativeNumberBounds = true
+			list = options.paths
 		} else if (arg === '--ignore') {
 			list = options.ignore
 		} else if (arg.startsWith('--')) {
 			throw new Error(`Unknown option ${arg}`)
 		} else list.push(arg)
 	}
+	if (options.help) return options
 	if (options.paths.length === 0) throw new Error('Pass at least one path')
 	return options
 }
@@ -94,7 +131,11 @@ export function run(argv, cwd = process.cwd()) {
 		path: relative(cwd, file),
 		source: readFileSync(file, 'utf8'),
 	}))
-	const transformOptions = { getters: options.getters, stripParsed: options.stripParsed }
+	const transformOptions = {
+		getters: options.getters,
+		stripParsed: options.stripParsed,
+		nativeNumberBounds: options.nativeNumberBounds,
+	}
 	const first = files.map(({ path, source }) => transformSource(path, source, transformOptions))
 	const knowledge = runKnowledge(files, first, cwd)
 	const results = []
@@ -164,7 +205,9 @@ function runKnowledge(files, outcomes, cwd) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
 	try {
-		console.log(run(process.argv.slice(2)).summary)
+		const argv = process.argv.slice(2)
+		if (argv.includes('--help') || argv.includes('-h')) console.log(HELP)
+		else console.log(run(argv).summary)
 	} catch (error) {
 		console.error(error.message)
 		process.exit(1)

@@ -1,7 +1,7 @@
 // Factories and chain methods: rewrites `z.<factory>(…)` to `k.<factory>(…)` and
 // the chain methods applied to a proven schema, or records why a site stays Zod.
 import { chainOf, isShadowed, outerChain, unwrap, walk } from './ast.mjs'
-import { addEdit, addSkip } from './sites.mjs'
+import { addEdit, addInfo, addSkip } from './sites.mjs'
 
 const FACTORIES = new Map([
 	['string', 'string'],
@@ -235,7 +235,52 @@ export function processZodChain(ctx, unit, id) {
 			derived: false,
 		})
 	}
+	if (first.name === 'number' || first.name === 'int') {
+		numberBounds(ctx, unit, steps, next, first, span(next))
+	}
 	processSteps(ctx, unit, steps, next + 1, outer)
+}
+
+/**
+ * Zod's `z.int()` (and `.int()`) stops at the safe-integer range and `z.number()` refuses `NaN` and
+ * infinities; native `v.number()` does neither. By default the codemod keeps v1's refusals:
+ * `k.int().safe()` and `k.number().finite()`. With `nativeNumberBounds` it emits the bare native
+ * forms, which run no kit code per call, and reports what each site stopped refusing.
+ */
+function numberBounds(ctx, unit, steps, next, factory, site) {
+	const names = new Set()
+	let intStep = null
+	for (let index = next + 1; index < steps.length; index += 2) {
+		const step = steps[index]
+		if (step.kind !== 'member' || steps[index + 1]?.kind !== 'call') break
+		names.add(step.name)
+		if (step.name === 'int' && intStep === null && steps[index + 1].node.arguments.length === 0)
+			intStep = step
+	}
+	const integer = factory.name === 'int' || intStep !== null
+	if (ctx.options.nativeNumberBounds) {
+		if (integer && !names.has('safe')) addInfo(ctx, unit, site, 'int-no-longer-safe')
+		else if (!integer && !names.has('finite') && !names.has('safe'))
+			addInfo(ctx, unit, site, 'number-now-accepts-nan')
+		return
+	}
+	if (integer) {
+		if (names.has('safe')) return
+		if (intStep !== null) {
+			// `z.number().int()` → `k.int().safe()`: the int factory, with `.int()` restated as `.safe()`.
+			addEdit(unit, factory.node.property, 'int')
+			addEdit(unit, intStep.node.property, 'safe')
+		} else {
+			const end = steps[next].node.end
+			addEdit(unit, { start: end, end }, '.safe()')
+		}
+		addInfo(ctx, unit, site, 'int-safe-preserved')
+		return
+	}
+	if (names.has('finite') || names.has('safe')) return
+	const end = steps[next].node.end
+	addEdit(unit, { start: end, end }, '.finite()')
+	addInfo(ctx, unit, site, 'number-finite-preserved')
 }
 
 /**

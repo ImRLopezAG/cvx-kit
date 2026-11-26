@@ -45,6 +45,8 @@ const TYPE_DECLARATIONS = new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclara
  * definitions to getters, see `transforms/getters.mjs`.
  * `options.stripParsed` (default `true`): append `.strip()` to object schemas
  * that are parsed, so parse keeps v1's stripping (see `transforms/objects.mjs`).
+ * `options.nativeNumberBounds` (default `false`): emit bare `k.int()` / `k.number()` instead of
+ * `k.int().safe()` / `k.number().finite()`, and report what each site no longer refuses.
  * `options.run`: what the CLI knows about the other files of the run, see
  * `index.mjs`; without it only this file is known.
  */
@@ -63,6 +65,7 @@ export function transformSource(path, source, options = {}) {
 		return rewrite(path, source, parsed.program, {
 			getters: options.getters !== false,
 			stripParsed: options.stripParsed !== false,
+			nativeNumberBounds: options.nativeNumberBounds === true,
 			run: options.run ?? null,
 		})
 	} catch (error) {

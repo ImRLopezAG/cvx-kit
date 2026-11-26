@@ -2,14 +2,14 @@ import { z } from 'zod'
 import { k } from 'cvx-kit'
 
 export const Amount = k.object({
-	cents: k.number().int().positive(),
-	balance: k.number().nonnegative(),
-	debt: k.number().negative().nonpositive(),
+	cents: k.int().safe().positive(),
+	balance: k.number().finite().nonnegative(),
+	debt: k.number().finite().negative().nonpositive(),
 	rate: k.number().finite(),
 	big: k.number().safe(),
 })
 
-export const Range = k.object({ from: k.number(), to: k.number() }).check((value, ctx) => {
+export const Range = k.object({ from: k.number().finite(), to: k.number().finite() }).check((value, ctx) => {
 	if (value.from > value.to) ctx.addIssue({ message: 'to must be >= from' })
 })
 

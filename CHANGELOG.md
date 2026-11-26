@@ -82,6 +82,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `toJsonSchema` and `.catch`: a caught object field is not required on the input side, and the output side emits the wrapped schema's shape without its checks, since the fallback is not validated.- Field and enum names that match `Object.prototype` members (`__proto__`, `constructor`, `toString`, `hasOwnProperty`) work everywhere: `k.object`, its derivations, finite-key records, `k.partialRecord`, `k.enum(...).enum`, both native validators, parse, JSON Schema, `toZod` and table projections build field maps with own properties, so `k.record(k.literal('__proto__'), v)` no longer loses its field. A discriminator missing from an option is no longer read through the prototype.
 - `k.enum(...).extract(values)` follows the requested order at runtime, as its type and Zod 4 do; `exclude` keeps the source order.
 - `k.discriminatedUnion` no longer reports a conflict when one option lists the same discriminator value twice (`k.union([k.literal('a'), k.enum(['a', 'b'])])`).
+- `toPublicDto` threw `cannot project a 'jsonObject' schema` on a table with a `k.jsonObject()` public field; it now projects it (a stored non-object fails as `invalid_type`).
 
 ### Changed
 

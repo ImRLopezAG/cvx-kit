@@ -1144,7 +1144,8 @@ function project(
 				break
 			case 'transform':
 			case 'pipe':
-				throw new Error('Table projections cannot run a transform or pipe')
+			case 'catch':
+				throw new Error('Table projections cannot run a transform, pipe or catch')
 			default:
 				// Checks, normalisers and descriptions are not re-run on stored values.
 				break
@@ -1250,6 +1251,8 @@ function leafMatches(root: KType, value: Value | undefined): boolean {
 		case 'any':
 		case 'json':
 			return value !== undefined
+		case 'jsonObject':
+			return isObjectValue(value)
 		case 'literal':
 			return value === root.arg
 		case 'enum':

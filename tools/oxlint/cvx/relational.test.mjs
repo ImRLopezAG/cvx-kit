@@ -450,7 +450,7 @@ tester.run('U7 root factory locations', rules['root-facade-ownership'], {
 })
 
 const table =
-	"import { zodTable as define } from 'cvx-kit/zod-table'; const orders = define('orders', () => ({}));"
+	"import { kTable as define } from 'cvx-kit/table'; const orders = define('orders', {});"
 tester.run('U7 manual ID projection', rules['no-manual-id-projection'], {
 	valid: [
 		{ filename, code: table + 'orders.toPublicDto(row, true)' },
@@ -486,17 +486,33 @@ tester.run('U7 copied native pagination', rules['no-copied-pagination'], {
 		{ filename, code: 'const opts = {numItems: 5, cursor: "next"}' },
 		{
 			filename,
-			code: "import { z } from 'zod'; function f(z) { return z.object({numItems: z.number(), cursor: z.string().nullable()}) }",
+			code: "import { k } from 'cvx-kit'; function f(k) { return k.object({numItems: k.number(), cursor: k.string().nullable()}) }",
 		},
 		{
 			filename,
-			code: 'const z = local; z.object({page: z.array(row), isDone: z.boolean(), continueCursor: z.string()})',
+			code: 'const k = local; k.object({page: k.array(row), isDone: k.boolean(), continueCursor: k.string()})',
 		},
 		{ filename, code: table + 'orders.paginationOpts(mask)' },
+		{
+			filename,
+			code: "import { z } from 'zod'; z.object({numItems: z.number(), cursor: z.string().nullable()})",
+		},
+		{
+			filename,
+			code: "import { k } from 'cvx-kit'; k.object({ title: k.string(), cursor: k.string() })",
+		},
 	],
 	invalid: [
 		testCase(
-			"import { z as schema } from 'zod'; const z = schema; z.object({numItems: z.number(), cursor: z.string().nullable()})",
+			"import { k } from 'cvx-kit/k'; k.object({numItems: k.int(), cursor: k.string().nullable()})",
+			'pagination',
+		),
+		testCase(
+			"import { k } from 'cvx-kit'; k.object({page: k.array(row), isDone: k.boolean(), continueCursor: k.string()})",
+			'pagination',
+		),
+		testCase(
+			"import { k as schema } from 'cvx-kit'; const k = schema; k.object({numItems: k.number(), cursor: k.string().nullable()})",
 			'pagination',
 		),
 		testCase(
@@ -737,12 +753,12 @@ tester.run('U7 R1 computed pagination keys', rules['no-copied-pagination'], {
 	valid: [
 		{
 			filename,
-			code: "import {z} from 'zod'; const numItems = 'total', cursor = 'pointer'; z.object({[numItems]: z.number(), [cursor]: z.string()})",
+			code: "import {k} from 'cvx-kit'; const numItems = 'total', cursor = 'pointer'; k.object({[numItems]: k.number(), [cursor]: k.string()})",
 		},
 	],
 	invalid: [
 		testCase(
-			"import {z} from 'zod'; z.object({['numItems']: z.number(), ['cursor']: z.string()})",
+			"import {k} from 'cvx-kit'; k.object({['numItems']: k.number(), ['cursor']: k.string()})",
 			'pagination',
 		),
 	],

@@ -24,6 +24,19 @@ export function appFile(context: Context, filename = context.filename) {
 	return file === '..' || file.startsWith('../') || file.startsWith('/') ? null : file
 }
 
+/** Entries that export the `k` validator namespace. */
+export const K_SOURCES: readonly string[] = ['cvx-kit', 'cvx-kit/k']
+
+/** Entries that export the table builders (`kTable`, `kVariantTable`, `tenantTable`, `createModule`). */
+export const TABLE_SOURCES: readonly string[] = ['cvx-kit', 'cvx-kit/table']
+
+/** Factory name when `node` is a `k.<factory>(...)` call whose `k` comes from a kit entry. */
+export function kFactory(context: Context, node: ESTree.CallExpression): string | null {
+	if (node.callee.type !== 'MemberExpression') return null
+	const owner = imported(context, node.callee.object)
+	return owner?.name === 'k' && K_SOURCES.includes(owner.source) ? propertyName(node.callee) : null
+}
+
 export function imported(
 	context: Context,
 	node: ESTree.Node,
@@ -41,7 +54,7 @@ export function imported(
 	if (node.type === 'MemberExpression') {
 		const owner = imported(context, node.object, active)
 		const name = propertyName(node)
-		return owner && name && ['*', 'z', 'v', 'default'].includes(owner.name)
+		return owner && name && ['*', 'z', 'k', 'v', 'default'].includes(owner.name)
 			? { source: owner.source, name }
 			: null
 	}
@@ -56,7 +69,7 @@ export function imported(
 	const member = localDestructured(context, node)
 	if (member) {
 		const owner = imported(context, member.expression, active)
-		return owner && ['*', 'z', 'v', 'default'].includes(owner.name)
+		return owner && ['*', 'z', 'k', 'v', 'default'].includes(owner.name)
 			? { source: owner.source, name: member.name }
 			: null
 	}
@@ -538,8 +551,8 @@ function physicalReadProvenance(
 		if (factory && foundationFactory(factory)) return 'foundation'
 		if (
 			factory &&
-			['cvx-kit', 'cvx-kit/zod-table', 'cvx-kit/tenancy'].includes(factory.source) &&
-			['zodTable', 'tenantTable', 'zodVariantTable'].includes(factory.name)
+			['cvx-kit', 'cvx-kit/table', 'cvx-kit/tenancy'].includes(factory.source) &&
+			['kTable', 'tenantTable', 'kVariantTable'].includes(factory.name)
 		)
 			return 'table'
 		if (
@@ -686,8 +699,8 @@ function* evaluateReadProvenance(
 		const ref = imported(context, node)
 		if (
 			ref &&
-			['zod', 'zod/v4', 'convex/values'].includes(ref.source) &&
-			['z', 'v', '*', 'default'].includes(ref.name)
+			['cvx-kit', 'cvx-kit/k', 'convex/values'].includes(ref.source) &&
+			['k', 'v', '*', 'default'].includes(ref.name)
 		)
 			return 'validator'
 		if (ref) return importedReadProvenance(context, ref)
@@ -718,8 +731,8 @@ function* evaluateReadProvenance(
 	if (ref && foundationFactory(ref)) return 'foundation'
 	if (
 		ref &&
-		['cvx-kit', 'cvx-kit/zod-table', 'cvx-kit/tenancy'].includes(ref.source) &&
-		['zodTable', 'tenantTable', 'zodVariantTable'].includes(ref.name)
+		['cvx-kit', 'cvx-kit/table', 'cvx-kit/tenancy'].includes(ref.source) &&
+		['kTable', 'tenantTable', 'kVariantTable'].includes(ref.name)
 	)
 		return 'table'
 	if (

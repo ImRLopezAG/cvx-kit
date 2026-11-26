@@ -42,7 +42,7 @@ writeFileSync(
 	}),
 )
 const schema =
-	"import { zodTable as table } from 'cvx-kit/zod-table'; export const intents = table('intents', () => ({}))"
+	"import { kTable as table } from 'cvx-kit/table'; export const intents = table('intents', {})"
 
 for (const guide of ['skills/cvx-kit/references/components.md', 'docs/references/components.md']) {
 	const markdown = readFileSync(new URL(`../../../${guide}`, import.meta.url), 'utf8')
@@ -117,7 +117,7 @@ tester.run('component queries remain read only', rules['domain-file-responsibili
 		},
 	],
 })
-tester.run('library component schemas use zodTable', libraryRules['schema-file-boundaries'], {
+tester.run('library component schemas use kTable', libraryRules['schema-file-boundaries'], {
 	valid: [{ filename: join(component, 'schema.ts'), code: schema }],
 	invalid: [
 		{ filename: join(component, 'functions.ts'), code: schema, errors: [{ messageId: 'schema' }] },
@@ -257,8 +257,8 @@ tester.run('explicit sibling domain public files', rules['domain-import-boundari
 		},
 	],
 })
-for (const builder of ['zodTable', 'tenantTable', 'zodVariantTable']) {
-	const code = `import { ${builder} as table } from 'cvx-kit/zod-table'; export const data = table('data', () => ({}))`
+for (const builder of ['kTable', 'tenantTable', 'kVariantTable']) {
+	const code = `import { ${builder} as table } from 'cvx-kit/table'; export const data = table('data', {})`
 	tester.run(`component ${builder} storage files`, rules['schema-file-boundaries'], {
 		valid: ['schema.ts', 'table.ts'].map((file) => ({
 			filename: join(component, file),

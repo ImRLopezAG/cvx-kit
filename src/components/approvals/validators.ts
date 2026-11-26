@@ -1,4 +1,3 @@
-// oxlint-disable-next-line cvx/component-boundaries -- Kit-shipped component: `k` ships in this package and the relative import stays inside dist/; host-authored components keep the rule.
 import { k } from '../../k'
 
 import {

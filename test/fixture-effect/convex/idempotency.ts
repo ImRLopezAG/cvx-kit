@@ -142,6 +142,9 @@ const capability = effectTransactionalIdempotency({
 		}),
 })
 const foundation = createEffectFoundation({
+	// The nested generated CRUD operation owns the single execution audit (see `create` below), so
+	// nested operations keep their own entry instead of folding into the outer one.
+	nestedAudit: 'separate',
 	observability: {
 		enabled: false,
 		classifyError: () => ({ outcome: 'failed', errorCode: 'IDEMPOTENCY_FAILURE' }),

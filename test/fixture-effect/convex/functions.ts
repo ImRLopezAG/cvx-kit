@@ -165,6 +165,7 @@ export const invalidReturn = validatedMutation({
 			return 'invalid' as 'saved'
 		}),
 })
+// With skipConvexValidation neither Convex nor the kit checks `returns`; the smoke script pins that.
 const customMutation = effectApiBuilder(
 	kCustomMutation(internalMutation, {
 		args: {},

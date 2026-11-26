@@ -359,6 +359,23 @@ export default defineSchema({
 
 Indexes are chained on `.table` exactly like a hand-written `defineTable`.
 
+### Declare indexes in the table's own module
+
+Convex bundles and evaluates each function module separately, and `schema.ts` is not part of a function's bundle. The relation and query engine (`defineRelations`, `createQueryEngine`) reads a table's indexes from the `.table` definition in the bundle that runs, so an index chained only in `schema.ts`, or in a module that the function's module does not import, is invisible to it. Tests pass anyway, because convex-test loads the schema with every module; the push then fails in function analysis with `No active index begins with or has a guarded prefix for "clients.ref": table "clients" has no indexes registered in this bundle`.
+
+Chain indexes where the table is declared, so every module that imports the table sees them, and pass the same `.table` to `defineSchema`:
+
+```ts
+// convex/tables/documents.ts
+export const documents = kTable('documents', { ownerId: k.id('users'), archivedAt: k.number().optional() })
+documents.table.index('by_owner', ['ownerId']).index('by_owner_archived', ['ownerId', 'archivedAt'])
+
+// convex/schema.ts
+export default defineSchema({ documents: documents.table })
+```
+
+Do not rely on a side-effect import or an object spread to pull an index module into each bundle: when the import or spread goes away, nothing fails until the push.
+
 ## Rules of thumb
 
 1. One `kTable` per entity, in its own module, exported by name.

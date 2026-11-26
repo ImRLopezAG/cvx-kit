@@ -30,7 +30,18 @@ export type KSafeParseResult<T> =
 
 /** Thrown by `parse` and the function boundary: a `ConvexError` whose data is `{ code: 'VALIDATION', issues }`. */
 export class KValidationError extends ConvexError<KValidationData> {
+	/**
+	 * Built without stack frames: a validation failure is an expected outcome whose issues carry the
+	 * path, and frames from the kit's walker (`k/parse.ts`, `registration.ts`) only made a dev
+	 * backend's log read like a crash. Effect's `SchemaError` does the same. Other errors keep their stack.
+	 */
 	constructor(issues: KIssue[]) {
-		super({ code: 'VALIDATION', issues })
+		const limit = Error.stackTraceLimit
+		Error.stackTraceLimit = 0
+		try {
+			super({ code: 'VALIDATION', issues })
+		} finally {
+			Error.stackTraceLimit = limit
+		}
 	}
 }

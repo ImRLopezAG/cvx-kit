@@ -66,6 +66,8 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `k.object` rejected class instances with `expected object, received object`; see the plain-object entry above.
 - `k.infer` of an object holding a `k.any()` field beside a defaulted field made the `any` field optional.
 - `refine` with a type-guard predicate narrows the schema's type.
+- The relation index error (`No active index begins with or has a guarded prefix for "table.field"`) says when the table has no indexes in the running bundle (the module declaring them may not be imported) or lists the indexes it does have.
+- `KValidationError` is built without stack frames, so a validation failure on a dev backend no longer prints kit-internal frames as if it were a crash. Other errors keep their stacks.
 - `k.discriminatedUnion` accepts a discriminator that is a union of literals (`k.union([k.literal('a'), k.literal('b')])`), dispatching on each value. An unsupported discriminator, a missing key or a repeated value now throws at declaration, naming the key, the option index and what was found, instead of on first use.
 - The error for a transforming `returns` schema names the field path that transforms and says what to declare instead.
 - Check options read Zod 4's `error` key: `refine(fn, { error: '…' })` reported `Invalid input`. `error` is now a string alias of `message` in `refine` and in the message argument of `min`/`max`/`length`/`regex`/`int` and the number checks, which also accept an options object. A function-valued `error` is a type error and throws at declaration. The codemod rewrites inline `error:` to `message:`, reports `error-map` and the informational `check-options-by-reference`.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { k } from '../src/k'
+import { k, KValidationError } from '../src/k'
 
 const messages = (result: { success: boolean; issues?: readonly { message: string }[] }) =>
 	result.success ? [] : (result.issues ?? []).map((issue) => issue.message)
@@ -42,5 +42,24 @@ describe("Zod 4's error key in check options", () => {
 		k.string().refine(() => true, { message: 'x', params: {} })
 		// @ts-expect-error `abort` is not a k check option
 		k.string().min(1, { abort: true })
+	})
+})
+
+describe('KValidationError', () => {
+	it('carries no kit stack frames and leaves the stack limit as it was', () => {
+		const before = Error.stackTraceLimit
+		const result = (() => {
+			try {
+				k.string().min(3).parse('a')
+			} catch (error) {
+				return error
+			}
+		})()
+		if (!(result instanceof KValidationError)) throw new Error('expected a KValidationError')
+		const stack = String(result.stack)
+		expect(stack).not.toMatch(/\bat\b/)
+		expect(stack).toContain('VALIDATION')
+		expect(Error.stackTraceLimit).toBe(before)
+		expect(new Error('genuine').stack).toMatch(/\bat\b/)
 	})
 })

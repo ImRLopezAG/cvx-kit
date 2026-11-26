@@ -651,6 +651,21 @@ Every release also creates a GitHub Release whose notes are the matching
 [CHANGELOG](https://github.com/ImRLopezAG/cvx-kit/blob/main/CHANGELOG.md) section (extracted by
 `scripts/extract-changelog.mjs` in the release workflow).
 
+### Before a release: push to a local backend
+
+convex-test does not validate exported validators the way the Convex backend
+does: it accepts shapes the backend refuses at push (a record with literal keys,
+for example), and it always loads the schema, so an index declared in a module a
+function does not import goes unnoticed. The test suite cannot catch these, so
+before a release run the packed scripts that push to a local deployment with
+`npx convex dev --once`: `bun run test:package:variants`
+(`scripts/test-packed-variants.mjs`), `node scripts/test-packed-compact-pagination.mjs`,
+`bun run test:package:variant-querying` (`scripts/test-packed-variant-querying.mjs`)
+and the `smoke-packed-*` scripts (`bun run test:package:smoke:effect`,
+`test:package:smoke:bun`, `test:package:smoke:npm`,
+`node scripts/smoke-packed-querying.mjs <dir>`). They start an anonymous local
+backend; none of them needs a cloud deployment or a login.
+
 ### OIDC setup
 
 Publishing uses [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)

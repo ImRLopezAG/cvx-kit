@@ -21,6 +21,17 @@ bun add cvx-kit@^2
 # or: npm install cvx-kit@^2
 ```
 
+## Coming from before 0.1.31 or 0.2.0
+
+An app moving to 2.0 from a release before 0.1.31 or 0.2.0 also crosses the behaviour changes of those releases. None of them is a type error, so check each one ([upgrading](upgrading.md) has the details):
+
+| Since  | Change                                                                                                                                                                                                                                                                                                       | To keep the old behaviour                                                                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| 0.1.31 | `nestedAudit: 'fold'` is the default: an Effect command nested under an operation that declares an audit callback writes no audit entry of its own; the outermost entry stands for the request. A bulk command that `exec`s one nested command per row used to write one audit entry per row and now writes one. | `createEffectFoundation({ nestedAudit: 'separate' })`, then remove any `nestedAudit` flag from bound contexts.              |
+| 0.1.31 | `projectErrorCause` (and the Effect API adapters' `errors` projection) projects a trusted declared error thrown inside `Effect.gen` (`throw errors.create(...)`) to its `DeclaredFailure` instead of `UnknownFailure`. Clients that matched `UNKNOWN_FAILURE` for those errors now receive the declared code. | No setting; return `yield* fail(...)` or map the cause yourself if a declared error must stay hidden.                       |
+| 0.2.0  | `argumentFailure` decides what an argument rejection throws. Its 0.2.0 default `'legacy'` (`ConvexError({ ZodError })`) is gone in 2.0; the default is `'validation'` (`KValidationError`). | `argumentFailure: 'declared'` for the `INVALID_ARGUMENTS` envelope, or a function returning the app's own error.            |
+| 0.2.0  | Peer ranges: `zod ^4.6.7` (only for `cvx-kit/zod` in 2.0) and `convex-helpers >=0.1.130 <0.2.0`.                                                                                                                                                                                                              | None; upgrade the peers.                                                                                                    |
+
 ## Name map
 
 Every name exported by cvx-kit 0.1.35, by entry point. Names that are not listed in the first table keep their name; the second table lists them all, with the signature changes that apply.
@@ -268,6 +279,10 @@ k.object({ a: k.number(), b: k.number() }).check((value, ctx) => {
 ```
 
 What to do: move database lookups and other async checks into the handler.
+
+### Reads do not re-run normalisers
+
+`toPublicDto`, `dto(...)` and the other read boundaries validate a stored row's shape and fill defaults, but they do not re-run normalisers (`trim`, `toLowerCase`, `toUpperCase`, `overwrite`) or checks on stored values. A row stored before a normaliser was added to its field comes back exactly as stored, for example with surrounding spaces or mixed case. v1's DTO parse ran them on read and hid such rows. The fix for old rows is a one-off data migration that rewrites them through the current schema (for example with `@convex-dev/migrations`, patching each row with `table.storage.parse(row)` minus the system fields); after it, writes keep them normalised.
 
 ### Defaults: patches no longer fill them
 
@@ -580,7 +595,7 @@ No data migration is expected: the stored shape and indexes are unchanged. If `n
   console.log(JSON.stringify(JSON.parse(exported), null, 2))
   ```
 
-- [ ] `npx convex dev --once` pushes without schema validation errors.
+- [ ] `npx convex dev --once` pushes without schema validation errors, against a local deployment if you have one. convex-test does not check exported validators the way the backend does (it accepts a record with literal keys, for example) and always loads the schema, so it hides an index declared in a module a function does not import. Only a push catches those; see [Declare indexes in the table's own module](table.md#declare-indexes-in-the-tables-own-module).
 - [ ] No function bundle contains Zod. Bundle a function module the way Convex does and list Zod inputs:
 
   ```sh

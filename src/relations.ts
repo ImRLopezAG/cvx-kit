@@ -2029,7 +2029,12 @@ function requireIndex(
 			)
 		})
 	)
-		throw new Error(`No active index begins with or has a guarded prefix for "${table}.${field}"`)
+		throw new Error(
+			`No active index begins with or has a guarded prefix for "${table}.${field}"` +
+				(data.capturedIndexes.length === 0
+					? `: table "${table}" has no indexes registered in this bundle. If its indexes are declared in another module (.index(...) on the table), that module may not be imported by this function's module; declare indexes with the table, or import the module that declares them from every module that uses the relation.`
+					: `; table "${table}" has indexes ${data.capturedIndexes.map((index) => `${index.name}(${index.fields.join(', ')})`).join(', ')} in this bundle. Add an index that starts with "${field}".`),
+		)
 }
 function legTables(leg: Leg): string[] {
 	return 'base' in leg ? [leg.base.table, leg.junction.table] : [leg.table]

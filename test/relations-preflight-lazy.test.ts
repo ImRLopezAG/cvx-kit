@@ -288,6 +288,22 @@ describe('deferred checks still throw no later than first use', () => {
 		)
 		expect(() => registry.identity).toThrow(/active index begins/)
 		expect(() => verifyRelations(registry)).toThrow(/active index begins/)
+		// A table with no indexes in the bundle names the likely cause: the declaring module is not imported.
+		expect(() => verifyRelations(registry)).toThrow(
+			/table "children" has no indexes registered in this bundle.*may not be imported/,
+		)
+	})
+
+	test('an index error lists the indexes a table does have in the bundle', () => {
+		const owners = kTable('owners', { code: k.string() }, { publicFields: ['code'] })
+		const children = kTable('children', { owner: k.string(), other: k.string() })
+		children.table.index('by_other', ['other'])
+		const registry = unchecked({ owners, children }, (r) => ({
+			owners: { children: r.many.children({ from: r.owners.code, to: r.children.owner }) },
+		}))
+		expect(() => verifyRelations(registry)).toThrow(
+			/table "children" has indexes by_other\(other\) in this bundle. Add an index that starts with "owner"/,
+		)
 	})
 
 	test('an invalid edge target fails the edge without failing unrelated tables', () => {

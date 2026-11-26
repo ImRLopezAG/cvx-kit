@@ -55,6 +55,22 @@ const object = query({
 	},
 })
 
+// A type-guard refine narrows args inside containers, for callers and the handler alike.
+type Slug = 'owner' | 'viewer'
+const slug = k.string().refine((value): value is Slug => value === 'owner' || value === 'viewer')
+const guarded = query({
+	args: k.object({ role: slug, roles: k.array(slug), maybe: slug.optional() }),
+	handler: (_ctx, args) => {
+		const output: Assert<Equal<typeof args, { role: Slug; roles: Slug[]; maybe?: Slug }>> = true
+		void output
+		return null
+	},
+})
+const guardedArgs: Assert<
+	Equal<ArgsOf<typeof guarded>, { role: Slug; roles: Slug[]; maybe?: Slug }>
+> = true
+void guardedArgs
+
 // Native args infer exactly as plain Convex.
 const native = query({
 	args: { id: v.id('documents'), at: v.optional(v.number()) },

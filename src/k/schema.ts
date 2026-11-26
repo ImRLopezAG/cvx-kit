@@ -199,10 +199,21 @@ export interface KNarrowing<S extends KType, U, T extends boolean> {
 	readonly _output: U
 	readonly _input: T extends true ? S['validator']['type'] : U
 	readonly validator: T extends true ? S['validator'] : S['validator'] & { readonly type: U }
+	readonly _req: T extends true ? S['_req'] : KNarrowedRequired<S['_req'], U>
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
 	parse(input: unknown): U
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- safeParse is the decoding boundary for undecoded input.
 	safeParse(input: unknown): KSafeParseResult<U>
+}
+
+/**
+ * The required native validator of a type-guarded schema, with its value type narrowed to `U` (and its
+ * `optional()` to `U | undefined`), so containers that read native types (arrays, records, unions,
+ * optional fields) keep the narrowing. A type-level brand only: the runtime validator is unchanged.
+ */
+export type KNarrowedRequired<V extends KRequiredValidator, U> = V & {
+	readonly type: U
+	optional(): ReturnType<V['optional']> & { readonly type: U | undefined }
 }
 
 /**

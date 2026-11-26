@@ -191,6 +191,65 @@ const refineAssertions: [
 ] = [true, true, true, true, true, true, true, true, true, true, true, true, true]
 void refineAssertions
 
+// A guard narrows the native validator type too, so every container that reads native types keeps it.
+type Role = 'admin' | 'member'
+const isRole = (value: string): value is Role => value === 'admin' || value === 'member'
+const role = k.string().refine(isRole)
+const roleBase = k.object({ one: role, many: k.array(role) })
+const roleContainers = k.object({
+	one: role,
+	many: k.array(role),
+	byKey: k.record(k.string(), role),
+	either: k.union([role, k.literal(1)]),
+	maybe: role.optional(),
+	empty: role.nullable(),
+	fallback: role.default('member'),
+	rows: k.array(k.object({ r: role })),
+})
+const roleFigure = k.discriminatedUnion('kind', [
+	k.object({ kind: k.literal('a'), r: role }),
+	k.object({ kind: k.literal('b'), rs: k.array(role) }),
+])
+const roleTable = defineTable(k.object({ r: role, rs: k.array(role).optional() }).validator)
+type RoleDoc = (typeof roleTable)['validator']['type']
+const roleArray: readonly Role[] = k.object({ m: k.array(role) }).parse({ m: ['admin'] }).m
+const roleField: Role = k.object({ r: role }).parse({ r: 'admin' }).r
+void roleArray
+void roleField
+const roleContainerAssertions: [
+	Assert<
+		Equal<
+			k.output<typeof roleContainers>,
+			{
+				one: Role
+				many: Role[]
+				byKey: Record<string, Role>
+				either: Role | 1
+				maybe?: Role
+				empty: Role | null
+				fallback: Role
+				rows: { r: Role }[]
+			}
+		>
+	>,
+	Assert<
+		Equal<k.input<ReturnType<typeof roleContainers.omit<'fallback'>>>['maybe'], Role | undefined>
+	>,
+	Assert<Equal<k.output<typeof roleFigure>, { kind: 'a'; r: Role } | { kind: 'b'; rs: Role[] }>>,
+	Assert<Equal<k.output<ReturnType<typeof roleBase.pick<'many'>>>, { many: Role[] }>>,
+	Assert<Equal<k.output<ReturnType<typeof roleBase.partial>>, { one?: Role; many?: Role[] }>>,
+	Assert<Equal<k.output<ReturnType<typeof roleBase.required>>, { one: Role; many: Role[] }>>,
+	Assert<
+		Equal<
+			k.output<ReturnType<typeof roleBase.extend<{ e: typeof role }>>>,
+			{ one: Role; many: Role[]; e: Role }
+		>
+	>,
+	Assert<Equal<RoleDoc, { r: Role; rs?: Role[] }>>,
+	Assert<Equal<NativeOf<typeof roleBase>['type'], { one: Role; many: Role[] }>>,
+] = [true, true, true, true, true, true, true, true, true]
+void roleContainerAssertions
+
 const zodParityObject = k.object({ a: k.string(), b: k.number().optional(), c: k.id('users') })
 const zodParityStatus = k.enum(['open', 'done', 'archived'])
 const zodParityAssertions: [
@@ -252,8 +311,12 @@ const caughtObject = k.object({
 const catchAssertions: [
 	Assert<Equal<k.output<typeof caughtRole>, 'admin' | 'member'>>,
 	Assert<Equal<k.input<typeof caughtRole>, 'admin' | 'member'>>,
-	Assert<Equal<k.output<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
-	Assert<Equal<k.input<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
+	Assert<
+		Equal<k.output<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>
+	>,
+	Assert<
+		Equal<k.input<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>
+	>,
 ] = [true, true, true, true]
 void catchAssertions
 // @ts-expect-error the fallback is the schema's output.

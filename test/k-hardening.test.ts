@@ -232,3 +232,103 @@ describe('class instances', () => {
 		})
 	})
 })
+
+interface FieldMap {
+	[key: string]: KType
+}
+
+interface Row {
+	[key: string]: string | number
+}
+
+describe('prototype-named keys', () => {
+	const names = ['__proto__', 'constructor', 'toString', 'hasOwnProperty'] as const
+	const before = Object.getOwnPropertyNames(Object.prototype).sort()
+
+	function fieldsWith(name: string, value: KType): FieldMap {
+		const fields: FieldMap = { other: k.number() }
+		Object.defineProperty(fields, name, { value, enumerable: true, writable: true, configurable: true })
+		return fields
+	}
+
+	function valueWith(name: string, value: string | number): Row {
+		const out: Row = { other: 1 }
+		Object.defineProperty(out, name, { value, enumerable: true, writable: true, configurable: true })
+		return out
+	}
+
+	it.each(names)('k.object, finite-key records and enum-keyed records accept %s', (name) => {
+		const schemas = [
+			k.object(fieldsWith(name, k.string())),
+			k.object(fieldsWith(name, k.string())).pick(name, 'other'),
+			k.object(fieldsWith(name, k.string())).omit('other').extend({ other: k.number() }),
+			k.object(fieldsWith(name, k.string())).partial().required(),
+		]
+		for (const schema of schemas) {
+			expect(Object.keys(schema.shape).sort()).toEqual([name, 'other'].sort())
+			expect(Object.keys(schema.validator.fields).sort()).toEqual([name, 'other'].sort())
+			expect(Object.keys(schema.outputValidator.fields).sort()).toEqual([name, 'other'].sort())
+			const parsed = schema.parse(valueWith(name, 'x'))
+			expect(Object.hasOwn(parsed, name)).toBe(true)
+			expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype)
+			expect(schema.safeParse(valueWith(name, 2)).success).toBe(false)
+			expect(schema.safeParse({ other: 1 }).success).toBe(false)
+		}
+		for (const record of [
+			k.record(k.union([k.literal(name), k.literal('other')]), k.string()),
+			k.record(k.enum([name, 'other']), k.string()),
+			k.partialRecord(k.enum([name, 'other']), k.string()),
+		]) {
+			expect(Object.keys(record.shape)).toContain(name)
+			expect(Object.keys(record.validator.fields)).toContain(name)
+			expect(record.outputValidator.kind).toBe('object')
+			const input: Row = { other: 'o' }
+			Object.defineProperty(input, name, { value: 'v', enumerable: true, configurable: true })
+			expect(Object.hasOwn(record.parse(input), name)).toBe(true)
+			expect(record.safeParse({ [name]: 1 }).success).toBe(false)
+		}
+		const withDefault = k.object(fieldsWith(name, k.string().default('d')))
+		expect(Object.hasOwn(withDefault.parse({ other: 1 }), name)).toBe(true)
+		expect(Object.keys(withDefault.outputValidator.fields)).toContain(name)
+		expect(Object.getOwnPropertyNames(Object.prototype).sort()).toEqual(before)
+	})
+
+	it.each(names)('k.enum([%s]).enum maps the value to itself', (name) => {
+		const schema = k.enum([name, 'b'])
+		expect(Object.hasOwn(schema.enum, name)).toBe(true)
+		expect(schema.enum[name]).toBe(name)
+		expect(Object.getOwnPropertyNames(Object.prototype).sort()).toEqual(before)
+	})
+
+	it('a discriminator absent from an option is not read through the prototype', () => {
+		expect(() =>
+			// SAFETY: the option deliberately lacks the key; the runtime guard is tested.
+			k.discriminatedUnion('toString', [k.object({ a: k.string() })] as never),
+		).toThrow(/has no 'toString' field/)
+	})
+})
+
+describe('enum derivations and discriminator values', () => {
+	it('extract follows the requested order, as Zod 4', () => {
+		expect(k.enum(['a', 'b', 'c']).extract(['c', 'a']).options).toEqual(['c', 'a'])
+		expect(k.enum(['a', 'b']).extract(['b', 'a']).options).toEqual(['b', 'a'])
+	})
+
+	it('exclude keeps the source order', () => {
+		expect(k.enum(['a', 'b', 'c']).exclude(['b']).options).toEqual(['a', 'c'])
+	})
+
+	it('one option repeating its own value is not a conflict', () => {
+		const schema = k.discriminatedUnion('kind', [
+			k.object({ kind: k.union([k.literal('a'), k.enum(['a', 'b'])]) }),
+			k.object({ kind: k.literal('c') }),
+		])
+		expect(schema.parse({ kind: 'b' })).toEqual({ kind: 'b' })
+		expect(() =>
+			k.discriminatedUnion('kind', [
+				k.object({ kind: k.enum(['a', 'b']) }),
+				k.object({ kind: k.literal('b') }),
+			]),
+		).toThrow(/more than one option/)
+	})
+})

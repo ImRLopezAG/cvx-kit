@@ -23,7 +23,8 @@ export function discriminatorDispatch(
 				`k.discriminatedUnion('${key}'): option ${index} must be a k.object, got '${root.op}'`,
 			)
 		// SAFETY: k.object stores its field map as the root argument.
-		const field = (root.arg as KFields)[key]
+		const fields = root.arg as KFields
+		const field = Object.hasOwn(fields, key) ? fields[key] : undefined
 		if (field === undefined)
 			throw new Error(`k.discriminatedUnion('${key}'): option ${index} has no '${key}' field`)
 		if (caught(field))

@@ -105,7 +105,7 @@ describe('array, object and enum members', () => {
 		expect(status.enum).toEqual({ open: 'open', done: 'done', archived: 'archived' })
 		expect(Object.isFrozen(status.enum)).toBe(true)
 		expect(status.exclude(['archived']).options).toEqual(['open', 'done'])
-		expect(status.extract(['done', 'open']).options).toEqual(['open', 'done'])
+		expect(status.extract(['done', 'open']).options).toEqual(['done', 'open'])
 		expect(status.extract(['done']).safeParse('open').success).toBe(false)
 		expect(() => status.exclude(['open', 'done', 'archived'])).toThrow(/at least one value/)
 		// @ts-expect-error not a value of the enum

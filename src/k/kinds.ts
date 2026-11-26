@@ -17,6 +17,7 @@ import type {
 } from 'convex/values'
 import { discriminatorDispatch } from './dispatch'
 import { checkMessage } from './messages'
+import { setOwn } from './names'
 import { KSchema } from './schema'
 import type { KCheckMessage, KDiscriminated, KLiteralValue, KNode, KOutputRequired, KType } from './types'
 
@@ -137,12 +138,12 @@ export class KEnum<V extends readonly [string, ...string[]]> extends KSchema<
 	/** The values as a value-to-value record, as Zod's `.enum`. */
 	get enum(): { readonly [Value in V[number]]: Value } {
 		const out: Record<string, string> = {}
-		for (const value of this.options) out[value] = value
+		for (const value of this.options) setOwn(out, value, value)
 		// SAFETY: every value maps to itself, which is the record type declared.
 		return Object.freeze(out) as { readonly [Value in V[number]]: Value }
 	}
 
-	/** A new enum without `values`; checks declared on this enum are not carried over. */
+	/** A new enum without `values`, in this enum's order; checks declared on this enum are not carried over. */
 	exclude<const E extends readonly V[number][]>(
 		values: E,
 	): KEnum<KEnumValues<Exclude<V[number], E[number]>>> {
@@ -152,12 +153,12 @@ export class KEnum<V extends readonly [string, ...string[]]> extends KSchema<
 		)
 	}
 
-	/** A new enum with only `values`; checks declared on this enum are not carried over. */
+	/** A new enum with only `values`, in the order given; checks declared on this enum are not carried over. */
 	extract<const E extends readonly [V[number], ...V[number][]]>(values: E): KEnum<E> {
-		const kept = new Set<string>(values)
 		const unknown = values.find((value) => !this.options.includes(value))
 		if (unknown !== undefined) throw new Error(`k.enum().extract(): "${unknown}" is not a value`)
-		return enumValues<E>(this.options.filter((value) => kept.has(value)))
+		// In the requested order, as Zod 4's `extract`, so `.options` matches the declared tuple.
+		return enumValues<E>([...new Set<string>(values)])
 	}
 }
 

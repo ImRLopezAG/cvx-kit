@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { isFieldName } from './names'
+import { isFieldName, setOwn } from './names'
 import type { GenericValidator, PropertyValidators } from 'convex/values'
 import type {
 	KDiscriminated,
@@ -113,7 +113,7 @@ function compileRootOutput(root: KNode): GenericValidator {
 				const field = fields[key]
 				const output = outputOfNode(field)
 				if (output !== field.validator) differs = true
-				out[key] = output
+				setOwn(out, key, output)
 			}
 			return differs ? v.object(out) : root.validator
 		}
@@ -246,7 +246,7 @@ function compileFields(fields: KFields): PropertyValidators {
 			throw new Error(
 				`k.object() field '${key}' is not a valid Convex field name (non-empty printable ASCII, at most 1024 characters, no leading '$')`,
 			)
-		out[key] = fields[key].validator
+		setOwn(out, key, fields[key].validator)
 	}
 	return out
 }

@@ -8,7 +8,7 @@ import {
 	type KRecord,
 	type KRecordKey,
 } from './kinds'
-import { isFieldName } from './names'
+import { isFieldName, setOwn } from './names'
 import { KOptional, KSchema } from './schema'
 import type {
 	Flat,
@@ -51,7 +51,7 @@ export class KObject<F extends KFields> extends KSchema<
 		const names = maskKeys(this, 'pick', keys)
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
-		for (const key of names) out[key] = fields[key]
+		for (const key of names) setOwn(out, key, fields[key])
 		return object(retyped<Pick<F, K>>(out))
 	}
 
@@ -61,7 +61,7 @@ export class KObject<F extends KFields> extends KSchema<
 		const dropped = new Set<string>(maskKeys(this, 'omit', keys))
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
-		for (const key in fields) if (!dropped.has(key)) out[key] = fields[key]
+		for (const key in fields) if (!dropped.has(key)) setOwn(out, key, fields[key])
 		return object(retyped<Omit<F, K>>(out))
 	}
 
@@ -87,7 +87,7 @@ export class KObject<F extends KFields> extends KSchema<
 		derivedChecks(this, 'partial', options)
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
-		for (const key in fields) out[key] = optionalOf(fields[key])
+		for (const key in fields) setOwn(out, key, optionalOf(fields[key]))
 		return object(retyped<{ [K in keyof F]: KOptional<F[K]> }>(out))
 	}
 
@@ -106,7 +106,7 @@ export class KObject<F extends KFields> extends KSchema<
 		const chosen = names.length === 0 ? null : new Set<string>(names)
 		const out: Record<string, KType> = {}
 		for (const key in fields)
-			out[key] = chosen === null || chosen.has(key) ? requiredOf(fields[key]) : fields[key]
+			setOwn(out, key, chosen === null || chosen.has(key) ? requiredOf(fields[key]) : fields[key])
 		return object(out)
 	}
 
@@ -187,7 +187,7 @@ export function record(key: KRecordKey, value: KType): KType {
 	const literals = recordKeyLiterals(key, 'k.record')
 	if (literals === null) return nativeRecord(key, value)
 	const fields: Record<string, KType> = {}
-	for (const literal of literals) fields[literal] = value
+	for (const literal of literals) setOwn(fields, literal, value)
 	return object(fields)
 }
 
@@ -202,7 +202,7 @@ export function partialRecord(key: KType, value: KType): KType {
 		throw new Error('k.partialRecord() needs a finite set of string literal keys')
 	const optional = optionalOf(value)
 	const fields: Record<string, KType> = {}
-	for (const literal of literals) fields[literal] = optional
+	for (const literal of literals) setOwn(fields, literal, optional)
 	return object(fields)
 }
 

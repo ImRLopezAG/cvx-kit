@@ -3,6 +3,7 @@ import type { StandardJSONSchemaV1 } from '@standard-schema/spec'
 import type { JSONValue, Value } from 'convex/values'
 import { membersOf } from './k/compile'
 import { maxTimestamp } from './k/formats'
+import { setOwn } from './k/names'
 import { installJsonSchemaConverter } from './k/standard'
 import type { KDiscriminated, KFields, KLiteralValue, KNode, KType } from './k/types'
 
@@ -354,7 +355,7 @@ function objectSchema(fields: KFields, output: boolean): JsonSchema {
 	const properties: Record<string, JsonSchema> = {}
 	const required: string[] = []
 	for (const key in fields) {
-		properties[key] = convert(fields[key], output)
+		setOwn(properties, key, convert(fields[key], output))
 		if (output ? isRequiredOutput(fields[key]) : isRequired(fields[key])) required.push(key)
 	}
 	const out: JsonSchema = { type: 'object', properties, additionalProperties: false }
@@ -499,7 +500,7 @@ function jsonOf(value: Value): JSONValue | undefined {
 		if (item === undefined) continue
 		const json = jsonOf(item)
 		if (json === undefined) return undefined
-		out[key] = json
+		setOwn(out, key, json)
 	}
 	return out
 }

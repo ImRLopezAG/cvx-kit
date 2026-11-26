@@ -9,6 +9,7 @@
 import * as z from 'zod/mini'
 import { membersOf } from './k/compile'
 import { maxTimestamp } from './k/formats'
+import { setOwn } from './k/names'
 import { KSchema } from './k/schema'
 import type { KDiscriminated, KFields, KLiteralValue, KMessage, KNode, KType } from './k/types'
 
@@ -156,7 +157,7 @@ function rootSchema(root: KNode, strip: boolean, loose: boolean): Mini {
 			// SAFETY: k.object stores its field map as the root argument.
 			const fields = root.arg as KFields
 			const converted: Record<string, Mini> = {}
-			for (const key in fields) converted[key] = convert(fields[key])
+			for (const key in fields) setOwn(converted, key, convert(fields[key]))
 			if (loose) return z.looseObject(converted)
 			return strip ? z.object(converted) : z.strictObject(converted)
 		}

@@ -25,6 +25,7 @@ import {
 	type KType,
 } from './k'
 import { containsTransform } from './k/parse'
+import { setOwn } from './k/names'
 import type { KDiscriminated } from './k/types'
 import {
 	convexPaginationOptions,
@@ -651,7 +652,7 @@ class TableRecord {
 		const documentFields: KFields = this.schema.shape
 		const validators: Record<string, GenericValidator> = {}
 		for (const key of Object.keys(selection))
-			if (Object.hasOwn(documentFields, key)) validators[key] = documentFields[key].validator
+			if (Object.hasOwn(documentFields, key)) setOwn(validators, key, documentFields[key].validator)
 		return paginationSchemaOf(validators, selection, options)
 	}
 
@@ -1004,7 +1005,7 @@ function assertFieldLists(
 
 function pickFields(fields: KFields, keys: readonly string[]): KFields {
 	const out: Record<string, KType> = {}
-	for (const key of keys) out[key] = fields[key]
+	for (const key of keys) setOwn(out, key, fields[key])
 	return out
 }
 
@@ -1102,7 +1103,7 @@ function projectRow(
 			[key],
 			issues,
 		)
-		if (value !== FAIL && (value !== undefined || keepMissing)) out[key] = value
+		if (value !== FAIL && (value !== undefined || keepMissing)) setOwn(out, key, value)
 	}
 	if (includeId) {
 		const id = project(idField, row._id, ['_id'], issues)
@@ -1169,7 +1170,7 @@ function projectRoot(
 			for (const key of Object.keys(fields)) {
 				const child = project(fields[key], value[key], [...path, key], issues)
 				if (child === FAIL) failed = true
-				else if (child !== undefined) out[key] = child
+				else if (child !== undefined) setOwn(out, key, child)
 			}
 			for (const key of Object.keys(value)) {
 				if (Object.hasOwn(fields, key) || strip) continue
@@ -1203,7 +1204,7 @@ function projectRoot(
 				const projectedKey = project(keySchema, key, [...path, key], issues)
 				const child = project(valueSchema, value[key], [...path, key], issues)
 				if (projectedKey === FAIL || child === FAIL || child === undefined) failed = true
-				else out[key] = child
+				else setOwn(out, key, child)
 			}
 			return failed ? FAIL : out
 		}

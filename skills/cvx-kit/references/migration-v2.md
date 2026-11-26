@@ -253,6 +253,8 @@ handler: async (ctx, { id }) => {
 
 What to do: return `toPublicDto(row)` for table rows, or build the object with the declared fields (`schema.pick(...)` gives the shape; pick the values yourself). A `returns` schema with a transform is rejected when the validators are exported. Refinements on a `returns` schema do not run. `returns` must be a schema (`k.object(...)`, `v.object(...)`, `documents.publicDto`), not a plain field object.
 
+With `skipConvexValidation: true` nothing checks a function's `returns`: Convex's own check is off and the kit does not parse return values. v1 parsed them in that mode. If a function relied on that, validate the value in the handler (`schema.parse(result)`) or leave Convex validation on.
+
 ### Transforms are input-only
 
 `transform` and `pipe` (and the date conversions) are allowed on function args, command inputs, contract inputs and `parse`. They are rejected on table fields (a type error and an error when the table is defined) and on `returns`. The normalisers `trim`, `toLowerCase`, `toUpperCase` and `overwrite` are allowed everywhere.

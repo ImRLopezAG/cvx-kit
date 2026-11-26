@@ -219,6 +219,8 @@ export const timestampContracts = internalQuery({ args: {}, returns: v.array(v.b
 
 export const declarationContracts = internalQuery({ args: {}, returns: v.array(v.boolean()), handler: () => {
  const results: boolean[] = []
+ // v2 checks a declaration when the table or edge is first used, so each probe reads the page DTO.
+ const used = (registry: { tables: { tasks: { pageDto(selection: object): unknown } } }, selection: object) => registry.tables.tasks.pageDto(selection)
  function rejected(probe: () => unknown, expected: RegExp) {
   try { probe(); results.push(false) } catch (error) { results.push(error instanceof Error && expected.test(error.message)) }
  }
@@ -226,16 +228,16 @@ export const declarationContracts = internalQuery({ args: {}, returns: v.array(v
   rejected(() => defineRelations(tables, r => ({ tasks: { bad: r.one.tasks({ from: foreign.tasks.rel.forTable('tasks'), to: r.tasks._id }) } })), /Foreign/)
   return {}
  })
- rejected(() => defineRelations(tables, r => {
+ rejected(() => used(defineRelations(tables, r => {
   // @ts-expect-error deliberate runtime invalid-member declaration
   r.tasks.rel.forTable('attachments')
   return {}
- }), /member|native|table/i)
- rejected(() => defineRelations(tables, r => {
+ }), {}), /member|native|table/i)
+ rejected(() => used(defineRelations(tables, r => {
   // @ts-expect-error deliberate runtime wrong-table declaration
   const bad = r.one.tasks({ from: r.tasks.rel.forTable('clients'), to: r.tasks._id })
   return { tasks: { bad } }
- }), /Incompatible/)
+ }), { bad: true }), /Incompatible/)
  rejected(() => defineRelations(tables, (r, branch) => {
   // @ts-expect-error deliberate runtime unsupported branch narrowing
   branch('payments', 'creditor_payment').creditorId.forTable('creditors')
@@ -253,21 +255,21 @@ export const declarationContracts = internalQuery({ args: {}, returns: v.array(v
  }), /through/)
  rejected(() => kVariantTable('collision', k.discriminatedUnion('type', [k.object({ type: k.literal('one'), createdAt: k.number() })]), { discriminator: 'type', timestamps: true, variants: { one: { publicFields: [] } } }), /Reserved/)
  const probes = kTable('tasks', { mixed: k.union([k.id('tasks'), k.string()]), rel: k.union([k.id('tasks'), k.id('unregistered')]), single: k.id('tasks').nullable().optional(), duplicate: k.union([k.id('tasks'), k.id('tasks')]), scalar: k.union([k.string(), k.number()]) })
- rejected(() => defineRelations({ tasks: probes }, r => {
+ rejected(() => used(defineRelations({ tasks: probes }, r => {
   // @ts-expect-error deliberate runtime mixed-union declaration
   r.tasks.mixed.forTable('tasks')
   return {}
- }), /native|union|ID/i)
+ }), {}), /native|union|ID/i)
  rejected(() => defineRelations({ tasks: probes }, r => {
   // @ts-expect-error deliberate runtime unregistered native member
   r.tasks.rel.forTable('unregistered')
   return {}
  }), /registered/i)
- rejected(() => defineRelations({ tasks: probes }, r => {
+ rejected(() => used(defineRelations({ tasks: probes }, r => {
   // @ts-expect-error ordinary scalar union compatibility remains exact
   const bad = r.one.tasks({ from: r.tasks.scalar, to: r.tasks._id })
   return { tasks: { bad } }
- }), /Incompatible/)
+ }), { bad: true }), /Incompatible/)
  defineRelations({ tasks: probes }, r => ({ tasks: {
   singleReference: r.one.tasks({ from: r.tasks.single.forTable('tasks'), to: r.tasks._id }),
   duplicateReference: r.one.tasks({ from: r.tasks.duplicate.forTable('tasks'), to: r.tasks._id }),

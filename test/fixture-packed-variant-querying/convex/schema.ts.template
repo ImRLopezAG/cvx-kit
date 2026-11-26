@@ -17,8 +17,8 @@ export const payments = kVariantTable('payments', k.discriminatedUnion('type', [
 } })
 payments.table.index('by_client', ['clientId']).index('by_type_client', ['type', 'clientId']).index('by_creditor', ['creditorId'])
 export const ledger = kVariantTable('ledger', k.discriminatedUnion('type', [
- k.object({ type: k.literal('payment'), clientId: k.id('clients').optional(), paymentId: k.id('payments').optional(), amountCents: k.int().min(1), allowed: k.boolean(), evidence: k.string(), ...access, createdAt: k.int().min(0), recordedAt: k.int().min(0) }),
- k.object({ type: k.literal('adjustment'), clientId: k.id('clients').optional(), reason: k.string(), amountCents: k.int(), allowed: k.boolean(), evidence: k.string(), ...access, createdAt: k.int().min(0), recordedAt: k.int().min(0) }),
+ k.object({ type: k.literal('payment'), clientId: k.id('clients').optional(), paymentId: k.id('payments').optional(), amountCents: k.int().min(1), allowed: k.boolean(), evidence: k.string(), ...access, createdAt: k.int().min(0).safe(), recordedAt: k.int().min(0).safe() }),
+ k.object({ type: k.literal('adjustment'), clientId: k.id('clients').optional(), reason: k.string(), amountCents: k.int(), allowed: k.boolean(), evidence: k.string(), ...access, createdAt: k.int().min(0).safe(), recordedAt: k.int().min(0).safe() }),
 ]), { discriminator: 'type', timestamps: false, variants: {
  payment: { serverFields: ['allowed', 'evidence', 'department', 'linkAllowed', 'createdAt', 'recordedAt'], commandFields: ['clientId', 'paymentId', 'amountCents'], publicFields: ['clientId', 'paymentId', 'amountCents'] },
  adjustment: { serverFields: ['allowed', 'evidence', 'department', 'linkAllowed', 'createdAt', 'recordedAt'], commandFields: ['clientId', 'reason', 'amountCents'], publicFields: ['clientId', 'reason', 'amountCents', 'createdAt', 'recordedAt'] },

@@ -24,7 +24,8 @@ const packed = resolve(process.argv[2] ?? '')
 const identity = JSON.parse(readFileSync(join(packed, 'package-identity.json'), 'utf8'))
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
 assert.equal(hash(readFileSync(identity.tarball)), identity.sha256)
-const source = join(packed, 'installed')
+// test-packed-querying retains one install per peer set; this proof runs on the minimum peers.
+const source = join(packed, 'minimum')
 assert.equal(
 	JSON.parse(readFileSync(join(source, 'node_modules/convex/package.json'), 'utf8')).version,
 	'1.46.0',

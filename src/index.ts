@@ -1,4 +1,5 @@
 export { defaultErrors, KitError, type ErrorFactory } from './errors'
+export { kTable, kVariantTable } from './table'
 export {
 	createModule,
 	createTable,

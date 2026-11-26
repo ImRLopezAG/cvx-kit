@@ -96,6 +96,10 @@
 			"types": "./dist/errors.d.mts",
 			"import": "./dist/errors.mjs"
 		},
+		"./k": {
+			"types": "./dist/k.d.mts",
+			"import": "./dist/k.mjs"
+		},
 		"./test": "./src/test.ts",
 		"./components/foundation": {
 			"types": "./dist/components/foundation/client.d.mts",

@@ -69,7 +69,15 @@ describe('k chain records', () => {
 		const schema = k.number().min(0)
 		expect(Object.hasOwn(schema, 'min')).toBe(false)
 		expect(Object.hasOwn(schema, 'validator')).toBe(false)
-		expect(Object.keys(schema)).toEqual(['prev', 'op', 'arg', 'message', 'native'])
+		expect(Object.keys(schema)).toEqual([
+			'prev',
+			'op',
+			'arg',
+			'message',
+			'native',
+			'outputNative',
+			'plan',
+		])
 	})
 })
 

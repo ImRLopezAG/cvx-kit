@@ -113,3 +113,4 @@ export {
 export type { ServerFilter, ScalarFilters, ScalarSelection } from './querying/filters'
 export { createQueryEngine, type QueryEngineConfig } from './querying'
 export { k } from './k'
+export type { KCustomBuilder, KCustomCtx } from './registration'

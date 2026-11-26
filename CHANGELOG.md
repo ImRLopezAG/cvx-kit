@@ -48,6 +48,13 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `withFieldGroups` in `cvx-kit/relations` and `AgentListArgs` in `cvx-kit/agent-tools`.
 - A codemod, `node tools/codemod-v2/index.mjs <path…> [--write] [--report out.json]`, run from a cvx-kit checkout.
 
+### Added (since 2.0.0-beta.0)
+
+- `KCustomCtx<typeof builder>` (`cvx-kit/registration`, `cvx-kit`): the handler ctx of a `KCustomBuilder`, replacing convex-helpers' `ZCustomCtx`. `KCustomBuilder` is also exported from `cvx-kit`.
+- `AnyKSchema` (a parameter type for any `k` schema) and `KRecordKey` from `cvx-kit/k`; `KCursorSchema` from `cvx-kit/querying`.
+- Zod-parity members: `KArray.element`, `KObject.keyof()`, `KObject.required(...keys)`, `k.enum(...).exclude/extract/.enum`, number `.positive()`, `.negative()`, `.nonnegative()`, `.nonpositive()`, `.finite()`, `.safe()`, and `removeDefault()` (an alias of `unwrap()` on a default). The number checks leave the native validator unchanged; `toJsonSchema` and `toZod` describe them.
+- `toJsonSchema(schema, { io: 'output' })` describes the output side.
+
 ### Fixed (since 2.0.0-beta.0)
 
 - An object spread of a table boundary (`{ ...table, table: other }`) keeps `schema`, `publicDto`, `storage` and the other lazy members, for `kTable`, `createTable`, `tenantTable` and `kVariantTable`.

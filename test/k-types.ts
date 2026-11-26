@@ -177,3 +177,32 @@ const refineAssertions: [
 	Assert<Equal<k.output<typeof inObject>, { at: TimeOfDay; maybe?: TimeOfDay }>>,
 ] = [true, true, true, true, true, true, true, true, true, true, true, true]
 void refineAssertions
+
+const zodParityObject = k.object({ a: k.string(), b: k.number().optional(), c: k.id('users') })
+const zodParityStatus = k.enum(['open', 'done', 'archived'])
+const zodParityAssertions: [
+	Assert<Equal<k.output<typeof objectKeys>, 'a' | 'b' | 'c'>>,
+	Assert<Equal<k.output<typeof requiredAll>, { a: string; b: number; c: GenericId<'users'> }>>,
+	Assert<Equal<k.output<typeof requiredSome>, { a: string; b?: number; c?: GenericId<'users'> }>>,
+	Assert<
+		Equal<k.output<ReturnType<typeof zodParityStatus.exclude<['archived']>>>, 'open' | 'done'>
+	>,
+	Assert<Equal<k.output<typeof extracted>, 'done'>>,
+	Assert<
+		Equal<
+			(typeof zodParityStatus)['enum'],
+			{ readonly open: 'open'; readonly done: 'done'; readonly archived: 'archived' }
+		>
+	>,
+	Assert<Equal<(typeof elementArray)['element'], KString>>,
+	Assert<Equal<ReturnType<typeof defaultedString.removeDefault>, KString>>,
+	Assert<Equal<k.output<typeof positiveNumber>, number>>,
+] = [true, true, true, true, true, true, true, true, true]
+const objectKeys = zodParityObject.keyof()
+const requiredAll = zodParityObject.partial().required()
+const requiredSome = zodParityObject.partial().required('a')
+const extracted = zodParityStatus.extract(['done'])
+const elementArray = k.array(k.string())
+const defaultedString = k.string().default('x')
+const positiveNumber = k.number().positive().nonnegative().negative().nonpositive().finite().safe()
+void zodParityAssertions

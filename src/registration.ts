@@ -153,6 +153,16 @@ export type KCustomBuilder<
 	>
 }
 
+/**
+ * The ctx a handler registered through a `KCustomBuilder` receives, for helpers typed against one
+ * builder (`type AuthCtx = KCustomCtx<typeof authQuery>`). Replaces convex-helpers' `ZCustomCtx`.
+ */
+export type KCustomCtx<Builder> = Builder extends (func: infer Func) => any
+	? Extract<Func, (...args: any[]) => any> extends (ctx: infer Ctx, ...args: any[]) => any
+		? Ctx
+		: never
+	: never
+
 export function kCustomQuery<
 	CustomArgsValidator extends PropertyValidators,
 	CustomCtx extends Record<string, any>,
@@ -653,7 +663,8 @@ function argumentRejecter(policy: ArgumentFailurePolicy | undefined): ArgumentRe
 			? (failure) =>
 					argumentErrors.toConvexError('INVALID_ARGUMENTS', { issues: [...failure.issues] })
 			: policy
-	return (source, issues) => toThrown(Object.freeze({ source, issues: sanitizeArgumentIssues(issues) }))
+	return (source, issues) =>
+		toThrown(Object.freeze({ source, issues: sanitizeArgumentIssues(issues) }))
 }
 
 /** Run one validation step; with a policy, a `KValidationError` it raises is rethrown as the policy's value. */

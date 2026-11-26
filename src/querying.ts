@@ -51,7 +51,7 @@ export { SearchError } from './querying/search'
 export type { SearchPaginationResult } from './querying/search'
 export { queryFailureContract } from './querying/failures'
 export { CursorError } from './querying/cursors'
-export type { ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
+export type { KCursorSchema, ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
 
 const emptyGroups: ResolvedGroups = { fieldGroups: {}, relations: {} }
 

@@ -61,6 +61,36 @@ export class KNumber extends KSchema<number, VFloat64<number>> {
 	int(message?: string): this {
 		return this.link('int', undefined, message)
 	}
+
+	/** `> 0`; issue `too_small`. */
+	positive(message?: string): this {
+		return this.link('gt', 0, message)
+	}
+
+	/** `>= 0`, the same check as `.min(0)`. */
+	nonnegative(message?: string): this {
+		return this.link('min', 0, message)
+	}
+
+	/** `< 0`; issue `too_big`. */
+	negative(message?: string): this {
+		return this.link('lt', 0, message)
+	}
+
+	/** `<= 0`, the same check as `.max(0)`. */
+	nonpositive(message?: string): this {
+		return this.link('max', 0, message)
+	}
+
+	/** Rejects `NaN` and the infinities, which a bare `k.number()` accepts; issue `invalid_type`. */
+	finite(message?: string): this {
+		return this.link('finite', undefined, message)
+	}
+
+	/** A safe integer (`Number.isSafeInteger`): `not_integer`, or `too_small`/`too_big` outside the range. */
+	safe(message?: string): this {
+		return this.link('safe', undefined, message)
+	}
 }
 
 export class KInt64 extends KSchema<bigint, VInt64<bigint>> {}
@@ -102,7 +132,36 @@ export class KEnum<V extends readonly [string, ...string[]]> extends KSchema<
 		// SAFETY: k.enum stores its value tuple as the root argument.
 		return rootOf(this).arg as V
 	}
+
+	/** The values as a value-to-value record, as Zod's `.enum`. */
+	get enum(): { readonly [Value in V[number]]: Value } {
+		const out: Record<string, string> = {}
+		for (const value of this.options) out[value] = value
+		// SAFETY: every value maps to itself, which is the record type declared.
+		return Object.freeze(out) as { readonly [Value in V[number]]: Value }
+	}
+
+	/** A new enum without `values`; checks declared on this enum are not carried over. */
+	exclude<const E extends readonly V[number][]>(
+		values: E,
+	): KEnum<KEnumValues<Exclude<V[number], E[number]>>> {
+		const dropped = new Set<string>(values)
+		return enumValues<KEnumValues<Exclude<V[number], E[number]>>>(
+			this.options.filter((value) => !dropped.has(value)),
+		)
+	}
+
+	/** A new enum with only `values`; checks declared on this enum are not carried over. */
+	extract<const E extends readonly [V[number], ...V[number][]]>(values: E): KEnum<E> {
+		const kept = new Set<string>(values)
+		const unknown = values.find((value) => !this.options.includes(value))
+		if (unknown !== undefined) throw new Error(`k.enum().extract(): "${unknown}" is not a value`)
+		return enumValues<E>(this.options.filter((value) => kept.has(value)))
+	}
 }
+
+/** The value tuple of a derived enum: a union of string values. */
+export type KEnumValues<U extends string> = [U, ...U[]]
 
 export class KId<T extends string> extends KSchema<GenericId<T>, VId<GenericId<T>>> {}
 
@@ -115,6 +174,12 @@ export class KArray<E extends KType> extends KSchema<
 > {
 	declare readonly _or: VArray<E['_output'][], KOutputRequired<E>>
 	declare readonly _oo: VArray<E['_output'][], KOutputRequired<E>>
+
+	/** The element schema. */
+	get element(): E {
+		// SAFETY: k.array stores its element schema as the root argument.
+		return rootOf(this).arg as E
+	}
 
 	min(length: number, message?: string): this {
 		return this.link('min', length, message)
@@ -281,4 +346,9 @@ function rootOf(node: KNode): KNode {
 	let root = node
 	while (root.prev !== null) root = root.prev
 	return root
+}
+
+function enumValues<T extends readonly [string, ...string[]]>(values: readonly string[]): KEnum<T> {
+	// SAFETY: callers pass a subset of an enum's values, which T names (for extract, in this enum's order).
+	return enumOf(values as T)
 }

@@ -201,6 +201,18 @@ function applyCheck(base: Mini, record: KNode): Mini {
 		return kind === 'string' ? base.check(z.regex(pattern, message)) : base
 	}
 	if (record.op === 'int') return kind === 'number' ? base.check(z.int(message)) : base
+	if (kind === 'number' && (record.op === 'gt' || record.op === 'lt')) {
+		// SAFETY: gt and lt store their numeric limit as the record argument.
+		const bound = record.arg as number
+		return base.check(record.op === 'gt' ? z.gt(bound, message) : z.lt(bound, message))
+	}
+	if (kind === 'number' && record.op === 'safe')
+		return base.check(
+			z.int(message),
+			z.minimum(Number.MIN_SAFE_INTEGER, message),
+			z.maximum(Number.MAX_SAFE_INTEGER, message),
+		)
+	// `finite` needs no check: Zod's number already rejects NaN and the infinities.
 	if (record.op !== 'min' && record.op !== 'max' && record.op !== 'length') return base
 	// SAFETY: min, max and length store their numeric limit as the record argument.
 	const limit = record.arg as number
@@ -238,6 +250,10 @@ function isRunOp(record: KNode): boolean {
 		case 'length':
 		case 'regex':
 		case 'int':
+		case 'gt':
+		case 'lt':
+		case 'finite':
+		case 'safe':
 		case 'trim':
 		case 'lower':
 		case 'upper':

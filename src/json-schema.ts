@@ -19,6 +19,8 @@ export interface JsonSchema {
 	pattern?: string
 	minimum?: number
 	maximum?: number
+	exclusiveMinimum?: number
+	exclusiveMaximum?: number
 	minItems?: number
 	maxItems?: number
 	items?: JsonSchema
@@ -34,6 +36,12 @@ export interface JsonSchema {
 export type JsonSchemaOptions = {
 	/** Add `$schema: "https://json-schema.org/draft/2020-12/schema"` to the root. */
 	readonly $schema?: boolean
+	/**
+	 * Which side to describe, as Zod's `io`. `'input'` (the default) is what a caller sends. `'output'`
+	 * is what parse returns: a defaulted field is required, a pipe emits its target's output, and a
+	 * transform emits `{}` (any value), as `outputValidator` emits `v.any()`.
+	 */
+	readonly io?: 'input' | 'output'
 }
 
 /**
@@ -43,18 +51,18 @@ export type JsonSchemaOptions = {
  * expressible and are omitted.
  */
 export function toJsonSchema(schema: KType, options?: JsonSchemaOptions): JsonSchema {
-	const out = convert(schema)
+	const out = convert(schema, options?.io === 'output')
 	if (options?.$schema === true)
 		return { $schema: 'https://json-schema.org/draft/2020-12/schema', ...out }
 	return out
 }
 
-function convert(node: KNode): JsonSchema {
+function convert(node: KNode, output: boolean): JsonSchema {
 	const records: KNode[] = []
 	for (let current: KNode | null = node; current !== null; current = current.prev)
 		records.push(current)
 	// SAFETY: a chain always ends at a root record.
-	const out = rootSchema(records.pop() as KNode)
+	let out = rootSchema(records.pop() as KNode, output)
 	let transformed = false
 	let nullable = false
 	let description: string | undefined
@@ -63,7 +71,11 @@ function convert(node: KNode): JsonSchema {
 		const record = records[index]
 		switch (record.op) {
 			case 'transform':
+				if (output) out = {}
+				transformed = true
+				break
 			case 'pipe':
+				if (output) out = convert(argNode(record.arg), true)
 				transformed = true
 				break
 			case 'describe':
@@ -80,6 +92,9 @@ function convert(node: KNode): JsonSchema {
 			case 'length':
 			case 'regex':
 			case 'int':
+			case 'gt':
+			case 'lt':
+			case 'safe':
 				if (!transformed) applyCheck(out, record)
 				break
 			default:
@@ -92,7 +107,7 @@ function convert(node: KNode): JsonSchema {
 	return wrapped
 }
 
-function rootSchema(root: KNode): JsonSchema {
+function rootSchema(root: KNode, output: boolean): JsonSchema {
 	switch (root.op) {
 		case 'string':
 		case 'id':
@@ -123,32 +138,36 @@ function rootSchema(root: KNode): JsonSchema {
 			// SAFETY: k.enum stores its value list as the root argument.
 			return { type: 'string', enum: [...(root.arg as readonly string[])] }
 		case 'array':
-			return { type: 'array', items: convert(argNode(root.arg)) }
+			return { type: 'array', items: convert(argNode(root.arg), output) }
 		case 'object':
-			return objectSchema(fieldsOf(root))
+			return objectSchema(fieldsOf(root), output)
 		case 'record': {
 			// SAFETY: k.record stores its key and value schemas as the root argument.
 			const [key, value] = root.arg as readonly KType[]
-			return { type: 'object', propertyNames: convert(key), additionalProperties: convert(value) }
+			return {
+				type: 'object',
+				propertyNames: convert(key, output),
+				additionalProperties: convert(value, output),
+			}
 		}
 		case 'union':
-			return { anyOf: membersOf(root).map(convert) }
+			return { anyOf: membersOf(root).map((member) => convert(member, output)) }
 		case 'discriminatedUnion': {
 			// SAFETY: k.discriminatedUnion stores its key and options as the root argument.
 			const { options } = root.arg as KDiscriminated
-			return { oneOf: options.map(convert) }
+			return { oneOf: options.map((option) => convert(option, output)) }
 		}
 		default:
 			throw new Error(`toJsonSchema: '${root.op}' is not a root operation`)
 	}
 }
 
-function objectSchema(fields: KFields): JsonSchema {
+function objectSchema(fields: KFields, output: boolean): JsonSchema {
 	const properties: Record<string, JsonSchema> = {}
 	const required: string[] = []
 	for (const key in fields) {
-		properties[key] = convert(fields[key])
-		if (isRequired(fields[key])) required.push(key)
+		properties[key] = convert(fields[key], output)
+		if (output ? isRequiredOutput(fields[key]) : isRequired(fields[key])) required.push(key)
 	}
 	const out: JsonSchema = { type: 'object', properties, additionalProperties: false }
 	if (required.length > 0) out.required = required
@@ -163,9 +182,49 @@ function isRequired(node: KNode): boolean {
 	return true
 }
 
+/** Required on the output side: parse fills a default, also below an `optional()`, but not below `partial()`. */
+function isRequiredOutput(node: KNode): boolean {
+	for (let current: KNode | null = node; current !== null; current = current.prev) {
+		switch (current.op) {
+			case 'partial':
+				return false
+			case 'optional':
+				return defaultBelow(current.prev)
+			case 'default':
+			case 'transform':
+			case 'pipe':
+				return true
+			default:
+				break
+		}
+	}
+	return true
+}
+
+function defaultBelow(node: KNode | null): boolean {
+	for (let current = node; current !== null; current = current.prev) {
+		if (current.op === 'default') return true
+		if (current.op === 'transform' || current.op === 'pipe') return false
+	}
+	return false
+}
+
 function applyCheck(out: JsonSchema, record: KNode): void {
 	if (record.op === 'int') {
 		out.type = 'integer'
+		return
+	}
+	if (record.op === 'safe') {
+		out.type = 'integer'
+		out.minimum = strongest(out.minimum, Number.MIN_SAFE_INTEGER, Math.max)
+		out.maximum = strongest(out.maximum, Number.MAX_SAFE_INTEGER, Math.min)
+		return
+	}
+	if (record.op === 'gt' || record.op === 'lt') {
+		// SAFETY: gt and lt store their numeric limit as the record argument.
+		const bound = record.arg as number
+		if (record.op === 'gt') out.exclusiveMinimum = strongest(out.exclusiveMinimum, bound, Math.max)
+		else out.exclusiveMaximum = strongest(out.exclusiveMaximum, bound, Math.min)
 		return
 	}
 	if (record.op === 'regex') {

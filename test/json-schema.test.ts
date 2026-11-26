@@ -140,3 +140,36 @@ describe('toJsonSchema', () => {
 		expect(toJsonSchema(schema).required).toEqual(['a'])
 	})
 })
+
+describe('toJsonSchema io: output', () => {
+	const schema = k.object({
+		name: k.string(),
+		status: k.enum(['open', 'done']).default('open'),
+		note: k.string().optional(),
+		filled: k.number().default(1).optional(),
+		count: k.string().transform(Number),
+		piped: k.string().pipe(k.string().min(2)),
+	})
+
+	it('makes defaulted fields required and describes transforms and pipes by their output', () => {
+		expect(toJsonSchema(schema, { io: 'output' })).toEqual({
+			type: 'object',
+			properties: {
+				name: { type: 'string' },
+				status: { type: 'string', enum: ['open', 'done'], default: 'open' },
+				note: { type: 'string' },
+				filled: { type: 'number', default: 1 },
+				count: {},
+				piped: { type: 'string', minLength: 2 },
+			},
+			required: ['name', 'status', 'filled', 'count', 'piped'],
+			additionalProperties: false,
+		})
+	})
+
+	it('keeps the input side as the default', () => {
+		expect(toJsonSchema(schema)).toEqual(toJsonSchema(schema, { io: 'input' }))
+		expect(toJsonSchema(schema).required).toEqual(['name', 'count', 'piped'])
+		expect(toJsonSchema(schema.partial(), { io: 'output' }).required).toBeUndefined()
+	})
+})

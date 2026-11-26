@@ -1,4 +1,5 @@
 import type { ObjectType, VObject } from 'convex/values'
+import { enumOf, type KEnum, type KEnumValues } from './kinds'
 import { KOptional, KSchema } from './schema'
 import type {
 	Flat,
@@ -67,6 +68,27 @@ export class KObject<F extends KFields> extends KSchema<
 		return object(retyped<{ [K in keyof F]: KOptional<F[K]> }>(out))
 	}
 
+	/**
+	 * Fields made required again, the inverse of `partial()`: an optional field loses its top
+	 * `optional()` wrappers. With no keys every field is affected. Other field behaviour, defaults included, is kept.
+	 */
+	required<K extends keyof F & string = keyof F & string>(
+		...keys: K[]
+	): KObject<{ [P in keyof F]: P extends K ? KRequiredField<F[P]> : F[P] }> {
+		const fields = fieldsOf(this)
+		const chosen = keys.length === 0 ? null : new Set<string>(keys)
+		const out: Record<string, KType> = {}
+		for (const key in fields)
+			out[key] = chosen === null || chosen.has(key) ? requiredOf(fields[key]) : fields[key]
+		return object(retyped<{ [P in keyof F]: P extends K ? KRequiredField<F[P]> : F[P] }>(out))
+	}
+
+	/** A `k.enum` of the field names, in declaration order. */
+	keyof(): KEnum<KEnumValues<keyof F & string>> {
+		// SAFETY: the keys of the field map are the string keys of F.
+		return enumOf(Object.keys(fieldsOf(this)) as KEnumValues<keyof F & string>)
+	}
+
 	/** Parse removes unknown keys instead of reporting them. The native validator stays strict. */
 	strip(): this {
 		return this.link('strip', undefined, undefined)
@@ -87,6 +109,9 @@ export type KObjectInput<F extends KFields> = keyof F extends never
  * +0.28 MB on the 400-schema bench), so the caller's literal stays writable until then; do not mutate
  * it after declaring.
  */
+/** A field with its top `optional()` (and `partial()`) wrappers removed; any other field as it is. */
+export type KRequiredField<S extends KType> = S extends KOptional<infer I> ? KRequiredField<I> : S
+
 export function object<F extends KFields>(fields: F): KObject<F> {
 	return new KObject<F>(null, 'object', fields, undefined)
 }
@@ -100,6 +125,14 @@ function retyped<T extends KFields>(fields: KFields): T {
 function optionalOf(field: KType): KType {
 	// SAFETY: every field value at runtime is a KSchema record created by a k factory.
 	return new KOptional(field as KSchema, 'partial', undefined, undefined)
+}
+
+function requiredOf(field: KType): KType {
+	let current = field
+	while (current.op === 'optional' || current.op === 'partial')
+		// SAFETY: an optional record's predecessor is the schema it wraps.
+		current = current.prev as KType
+	return current
 }
 
 function fieldsOf<F extends KFields>(node: KObject<F>): F {

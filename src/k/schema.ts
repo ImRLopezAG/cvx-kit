@@ -195,6 +195,24 @@ interface KNarrowedWrapper<W extends KType, U, T extends boolean> {
 	parse(input: unknown): U
 }
 
+/**
+ * Any `k` schema, as a parameter type for helpers that take one: unlike the structural `KType`, it has
+ * the schema methods such helpers call (`optional()`, `nullable()`, `parse`, `outputValidator`). Their
+ * results are `AnyKSchema` and `any`, so every schema is assignable to it; a helper that must keep the
+ * exact schema type takes `S extends KType` and names the result (`KOptional<S>`) itself.
+ */
+export interface AnyKSchema extends KType {
+	readonly outputValidator: GenericValidator
+	readonly description: string | undefined
+	optional(): AnyKSchema
+	nullable(): AnyKSchema
+	describe(text: string): AnyKSchema
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
+	parse(input: unknown): any
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- safeParse is the decoding boundary for undecoded input.
+	safeParse(input: unknown): KSafeParseResult<any>
+}
+
 /** The context handed to `.check()`; `addIssue` may be called any number of times. */
 export interface KCheckContext {
 	addIssue(issue: KIssueInput): void
@@ -255,6 +273,11 @@ export class KDefault<I extends KType> extends KSchema<
 	declare readonly _oo: KOutputRequired<I>
 
 	unwrap(): I {
+		return this.wrapped<I>('default')
+	}
+
+	/** The schema below the default, as Zod's `removeDefault()`; the same as `unwrap()`. */
+	removeDefault(): I {
 		return this.wrapped<I>('default')
 	}
 }

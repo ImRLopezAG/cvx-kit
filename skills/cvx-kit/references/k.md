@@ -38,35 +38,35 @@ export type Document = k.infer<typeof documentInput> // status required
 
 ## Factories
 
-| Factory                                  | Parses                                                                      | Native validator                                                    |
-| ---------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `k.string()`                             | string                                                                      | `v.string()`                                                        |
-| `k.number()`                             | any number, including `NaN` and `±Infinity` (as `v.number()`)               | `v.number()`                                                        |
-| `k.int()`                                | a number for which `Number.isInteger` holds                                 | `v.number()`                                                        |
-| `k.int64()`                              | bigint                                                                      | `v.int64()`                                                         |
-| `k.boolean()`                            | boolean                                                                     | `v.boolean()`                                                       |
-| `k.null()`                               | `null`                                                                      | `v.null()`                                                          |
-| `k.bytes()`                              | `ArrayBuffer`                                                               | `v.bytes()`                                                         |
-| `k.any()`                                | any value except `undefined`                                                | `v.any()`                                                           |
-| `k.json()`                               | a JSON-compatible value, checked throughout (finite numbers, plain objects) | union of string, number, boolean, null, array of any, record of any |
-| `k.literal(value)`                       | one string, number, bigint or boolean                                       | `v.literal(value)`                                                  |
-| `k.enum(values)`                         | one of a non-empty tuple of strings; `.options` returns the tuple           | union of literals (a one-value enum is a one-member union)          |
-| `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                           | `v.id('table')`                                                     |
-| `k.array(element)`                       | an array                                                                    | `v.array(...)`                                                      |
-| `k.object(fields)`                       | a plain object with exactly these keys                                      | `v.object(...)`                                                     |
-| `k.record(key, value)`                   | a plain object; `key` is a string schema; see [Records](#records)           | `v.record(...)`                                                     |
-| `k.union([a, b, ...])`                   | the first member that parses (two or more members)                          | `v.union(...)`                                                      |
-| `k.discriminatedUnion(key, [a, b, ...])` | the option whose `key` field (a literal or enum) matches; values unique     | `v.union(...)` of the objects                                       |
-| `k.isoDate()`                            | `YYYY-MM-DD` naming a real calendar day                                     | `v.string()`                                                        |
-| `k.isoDateTime()`                        | ISO 8601 date-time with seconds and a `Z` or `±HH:MM` offset                | `v.string()`                                                        |
-| `k.timestamp()`                          | integer milliseconds from 1970-01-01 through the end of 9999 (UTC)          | `v.number()`                                                        |
+| Factory                                  | Parses                                                                                                                                             | Native validator                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `k.string()`                             | string                                                                                                                                             | `v.string()`                                                        |
+| `k.number()`                             | any number, including `NaN` and `±Infinity` (as `v.number()`)                                                                                      | `v.number()`                                                        |
+| `k.int()`                                | a number for which `Number.isInteger` holds                                                                                                        | `v.number()`                                                        |
+| `k.int64()`                              | bigint                                                                                                                                             | `v.int64()`                                                         |
+| `k.boolean()`                            | boolean                                                                                                                                            | `v.boolean()`                                                       |
+| `k.null()`                               | `null`                                                                                                                                             | `v.null()`                                                          |
+| `k.bytes()`                              | `ArrayBuffer`                                                                                                                                      | `v.bytes()`                                                         |
+| `k.any()`                                | any value except `undefined`                                                                                                                       | `v.any()`                                                           |
+| `k.json()`                               | a JSON-compatible value, checked throughout (finite numbers, plain objects)                                                                        | union of string, number, boolean, null, array of any, record of any |
+| `k.literal(value)`                       | one string, number, bigint or boolean                                                                                                              | `v.literal(value)`                                                  |
+| `k.enum(values)`                         | one of a non-empty tuple of strings; `.options` returns the tuple, `.enum` a value-to-value record, `.exclude([...])`/`.extract([...])` a new enum | union of literals (a one-value enum is a one-member union)          |
+| `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                                                                                                  | `v.id('table')`                                                     |
+| `k.array(element)`                       | an array; `.element` returns the element schema                                                                                                    | `v.array(...)`                                                      |
+| `k.object(fields)`                       | a plain object with exactly these keys                                                                                                             | `v.object(...)`                                                     |
+| `k.record(key, value)`                   | a plain object; `key` is a string schema; see [Records](#records)                                                                                  | `v.record(...)`                                                     |
+| `k.union([a, b, ...])`                   | the first member that parses (two or more members)                                                                                                 | `v.union(...)`                                                      |
+| `k.discriminatedUnion(key, [a, b, ...])` | the option whose `key` field (a literal or enum) matches; values unique                                                                            | `v.union(...)` of the objects                                       |
+| `k.isoDate()`                            | `YYYY-MM-DD` naming a real calendar day                                                                                                            | `v.string()`                                                        |
+| `k.isoDateTime()`                        | ISO 8601 date-time with seconds and a `Z` or `±HH:MM` offset                                                                                       | `v.string()`                                                        |
+| `k.timestamp()`                          | integer milliseconds from 1970-01-01 through the end of 9999 (UTC)                                                                                 | `v.number()`                                                        |
 
 Argument-less factories return one shared, immutable root, so `k.string()` allocates nothing.
 
-`k.number()` accepts `NaN` and infinities because native `v.number()` does. `min`, `max` and `length` reject `NaN`, and `.int()` and `k.int()` reject both `NaN` and infinities. Add a check when an unbounded number must be finite:
+`k.number()` accepts `NaN` and infinities because native `v.number()` does. `min`, `max` and `length` reject `NaN`, and `.int()` and `k.int()` reject both `NaN` and infinities. Add `.finite()` when an unbounded number must be finite:
 
 ```ts
-const amount = k.number().refine(Number.isFinite, 'Expected a finite number')
+const amount = k.number().finite()
 ```
 
 ### Records
@@ -99,6 +99,10 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.length(n, message?)`                          | string, array               | exact length                                                                                                                                                              |
 | `.regex(pattern, message?)`                     | string                      | the pattern must match                                                                                                                                                    |
 | `.int(message?)`                                | number                      | `Number.isInteger` must hold                                                                                                                                              |
+| `.positive()` / `.negative()`                   | number                      | `> 0` (`too_small`) / `< 0` (`too_big`)                                                                                                                                   |
+| `.nonnegative()` / `.nonpositive()`             | number                      | `.min(0)` / `.max(0)`                                                                                                                                                     |
+| `.finite()`                                     | number                      | rejects `NaN` and `±Infinity` (`invalid_type`)                                                                                                                            |
+| `.safe()`                                       | number                      | a safe integer: `not_integer`, or `too_small`/`too_big` outside the range                                                                                                 |
 | `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                      | type-preserving normalisers                                                                                                                                               |
 | `.overwrite(fn)`                                | all                         | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                              |
 | `.refine(fn, message?)`                         | all                         | `fn(value)` must return `true`; `message` is a string or `{ message, path }`; a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
@@ -106,7 +110,7 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.transform(fn)`                                | all                         | a type-changing step; see [Transforms](#transforms)                                                                                                                       |
 | `.pipe(schema)`                                 | all                         | parse this schema's output with `schema`; a transform kind                                                                                                                |
 | `.describe(text)`                               | all                         | a description for JSON Schema and tooling; `.description` reads it                                                                                                        |
-| `.unwrap()`                                     | optional, nullable, default | the schema below the wrapper                                                                                                                                              |
+| `.unwrap()`                                     | optional, nullable, default | the schema below the wrapper; `.removeDefault()` is the same on a default                                                                                                 |
 | `.strip()`                                      | object                      | parse removes unknown keys instead of reporting them                                                                                                                      |
 
 Checks and normalisers run in declaration order after the structure is valid: normalisers first, then checks. Messages are optional; each check has a default message.
@@ -124,13 +128,15 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 
 `k.object(fields)` is always strict: parse reports each unknown key as an `unrecognized_key` issue, and the native validator is a closed `v.object`. Convex has no open object, so there is no loose object or catchall. Use `.strip()` when parse should drop unknown keys (the native validator stays closed), or a `k.record(...)` field for open-ended keys.
 
-| Operation                    | Result                                                                                            |
-| ---------------------------- | ------------------------------------------------------------------------------------------------- |
-| `.shape`                     | the field map; reusing a field keeps every check, default and normaliser declared on it           |
-| `.pick('a', 'b')`            | a new object with those fields                                                                    |
-| `.omit('a', 'b')`            | a new object without those fields                                                                 |
-| `.extend({ c: k.string() })` | a new object with added or replaced fields                                                        |
-| `.partial()`                 | every field optional; a defaulted field becomes plain optional, so an omitted field stays omitted |
+| Operation                    | Result                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `.shape`                     | the field map; reusing a field keeps every check, default and normaliser declared on it                                   |
+| `.pick('a', 'b')`            | a new object with those fields                                                                                            |
+| `.omit('a', 'b')`            | a new object without those fields                                                                                         |
+| `.extend({ c: k.string() })` | a new object with added or replaced fields                                                                                |
+| `.partial()`                 | every field optional; a defaulted field becomes plain optional, so an omitted field stays omitted                         |
+| `.required('a', …)`          | the named fields (every field when none are named) lose their top `optional()`, the inverse of `partial()`; defaults stay |
+| `.keyof()`                   | a `k.enum` of the field names                                                                                             |
 
 ### Class instances
 
@@ -227,12 +233,32 @@ function issuesOf(error: unknown) {
 
 ## Types
 
-| Type                                       | Meaning                                                                                                      |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `k.infer<typeof S>` / `k.output<typeof S>` | the parsed value: defaults filled, transforms applied                                                        |
-| `k.input<typeof S>`                        | what a caller sends: defaulted fields optional, transformed fields at their input type, ids as `Id<'table'>` |
-| `NativeOf<typeof S>`                       | the input-side native validator type                                                                         |
-| `OutputNativeOf<typeof S>`                 | the output-side native validator type                                                                        |
+| Type                                       | Meaning                                                                                                                       |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `k.infer<typeof S>` / `k.output<typeof S>` | the parsed value: defaults filled, transforms applied                                                                         |
+| `k.input<typeof S>`                        | what a caller sends: defaulted fields optional, transformed fields at their input type, ids as `Id<'table'>`                  |
+| `NativeOf<typeof S>`                       | the input-side native validator type                                                                                          |
+| `OutputNativeOf<typeof S>`                 | the output-side native validator type                                                                                         |
+| `AnyKSchema`                               | any `k` schema as a parameter type, with `optional()`, `nullable()`, `describe()`, `parse`, `safeParse` and `outputValidator` |
+| `KType`                                    | the structural shape every schema satisfies (`validator`, `_output`); a constraint, not a parameter type                      |
+| `KRecordKey`                               | what `k.record` accepts as its key schema                                                                                     |
+
+Which to use for a helper that takes any schema:
+
+- `schema: AnyKSchema` when the helper calls schema methods (`schema.optional()`, `schema.parse(x)`, `schema.outputValidator`). Every `k` schema is assignable to it; the methods return `AnyKSchema` and `any`.
+- `S extends KType` when the helper must keep the exact schema type in its result, for example to pass it on to `k.object` or a builder's `args`. `KType` has no methods; name the result type yourself.
+
+```ts
+import type { AnyKSchema, KOptional, KType } from 'cvx-kit/k'
+
+function describeAll(schemas: readonly AnyKSchema[]) {
+	return schemas.map((schema) => schema.outputValidator)
+}
+
+function optionalField<S extends KType>(schema: S & AnyKSchema): KOptional<S> {
+	return schema.optional() as KOptional<S>
+}
+```
 
 Input and output types differ only for a schema that declares a default or a transform. A `k.any()` field stays required beside a defaulted field (only `.optional()` makes it optional). `k.input` of an object with no fields, `k.object({})`, is `{ readonly [key: string]: never }`, so an empty command input rejects extra properties at the type level. Ids are branded on input too: a caller passes an `Id<'users'>`, not a plain string.
 
@@ -249,12 +275,15 @@ Every `k` schema implements Standard Schema v1 (`schema['~standard']`, vendor `c
 
 ## JSON Schema
 
-`toJsonSchema(schema, { $schema? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and objects have `additionalProperties: false`. Repeated bounds keep the strongest one (`.min(2).min(5)` emits `minLength: 5`), and several `regex` checks emit the first as `pattern` and the rest as `allOf` patterns. Timestamps carry `maximum: 253402300799999`. Custom refinements are omitted. The entry is separate, so function bundles that do not import it do not load it.
+`toJsonSchema(schema, { $schema?, io? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and objects have `additionalProperties: false`. Repeated bounds keep the strongest one (`.min(2).min(5)` emits `minLength: 5`), and several `regex` checks emit the first as `pattern` and the rest as `allOf` patterns. Timestamps carry `maximum: 253402300799999`. `.positive()`/`.negative()` emit `exclusiveMinimum`/`exclusiveMaximum`, and `.safe()` emits an integer with the safe range. Custom refinements are omitted.
+
+`{ io: 'output' }` describes what parse returns instead, as Zod's `io` option: a defaulted field is required, a pipe emits its target's output, and a transform emits `{}` (any value), as `outputValidator` emits `v.any()`. The entry is separate, so function bundles that do not import it do not load it.
 
 ```ts
 import { toJsonSchema } from 'cvx-kit/json-schema'
 
 const inputSchema = toJsonSchema(documentInput)
+const outputSchema = toJsonSchema(documentInput, { io: 'output' })
 ```
 
 ## Zod interop

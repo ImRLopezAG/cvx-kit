@@ -365,6 +365,52 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 			if (!Number.isInteger(value))
 				context.add('not_integer', messageOf(record, 'Expected an integer'), undefined)
 			return
+		case 'gt': {
+			const limit = numberArg(record)
+			if (!(Number(value) > limit))
+				context.add(
+					'too_small',
+					messageOf(record, `Too small: expected number to be >${limit}`),
+					undefined,
+				)
+			return
+		}
+		case 'lt': {
+			const limit = numberArg(record)
+			if (!(Number(value) < limit))
+				context.add(
+					'too_big',
+					messageOf(record, `Too big: expected number to be <${limit}`),
+					undefined,
+				)
+			return
+		}
+		case 'finite':
+			if (!Number.isFinite(value))
+				context.add(
+					'invalid_type',
+					messageOf(record, 'Invalid input: expected a finite number'),
+					undefined,
+				)
+			return
+		case 'safe': {
+			const number = Number(value)
+			if (!Number.isInteger(number))
+				context.add('not_integer', messageOf(record, 'Expected an integer'), undefined)
+			else if (number < Number.MIN_SAFE_INTEGER)
+				context.add(
+					'too_small',
+					messageOf(record, `Too small: expected number to be >=${Number.MIN_SAFE_INTEGER}`),
+					undefined,
+				)
+			else if (number > Number.MAX_SAFE_INTEGER)
+				context.add(
+					'too_big',
+					messageOf(record, `Too big: expected number to be <=${Number.MAX_SAFE_INTEGER}`),
+					undefined,
+				)
+			return
+		}
 		case 'refine':
 			if (settled(callbackOf(record)(value)) !== true) {
 				const options = optionsOf(record)
@@ -796,6 +842,10 @@ function isRunOp(record: KNode): boolean {
 		case 'length':
 		case 'regex':
 		case 'int':
+		case 'gt':
+		case 'lt':
+		case 'finite':
+		case 'safe':
 		case 'refine':
 		case 'check':
 		case 'trim':

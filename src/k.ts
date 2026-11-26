@@ -29,6 +29,7 @@ export type {
 export type { KIsoDate, KIsoDateTime, KTimestamp } from './k/dates'
 export type { KObject } from './k/object'
 export type {
+	AnyKSchema,
 	KCheckContext,
 	KDefault,
 	KNarrowed,

@@ -8,8 +8,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-/** The last v1 commit (release 0.1.35). */
-export const V1_COMMIT = '8d979a5'
+/**
+ * The v1 revision to compare against: the last v1 commit (release 0.1.35) by default.
+ * `CVX_BENCH_V1_REF` selects another v1 revision, e.g. the 0.2.0 release commit.
+ */
+export const V1_COMMIT = process.env.CVX_BENCH_V1_REF || '8d979a5'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const checkout = path.resolve(here, '..', '..')

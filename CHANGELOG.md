@@ -42,7 +42,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `cvx-kit/table`: `kTable`, `createTable`, `tenantTable`, `kVariantTable` and the table types.
 - `cvx-kit/registration`: `kCustomQuery`, `kCustomMutation`, `kCustomAction` and `rawFunctionArgs`.
 - `cvx-kit/json-schema`: `toJsonSchema`, which renders ids as strings.
-- `cvx-kit/zod`: `toZod(schema)` and `.toZod()`, a one-way conversion to Zod 4.
+- `cvx-kit/zod`: `toZod(schema)` and `.toZod()`, a one-way conversion to Zod 4. The result is a `zod/mini` schema, so the entry bundles Zod's core and not the classic method API: about 232 KB with `k`, against 815 KB when it was built on classic Zod. Extend a result with `zod/mini` functions.
 - `withFieldGroups` in `cvx-kit/relations` and `AgentListArgs` in `cvx-kit/agent-tools`.
 - A codemod, `node tools/codemod-v2/index.mjs <path…> [--write] [--report out.json]`, run from a cvx-kit checkout.
 

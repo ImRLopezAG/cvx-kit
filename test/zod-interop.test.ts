@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { zodToConvex } from 'convex-helpers/server/zod4'
 import { z } from 'zod'
+import * as mini from 'zod/mini'
 import { k } from '../src/k'
 import { toZod } from '../src/zod'
 
@@ -52,7 +54,7 @@ describe('toZod', () => {
 		expect(code.success ? '' : code.error.issues[0].message).toBe('upper only')
 		expect(zod.parse(valid)).toMatchObject({ title: 'ab', status: 'open' })
 		expect(toZod(k.string().toUpperCase()).parse('a')).toBe('A')
-		expect(toZod(k.string().describe('d')).description).toBe('d')
+		expect(z.globalRegistry.get(toZod(k.string().describe('d')))?.description).toBe('d')
 	})
 
 	it('does not carry refine or transform, and still validates structure', () => {
@@ -102,12 +104,31 @@ describe('toZod', () => {
 	it('keeps describe transparent to the order of normalisers and checks', () => {
 		const schema = k.string().min(2).describe('name').trim()
 		expect(toZod(schema).safeParse(' x ').success).toBe(schema.safeParse(' x ').success)
-		expect(toZod(schema).description).toBe('name')
+		expect(z.globalRegistry.get(toZod(schema))?.description).toBe('name')
+	})
+
+	it('produces zod/mini schemas that convex-helpers converts back to the same native validator', () => {
+		const schema = k.object({
+			owner: k.id('users'),
+			title: k.string().min(1),
+			tags: k.array(k.string()).optional(),
+			note: k.string().nullable(),
+			kind: k.enum(['a', 'b']),
+		})
+		const zod = toZod(schema)
+		expect(zod).toBeInstanceOf(mini.ZodMiniType)
+		expect(zod).not.toBeInstanceOf(z.ZodType)
+		// SAFETY: native validators carry their JSON form.
+		const json = (validator: object) => (validator as { json: unknown }).json
+		expect(json(zodToConvex(zod))).toEqual(json(schema.validator))
+		// A result is extended with zod/mini functions.
+		const extended = mini.extend(zod as never, { extra: mini.optional(mini.boolean()) })
+		expect(extended.safeParse({ owner: 'u', title: 't', note: null, kind: 'a', extra: true }).success).toBe(true)
 	})
 
 	it('installs .toZod() on every k schema', () => {
 		const zod = task.shape.title.toZod()
-		expect(zod).toBeInstanceOf(z.ZodType)
+		expect(zod).toBeInstanceOf(z.core.$ZodType)
 		expect(zod.parse(' a ')).toBe('a')
 		expect(k.string().optional().toZod().parse(undefined)).toBeUndefined()
 	})

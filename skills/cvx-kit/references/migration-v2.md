@@ -9,10 +9,10 @@ The steps, in order: [update dependencies](#prerequisites), [run the codemod](#t
 | Package          | 2.0 requirement                                      |
 | ---------------- | ---------------------------------------------------- |
 | `convex`         | `^1.46.0` (peer)                                     |
-| `convex-helpers` | `>=0.1.127 <0.2.0` (peer)                            |
+| `convex-helpers` | `>=0.1.130 <0.2.0` (peer)                            |
 | `effect`         | `>=4.0.1 <5`, optional; needed for `cvx-kit/effect`  |
 | `react`          | `^18 \|\| ^19`, optional; needed for `cvx-kit/react` |
-| `zod`            | `^4.5.4`, optional; needed only for `cvx-kit/zod`    |
+| `zod`            | `^4.6.7`, optional; needed only for `cvx-kit/zod`    |
 
 Zod is no longer required. Remove it from the app's dependencies once no app code imports it. Keep it if app code still parses external data with Zod or uses `cvx-kit/zod`.
 

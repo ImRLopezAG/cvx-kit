@@ -1,18 +1,20 @@
 /**
  * Zod interop (KTD7): `toZod()` as a function, and as a method that importing this entry installs on
- * every `k` schema. Core declarations never mention Zod; the method's type comes from the global
+ * every `k` schema. Schemas are built with `zod/mini`, so the entry bundles Zod's core and the few
+ * constructors used here, not the classic method API: a result parses, checks and feeds any library
+ * that accepts a Zod 4 schema, and is extended with `zod/mini` functions. Core declarations never mention Zod; the method's type comes from the global
  * `CvxKitSchemaMethods` augmentation below, so only apps that import `cvx-kit/zod` see it. (A module
  * augmentation of `./k/schema` would not resolve from the built `.d.mts` files.)
  */
 import { zid } from 'convex-helpers/server/zod4'
-import { z } from 'zod'
+import * as z from 'zod/mini'
 import { membersOf } from './k/compile'
 import { maxTimestamp } from './k/formats'
 import { KSchema } from './k/schema'
 import type { KDiscriminated, KFields, KLiteralValue, KMessage, KNode, KType } from './k/types'
 
-/** The Zod schema `toZod` produces: the `k` schema's output and input, except that transforms are not carried. */
-export type KZod<S extends KType> = z.ZodType<
+/** The Zod Mini schema `toZod` produces: the `k` schema's output and input, except that transforms are not carried. */
+export type KZod<S extends KType> = z.ZodMiniType<
 	S['_t'] extends true ? S['validator']['type'] : S['_output'],
 	S['validator']['type']
 >
@@ -25,8 +27,8 @@ declare global {
 }
 
 /**
- * Convert a `k` schema to a Zod 4 schema, node by node, with ids from convex-helpers' `zid` so they
- * keep their table typing. Carried: structure, strict objects (`strip()` objects strip), `min`, `max`,
+ * Convert a `k` schema to a Zod 4 (`zod/mini`) schema, node by node, with ids from convex-helpers'
+ * `zid` so they keep their table typing and convert back through convex-helpers. Carried: structure, strict objects (`strip()` objects strip), `min`, `max`,
  * `length`, `regex`, `int`, `trim`, case normalisers, defaults (as `prefault`, so a default runs through the chain like in `k`; a
  * `partial()` field drops its default), ISO date and date-time formats,
  * timestamps and `describe`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a
@@ -43,11 +45,13 @@ Object.defineProperty(KSchema.prototype, 'toZod', {
 	configurable: true,
 })
 
-function toZodMethod(this: KType): z.ZodType {
+function toZodMethod(this: KType): Mini {
 	return convert(this)
 }
 
-function convert(node: KNode): z.ZodType {
+type Mini = z.ZodMiniType
+
+function convert(node: KNode): Mini {
 	const records: KNode[] = []
 	for (let current: KNode | null = node; current !== null; current = current.prev)
 		records.push(current)
@@ -77,10 +81,10 @@ function convert(node: KNode): z.ZodType {
 				break
 			case 'optional':
 			case 'partial':
-				out = out.optional()
+				out = z.optional(out)
 				break
 			case 'nullable':
-				out = out.nullable()
+				out = z.nullable(out)
 				break
 			case 'default':
 				if (!transformed && !(partialAt >= 0 && index > partialAt)) out = withDefault(out, record)
@@ -90,10 +94,10 @@ function convert(node: KNode): z.ZodType {
 		}
 	}
 	out = applyRun(out, run)
-	return description === undefined ? out : out.describe(description)
+	return description === undefined ? out : out.check(z.describe(description))
 }
 
-function rootSchema(root: KNode, strip: boolean): z.ZodType {
+function rootSchema(root: KNode, strip: boolean): Mini {
 	switch (root.op) {
 		case 'string':
 			return z.string()
@@ -102,14 +106,15 @@ function rootSchema(root: KNode, strip: boolean): z.ZodType {
 		case 'isoDateTime':
 			return z.iso.datetime({ offset: true })
 		case 'id':
-			// SAFETY: k.id stores its table name as the root argument.
-			return zid(root.arg as string)
+			// SAFETY: k.id stores its table name as the root argument; zid's schema is a Zod 4 core schema
+			// with the same `check` surface.
+			return zid(root.arg as string) as unknown as Mini
 		case 'number':
 			return z.number()
 		case 'int':
-			return z.number().int()
+			return z.int()
 		case 'timestamp':
-			return z.number().int().min(0).max(maxTimestamp)
+			return z.int().check(z.minimum(0), z.maximum(maxTimestamp))
 		case 'int64':
 			return z.bigint()
 		case 'boolean':
@@ -134,7 +139,7 @@ function rootSchema(root: KNode, strip: boolean): z.ZodType {
 		case 'object': {
 			// SAFETY: k.object stores its field map as the root argument.
 			const fields = root.arg as KFields
-			const converted: Record<string, z.ZodType> = {}
+			const converted: Record<string, Mini> = {}
 			for (const key in fields) converted[key] = convert(fields[key])
 			return strip ? z.object(converted) : z.strictObject(converted)
 		}
@@ -142,7 +147,7 @@ function rootSchema(root: KNode, strip: boolean): z.ZodType {
 			// SAFETY: k.record stores its key and value schemas as the root argument.
 			const [key, value] = root.arg as readonly KType[]
 			// SAFETY: record keys are k.string() or k.id(), which convert to Zod record keys.
-			return z.record(convert(key) as z.ZodString, convert(value))
+			return z.record(convert(key) as z.ZodMiniString, convert(value))
 		}
 		case 'union':
 			return z.union(membersOf(root).map(convert))
@@ -150,7 +155,7 @@ function rootSchema(root: KNode, strip: boolean): z.ZodType {
 			// SAFETY: k.discriminatedUnion stores its key and object options as the root argument.
 			const { key, options } = root.arg as KDiscriminated
 			// SAFETY: each option is a k.object, which converts to a Zod object.
-			const objects = options.map(convert) as [z.ZodObject, ...z.ZodObject[]]
+			const objects = options.map(convert) as [z.ZodMiniObject, ...z.ZodMiniObject[]]
 			return z.discriminatedUnion(key, objects)
 		}
 		default:
@@ -159,46 +164,46 @@ function rootSchema(root: KNode, strip: boolean): z.ZodType {
 }
 
 /** Apply one run of chained conveniences: normalisers first, then checks, as `k` parses them. */
-function applyRun(base: z.ZodType, run: readonly KNode[]): z.ZodType {
+function applyRun(base: Mini, run: readonly KNode[]): Mini {
 	let out = base
 	for (const record of run) if (isNormaliser(record)) out = applyNormaliser(out, record)
 	for (const record of run) if (!isNormaliser(record)) out = applyCheck(out, record)
 	return out
 }
 
-function applyNormaliser(base: z.ZodType, record: KNode): z.ZodType {
-	if (!(base instanceof z.ZodString || base instanceof z.ZodStringFormat)) return base
-	if (record.op === 'trim') return base.trim()
-	if (record.op === 'lower') return base.toLowerCase()
-	if (record.op === 'upper') return base.toUpperCase()
+/** The Zod definition kind: a string format is a `string`, a number format a `number`. */
+function kindOf(schema: Mini): string {
+	return schema._zod.def.type
+}
+
+function applyNormaliser(base: Mini, record: KNode): Mini {
+	if (kindOf(base) !== 'string') return base
+	if (record.op === 'trim') return base.check(z.trim())
+	if (record.op === 'lower') return base.check(z.toLowerCase())
+	if (record.op === 'upper') return base.check(z.toUpperCase())
 	return base
 }
 
-function applyCheck(base: z.ZodType, record: KNode): z.ZodType {
+function applyCheck(base: Mini, record: KNode): Mini {
 	const message = messageOf(record.message)
+	const kind = kindOf(base)
 	if (record.op === 'regex') {
 		// SAFETY: .regex stores its pattern as the record argument.
 		const pattern = record.arg as RegExp
-		return base instanceof z.ZodString || base instanceof z.ZodStringFormat
-			? base.regex(pattern, message)
-			: base
+		return kind === 'string' ? base.check(z.regex(pattern, message)) : base
 	}
-	if (record.op === 'int') return base instanceof z.ZodNumber ? base.int(message) : base
+	if (record.op === 'int') return kind === 'number' ? base.check(z.int(message)) : base
 	if (record.op !== 'min' && record.op !== 'max' && record.op !== 'length') return base
 	// SAFETY: min, max and length store their numeric limit as the record argument.
 	const limit = record.arg as number
-	if (
-		base instanceof z.ZodString ||
-		base instanceof z.ZodStringFormat ||
-		base instanceof z.ZodArray
-	) {
-		if (record.op === 'min') return base.min(limit, message)
-		if (record.op === 'max') return base.max(limit, message)
-		return base.length(limit, message)
+	if (kind === 'string' || kind === 'array') {
+		if (record.op === 'min') return base.check(z.minLength(limit, message))
+		if (record.op === 'max') return base.check(z.maxLength(limit, message))
+		return base.check(z.length(limit, message))
 	}
-	if (base instanceof z.ZodNumber) {
-		if (record.op === 'min') return base.min(limit, message)
-		if (record.op === 'max') return base.max(limit, message)
+	if (kind === 'number') {
+		if (record.op === 'min') return base.check(z.minimum(limit, message))
+		if (record.op === 'max') return base.check(z.maximum(limit, message))
 	}
 	return base
 }
@@ -207,9 +212,9 @@ function applyCheck(base: z.ZodType, record: KNode): z.ZodType {
  * `k` runs a default through the rest of the chain (normalisers, checks), so it maps to Zod's
  * `prefault`, not `default`, which would short-circuit.
  */
-function withDefault(base: z.ZodType, record: KNode): z.ZodType {
+function withDefault(base: Mini, record: KNode): Mini {
 	// SAFETY: a default record stores a value of the schema's input type here (no transform below it).
-	return base.prefault(record.arg as never)
+	return z.prefault(base, record.arg as never)
 }
 
 function messageOf(message: KMessage): string | undefined {

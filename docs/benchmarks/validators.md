@@ -19,6 +19,37 @@ Figures are for the `eager` variant (`args` and `returns` declared as properties
 
 The first-call row comes from the smaller request fixture in section (d), because the full app's harness builds validators but does not call a function.
 
+## Rerun after merging 0.2.0
+
+v2 now includes the 0.2.0 changes (convex 1.51.0, zod 4.6.7, convex-helpers 0.1.137, cursor and relation-page reuse, `argumentFailure`). The tables below rerun the two app benches on those versions, against 0.1.35 and against the 0.2.0 release commit (`f191ff3`, selected with `CVX_BENCH_V1_REF`). The rest of this document was recorded before the merge, on zod 4.6.5 and convex 1.48.0, and is kept as recorded; the schema-layer and spike sections were not rerun.
+
+Full app, `eager` variant, medians of 15:
+
+| metric             | 0.1.35 | 0.2.0 |    v2 | v2 vs 0.2.0 |
+| ------------------ | -----: | ----: | ----: | ----------: |
+| bundle KB          |  823.8 | 829.3 | 230.3 |      -72.2% |
+| Zod KB in bundle   |  583.3 | 583.4 |   0.0 |       -100% |
+| module load ms     |  35.14 | 26.18 |  8.43 |      -67.8% |
+| retained heap MB   |   9.38 |  7.40 |  2.05 |      -72.2% |
+| registration ms    |  14.05 |  7.01 |  2.58 |      -63.2% |
+| tsc instantiations | 813,284 | 854,288 | 254,719 |   -70.2% |
+
+The 0.1.35 and 0.2.0 columns come from two separate runs, each with its own v2 measurement (9.23 ms and 8.43 ms load); the v2 column is the 0.2.0 run. Load times in the 0.1.35 run were higher than in the original record (28.34 ms there), so compare within a run, not across runs.
+
+Whole request without relations, against 0.2.0, medians of 15:
+
+| metric           | 0.2.0 |    v2 | change |
+| ---------------- | ----: | ----: | -----: |
+| bundle KB        | 763.5 | 190.5 | -75.0% |
+| module load ms   | 32.54 |  8.68 | -73.3% |
+| retained heap MB |  4.33 |  1.01 | -76.6% |
+| first call ms    |  3.07 |  1.65 | -46.1% |
+| warm call µs     |  63.4 |  51.4 | -18.8% |
+
+Pushed `exportArgs()` and `exportReturns()` JSON is identical between 0.2.0 and v2 for every function in both fixtures.
+
+The `cvx-kit/zod` interop entry is now built on `zod/mini`. A module that imports `k` and `cvx-kit/zod` bundles to 231.8 KB (153.4 KB of it Zod); built on classic Zod it was 815.4 KB (733.7 KB of Zod). Of the 153 KB, about 85 KB is classic code that convex-helpers' `zid` imports.
+
 ## How it is measured
 
 - Every case is bundled the way Convex does: esbuild, browser platform, ESM, `convex,module` conditions, syntax and identifier minification, names kept, `process.env.NODE_ENV` set to `"production"`.

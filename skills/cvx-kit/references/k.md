@@ -247,7 +247,7 @@ const inputSchema = toJsonSchema(documentInput)
 
 ## Zod interop
 
-`cvx-kit/zod` converts a `k` schema to Zod 4 for libraries that only accept Zod. Install `zod` (an optional peer) to use it.
+`cvx-kit/zod` converts a `k` schema to Zod 4 for libraries that only accept Zod. Install `zod` (an optional peer) to use it. The result is a `zod/mini` schema: it has `parse`, `safeParse` and `check`, works with any library that accepts a Zod 4 schema, and converts back through convex-helpers' `zodToConvex`. It does not have the classic chain methods (`.optional()`, `.extend()`); extend it with the `zod/mini` functions (`z.optional(schema)`, `z.extend(schema, shape)`).
 
 ```ts
 import { toZod } from 'cvx-kit/zod' // importing the entry also installs `.toZod()` on every schema
@@ -256,7 +256,7 @@ const zodSchema = toZod(documentInput)
 const same = documentInput.toZod()
 ```
 
-Carried: structure, strict objects (`strip()` objects strip), ids with their table typing (through convex-helpers' `zid`), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod into that bundle, so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
+Carried: structure, strict objects (`strip()` objects strip), ids with their table typing (through convex-helpers' `zid`), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 150 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
 
 ## Performance model
 

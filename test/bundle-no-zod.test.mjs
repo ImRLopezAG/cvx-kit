@@ -89,6 +89,14 @@ describe('v2 bundles', () => {
 		expect(bytesMatching(inputs, [zodInputs[1]])).toBeGreaterThan(0)
 	})
 
+	it('build the interop entry on zod/mini, well under the classic bundle', async () => {
+		const inputs = await bundleInputs('interop-size', ['src/k.ts'], ['src/zod.ts'])
+		// Classic Zod is over 700 KB here; zod/mini with convex-helpers' zid is about 150 KB.
+		expect(bytesMatching(inputs, [zodInputs[0]])).toBeLessThan(250_000)
+		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/mini\//])).toBeGreaterThan(0)
+		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/locales\/(?!en\.)/])).toBe(0)
+	})
+
 	it('keep the interop entry when it is imported only for its side effect', async () => {
 		const inputs = await bundleInputs('side-effect', ['src/k.ts'], ['src/zod.ts'])
 		expect(bytesMatching(inputs, [zodInputs[0]])).toBeGreaterThan(0)

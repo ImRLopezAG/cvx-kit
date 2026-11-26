@@ -1,0 +1,4 @@
+{
+	"status": "mixed",
+	"skipped": [{ "line": 11, "code": "unknown-method" }]
+}

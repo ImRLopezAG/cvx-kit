@@ -1,0 +1,8 @@
+{
+	"status": "untouched",
+	"skipped": [
+		{ "line": 3, "code": "mixed-reference" },
+		{ "line": 6, "code": "mask-dynamic" },
+		{ "line": 7, "code": "mask-dynamic" }
+	]
+}

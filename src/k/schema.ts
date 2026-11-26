@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type { GenericValidator, VAny, VNull, VUnion } from 'convex/values'
 import { compileNative, compileOutput } from './compile'
-import type { KIssueInput, KSafeParseResult } from './issues'
+import type { KIssue, KIssueInput, KSafeParseResult } from './issues'
 import { refineMessage } from './messages'
 import { parseSchema, safeParseSchema, type KPlan } from './parse'
 import { standardProps } from './standard'
@@ -120,6 +120,18 @@ export abstract class KSchema<
 		return new KPipe(this, 'pipe', target, undefined)
 	}
 
+	/**
+	 * Zod's `.catch`: when this schema reports issues, parse succeeds with `fallback` instead (a function
+	 * receives `{ issues, input }`). The fallback is not validated. Convex sees `v.any()` on the input
+	 * side, so the kit runs the wrapped schema in full. Rejected on table fields and in `returns`.
+	 */
+	catch(fallback: Out | ((context: KCatchContext) => Out)): KCatch<this> {
+		// SAFETY: a fallback is this schema's output, a Convex value, or a callback producing one.
+		const record: KNode = new KTransform(this, 'catch', fallback as KArg, undefined)
+		// SAFETY: KCatch declares types only; KTransform lends the runtime class, as behaviour keys on the op.
+		return record as KCatch<this>
+	}
+
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
 	parse(input: unknown): Out {
 		// SAFETY: a successful walk of this schema produces its declared output.
@@ -209,6 +221,12 @@ export interface AnyKSchema extends KType {
 	parse(input: unknown): any
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- safeParse is the decoding boundary for undecoded input.
 	safeParse(input: unknown): KSafeParseResult<any>
+}
+
+/** The context a `.catch()` fallback function receives: the issues the wrapped schema reported and the input. */
+export interface KCatchContext {
+	readonly issues: readonly KIssue[]
+	readonly input: any
 }
 
 /** The context handed to `.check()`; `addIssue` may be called any number of times. */
@@ -324,6 +342,20 @@ export class KPipe<I extends KType, P extends KType> extends KSchema<
 > {
 	declare readonly _or: KOutputRequired<P>
 	declare readonly _oo: OutputNativeOf<P>
+}
+
+// A schema with a fallback: natively `v.any()` on input, the wrapped schema on output.
+export declare class KCatch<I extends KType> extends KSchema<
+	I['_output'],
+	VAny<I['validator']['type']>,
+	true,
+	I['validator']['isOptional'] extends 'optional'
+		? VAny<I['validator']['type'], 'optional'>
+		: VAny<I['validator']['type']>,
+	I['_t']
+> {
+	declare readonly _or: KOutputRequired<I>
+	declare readonly _oo: OutputNativeOf<I>
 }
 
 type NullableOf<V extends KRequiredValidator> = VUnion<V['type'] | null, [V, VNull<null>]>

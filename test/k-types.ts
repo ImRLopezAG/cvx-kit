@@ -219,3 +219,53 @@ const elementArray = k.array(k.string())
 const defaultedString = k.string().default('x')
 const positiveNumber = k.number().positive().nonnegative().negative().nonpositive().finite().safe()
 void zodParityAssertions
+
+const deriveRange = k.object({ from: k.number(), to: k.number().optional() }).refine(() => true)
+const derivePicked = deriveRange.pick('from', { dropChecks: true })
+const deriveOmitted = deriveRange.omit('to', { dropChecks: true })
+const deriveRequired = deriveRange.required({ dropChecks: true })
+const deriveRequiredSome = deriveRange.required('to', { dropChecks: true })
+const derivePartial = deriveRange.partial({ dropChecks: true })
+const deriveKept = deriveRange.extend({}, { keepChecks: true })
+const deriveAssertions: [
+	Assert<Equal<k.output<typeof derivePicked>, { from: number }>>,
+	Assert<Equal<k.output<typeof deriveOmitted>, { from: number }>>,
+	Assert<Equal<k.output<typeof deriveRequired>, { from: number; to: number }>>,
+	Assert<Equal<k.output<typeof deriveRequiredSome>, { from: number; to: number }>>,
+	Assert<Equal<k.output<typeof derivePartial>, { from?: number; to?: number }>>,
+	Assert<Equal<k.output<typeof deriveKept>, { from: number; to?: number }>>,
+] = [true, true, true, true, true, true]
+void deriveAssertions
+// @ts-expect-error keepChecks is only offered by extend.
+deriveRange.pick('from', { keepChecks: true })
+// @ts-expect-error keepChecks is only offered by extend.
+deriveRange.partial({ keepChecks: true })
+// @ts-expect-error a mask key must be a field.
+deriveRange.omit('missing', { dropChecks: true })
+
+const caughtRole = k.enum(['admin', 'member']).catch('member')
+const caughtObject = k.object({
+	role: caughtRole,
+	note: k.string().optional().catch(undefined),
+	n: k.number().catch(({ input }) => Number(input)),
+})
+const catchAssertions: [
+	Assert<Equal<k.output<typeof caughtRole>, 'admin' | 'member'>>,
+	Assert<Equal<k.input<typeof caughtRole>, 'admin' | 'member'>>,
+	Assert<Equal<k.output<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
+	Assert<Equal<k.input<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
+] = [true, true, true, true]
+void catchAssertions
+// @ts-expect-error the fallback is the schema's output.
+k.string().catch(1)
+
+const looseHook = k.looseObject({ id: k.string(), n: k.number().optional() })
+const looseChained = k.object({ id: k.string() }).loose().pick('id')
+const plainJsonObject = k.jsonObject()
+const looseAssertions: [
+	Assert<Equal<k.output<typeof looseHook>, { id: string; n?: number }>>,
+	Assert<Equal<k.output<typeof looseChained>, { id: string }>>,
+	Assert<Equal<k.output<typeof plainJsonObject>, Record<string, JSONValue>>>,
+	Assert<Equal<k.input<typeof plainJsonObject>, Record<string, JSONValue>>>,
+] = [true, true, true, true]
+void looseAssertions

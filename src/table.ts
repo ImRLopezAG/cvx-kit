@@ -980,7 +980,7 @@ function assertNoTransforms(tableName: string, fields: KFields): void {
 	for (const key of Object.keys(fields)) {
 		if (containsTransform(fields[key]))
 			throw new Error(
-				`Table field "${key}" on "${tableName}" uses transform or pipe; table fields must keep their type (use trim, toLowerCase or overwrite to normalise)`,
+				`Table field "${key}" on "${tableName}" uses transform or pipe, or catch; table fields must keep their type (use trim, toLowerCase or overwrite to normalise)`,
 			)
 	}
 }

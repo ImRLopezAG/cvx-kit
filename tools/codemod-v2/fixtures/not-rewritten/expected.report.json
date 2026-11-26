@@ -7,59 +7,59 @@
 		},
 		{
 			"line": 4,
-			"code": "loose-object"
-		},
-		{
-			"line": 5,
-			"code": "loose-object"
-		},
-		{
-			"line": 6,
-			"code": "catch"
-		},
-		{
-			"line": 7,
 			"code": "recursive"
 		},
 		{
-			"line": 8,
+			"line": 5,
 			"code": "tuple"
 		},
 		{
-			"line": 9,
+			"line": 6,
+			"code": "custom"
+		},
+		{
+			"line": 7,
 			"code": "custom"
 		},
 		{
 			"line": 10,
-			"code": "custom"
-		},
-		{
-			"line": 13,
 			"code": "super-refine"
 		},
 		{
-			"line": 14,
+			"line": 11,
 			"code": "meta"
 		},
 		{
-			"line": 15,
+			"line": 12,
 			"code": "coerce"
+		},
+		{
+			"line": 13,
+			"code": "coerce"
+		},
+		{
+			"line": 14,
+			"code": "coerce"
+		},
+		{
+			"line": 15,
+			"code": "brand"
 		},
 		{
 			"line": 16,
-			"code": "coerce"
+			"code": "brand"
 		},
 		{
 			"line": 17,
-			"code": "coerce"
+			"code": "string-format"
 		},
 		{
 			"line": 18,
-			"code": "brand"
+			"code": "string-format"
 		},
 		{
 			"line": 19,
-			"code": "brand"
+			"code": "string-format"
 		},
 		{
 			"line": 20,
@@ -71,34 +71,22 @@
 		},
 		{
 			"line": 22,
-			"code": "string-format"
-		},
-		{
-			"line": 23,
-			"code": "string-format"
-		},
-		{
-			"line": 24,
-			"code": "string-format"
-		},
-		{
-			"line": 25,
 			"code": "json-schema"
 		},
 		{
-			"line": 26,
+			"line": 23,
 			"code": "zod-type"
 		},
 		{
-			"line": 27,
+			"line": 24,
 			"code": "zod-type"
 		},
 		{
-			"line": 28,
+			"line": 25,
 			"code": "unknown-factory"
 		},
 		{
-			"line": 29,
+			"line": 26,
 			"code": "zod-introspection"
 		}
 	]

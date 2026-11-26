@@ -128,7 +128,10 @@ New in 2.0: `cvx-kit/k` (`k`, `KValidationError` and the schema types, including
 | `z.union([a, b])`, `z.discriminatedUnion('kind', [...])`             | `k.union([a, b])`, `k.discriminatedUnion('kind', [...])`                                    |                                                                                        |
 | `z.object({...})`, `z.strictObject({...})`                           | `k.object({...})`                                                                           | always strict; see [Objects are strict](#objects-are-strict)                           |
 | `.strict()`                                                          | remove                                                                                      |                                                                                        |
-| `z.looseObject`, `.passthrough()`, `.catchall(x)`                    | not supported                                                                               | see [No v2 form](#constructs-with-no-v2-form)                                          |
+| `z.looseObject({...})`, `.passthrough()`, `.loose()`                 | `k.looseObject({...})`, `.loose()`                                                          | parse keeps unknown keys; the native validator stays closed, as in v1; see [Open objects](k.md#open-objects) |
+| `.catchall(x)`                                                       | not supported                                                                               | see [No v2 form](#constructs-with-no-v2-form)                                          |
+| a JSON object with any keys (`_id`, …)                               | `k.jsonObject()`                                                                            | native `v.any()`; see [Open objects](k.md#open-objects)                                |
+| `.catch(value)`, `.catch((ctx) => value)`                            | same                                                                                        | the callback gets `{ issues, input }`; not on table fields or `returns`; see [Fallbacks](k.md#fallbacks) |
 | `z.any()`, `z.unknown()`                                             | `k.any()`                                                                                   |                                                                                        |
 | `z.json()`                                                           | `k.json()`                                                                                  |                                                                                        |
 | `zid('t')`                                                           | `k.id('t')`                                                                                 |                                                                                        |
@@ -151,8 +154,8 @@ New in 2.0: `cvx-kit/k` (`k`, `KValidationError` and the schema types, including
 | `.transform(fn)`, `.pipe(schema)`                                    | same                                                                                        | input positions only                                                                   |
 | `.describe(text)`                                                    | same                                                                                        |                                                                                        |
 | `.meta({...})`                                                       | `.describe(text)`                                                                           | only a description is kept                                                             |
-| `.pick({ a: true })`, `.omit({ a: true })`                           | `.pick('a')`, `.omit('a')`                                                                  | string keys                                                                            |
-| `.extend({...})`, `.partial()`, `.shape`                             | same                                                                                        | `partial()` fills no defaults                                                          |
+| `.pick({ a: true })`, `.omit({ a: true })`                           | `.pick('a')`, `.omit('a')`                                                                  | string keys; on a refined object add `{ dropChecks: true }`, see [Derived objects](#derived-objects-refuse-to-drop-object-level-checks) |
+| `.extend({...})`, `.partial()`, `.shape`                             | same                                                                                        | `partial()` fills no defaults; on a refined object pass `{ dropChecks: true }` or `extend(fields, { keepChecks: true })` |
 | `.required()`, `.required({ a: true })`                              | `.required()`, `.required('a')`                                                             | string keys; removes the fields' `optional()` wrappers                                 |
 | `.keyof()`                                                           | same                                                                                        | a `k.enum` of the keys                                                                 |
 | `z.array(x).element`                                                 | `k.array(x).element`                                                                        |                                                                                        |
@@ -199,7 +202,7 @@ if (!result.success) log(result.issues)
 
 ### Objects are strict
 
-`k.object` always rejects unknown keys on parse. In v1, `z.object` stripped unknown keys on parse, and `z.looseObject` and `.catchall` kept them, but all of them were stored as the same closed native object. So the stored shape does not change; only parse behaviour does.
+`k.object` rejects unknown keys on parse unless it is `.strip()` or `.loose()`. In v1, `z.object` stripped unknown keys on parse, and `z.looseObject` and `.catchall` kept them, but all of them were stored as the same closed native object. So the stored shape does not change; only parse behaviour does.
 
 ```ts
 // before: z.object({ a: z.string() }).parse({ a: 'x', b: 1 }) → { a: 'x' }
@@ -208,15 +211,17 @@ k.object({ a: k.string() }).parse({ a: 'x', b: 1 }) // throws: unrecognized_key 
 k.object({ a: k.string() }).strip().parse({ a: 'x', b: 1 }) // { a: 'x' }
 ```
 
-What to do: where code relied on stripping (parsing a superset of fields, for example a whole row against a smaller object), add `.strip()` or pick the fields first. There is no loose object at a Convex boundary; see [No v2 form](#constructs-with-no-v2-form).
+What to do: where code relied on stripping (parsing a superset of fields, for example a whole row against a smaller object), add `.strip()` or pick the fields first; `.loose()` keeps them. Neither changes the closed native object, so at a Convex boundary unknown keys are still rejected; see [Open objects](k.md#open-objects).
 
 ### Parse returns the input when nothing is normalised
 
 `z.object(...).parse` returned a new object in schema key order. A `k` parse returns the input object itself when nothing is normalised (no default filled, no normaliser or transform changed a value, no key stripped), so the result is `===` the input and keeps the input's key order. Code that compares `JSON.stringify(schema.parse(a))` with a stored string, uses the output as a cache key, or mutates the output changes behaviour. Sort keys before serialising, or copy the result (`{ ...schema.parse(a) }`) before mutating it. See [Parse and issues](k.md#parse-and-issues).
 
-### Derived objects drop object-level checks
+### Derived objects refuse to drop object-level checks
 
-`pick`, `omit`, `extend` (also `extend({})`) and `partial` build a new object over the same field schemas. Field checks are kept; a `refine` or `check` declared on the object itself is not, because it may read fields the new object lacks. Zod kept them on `extend`. Restate the check on the derived object.
+`pick`, `omit`, `extend` (also `extend({})`), `partial` and `required` build a new object over the same field schemas; field checks are kept. On an object with a `refine`, `check` or `overwrite` declared on the object itself, they throw at declaration instead of silently dropping it: `k: extend() would drop 1 object-level check(s); pass { dropChecks: true } or { keepChecks: true }`. Zod kept refinements through `extend` in some versions and dropped them in others, and Zod 4 throws on `.pick`/`.omit` of a refined object.
+
+What to do: at each site, pass `{ dropChecks: true }` as the last argument to drop the checks (`schema.pick('a', 'b', { dropChecks: true })`), or on `extend`, `{ keepChecks: true }` to run them on the extended object. The codemod reports each mask or extend call on a refined object it can see as `derive-drops-checks`.
 
 ### Table boundaries and object spread
 
@@ -372,7 +377,7 @@ What the default costs: a bare `k.number()` runs no kit code on a call (Convex v
 
 After the key schema runs (including normalisers), each `k.record` key must be non-empty, at most 1024 characters, printable ASCII, and must not start with `$` or `_`. Otherwise parse reports an `invalid_format` issue at that key. Convex already rejected such keys on write, so the error now comes from the kit before the write. A key normaliser such as `.toLowerCase()` that produces a key Convex would reject fails the same way.
 
-There is no `k` form for an object whose keys are arbitrary JSON (keys starting with `_` or `$` included). The supported form is `k.json()`, plus a check if the value must be an object: `k.json().refine((value) => value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected an object')`. Its parse checks values, not keys. Convex itself still rejects keys it does not allow when such a value is stored or sent as an argument, so rename those keys before they reach Convex.
+For an object whose keys are arbitrary (`_id`, `_creationTime` included), use `k.jsonObject()`: a plain object of JSON values, natively `v.any()`, whose keys parse checks against Convex's object-value rule (no leading `$`). See [Open objects](k.md#open-objects).
 
 ### Shared arrays and field objects become read-only
 
@@ -458,8 +463,7 @@ These are not supported in 2.0. `cvx-kit/zod` does not help: it converts `k` to 
 
 | Construct                                         | What to do                                                                                                                                                                                                                                 |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `z.looseObject`, `.passthrough()`, `.catchall(x)` | Convex stored these as closed objects and rejected the extra keys on write. Use a strict `k.object` with every field declared, `.strip()` when parse should drop extra keys, or a `k.record(k.string(), value)` field for open-ended keys. |
-| `.catch(fallback)`                                | Handle the fallback explicitly: `.optional()` plus a default in the handler, or `safeParse` and use the fallback on failure.                                                                                                               |
+| `.catchall(x)`                                    | Convex stored these as closed objects and rejected the extra keys on write. Use `.loose()` when parse should keep extra keys unchecked, a strict `k.object` with every field declared, or a `k.record(k.string(), value)` field for open-ended keys. |
 | `z.lazy` (recursive schemas)                      | Restructure: store a bounded depth explicitly (nested objects to a fixed depth), store children as separate rows linked by `k.id`, or store the tree as `k.json()` and check it with `.check(...)`.                                        |
 | `z.tuple([a, b])`                                 | Use an object with named fields, or `k.array(k.union([a, b])).length(2)` with a `.check` on positions.                                                                                                                                     |
 | `z.custom`, `z.instanceof`                        | Use the closest structural schema plus `.refine(...)`. Convex values cannot be class instances except `ArrayBuffer` (`k.bytes()`).                                                                                                         |
@@ -513,8 +517,8 @@ The report holds `summary` (file counts by status), `declarations` (rewritten an
 
 | Reason code              | Meaning                                                                                                                                    | What to do                                                                              |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `loose-object`           | `z.looseObject`, `.passthrough()` or `.catchall()`                                                                                         | Decide per site; see [No v2 form](#constructs-with-no-v2-form).                         |
-| `catch`                  | `.catch(...)` on a schema                                                                                                                  | Replace with explicit fallback handling.                                                |
+| `loose-object`           | `.catchall()` (`z.looseObject` and `.passthrough()` are rewritten to `k.looseObject` and `.loose()`)                                       | Decide per site; see [No v2 form](#constructs-with-no-v2-form).                         |
+| `catch`                  | `.catch(...)` whose callback reads Zod's `ctx.value` or `ctx.error`, or has no single argument                                             | Read `input` and `issues` instead; `k` passes `{ issues, input }`.                      |
 | `recursive`              | `z.lazy`                                                                                                                                   | Restructure the data.                                                                   |
 | `tuple`                  | `z.tuple`                                                                                                                                  | Use an object or a checked array.                                                       |
 | `custom`                 | `z.custom`, `z.instanceof`                                                                                                                 | A structural schema plus `.refine`.                                                     |
@@ -529,6 +533,7 @@ The report holds `summary` (file counts by status), `declarations` (rewritten an
 | `zod-check`              | Zod's `.check(...)`: check functions, or a callback reading `ctx.value`/`ctx.issues`                                                       | Rewrite as `.check((value, ctx) => ctx.addIssue({ message }))`, then run again.         |
 | `error-map`              | a check's options hold a function-valued `error` (Zod's error map)                                                                         | Replace it with `message: '…'`; `k` has no error maps.                                  |
 | `type-helper-unknown`    | `z.infer`/`z.input`/`z.output` of a schema not known to be `k` after the run                                                               | Migrate that schema (or pass its file in the same run), then run again; or keep it Zod. |
+| `derive-drops-checks`    | `.pick`/`.omit`/`.extend`/`.partial`/`.required` on an object with an object-level `.refine`/`.superRefine`/`.check` in the same file | Pass `{ dropChecks: true }`, or `{ keepChecks: true }` on `extend`; see [Derived objects](#derived-objects-refuse-to-drop-object-level-checks). |
 | `unproven-mask`          | `.pick({ a: true })`/`.omit({ … })` on a value the codemod cannot prove is a schema or table (an import from outside the run, a parameter) | Pass string keys if it is a `k` schema. Does not hold the rest of the statement as Zod. |
 | `unproven-strict`        | `.strict()` on such a value                                                                                                                | Remove it if it is a `k` schema. Does not hold the rest of the statement as Zod.        |
 | `mask-dynamic`           | `.pick`/`.omit` with a mask that is not a literal `{ key: true }` object                                                                   | Pass string keys.                                                                       |
@@ -567,7 +572,7 @@ Limits:
 2. Record the current pushed schema (see the checklist below) before changing code.
 3. Upgrade cvx-kit and the peers, then run the codemod in dry-run mode and read the report.
 4. Run it with `--write`, then fix the reported sites and the type errors, starting from leaf modules of the import graph: shared constants and field schemas first, then table modules, then contracts and registries, then function modules. A module's errors often come from a schema it imports, so fixing leaves first avoids chasing the same error in many files.
-5. Fix the behaviour changes: returns that relied on stripping, `ZodError` readers, ids typed as `string`, async refinements.
+5. Fix the behaviour changes: returns that relied on stripping, derived objects of refined objects, `ZodError` readers, ids typed as `string`, async refinements.
 6. Verify, then deploy.
 
 A function module gets faster only once its whole import graph is Zod-free. One module that still imports `zod` (an app helper, a shared schema, `cvx-kit/zod`) puts Zod into the bundle of every function module that imports it. Find those modules with the bundle check below and move Zod-using code out of shared schema files.
@@ -578,7 +583,7 @@ No data migration is expected: the stored shape and indexes are unchanged. If `n
 - an enum or literal union that lost a value;
 - a field whose type changed, for example `z.date()` or a transform replaced by a different stored type;
 - a table whose fields moved under `createTable` shared fields with a different definition;
-- `z.looseObject` data: if documents were written with extra keys through a native path, a strict object rejects them. Declare the keys or use a `k.record` field.
+- `z.looseObject` data (now `k.looseObject`, same closed native object): if documents were written with extra keys through a native path, a strict object rejects them. Declare the keys or use a `k.record` field.
 
 ## Verification checklist
 

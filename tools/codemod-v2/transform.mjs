@@ -20,7 +20,12 @@ import {
 	ZOD_INTEROP,
 } from './transforms/imports.mjs'
 import { classifyObjects } from './transforms/objects.mjs'
-import { isSchemaExpression, processBoundChain, processZodChain } from './transforms/schema.mjs'
+import {
+	carriesObjectChecks,
+	isSchemaExpression,
+	processBoundChain,
+	processZodChain,
+} from './transforms/schema.mjs'
 import { getterEdits } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
 import { isCreateTable, processTableCall, tableKind } from './transforms/tables.mjs'
@@ -112,6 +117,7 @@ function createContext(path, source, program, options) {
 		moduleDecls: new Map(),
 		parsedNames: new Set(),
 		schemaBindings: new Set(),
+		refinedBindings: new Set(),
 		tableBindings: new Set(),
 		tableFactories: new Set(),
 		objectConsts: new Set(),
@@ -300,7 +306,10 @@ function classifyBindings(ctx, units) {
 				if (init.type === 'CallExpression' && tableKind(ctx, init)) ctx.tableBindings.add(name)
 				else if (init.type === 'CallExpression' && isCreateTable(ctx, init))
 					ctx.tableFactories.add(name)
-				else if (isSchemaExpression(ctx, init)) ctx.schemaBindings.add(name)
+				else if (isSchemaExpression(ctx, init)) {
+					ctx.schemaBindings.add(name)
+					if (carriesObjectChecks(ctx, chainOf(init))) ctx.refinedBindings.add(name)
+				}
 			}
 		}
 	}

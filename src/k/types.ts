@@ -12,6 +12,7 @@ export type KOp =
 	| 'bytes'
 	| 'any'
 	| 'json'
+	| 'jsonObject'
 	| 'isoDate'
 	| 'isoDateTime'
 	| 'timestamp'
@@ -43,8 +44,10 @@ export type KOp =
 	| 'nullable'
 	| 'default'
 	| 'strip'
+	| 'loose'
 	| 'transform'
 	| 'pipe'
+	| 'catch'
 
 export type KRequiredValidator = Validator<any, 'required', any>
 

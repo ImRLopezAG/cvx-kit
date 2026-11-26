@@ -42,6 +42,7 @@ declare global {
  * `partial()` field drops its default), ISO date and date-time formats,
  * timestamps and `describe`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a
  * transformed schema converts to its input schema, and checks declared after a transform are dropped.
+ * A schema holding `catch` throws.
  */
 export function toZod<S extends KType>(schema: S): KZod<S> {
 	// SAFETY: convert mirrors the schema's structure and declared checks node by node.
@@ -66,7 +67,7 @@ function convert(node: KNode): Mini {
 		records.push(current)
 	// SAFETY: a chain always ends at a root record.
 	const root = records.pop() as KNode
-	let out = rootSchema(root, records.some(isStrip))
+	let out = rootSchema(root, records.some(isStrip), records.some(isLoose))
 	const partialAt = records.findIndex(isPartial)
 	let transformed = false
 	let description: string | undefined
@@ -95,6 +96,11 @@ function convert(node: KNode): Mini {
 			case 'nullable':
 				out = z.nullable(out)
 				break
+			case 'catch':
+				// z.catch adds about 10 KB of zod/mini core to every bundle importing this entry.
+				throw new Error(
+					'toZod: .catch() is not carried; convert the wrapped schema and add z.catch yourself',
+				)
 			case 'default':
 				if (!transformed && !(partialAt >= 0 && index > partialAt)) out = withDefault(out, record)
 				break
@@ -106,7 +112,7 @@ function convert(node: KNode): Mini {
 	return description === undefined ? out : out.check(z.describe(description))
 }
 
-function rootSchema(root: KNode, strip: boolean): Mini {
+function rootSchema(root: KNode, strip: boolean, loose: boolean): Mini {
 	switch (root.op) {
 		case 'string':
 			return z.string()
@@ -135,6 +141,8 @@ function rootSchema(root: KNode, strip: boolean): Mini {
 			return z.any()
 		case 'json':
 			return z.json()
+		case 'jsonObject':
+			return z.record(z.string(), z.json())
 		case 'literal':
 			// SAFETY: k.literal stores its value as the root argument.
 			return z.literal(root.arg as KLiteralValue)
@@ -149,6 +157,7 @@ function rootSchema(root: KNode, strip: boolean): Mini {
 			const fields = root.arg as KFields
 			const converted: Record<string, Mini> = {}
 			for (const key in fields) converted[key] = convert(fields[key])
+			if (loose) return z.looseObject(converted)
 			return strip ? z.object(converted) : z.strictObject(converted)
 		}
 		case 'record': {
@@ -277,6 +286,10 @@ function isPartial(record: KNode): boolean {
 
 function isStrip(record: KNode): boolean {
 	return record.op === 'strip'
+}
+
+function isLoose(record: KNode): boolean {
+	return record.op === 'loose'
 }
 
 function textOf(record: KNode): string {

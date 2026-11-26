@@ -22,14 +22,20 @@ const anyNative = v.any()
 export function compileNative(node: KNode): GenericValidator {
 	let optional = false
 	let nullable = false
+	let caught = false
 	let root = node
 	while (root.prev !== null) {
 		if (root.op === 'optional' || root.op === 'partial' || root.op === 'default') optional = true
 		else if (root.op === 'nullable') nullable = true
+		else if (root.op === 'catch') {
+			optional ||= root.prev.validator.isOptional === 'optional'
+			caught = true
+			break
+		}
 		root = root.prev
 	}
 	// SAFETY: root validators are never optional; only optional/default records make a chain optional.
-	let native = (root.native ??= compileRoot(root)) as KRequiredValidator
+	let native = caught ? anyNative : ((root.native ??= compileRoot(root)) as KRequiredValidator)
 	if (nullable) native = v.union(native, nullNative)
 	return optional ? v.optional(native) : native
 }
@@ -79,6 +85,10 @@ function outputOf(node: KNode, required: boolean): GenericValidator {
 		} else if (current.op === 'pipe') {
 			// SAFETY: a pipe record stores its target schema as its argument.
 			base = requiredOutput(current.arg as KNode)
+			differs = true
+		} else if (current.op === 'catch') {
+			if (outputOfNode(current.prev).isOptional === 'optional') optional ??= true
+			base = requiredOutput(current.prev)
 			differs = true
 		}
 		current = current.prev
@@ -155,6 +165,7 @@ function compileRoot(node: KNode): KRequiredValidator {
 		case 'bytes':
 			return v.bytes()
 		case 'any':
+		case 'jsonObject':
 			return v.any()
 		case 'json':
 			return v.union(
@@ -214,6 +225,7 @@ function requiredCopy(node: KNode): KRequiredValidator {
 	let root = node
 	while (root.prev !== null) {
 		if (root.op === 'nullable') nullable = true
+		if (root.op === 'catch') return nullable ? v.union(anyNative, nullNative) : anyNative
 		root = root.prev
 	}
 	// SAFETY: root validators are never optional.

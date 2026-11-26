@@ -49,11 +49,13 @@ export type Document = k.infer<typeof documentInput> // status required
 | `k.bytes()`                              | `ArrayBuffer`                                                                                                                                      | `v.bytes()`                                                         |
 | `k.any()`                                | any value except `undefined`                                                                                                                       | `v.any()`                                                           |
 | `k.json()`                               | a JSON-compatible value, checked throughout (finite numbers, plain objects)                                                                        | union of string, number, boolean, null, array of any, record of any |
+| `k.jsonObject()`                         | a plain object of JSON values with any keys Convex accepts in an object value (`_id` included); see [Open objects](#open-objects)                | `v.any()`                                                           |
 | `k.literal(value)`                       | one string, number, bigint or boolean                                                                                                              | `v.literal(value)`                                                  |
 | `k.enum(values)`                         | one of a non-empty tuple of strings; `.options` returns the tuple, `.enum` a value-to-value record, `.exclude([...])`/`.extract([...])` a new enum | union of literals (a one-value enum is a one-member union)          |
 | `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                                                                                                  | `v.id('table')`                                                     |
 | `k.array(element)`                       | an array; `.element` returns the element schema                                                                                                    | `v.array(...)`                                                      |
 | `k.object(fields)`                       | a plain object with exactly these keys                                                                                                             | `v.object(...)`                                                     |
+| `k.looseObject(fields)`                  | `k.object(fields).loose()`: these fields, unknown keys kept; see [Open objects](#open-objects)                                                    | `v.object(...)` (closed)                                            |
 | `k.record(key, value)`                   | a plain object; `key` is a string or id schema, or a finite set of string literals; see [Records](#records)                                        | `v.record(...)`, or `v.object(...)` for literal keys                |
 | `k.partialRecord(key, value)`            | an object with one optional field per value of a literal key set; see [Records](#records)                                                          | `v.object(...)` with optional fields                                |
 | `k.union([a, b, ...])`                   | the first member that parses (two or more members)                                                                                                 | `v.union(...)`                                                      |
@@ -150,7 +152,7 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 
 ## Objects
 
-`k.object(fields)` is always strict: parse reports each unknown key as an `unrecognized_key` issue, and the native validator is a closed `v.object`. Convex has no open object, so there is no loose object or catchall. Use `.strip()` when parse should drop unknown keys (the native validator stays closed), or a `k.record(...)` field for open-ended keys.
+`k.object(fields)` is strict by default: parse reports each unknown key as an `unrecognized_key` issue, and the native validator is a closed `v.object`. Use `.strip()` when parse should drop unknown keys, `.loose()` when it should keep them (both keep the closed native validator), or a `k.record(...)` field for open-ended keys. There is no `catchall`.
 
 | Operation                    | Result                                                                                                                    |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -161,6 +163,24 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 | `.partial()`                 | every field optional; a defaulted field becomes plain optional, so an omitted field stays omitted                         |
 | `.required('a', …)`          | the named fields (every field when none are named) lose their top `optional()`, the inverse of `partial()`; defaults stay |
 | `.keyof()`                   | a `k.enum` of the field names                                                                                             |
+
+### Open objects
+
+`.loose()` (or `k.looseObject(fields)`) is Zod's `looseObject`/`.passthrough()`: parse validates the declared fields and keeps every other own enumerable key in the output unchanged. When no field changes, the output is the input object itself. It is hardened like `.strip()`: a class instance is read from its own enumerable properties into a fresh plain object, inherited keys are never read, and keys such as `__proto__` are written as own data properties. Its output type names the declared fields only, so `pick`/`omit` typing is unchanged; derived objects (`pick`, `extend`, …) are strict again.
+
+Convex has no open object validator, so the native validator of a loose object is the same closed `v.object` as v1's conversion of `z.looseObject`/`.passthrough()` (convex-helpers `zodToConvex` converted every `ZodObject` to `v.object(shape)`). Convex therefore still rejects unknown keys in function args, returns and documents: `.loose()` is for `parse`/`safeParse` of provider payloads (webhooks, SDK responses). To accept unknown keys at a function boundary, take the payload as `k.any()` or `k.jsonObject()` and parse it with the loose schema in the handler.
+
+`k.jsonObject()` is any plain object of JSON values, for values that are not a Convex record, such as workflow step outputs carrying `_id`/`_creationTime`. It rejects arrays, `null`, class instances and non-JSON values (`undefined`, `NaN`, bigints, `ArrayBuffer`s). Its native validator is `v.any()`, because no typed validator accepts such an object: `v.record` refuses keys starting with `_` or `$`. Convex validates nothing about it, so the kit checks the whole value at a function boundary.
+
+Keys follow Convex's rule for object values, at any depth: at most 1024 characters, printable ASCII, and no leading `$`. That is `validateObjectField` in `convex/src/values/value.ts`, which Convex's client runs on every object value it serialises (`convexToJson`, `jsonToConvex`), so an argument or return value with a `$` key cannot cross the wire at all. A key that breaks it fails with `Invalid object key: Convex refuses '$'-prefixed, …` at that key. The kit also refuses an empty key, which Convex's value rule allows. A leading `_` passes that rule, so `_`-prefixed keys work in arguments and return values. In stored documents, Convex reserves top-level `_` fields for system fields; whether the backend accepts `_`-prefixed keys nested in a `v.any()` field is enforced server-side and cannot be checked from the `convex` package, so test a write on your deployment before storing such keys.
+
+```ts
+const stripeEvent = k.looseObject({ id: k.string(), type: k.string() })
+stripeEvent.parse({ id: 'evt_1', type: 'charge', livemode: true }) // keeps livemode
+const stepOutput = k.jsonObject()
+stepOutput.parse({ _id: 'abc', _creationTime: 1 }) // ok
+stepOutput.parse({ $ref: 1 }) // fails: Convex's '$' rule
+```
 
 ### Class instances
 
@@ -174,12 +194,18 @@ k.object({ _tag: k.string() }).strip().parse(new NotFound()) // { _tag: 'NotFoun
 k.object({ _tag: k.string() }).parse(new NotFound()) // throws: expected a plain object
 ```
 
-`pick` and `omit` take string keys, not `{ a: true }` masks. All four build a new object over the same field schemas, so retained fields keep their behaviour. Refinements and checks declared on the object itself are not carried over, because they may read fields the new object lacks, and that includes `.extend({})` with no fields; declare them again on the derived object.
+`pick` and `omit` take string keys, not `{ a: true }` masks. `pick`, `omit`, `extend`, `partial` and `required` build a new object over the same field schemas, so retained fields keep their behaviour. A `refine`, `check` or `overwrite` declared on the object itself may read fields the new object lacks or makes optional, so on an object that has one these methods throw at declaration, naming the method and how many checks would be dropped. Say what you want with a last argument:
+
+- `{ dropChecks: true }` on any of the five drops them: `range.pick('from', { dropChecks: true })`, `range.partial({ dropChecks: true })`, `range.required('to', { dropChecks: true })`.
+- `{ keepChecks: true }`, on `extend` only, re-attaches them to the extended object in their declared order; they run against the extended value. Use it when the extension does not redefine a field the check reads.
+
+`strip()`, `describe()`, `optional()` and `nullable()` derive no new shape and keep the checks. Checks on a field's own schema always travel with the field.
 
 ```ts
 const range = k.object({ from: k.int(), to: k.int() }).refine((r) => r.from <= r.to)
-range.extend({}).parse({ from: 2, to: 1 }) // passes: the refinement is not on the new object
-range.extend({}).refine((r) => r.from <= r.to) // restate it
+range.extend({}) // throws: extend() would drop 1 object-level check(s)
+range.extend({ note: k.string() }, { keepChecks: true }) // still checks from <= to
+range.pick('from', { dropChecks: true }) // no check
 ```
 
 ```ts
@@ -219,7 +245,22 @@ const args = { amount: k.string().regex(/^\d+$/).transform(Number) } // allowed 
 const fields = { title: k.string().trim() } // allowed in a table
 ```
 
-There is no `catch`, `coerce` or `preprocess`. Parse the raw value with a transform on an input-position schema instead.
+There is no `coerce` or `preprocess`. Parse the raw value with a transform on an input-position schema instead.
+
+## Fallbacks
+
+`.catch(fallback)` is Zod 4's `catch`: when the schema reports issues, parse succeeds with the fallback instead. The fallback is a value, or a function receiving `{ issues, input }` (the issues the schema reported and the raw input). The fallback itself is not validated.
+
+```ts
+const role = k.enum(['admin', 'member']).catch('member')
+role.parse('owner') // 'member'
+const level = k.int().min(0).catch(({ input }) => (typeof input === 'string' ? input.length : 0))
+```
+
+- Types: output and input are the wrapped schema's, as in Zod 4. There is no `.unwrap()`; keep a reference to the wrapped schema.
+- Native validators: the input side is `v.any()` (`v.optional(v.any())` when the wrapped schema is optional), because the fallback accepts any input; the output side is the wrapped schema's. Convex therefore validates nothing about the value, and at a function boundary the kit runs the wrapped schema's full structural check on it, not only declared checks.
+- Allowed in args and `parse`. Rejected on table fields and in `returns`, like `transform`: the stored or returned shape would become `v.any()`. v1 converted `ZodCatch` to the wrapped validator (convex-helpers `zodToConvex`), so Convex rejected a bad argument before the fallback could apply; in 2.0 the fallback applies.
+- `toJsonSchema` emits `{}` on the input side and the wrapped schema with `{ io: 'output' }`. `toZod` throws on a schema holding `catch` (`.catch() is not carried`): `z.catch` would add about 10 KB of Zod core to every bundle of the interop entry. Convert the wrapped schema and add `z.catch` yourself.
 
 ## Dates
 
@@ -351,7 +392,7 @@ const zodSchema = toZod(documentInput)
 const same = documentInput.toZod()
 ```
 
-Carried: structure, strict objects (`strip()` objects strip), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 73 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
+Carried: structure, strict objects (`strip()` objects strip, `loose()` objects convert to `z.looseObject`, `k.jsonObject()` to `z.record(z.string(), z.json())`), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried (throws): `catch`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 73 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
 
 ## Performance model
 

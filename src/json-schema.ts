@@ -202,8 +202,18 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 				if (output) out = convert(argNode(record.arg), true)
 				transformed = true
 				break
+			case 'catch':
+				// A fallback accepts any input; the output side is the wrapped schema.
+				if (!output) {
+					out = {}
+					transformed = true
+				}
+				break
 			case 'describe':
 				description = textOf(record)
+				break
+			case 'loose':
+				out = { ...out, additionalProperties: true }
 				break
 			case 'nullable':
 				nullable = true
@@ -253,6 +263,8 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 			return { type: 'null' }
 		case 'bytes':
 			return { type: 'string', contentEncoding: 'base64' }
+		case 'jsonObject':
+			return { type: 'object' }
 		case 'any':
 		case 'json':
 			return {}

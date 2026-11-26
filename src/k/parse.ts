@@ -82,13 +82,13 @@ export function hasDeclaredBehaviour(schema: KNode): boolean {
 	return planOf(schema).declared
 }
 
-/** Whether a transform or pipe sits anywhere in the schema's tree; table fields and return shapes reject it. */
+/** Whether a transform, pipe or catch sits anywhere in the tree; table fields and returns reject it. */
 export function containsTransform(schema: KNode): boolean {
 	return planOf(schema).transform
 }
 
 /**
- * The path of the first transform or pipe in the schema's tree, for error messages: `''` for the
+ * The path of the first transform, pipe or catch in the schema's tree, for error messages: `''` for the
  * schema itself, `'a.b'` for a field, `'items[]'` for an array element, `'m[value]'` for a record
  * value and `'u|1'` for a union member. Undefined when the tree holds none.
  */
@@ -100,7 +100,7 @@ function pathBelow(schema: KNode): string | undefined {
 	if (!planOf(schema).transform) return undefined
 	let root = schema
 	for (; root.prev !== null; root = root.prev)
-		if (root.op === 'transform' || root.op === 'pipe') return ''
+		if (root.op === 'transform' || root.op === 'pipe' || root.op === 'catch') return ''
 	const op = root.op
 	const steps: [string, KNode][] =
 		op === 'object'
@@ -118,6 +118,8 @@ function pathBelow(schema: KNode): string | undefined {
 	}
 	return undefined
 }
+/** Unknown-key handling of the object being walked: strict (`false`), `.strip()` or `.loose()`. */
+type Keys = boolean | 'loose'
 
 const FAIL: unique symbol = Symbol('k.fail')
 const noRecords: readonly KNode[] = []
@@ -158,12 +160,14 @@ function compilePlan(node: KNode): KPlan {
 		case 'partial':
 		case 'nullable':
 		case 'strip':
+		case 'loose':
 		case 'describe':
 			return planOf(node.prev)
 		case 'default':
 			return planOf(node.prev).transform ? transformPlan : checkedPlan
 		case 'transform':
 		case 'pipe':
+		case 'catch':
 			return transformPlan
 		default:
 			return runPlan(node)
@@ -191,6 +195,7 @@ function rootPlan(root: KNode): KPlan {
 	switch (root.op) {
 		case 'int':
 		case 'json':
+		case 'jsonObject':
 		case 'isoDate':
 		case 'isoDateTime':
 		case 'timestamp':
@@ -249,7 +254,7 @@ function walk(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	if (!full && !planOf(node).declared) return value
 	if (node.prev === null) return walkRoot(node, value, context, full, strip)
@@ -269,6 +274,8 @@ function walk(
 			return walk(node.prev, node.arg, context, full, strip)
 		case 'strip':
 			return walk(node.prev, value, context, full, true)
+		case 'loose':
+			return walk(node.prev, value, context, full, 'loose')
 		case 'transform': {
 			const input = walk(node.prev, value, context, full, strip)
 			return input === FAIL ? FAIL : callbackResult(callbackOf(node)(input), context, 'transform')
@@ -276,6 +283,17 @@ function walk(
 		case 'pipe': {
 			const input = walk(node.prev, value, context, full, strip)
 			return input === FAIL ? FAIL : walk(argSchema(node), input, context, true, false)
+		}
+		case 'catch': {
+			// Convex validated only `v.any()`, so the wrapped schema runs in full.
+			const issues = context.issues
+			context.issues = []
+			const output = walk(node.prev, value, context, true, strip)
+			const caught = context.issues
+			context.issues = issues
+			if (output !== FAIL && caught.length === 0) return output
+			if (typeof node.arg !== 'function') return node.arg
+			return callbackResult(callbackOf(node)({ issues: caught, input: value }), context, 'catch')
 		}
 		default:
 			return walkRun(node, value, context, full, strip)
@@ -287,7 +305,7 @@ function walkRun(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	const plan = planOf(node)
 	// SAFETY: runPlan always records the base below a run.
@@ -439,7 +457,7 @@ function walkRoot(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	switch (root.op) {
 		case 'array':
@@ -485,8 +503,36 @@ function walkRoot(
 			if (isJson(value)) return value
 			context.add('invalid_type', 'Expected a JSON value', undefined)
 			return FAIL
+		case 'jsonObject': {
+			if (!isPlainObject(value)) return invalidType(context, 'object', value)
+			const before = context.issues.length
+			checkJson(value, context)
+			return context.issues.length === before ? value : FAIL
+		}
 		default:
 			return full ? walkLeaf(root, value, context) : value
+	}
+}
+
+/** `k.jsonObject()` values in full; keys follow `validateObjectField` (convex/src/values/value.ts). */
+function checkJson(value: unknown, context: WalkContext): void {
+	const array = Array.isArray(value)
+	if (!array && !isPlainObject(value)) {
+		if (!isJson(value)) context.add('invalid_type', 'Expected a JSON value', undefined)
+		return
+	}
+	// SAFETY: a plain object or an array, checked above.
+	const entries = value as Record<string, unknown>
+	for (const key of Object.keys(entries)) {
+		context.path.push(array ? Number(key) : key)
+		if (array || isFieldName(key)) checkJson(entries[key], context)
+		else
+			context.add(
+				'invalid_format',
+				"Invalid object key: not a Convex field name",
+				undefined,
+			)
+		context.path.pop()
 	}
 }
 
@@ -574,7 +620,7 @@ function walkObject(
 	value: Record<string, unknown>,
 	context: WalkContext,
 	full: boolean,
-	strip: boolean,
+	strip: Keys,
 ): unknown {
 	const fields = fieldsOf(root)
 	let out: Record<string, unknown> | undefined
@@ -597,7 +643,7 @@ function walkObject(
 	let stripped = false
 	if (full) {
 		for (const key of Object.keys(value)) {
-			if (Object.hasOwn(fields, key)) continue
+			if (Object.hasOwn(fields, key) || strip === 'loose') continue
 			if (strip) stripped = true
 			else {
 				failed = true
@@ -610,6 +656,8 @@ function walkObject(
 		out = {}
 		copyKnown(out, value, fields, null)
 	}
+	if (strip === 'loose' && out !== undefined)
+		for (const key of Object.keys(value)) if (!Object.hasOwn(fields, key)) setOwn(out, key, value[key])
 	return out ?? value
 }
 
@@ -916,7 +964,7 @@ function stringOf(value: unknown): string {
 	return value as string
 }
 
-function callbackOf(record: KNode): (value: unknown, context?: CheckContext) => unknown {
-	// SAFETY: refine, check, overwrite and transform store their callback as the record argument.
-	return record.arg as (value: unknown, context?: CheckContext) => unknown
+function callbackOf(record: KNode): (value: any, context?: CheckContext) => unknown {
+	// SAFETY: refine, check, overwrite, transform and a catch fallback store their callback as the record argument.
+	return record.arg as (value: any, context?: CheckContext) => unknown
 }

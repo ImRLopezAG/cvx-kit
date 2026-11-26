@@ -1,0 +1,9 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 9,
+			"code": "catch"
+		}
+	]
+}

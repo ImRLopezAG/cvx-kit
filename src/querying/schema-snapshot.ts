@@ -139,9 +139,9 @@ const traitDispatch = new Map(
 			] as const,
 	),
 )
-// The audited installed 4.5.4/4.6.5 constructors use literal trait membership,
-// with no Parent specialization. Unknown peer versions retain the original scan.
-const ordinaryTraitDispatch = ['4.5.4', '4.6.5'].includes(
+// The audited installed 4.5.4/4.6.5/4.6.7 constructors use literal trait membership,
+// with no Parent specialization (4.6.7 only adds a parse-size-cap wrapper to array/map/set). Unknown peer versions retain the original scan.
+const ordinaryTraitDispatch = ['4.5.4', '4.6.5', '4.6.7'].includes(
 	`${z.core.version.major}.${z.core.version.minor}.${z.core.version.patch}`,
 )
 const intrinsicSetHas = Set.prototype.has
@@ -614,7 +614,10 @@ function ordinaryConstructorEnvironment(): boolean {
 	const version: { major: number; minor: number; patch: number } = z.core.version
 	if (
 		version.major !== 4 ||
-		!((version.minor === 6 && version.patch === 5) || (version.minor === 5 && version.patch === 4))
+		!(
+			(version.minor === 6 && (version.patch === 5 || version.patch === 7)) ||
+			(version.minor === 5 && version.patch === 4)
+		)
 	)
 		return false
 	const global = Object.getOwnPropertyDescriptor(globalThis, '__zod_globalConfig')

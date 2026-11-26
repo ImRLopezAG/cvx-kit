@@ -226,7 +226,7 @@ async function availablePort(requested = 0) {
 }
 for (const [label, installer, helpers, zod] of [
 	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
-	['minimum', installerOverride ?? 'npm', '0.1.127', '4.5.4'],
+	['minimum', installerOverride ?? 'npm', '0.1.127', '4.6.7'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)

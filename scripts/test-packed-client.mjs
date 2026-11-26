@@ -45,10 +45,10 @@ writeFileSync(
 	),
 )
 for (const [label, convex, helpers, zod, react, reactTypes] of [
-	['current', '1.48.0', '0.1.129', '4.6.5', '19.2.8', '19.2.2'],
+	['current', '1.51.0', '0.1.137', '4.6.7', '19.3.1', '19.3.3'],
 	// Convex 1.46 declarations use React.JSX. Runtime React 18.0.0 is supported,
 	// but @types/react 18.0.0 predates that namespace; use compatible React 18 declarations.
-	['minimum', '1.46.0', '0.1.127', '4.5.4', '18.0.0', '18.3.0'],
+	['minimum', '1.46.0', '0.1.127', '4.6.7', '18.0.0', '18.3.0'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -255,7 +255,7 @@ writeFileSync(
 			'cvx-kit': `file:${tarball}`,
 			convex: '1.46.0',
 			'convex-helpers': '0.1.127',
-			zod: '4.5.4',
+			zod: '4.6.7',
 			typescript: '7.0.2',
 			'@types/node': '26.6.5',
 		},

@@ -13,6 +13,10 @@ export function discriminatorDispatch(
 	const dispatch = new Map<KLiteralValue, KNode>()
 	for (let index = 0; index < options.length; index++) {
 		const option: KNode = options[index]
+		if (caught(option))
+			throw new Error(
+				`k.discriminatedUnion('${key}'): option ${index} carries .catch(); put the catch on the whole union instead: k.discriminatedUnion(...).catch(fallback)`,
+			)
 		const root = rootOf(option)
 		if (root.op !== 'object')
 			throw new Error(
@@ -22,7 +26,11 @@ export function discriminatorDispatch(
 		const field = (root.arg as KFields)[key]
 		if (field === undefined)
 			throw new Error(`k.discriminatedUnion('${key}'): option ${index} has no '${key}' field`)
-		for (const value of discriminatorValues(field, key, index)) {
+		if (caught(field))
+			throw new Error(
+				`k.discriminatedUnion('${key}'): the '${key}' field of option ${index} carries .catch(); dispatch needs the declared value, so put the catch on the whole union instead`,
+			)
+		for (const value of new Set(discriminatorValues(field, key, index))) {
 			if (dispatch.has(value))
 				throw new Error(
 					`k.discriminatedUnion('${key}'): more than one option has '${key}' value ${JSON.stringify(String(value))} (option ${index} repeats it)`,
@@ -52,6 +60,12 @@ function discriminatorValues(field: KNode, key: string, index: number): readonly
 				`k.discriminatedUnion('${key}'): '${key}' must be a literal, an enum or a union of literals on every option; option ${index} has '${root.op}'`,
 			)
 	}
+}
+
+function caught(node: KNode): boolean {
+	for (let current: KNode | null = node; current !== null; current = current.prev)
+		if (current.op === 'catch') return true
+	return false
 }
 
 function rootOf(node: KNode): KNode {

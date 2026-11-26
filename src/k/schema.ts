@@ -3,7 +3,7 @@ import type { GenericValidator, VAny, VNull, VUnion } from 'convex/values'
 import { compileNative, compileOutput } from './compile'
 import type { KIssue, KIssueInput, KSafeParseResult } from './issues'
 import { refineMessage } from './messages'
-import { parseSchema, safeParseSchema, type KPlan } from './parse'
+import { idPath, parseSchema, safeParseSchema, type KPlan } from './parse'
 import { standardProps } from './standard'
 import type {
 	KArg,
@@ -127,9 +127,16 @@ export abstract class KSchema<
 	/**
 	 * Zod's `.catch`: when this schema reports issues, parse succeeds with `fallback` instead (a function
 	 * receives `{ issues, input }`). The fallback is not validated. Convex sees `v.any()` on the input
-	 * side, so the kit runs the wrapped schema in full. Rejected on table fields and in `returns`.
+	 * side, so the kit runs the wrapped schema in full. Rejected on table fields and in `returns`, on a
+	 * discriminated-union option or discriminator (put it on the union), and around any `k.id`: only
+	 * Convex can check an id's table, and catch removes Convex's check.
 	 */
 	catch(fallback: Out | ((context: KCatchContext) => Out)): KCatch<this> {
+		const id = idPath(this)
+		if (id !== undefined)
+			throw new Error(
+				`k: .catch() cannot wrap a schema holding k.id (${id === '' ? 'the schema itself' : `at '${id}'`}): catch replaces Convex's argument validation for this value with v.any(), and an id's table can only be checked by Convex. Catch the surrounding non-id fields instead, or validate the id in the handler with ctx.db.normalizeId`,
+			)
 		// SAFETY: a fallback is this schema's output, a Convex value, or a callback producing one.
 		const record: KNode = new KTransform(this, 'catch', fallback as KArg, undefined)
 		// SAFETY: KCatch declares types only; KTransform lends the runtime class, as behaviour keys on the op.

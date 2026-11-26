@@ -548,6 +548,7 @@ const VALUE_CHANGING_OPS: ReadonlySet<string> = new Set([
 	'overwrite',
 	'transform',
 	'pipe',
+	'catch',
 	'strip',
 ])
 
@@ -1043,6 +1044,8 @@ function literalTagOf(field: KType | undefined): string | undefined {
 
 /** Whether a schema only validates: no default, normaliser, transform, pipe or strip, at any depth. */
 function isValuePreserving(schema: KType): boolean {
+	// The same transform, pipe and catch detection ordinary table fields use, at any depth.
+	if (containsTransform(schema)) return false
 	let current = schema
 	while (current.prev !== null) {
 		if (VALUE_CHANGING_OPS.has(current.op)) return false

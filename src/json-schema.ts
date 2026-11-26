@@ -73,6 +73,12 @@ declare global {
 let shared: { names: Map<KNode, string>; defs: Record<string, JsonSchema> } | null = null
 
 /**
+ * Above zero while converting the output side below a `.catch`: the fallback is not validated, so only
+ * the type-level shape is promised (no length, range, pattern or format checks).
+ */
+let unchecked = 0
+
+/**
  * The input-side JSON Schema of a `k` schema, for agent tool inputs and forms: optional and defaulted
  * fields are not required (a JSON-compatible default is emitted), ids are strings, transforms and pipes
  * emit their input schema, and descriptions come from `.describe()`. Custom refinements are not
@@ -195,18 +201,31 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 		const record = records[index]
 		switch (record.op) {
 			case 'transform':
-				if (output) out = {}
+				if (output) {
+					out = {}
+					nullable = false
+					fallback = undefined
+				}
 				transformed = true
 				break
 			case 'pipe':
-				if (output) out = convert(argNode(record.arg), true)
+				// The output is the target's: wrappers and defaults declared before the pipe no longer apply.
+				if (output) {
+					out = convert(argNode(record.arg), true)
+					nullable = false
+					fallback = undefined
+				}
 				transformed = true
 				break
 			case 'catch':
-				// A fallback accepts any input; the output side is the wrapped schema.
-				if (!output) {
-					out = {}
-					transformed = true
+				// A fallback accepts any input. On the output side it is not validated, so the wrapped
+				// schema's shape is emitted without its checks.
+				transformed = true
+				if (!output) out = {}
+				else {
+					out = uncheckedOutput(prevOf(record))
+					nullable = false
+					fallback = undefined
 				}
 				break
 			case 'describe':
@@ -233,7 +252,7 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 			case 'gt':
 			case 'lt':
 			case 'safe':
-				if (!transformed) applyCheck(out, record)
+				if (!transformed && unchecked === 0) applyCheck(out, record)
 				break
 			default:
 				break
@@ -245,7 +264,30 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 	return wrapped
 }
 
+/** The output-side shape of the schema below a `.catch`, with no checks and no shared `$ref`s. */
+function uncheckedOutput(node: KNode): JsonSchema {
+	const previous = shared
+	shared = null
+	unchecked++
+	try {
+		return convertNode(node, true)
+	} finally {
+		unchecked--
+		shared = previous
+	}
+}
+
 function rootSchema(root: KNode, output: boolean): JsonSchema {
+	if (unchecked > 0)
+		switch (root.op) {
+			case 'isoDate':
+			case 'isoDateTime':
+				return { type: 'string' }
+			case 'timestamp':
+				return { type: 'integer' }
+			default:
+				break
+		}
 	switch (root.op) {
 		case 'string':
 		case 'id':
@@ -322,7 +364,13 @@ function objectSchema(fields: KFields, output: boolean): JsonSchema {
 
 function isRequired(node: KNode): boolean {
 	for (let current: KNode | null = node; current !== null; current = current.prev) {
-		if (current.op === 'optional' || current.op === 'partial' || current.op === 'default')
+		// A caught field parses to its fallback when absent.
+		if (
+			current.op === 'optional' ||
+			current.op === 'partial' ||
+			current.op === 'default' ||
+			current.op === 'catch'
+		)
 			return false
 	}
 	return true
@@ -337,10 +385,12 @@ function isRequiredOutput(node: KNode): boolean {
 			case 'optional':
 				return defaultBelow(current.prev)
 			case 'default':
-			case 'transform':
-			case 'pipe':
 				return true
+			case 'pipe':
+				// Absent input reaches the target: present if the target fills it or rejects it.
+				return isRequiredOutput(argNode(current.arg)) || isRequiredOutput(prevOf(current))
 			default:
+				// A transform does not prove presence: an optional input stays optional through it.
 				break
 		}
 	}
@@ -457,6 +507,11 @@ function jsonOf(value: Value): JSONValue | undefined {
 function argNode(arg: KNode['arg']): KNode {
 	// SAFETY: k.array stores its element schema as the root argument.
 	return arg as KType
+}
+
+function prevOf(record: KNode): KNode {
+	// SAFETY: only chain records, which always have a predecessor, are passed here.
+	return record.prev as KNode
 }
 
 function defaultOf(record: KNode): Value {

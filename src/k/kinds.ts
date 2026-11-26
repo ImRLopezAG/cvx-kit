@@ -164,7 +164,13 @@ export class KEnum<V extends readonly [string, ...string[]]> extends KSchema<
 /** The value tuple of a derived enum: a union of string values. */
 export type KEnumValues<U extends string> = [U, ...U[]]
 
-export class KId<T extends string> extends KSchema<GenericId<T>, VId<GenericId<T>>> {}
+export class KId<T extends string> extends KSchema<GenericId<T>, VId<GenericId<T>>> {
+	/** Rejected: only Convex can check an id's table, and `.catch` replaces Convex's check with `v.any()`. */
+	override catch(fallback: never): never {
+		super.catch(fallback)
+		throw new Error('k: .catch() cannot wrap k.id')
+	}
+}
 
 export class KArray<E extends KType> extends KSchema<
 	E['_output'][],

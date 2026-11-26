@@ -97,6 +97,14 @@ export function transformPath(schema: KNode): string | undefined {
 	return pathBelow(schema)?.replace(/^\./, '')
 }
 
+/**
+ * The path of the first `k.id` in the schema's tree (through pipe targets), in `transformPath`'s
+ * notation, or undefined when it holds none. Reads field maps only; no validator is built.
+ */
+export function idPath(schema: KNode): string | undefined {
+	return idBelow(schema)?.replace(/^\./, '')
+}
+
 function pathBelow(schema: KNode): string | undefined {
 	if (!planOf(schema).transform) return undefined
 	let root = schema
@@ -119,6 +127,46 @@ function pathBelow(schema: KNode): string | undefined {
 	}
 	return undefined
 }
+function idBelow(schema: KNode): string | undefined {
+	let root = schema
+	for (; root.prev !== null; root = root.prev)
+		if (root.op === 'pipe') {
+			const below = idBelow(argSchema(root))
+			if (below !== undefined) return below
+		}
+	switch (root.op) {
+		case 'id':
+			return ''
+		case 'object':
+			for (const key in fieldsOf(root)) {
+				const below = idBelow(asSchema(fieldsOf(root)[key]))
+				if (below !== undefined) return `.${key}${below}`
+			}
+			return undefined
+		case 'array': {
+			const below = idBelow(argSchema(root))
+			return below === undefined ? undefined : `[]${below}`
+		}
+		case 'record': {
+			const [key, value] = recordOf(root)
+			if (idBelow(key) !== undefined) return '[key]'
+			const below = idBelow(value)
+			return below === undefined ? undefined : `[value]${below}`
+		}
+		case 'union':
+		case 'discriminatedUnion': {
+			const members = membersOf(root)
+			for (let index = 0; index < members.length; index++) {
+				const below = idBelow(members[index])
+				if (below !== undefined) return `|${index}${below}`
+			}
+			return undefined
+		}
+		default:
+			return undefined
+	}
+}
+
 /** Unknown-key handling of the object being walked: strict (`false`), `.strip()` or `.loose()`. */
 type Keys = boolean | 'loose'
 
@@ -480,9 +528,9 @@ function walkRoot(
 		case 'union':
 			return walkUnion(root, value, context)
 		case 'discriminatedUnion':
-			if (full && !isPlainObject(value)) return invalidType(context, 'object', value)
-			// SAFETY: checked above, or already validated natively at a function boundary.
-			return walkDiscriminated(root, value as Record<string, unknown>, context, full)
+			// Checked on the plan-only path too: dispatch reads a key, so a non-object never reaches it.
+			if (!isPlainObject(value)) return invalidType(context, 'object', value)
+			return walkDiscriminated(root, value, context, full)
 		case 'int':
 			if (full && typeof value !== 'number') return invalidType(context, 'number', value)
 			if (Number.isInteger(value)) return value

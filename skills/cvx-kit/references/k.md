@@ -272,8 +272,10 @@ const level = k
 
 - Types: output and input are the wrapped schema's, as in Zod 4. There is no `.unwrap()`; keep a reference to the wrapped schema.
 - Native validators: the input side is `v.any()` (`v.optional(v.any())` when the wrapped schema is optional), because the fallback accepts any input; the output side is the wrapped schema's. Convex therefore validates nothing about the value, and at a function boundary the kit runs the wrapped schema's full structural check on it, not only declared checks.
-- Allowed in args and `parse`. Rejected on table fields and in `returns`, like `transform`: the stored or returned shape would become `v.any()`. v1 converted `ZodCatch` to the wrapped validator (convex-helpers `zodToConvex`), so Convex rejected a bad argument before the fallback could apply; in 2.0 the fallback applies.
-- `toJsonSchema` emits `{}` on the input side and the wrapped schema with `{ io: 'output' }`. `toZod` throws on a schema holding `catch` (`.catch() is not carried`): `z.catch` would add about 10 KB of Zod core to every bundle of the interop entry. Convert the wrapped schema and add `z.catch` yourself.
+- Allowed in args and `parse`. Rejected on table fields, on variant-table branch fields and in `returns`, like `transform`: the stored or returned shape would become `v.any()`. v1 converted `ZodCatch` to the wrapped validator (convex-helpers `zodToConvex`), so Convex rejected a bad argument before the fallback could apply; in 2.0 the fallback applies.
+- Rejected around any `k.id`, at any depth (`k.id('users').catch(...)`, `k.object({ owner: k.id('users') }).catch(...)` throw at `.catch`, and `k.id(...).catch` is a type error): catch replaces Convex's argument validation for the value with `v.any()`, and the kit can check only that an id is a string; its table can only be checked by Convex. Catch the surrounding non-id fields instead, or validate the id in the handler with `ctx.db.normalizeId(table, id)`.
+- Rejected on a discriminated-union option and on the discriminator field: dispatch needs the declared value. Put the catch on the whole union: `k.discriminatedUnion('kind', [...]).catch(fallback)`. A non-object given to a discriminated union is an `invalid_type` issue.
+- `toJsonSchema` emits `{}` on the input side, where a caught field is not required (an absent value parses to the fallback). With `{ io: 'output' }` it emits the wrapped schema's shape without its checks (no length, range, pattern or format keywords), because the fallback is not validated against them. `toZod` throws on a schema holding `catch` (`.catch() is not carried`): `z.catch` would add about 10 KB of Zod core to every bundle of the interop entry. Convert the wrapped schema and add `z.catch` yourself.
 
 ## Dates
 
@@ -367,7 +369,7 @@ Input and output types differ only for a schema that declares a default or a tra
 - `schema.validator` is the input-side native validator. Use it wherever native Convex code wants a validator, for example `defineTable(schema.validator)` or `v.array(schema.validator)`.
 - `schema.outputValidator` is the output-side native validator: defaulted fields are required and a transform is `v.any()`.
 
-Both are built on first read and memoised. Native validators can sit next to `k` fields in function args (`{ id: k.id('t'), raw: v.string() }`); native fields are passed through untouched.
+Both are built on first read and memoised. With `skipConvexValidation: true` no native validator runs, so a `k.id` argument is only checked to be a string: its table is not verified. Use `ctx.db.normalizeId` in the handler when that matters. Native validators can sit next to `k` fields in function args (`{ id: k.id('t'), raw: v.string() }`); native fields are passed through untouched.
 
 ## Standard Schema
 

@@ -81,7 +81,10 @@ export function hasDeclaredBehaviour(schema: KNode): boolean {
 	return planOf(schema).declared
 }
 
-/** Whether a transform or pipe sits anywhere in the schema's tree; table fields and return shapes reject it. */
+/**
+ * Whether a transform, pipe or catch sits anywhere in the schema's tree; table fields and return shapes
+ * reject it (a catch's input side is `v.any()`, so it would change the stored shape).
+ */
 export function containsTransform(schema: KNode): boolean {
 	return planOf(schema).transform
 }
@@ -131,6 +134,7 @@ function compilePlan(node: KNode): KPlan {
 			return planOf(node.prev).transform ? transformPlan : checkedPlan
 		case 'transform':
 		case 'pipe':
+		case 'catch':
 			return transformPlan
 		default:
 			return runPlan(node)
@@ -271,9 +275,33 @@ function walk(
 			const input = walk(node.prev, value, context, full, strip)
 			return input === FAIL ? FAIL : walk(argSchema(node), input, context, true, false)
 		}
+		case 'catch':
+			return walkCatch(node, node.prev, value, context, strip)
 		default:
 			return walkRun(node, value, context, full, strip)
 	}
+}
+
+/**
+ * A fallback: Convex validated only `v.any()` for this value, so the wrapped schema always runs in
+ * full. Its issues are discarded and the fallback (not validated) takes the value's place.
+ */
+function walkCatch(
+	node: KNode,
+	inner: KNode,
+	value: unknown,
+	context: WalkContext,
+	strip: boolean,
+): unknown {
+	const issues = context.issues
+	context.issues = []
+	const output = walk(inner, value, context, true, strip)
+	const caught = context.issues
+	context.issues = issues
+	if (output !== FAIL && caught.length === 0) return output
+	const fallback = node.arg
+	if (typeof fallback !== 'function') return fallback
+	return callbackResult(callbackOf(node)({ issues: caught, input: value }), context, 'catch')
 }
 
 function walkRun(
@@ -921,7 +949,7 @@ function stringOf(value: unknown): string {
 	return value as string
 }
 
-function callbackOf(record: KNode): (value: unknown, context?: CheckContext) => unknown {
-	// SAFETY: refine, check, overwrite and transform store their callback as the record argument.
-	return record.arg as (value: unknown, context?: CheckContext) => unknown
+function callbackOf(record: KNode): (value: any, context?: CheckContext) => unknown {
+	// SAFETY: refine, check, overwrite, transform and a catch fallback store their callback as the record argument.
+	return record.arg as (value: any, context?: CheckContext) => unknown
 }

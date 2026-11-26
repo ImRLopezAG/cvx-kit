@@ -217,7 +217,22 @@ const args = { amount: k.string().regex(/^\d+$/).transform(Number) } // allowed 
 const fields = { title: k.string().trim() } // allowed in a table
 ```
 
-There is no `catch`, `coerce` or `preprocess`. Parse the raw value with a transform on an input-position schema instead.
+There is no `coerce` or `preprocess`. Parse the raw value with a transform on an input-position schema instead.
+
+## Fallbacks
+
+`.catch(fallback)` is Zod 4's `catch`: when the schema reports issues, parse succeeds with the fallback instead. The fallback is a value, or a function receiving `{ issues, input }` (the issues the schema reported and the raw input). The fallback itself is not validated.
+
+```ts
+const role = k.enum(['admin', 'member']).catch('member')
+role.parse('owner') // 'member'
+const level = k.int().min(0).catch(({ input }) => (typeof input === 'string' ? input.length : 0))
+```
+
+- Types: output and input are the wrapped schema's, as in Zod 4. `.unwrap()` returns the wrapped schema.
+- Native validators: the input side is `v.any()` (`v.optional(v.any())` when the wrapped schema is optional), because the fallback accepts any input; the output side is the wrapped schema's. Convex therefore validates nothing about the value, and at a function boundary the kit runs the wrapped schema's full structural check on it, not only declared checks.
+- Allowed in args and `parse`. Rejected on table fields and in `returns`, like `transform`: the stored or returned shape would become `v.any()`. v1 converted `ZodCatch` to the wrapped validator (convex-helpers `zodToConvex`), so Convex rejected a bad argument before the fallback could apply; in 2.0 the fallback applies.
+- `toJsonSchema` emits `{}` on the input side and the wrapped schema with `{ io: 'output' }`. `toZod` throws on a schema holding `catch` (`.catch() is not carried`): `z.catch` would add about 10 KB of Zod core to every bundle of the interop entry. Convert `.unwrap()` and add `z.catch` yourself.
 
 ## Dates
 
@@ -341,7 +356,7 @@ const zodSchema = toZod(documentInput)
 const same = documentInput.toZod()
 ```
 
-Carried: structure, strict objects (`strip()` objects strip), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 73 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
+Carried: structure, strict objects (`strip()` objects strip), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried (throws): `catch`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 73 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
 
 ## Performance model
 

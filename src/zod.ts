@@ -42,6 +42,7 @@ declare global {
  * `partial()` field drops its default), ISO date and date-time formats,
  * timestamps and `describe`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a
  * transformed schema converts to its input schema, and checks declared after a transform are dropped.
+ * A schema holding `catch` throws.
  */
 export function toZod<S extends KType>(schema: S): KZod<S> {
 	// SAFETY: convert mirrors the schema's structure and declared checks node by node.
@@ -95,6 +96,11 @@ function convert(node: KNode): Mini {
 			case 'nullable':
 				out = z.nullable(out)
 				break
+			case 'catch':
+				// z.catch adds about 10 KB of zod/mini core to every bundle importing this entry.
+				throw new Error(
+					'toZod: .catch() is not carried; convert the schema below the fallback (.unwrap()) and add z.catch yourself',
+				)
 			case 'default':
 				if (!transformed && !(partialAt >= 0 && index > partialAt)) out = withDefault(out, record)
 				break

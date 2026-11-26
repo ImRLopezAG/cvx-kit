@@ -106,6 +106,7 @@ const KEPT_METHODS = new Set([
 	'extract',
 	'removeDefault',
 	'check',
+	'catch',
 ])
 
 /** Steps that build a new object from an object, whose strictness `.strip()` must restate. */
@@ -119,7 +120,6 @@ const TERMINAL_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParse
 const REPORTED_METHODS = new Map([
 	['catchall', 'loose-object'],
 	['passthrough', 'loose-object'],
-	['catch', 'catch'],
 	['superRefine', 'super-refine'],
 	['meta', 'meta'],
 	['brand', 'brand'],
@@ -320,6 +320,8 @@ function processSteps(ctx, unit, steps, from, outer) {
 			addEdit(unit, { start: step.node.object.end, end: call.end }, '')
 		} else if (step.name === 'pick' || step.name === 'omit') {
 			maskStep(ctx, unit, call, site)
+		} else if (step.name === 'catch' && readsZodCatchContext(call)) {
+			addSkip(ctx, unit, site, 'catch')
 		} else if (step.name === 'check' && isZodCheck(call)) {
 			addSkip(ctx, unit, site, 'zod-check')
 		} else if (REPORTED_METHODS.has(step.name)) {
@@ -373,6 +375,40 @@ function isZodCheck(call) {
 			node.object.type === 'Identifier' &&
 			node.object.name === name &&
 			(node.property.name === 'value' || node.property.name === 'issues')
+		)
+			zodForm = true
+	})
+	return zodForm
+}
+
+/**
+ * `k`'s fallback callback receives `{ issues, input }`; Zod's context also has `value` and `error`,
+ * so a callback reading those on its parameter stays Zod.
+ */
+function readsZodCatchContext(call) {
+	const callback = call.arguments[0]
+	if (call.arguments.length !== 1) return true
+	if (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression')
+		return false
+	if (callback.params.length === 0) return false
+	const param = callback.params[0]
+	if (param.type !== 'Identifier') {
+		if (param.type !== 'ObjectPattern') return true
+		return param.properties.some(
+			(property) =>
+				property.type !== 'Property' ||
+				property.key.type !== 'Identifier' ||
+				(property.key.name !== 'issues' && property.key.name !== 'input'),
+		)
+	}
+	let zodForm = false
+	walk(callback.body, (node) => {
+		if (
+			node.type === 'MemberExpression' &&
+			!node.computed &&
+			node.object.type === 'Identifier' &&
+			node.object.name === param.name &&
+			(node.property.name === 'value' || node.property.name === 'error')
 		)
 			zodForm = true
 	})

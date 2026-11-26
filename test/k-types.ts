@@ -242,3 +242,20 @@ deriveRange.pick('from', { keepChecks: true })
 deriveRange.partial({ keepChecks: true })
 // @ts-expect-error a mask key must be a field.
 deriveRange.omit('missing', { dropChecks: true })
+
+const caughtRole = k.enum(['admin', 'member']).catch('member')
+const caughtObject = k.object({
+	role: caughtRole,
+	note: k.string().optional().catch(undefined),
+	n: k.number().catch(({ input }) => Number(input)),
+})
+const catchAssertions: [
+	Assert<Equal<k.output<typeof caughtRole>, 'admin' | 'member'>>,
+	Assert<Equal<k.input<typeof caughtRole>, 'admin' | 'member'>>,
+	Assert<Equal<k.output<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
+	Assert<Equal<k.input<typeof caughtObject>, { role: 'admin' | 'member'; note?: string; n: number }>>,
+	Assert<Equal<ReturnType<typeof caughtRole.unwrap>['_output'], 'admin' | 'member'>>,
+] = [true, true, true, true, true]
+void catchAssertions
+// @ts-expect-error the fallback is the schema's output.
+k.string().catch(1)

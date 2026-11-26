@@ -78,6 +78,13 @@ function convert(node: KNode, output: boolean): JsonSchema {
 				if (output) out = convert(argNode(record.arg), true)
 				transformed = true
 				break
+			case 'catch':
+				// A fallback accepts any input; the output side is the wrapped schema.
+				if (!output) {
+					out = {}
+					transformed = true
+				}
+				break
 			case 'describe':
 				description = textOf(record)
 				break

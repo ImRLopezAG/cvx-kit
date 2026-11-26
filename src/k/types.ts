@@ -45,6 +45,7 @@ export type KOp =
 	| 'strip'
 	| 'transform'
 	| 'pipe'
+	| 'catch'
 
 export type KRequiredValidator = Validator<any, 'required', any>
 

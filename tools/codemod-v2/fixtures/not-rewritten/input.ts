@@ -3,7 +3,6 @@ import { z } from 'zod'
 export const Loose = z.looseObject({ a: z.string() })
 export const Catchall = z.strictObject({ a: z.string() }).catchall(z.string())
 export const Passthrough = z.object({ a: z.string() }).passthrough()
-export const Caught = z.string().catch('fallback')
 export const Recursive = z.lazy(() => z.string())
 export const Pair = z.tuple([z.string(), z.number()])
 export const Custom = z.custom<string>((value) => value === 'x')

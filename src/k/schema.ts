@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type { GenericValidator, VAny, VNull, VUnion } from 'convex/values'
 import { compileNative, compileOutput } from './compile'
-import type { KIssueInput, KSafeParseResult } from './issues'
+import type { KIssue, KIssueInput, KSafeParseResult } from './issues'
 import { parseSchema, safeParseSchema, type KPlan } from './parse'
 import { standardProps } from './standard'
 import type {
@@ -119,6 +119,17 @@ export abstract class KSchema<
 		return new KPipe(this, 'pipe', target, undefined)
 	}
 
+	/**
+	 * Zod's `.catch`: when this schema reports issues, parse succeeds with `fallback` instead (a function
+	 * receives `{ issues, input }`). The fallback is not validated. Natively the input side is `v.any()`,
+	 * so the kit checks the whole value itself at a function boundary; table fields and return shapes
+	 * reject it, like `transform`.
+	 */
+	catch(fallback: Out | ((context: KCatchContext) => Out)): KCatch<this> {
+		// SAFETY: a fallback is this schema's output, a Convex value, or a callback producing one.
+		return new KCatch(this, 'catch', fallback as KArg, undefined)
+	}
+
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- parse is the decoding boundary for undecoded input.
 	parse(input: unknown): Out {
 		// SAFETY: a successful walk of this schema produces its declared output.
@@ -206,6 +217,12 @@ export interface AnyKSchema extends KType {
 	parse(input: unknown): any
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- safeParse is the decoding boundary for undecoded input.
 	safeParse(input: unknown): KSafeParseResult<any>
+}
+
+/** The context a `.catch()` fallback function receives: the issues the wrapped schema reported and the input. */
+export interface KCatchContext {
+	readonly issues: readonly KIssue[]
+	readonly input: any
 }
 
 /** The context handed to `.check()`; `addIssue` may be called any number of times. */
@@ -316,6 +333,29 @@ export class KPipe<I extends KType, P extends KType> extends KSchema<
 > {
 	declare readonly _or: KOutputRequired<P>
 	declare readonly _oo: OutputNativeOf<P>
+}
+
+/**
+ * A schema with a fallback. The input side is `v.any()` (optional when the wrapped schema is), as the
+ * fallback accepts any input; the input type stays the wrapped schema's, as in Zod 4. The output side
+ * is the wrapped schema's.
+ */
+export class KCatch<I extends KType> extends KSchema<
+	I['_output'],
+	VAny<I['validator']['type']>,
+	true,
+	I['validator']['isOptional'] extends 'optional'
+		? VAny<I['validator']['type'], 'optional'>
+		: VAny<I['validator']['type']>,
+	I['_t']
+> {
+	declare readonly _or: KOutputRequired<I>
+	declare readonly _oo: OutputNativeOf<I>
+
+	/** The schema below the fallback, as Zod's `removeCatch()`. */
+	unwrap(): I {
+		return this.wrapped<I>('catch')
+	}
 }
 
 type NullableOf<V extends KRequiredValidator> = VUnion<V['type'] | null, [V, VNull<null>]>

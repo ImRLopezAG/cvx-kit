@@ -54,7 +54,8 @@ export type Document = k.infer<typeof documentInput> // status required
 | `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                                                                                                  | `v.id('table')`                                                     |
 | `k.array(element)`                       | an array; `.element` returns the element schema                                                                                                    | `v.array(...)`                                                      |
 | `k.object(fields)`                       | a plain object with exactly these keys                                                                                                             | `v.object(...)`                                                     |
-| `k.record(key, value)`                   | a plain object; `key` is a string schema; see [Records](#records)                                                                                  | `v.record(...)`                                                     |
+| `k.record(key, value)`                   | a plain object; `key` is a string or id schema, or a finite set of string literals; see [Records](#records)                                        | `v.record(...)`, or `v.object(...)` for literal keys                |
+| `k.partialRecord(key, value)`            | an object with one optional field per value of a literal key set; see [Records](#records)                                                          | `v.object(...)` with optional fields                                |
 | `k.union([a, b, ...])`                   | the first member that parses (two or more members)                                                                                                 | `v.union(...)`                                                      |
 | `k.discriminatedUnion(key, [a, b, ...])` | the option whose `key` field (a literal or enum) matches; values unique                                                                            | `v.union(...)` of the objects                                       |
 | `k.isoDate()`                            | `YYYY-MM-DD` naming a real calendar day                                                                                                            | `v.string()`                                                        |
@@ -71,7 +72,18 @@ const amount = k.number().finite()
 
 ### Records
 
-After the key schema has run (including normalisers such as `trim`), each key must also satisfy Convex's record-key rule: non-empty, at most 1024 characters, printable ASCII, and not starting with `$` or `_`. A key that breaks the rule fails with an `invalid_format` issue at that key's path. Parse writes every output key as an own property, so a key such as `__proto__` cannot reach a prototype.
+A string, id or ISO date key (or a union of those) builds a native `v.record`. Convex refuses a record whose keys are literals when the functions are pushed (`Records cannot have string literal keys`; convex-test accepts it), so a key that is a finite set of string literals (`k.enum([...])`, `k.literal('x')` or a union of string literals) builds a strict object with one required field per value, as v1's `z.record(z.enum([...]), value)` did. Its type is `Record<'a' | 'b', V>`, parse reports a missing key and an unknown key, and JSON Schema and `.toZod()` see an object. `k.partialRecord(k.enum([...]), value)` builds the same object with every field optional (`z.partialRecord`). Any other key kind (a number, a numeric literal, a union mixing literals with strings) is a type error and throws at declaration naming the kind, as does a literal key that is not a valid Convex field name.
+
+```ts
+const totals = k.object({
+	byStatus: k.record(k.enum(['open', 'closed']), k.number()), // { open: number; closed: number }
+	seen: k.partialRecord(k.enum(['open', 'closed']), k.boolean()), // { open?: boolean; closed?: boolean }
+})
+```
+
+Object field names follow Convex's field-name rule: non-empty, at most 1024 characters, printable ASCII and not starting with `$` (a leading `_` is allowed, as for `_id`). A field that breaks it throws when the object's validator is first built, which happens when Convex analyses the functions, rather than at push.
+
+After the key schema has run (including normalisers such as `trim`), each key of a native record must also satisfy Convex's record-key rule: non-empty, at most 1024 characters, printable ASCII, and not starting with `$` or `_` (the rule `v.record` documents in `convex/src/values/validator.ts`; `k` is exactly as strict). A key that breaks the rule fails with an `invalid_format` issue at that key's path. Parse writes every output key as an own property, so a key such as `__proto__` cannot reach a prototype.
 
 ### Discriminated unions
 

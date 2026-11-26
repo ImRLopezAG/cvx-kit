@@ -12,12 +12,11 @@ import {
 	literal,
 	nullValue,
 	number,
-	record,
 	string,
 	union,
 } from './kinds'
 import { isoDate, isoDateTime, timestamp } from './dates'
-import { object } from './object'
+import { object, partialRecord, record } from './object'
 import type { KType } from './types'
 
 export const k = {
@@ -36,6 +35,7 @@ export const k = {
 	array,
 	object,
 	record,
+	partialRecord,
 	union,
 	discriminatedUnion,
 	isoDate,

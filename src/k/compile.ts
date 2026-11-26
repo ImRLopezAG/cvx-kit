@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { isFieldName } from './names'
 import type { GenericValidator, PropertyValidators } from 'convex/values'
 import type {
 	KDiscriminated,
@@ -228,6 +229,12 @@ function compileEnum(values: readonly string[]): KRequiredValidator {
 
 function compileFields(fields: KFields): PropertyValidators {
 	const out: Record<string, GenericValidator> = {}
-	for (const key in fields) out[key] = fields[key].validator
+	for (const key in fields) {
+		if (!isFieldName(key))
+			throw new Error(
+				`k.object() field '${key}' is not a valid Convex field name: non-empty printable ASCII, at most 1024 characters, not starting with '$'`,
+			)
+		out[key] = fields[key].validator
+	}
 	return out
 }

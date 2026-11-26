@@ -1,5 +1,14 @@
 import type { ObjectType, VObject } from 'convex/values'
-import { enumOf, type KEnum, type KEnumValues } from './kinds'
+import {
+	enumOf,
+	nativeRecord,
+	type KEnum,
+	type KEnumValues,
+	type KLiteralKeyValidator,
+	type KRecord,
+	type KRecordKey,
+} from './kinds'
+import { isFieldName } from './names'
 import { KOptional, KSchema } from './schema'
 import type {
 	Flat,
@@ -114,6 +123,118 @@ export type KRequiredField<S extends KType> = S extends KOptional<infer I> ? KRe
 
 export function object<F extends KFields>(fields: F): KObject<F> {
 	return new KObject<F>(null, 'object', fields, undefined)
+}
+
+/** A record whose key is a finite set of string literals: one field per value. */
+export type KLiteralRecord<K extends KType, V extends KType> = KObject<{ [P in K['_output']]: V }>
+
+/** The optional-keys form: one optional field per value. */
+export type KPartialRecord<K extends KType, V extends KType> = KObject<{
+	[P in K['_output']]: KOptional<V>
+}>
+
+/**
+ * A record. A string or id key builds a native record. A key that is a finite set of string literals
+ * (`k.enum`, `k.literal`, a union of literals) builds a strict object with one required field per
+ * value, as v1's `z.record(z.enum(…), v)` did: Convex refuses literal record keys at push.
+ */
+export function record<K extends KRecordKey, V extends KType>(
+	key: K,
+	value: V,
+): K['_req'] extends KLiteralKeyValidator ? KLiteralRecord<K, V> : KRecord<K, V>
+export function record(key: KRecordKey, value: KType): KType {
+	const literals = recordKeyLiterals(key, 'k.record')
+	if (literals === null) return nativeRecord(key, value)
+	const fields: Record<string, KType> = {}
+	for (const literal of literals) fields[literal] = value
+	return object(fields)
+}
+
+/** `z.partialRecord`: an object with one optional field per value of a finite literal key set. */
+export function partialRecord<
+	K extends KType & { readonly _req: KLiteralKeyValidator },
+	V extends KType,
+>(key: K, value: V): KPartialRecord<K, V>
+export function partialRecord(key: KType, value: KType): KType {
+	const literals = recordKeyLiterals(key, 'k.partialRecord')
+	if (literals === null)
+		throw new Error(
+			'k.partialRecord() needs a finite set of string literal keys (k.enum, k.literal or a union of literals); use k.record() for string or id keys',
+		)
+	const optional = optionalOf(value)
+	const fields: Record<string, KType> = {}
+	for (const literal of literals) fields[literal] = optional
+	return object(fields)
+}
+
+/**
+ * The literal values of a record key, or null for a string or id key (a native record). Any other key
+ * kind, or a union mixing literals with strings, throws at declaration naming what was found.
+ */
+function recordKeyLiterals(key: KNode, factory: string): readonly string[] | null {
+	let root = key
+	let chained: KNode | null = null
+	while (root.prev !== null) {
+		if (root.op !== 'describe') chained ??= root
+		root = root.prev
+	}
+	const literals = rootKeyLiterals(root, factory)
+	if (literals !== null && chained !== null)
+		throw new Error(`${factory}() key: a literal key set cannot carry '${chained.op}'`)
+	return literals
+}
+
+function rootKeyLiterals(root: KNode, factory: string): readonly string[] | null {
+	switch (root.op) {
+		case 'string':
+		case 'id':
+		case 'isoDate':
+		case 'isoDateTime':
+			return null
+		case 'literal':
+			// oxlint-disable-next-line anti-slop/no-runtime-typeof -- k.literal also accepts numbers, bigints and booleans.
+			if (typeof root.arg !== 'string')
+				throw new Error(`${factory}() key must be a string literal, got ${String(root.arg)}`)
+			return checkedKeys([root.arg], factory)
+		case 'enum':
+			// SAFETY: k.enum stores its non-empty value list as the root argument.
+			return checkedKeys(root.arg as readonly string[], factory)
+		case 'union': {
+			// SAFETY: k.union stores its member schemas as the root argument.
+			const members = root.arg as readonly KNode[]
+			const literals: string[] = []
+			let native = 0
+			for (const member of members) {
+				const set = recordKeyLiterals(member, factory)
+				if (set === null) native++
+				else literals.push(...set)
+			}
+			if (native === members.length) return null
+			if (native > 0)
+				throw new Error(
+					`${factory}() key: a union cannot mix string literals with string or id kinds`,
+				)
+			return [...new Set(literals)]
+		}
+		default:
+			throw new Error(
+				`${factory}() key must be a string, id, k.enum, string k.literal or a union of string literals; got '${root.op}'`,
+			)
+	}
+}
+
+/**
+ * Literal keys become object field names. Convex refuses a field name that is empty, longer than 1024
+ * characters, starts with '$' or holds a non-printable or non-ASCII character
+ * (`validateObjectField` in convex/src/values/value.ts). A leading '_' is allowed, as for `_id`.
+ */
+function checkedKeys(keys: readonly string[], factory: string): readonly string[] {
+	for (const key of keys)
+		if (!isFieldName(key))
+			throw new Error(
+				`${factory}() key '${key}' is not a valid Convex field name: non-empty printable ASCII, at most 1024 characters, not starting with '$'`,
+			)
+	return keys
 }
 
 /** The field map built by pick, omit, extend or partial, under the type its method states. */

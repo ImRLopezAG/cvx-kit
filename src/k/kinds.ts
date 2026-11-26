@@ -2,7 +2,6 @@ import { v } from 'convex/values'
 import type {
 	GenericId,
 	JSONValue,
-	Validator,
 	VAny,
 	VArray,
 	VBoolean,
@@ -194,7 +193,25 @@ export class KArray<E extends KType> extends KSchema<
 	}
 }
 
-export type KRecordKey = KType & { readonly _req: Validator<string, 'required', any> }
+/** Key validators a Convex record accepts at push: a string, an id, or a union of those. */
+type KNativeKeyValidator =
+	| VString<any, 'required'>
+	| VId<any, 'required'>
+	| VUnion<any, (VString<any, 'required'> | VId<any, 'required'>)[], 'required', any>
+
+/** Key validators that are a finite set of string literals: `k.record` builds an object for them. */
+type KLiteralSetValidator =
+	| VLiteral<string, 'required'>
+	| VUnion<string, VLiteral<string, 'required'>[], 'required', any>
+export type KLiteralKeyValidator =
+	| KLiteralSetValidator
+	| VUnion<string, KLiteralSetValidator[], 'required', any>
+
+/**
+ * A record key: a string or id kind (a native record), or an enum, string literal or union of string
+ * literals (an object with one field per value, since Convex refuses literal record keys at push).
+ */
+export type KRecordKey = KType & { readonly _req: KNativeKeyValidator | KLiteralKeyValidator }
 
 export class KRecord<K extends KRecordKey, V extends KType> extends KSchema<
 	Record<K['_output'], V['_output']>,
@@ -322,7 +339,8 @@ export function array<E extends KType>(element: E): KArray<E> {
 	return new KArray<E>(null, 'array', element, undefined)
 }
 
-export function record<K extends KRecordKey, V extends KType>(key: K, value: V): KRecord<K, V> {
+/** The native record root; `k.record` (in object.ts) decides between this and an object. */
+export function nativeRecord<K extends KRecordKey, V extends KType>(key: K, value: V): KRecord<K, V> {
 	return new KRecord<K, V>(null, 'record', Object.freeze([key, value]), undefined)
 }
 

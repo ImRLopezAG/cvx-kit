@@ -13,6 +13,7 @@ const FACTORIES = new Map([
 	['array', 'array'],
 	['union', 'union'],
 	['record', 'record'],
+	['partialRecord', 'partialRecord'],
 	['any', 'any'],
 	['object', 'object'],
 	['strictObject', 'object'],

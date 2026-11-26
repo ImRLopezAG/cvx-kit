@@ -1,5 +1,5 @@
 import type { ObjectType, VObject } from 'convex/values'
-import { KSchema, type KOptional } from './schema'
+import { KOptional, KSchema } from './schema'
 import type {
 	Flat,
 	KAnyDiffers,
@@ -53,6 +53,10 @@ export class KObject<F extends KFields> extends KSchema<
 		return object(retyped<Flat<Omit<F, keyof E> & E>>({ ...fieldsOf(this), ...fields }))
 	}
 
+	/**
+	 * Every field optional, for patches: a field that had a default becomes plain optional, so an omitted
+	 * field stays omitted instead of overwriting a stored value. Other field behaviour is kept.
+	 */
 	partial(): KObject<{ [K in keyof F]: KOptional<F[K]> }> {
 		const fields = fieldsOf(this)
 		const out: Record<string, KType> = {}
@@ -78,7 +82,7 @@ function retyped<T extends KFields>(fields: KFields): T {
 
 function optionalOf(field: KType): KType {
 	// SAFETY: every field value at runtime is a KSchema record created by a k factory.
-	return (field as KSchema).optional()
+	return new KOptional(field as KSchema, 'partial', undefined, undefined)
 }
 
 function fieldsOf<F extends KFields>(node: KObject<F>): F {

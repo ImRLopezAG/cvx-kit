@@ -59,9 +59,21 @@ describe('k object helpers', () => {
 				}),
 			),
 		)
-		expect(partial.parse({})).toEqual({ done: false })
+		expect(partial.parse({})).toEqual({})
+		expect(partial.parse({ done: true, title: ' a ' })).toEqual({ done: true, title: 'a' })
 		expect(partial.safeParse({ title: ' ' }).success).toBe(false)
 		expect(partial.shape.title.unwrap()).toBe(title)
+	})
+
+	it('partial does not apply defaults, while a plain optional around a default still does', () => {
+		expect(task.partial().parse({ title: 'a' })).toEqual({ title: 'a' })
+		expect(k.object({ done: k.boolean().default(false).optional() }).parse({})).toEqual({
+			done: false,
+		})
+		expect(task.parse({ title: 'a' })).toEqual({ title: 'a', done: false })
+		const partialDone = task.partial().shape.done
+		expect(partialDone.unwrap()).toBe(task.shape.done)
+		expect(partialDone.outputValidator.isOptional).toBe('optional')
 	})
 
 	it('matches the native VObject methods by exported JSON', () => {

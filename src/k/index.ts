@@ -16,6 +16,7 @@ import {
 	string,
 	union,
 } from './kinds'
+import { isoDate, isoDateTime, timestamp } from './dates'
 import { object } from './object'
 import type { KType } from './types'
 
@@ -37,6 +38,9 @@ export const k = {
 	record,
 	union,
 	discriminatedUnion,
+	isoDate,
+	isoDateTime,
+	timestamp,
 }
 
 export declare namespace k {

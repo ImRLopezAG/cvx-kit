@@ -72,16 +72,30 @@ export class KBytes extends KSchema<ArrayBuffer, VBytes<ArrayBuffer>> {}
 
 export class KAny extends KSchema<any, VAny> {}
 
-/** Any JSON-compatible value; natively `v.any()`, checked for JSON compatibility when parsed. */
-export class KJson extends KSchema<JSONValue, VAny<JSONValue>> {}
+/**
+ * Any JSON-compatible value. Natively the six-member union v1's `z.json()` stored (string, number,
+ * boolean, null, array of any, record of any); parse also checks the value is JSON-compatible throughout.
+ */
+export class KJson extends KSchema<
+	JSONValue,
+	VUnion<
+		JSONValue,
+		[
+			VString<string>,
+			VFloat64<number>,
+			VBoolean<boolean>,
+			VNull<null>,
+			VArray<JSONValue[], VAny<JSONValue>>,
+			VRecord<Record<string, JSONValue>, VString<string>, VAny<JSONValue>>,
+		]
+	>
+> {}
 
 export class KLiteral<V extends KLiteralValue> extends KSchema<V, VLiteral<V>> {}
 
 export class KEnum<V extends readonly [string, ...string[]]> extends KSchema<
 	V[number],
-	V extends readonly [infer Only extends string]
-		? VLiteral<Only>
-		: VUnion<V[number], { -readonly [I in keyof V]: VLiteral<V[I]> }>
+	VUnion<V[number], { -readonly [I in keyof V]: VLiteral<V[I]> }>
 > {
 	get options(): V {
 		// SAFETY: k.enum stores its value tuple as the root argument.

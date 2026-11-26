@@ -1,5 +1,6 @@
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- This module is the decoding boundary: it receives undecoded values, narrows them by representation and hands them back as the schema's output, which the typed callers in schema.ts name. */
 import { membersOf } from './compile'
+import { isIsoDate, isIsoDateTime, isTimestamp } from './formats'
 import {
 	KValidationError,
 	type KIssue,
@@ -121,8 +122,10 @@ function compilePlan(node: KNode): KPlan {
 	if (node.prev === null) return rootPlan(node)
 	switch (node.op) {
 		case 'optional':
+		case 'partial':
 		case 'nullable':
 		case 'strip':
+		case 'describe':
 			return planOf(node.prev)
 		case 'default':
 			return planOf(node.prev).transform ? transformPlan : checkedPlan
@@ -155,6 +158,9 @@ function rootPlan(root: KNode): KPlan {
 	switch (root.op) {
 		case 'int':
 		case 'json':
+		case 'isoDate':
+		case 'isoDateTime':
+		case 'timestamp':
 			return checkedPlan
 		case 'array':
 			return planOf(argSchema(root))
@@ -230,6 +236,10 @@ function walk(
 	switch (node.op) {
 		case 'optional':
 			if (value === undefined && !defaultsBelow(node.prev)) return undefined
+			return walk(node.prev, value, context, full, strip)
+		case 'partial':
+			return value === undefined ? undefined : walk(node.prev, value, context, full, strip)
+		case 'describe':
 			return walk(node.prev, value, context, full, strip)
 		case 'nullable':
 			return value === null ? null : walk(node.prev, value, context, full, strip)
@@ -382,6 +392,18 @@ function walkRoot(
 			if (Number.isInteger(value)) return value
 			context.add('not_integer', 'Expected an integer', undefined)
 			return FAIL
+		case 'isoDate':
+			if (full && typeof value !== 'string') return invalidType(context, 'string', value)
+			if (isIsoDate(stringOf(value))) return value
+			context.add('invalid_format', 'Invalid ISO date: expected YYYY-MM-DD', undefined)
+			return FAIL
+		case 'isoDateTime':
+			if (full && typeof value !== 'string') return invalidType(context, 'string', value)
+			if (isIsoDateTime(stringOf(value))) return value
+			context.add('invalid_format', 'Invalid ISO date-time', undefined)
+			return FAIL
+		case 'timestamp':
+			return walkTimestamp(value, context, full)
 		case 'json':
 			if (isJson(value)) return value
 			context.add('invalid_type', 'Expected a JSON value', undefined)
@@ -389,6 +411,18 @@ function walkRoot(
 		default:
 			return full ? walkLeaf(root, value, context) : value
 	}
+}
+
+function walkTimestamp(value: unknown, context: WalkContext, full: boolean): unknown {
+	if (full && typeof value !== 'number') return invalidType(context, 'number', value)
+	// SAFETY: checked above, or already validated natively at a function boundary.
+	const time = value as number
+	if (isTimestamp(time)) return value
+	if (!Number.isFinite(time)) context.add('invalid_type', 'Expected a finite timestamp', undefined)
+	else if (!Number.isInteger(time))
+		context.add('not_integer', 'Expected integer milliseconds', undefined)
+	else context.add('too_small', 'Expected a timestamp >= 0', undefined)
+	return FAIL
 }
 
 function walkLeaf(root: KNode, value: unknown, context: WalkContext): unknown {

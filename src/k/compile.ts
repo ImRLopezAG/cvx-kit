@@ -23,7 +23,7 @@ export function compileNative(node: KNode): GenericValidator {
 	let nullable = false
 	let root = node
 	while (root.prev !== null) {
-		if (root.op === 'optional' || root.op === 'default') optional = true
+		if (root.op === 'optional' || root.op === 'partial' || root.op === 'default') optional = true
 		else if (root.op === 'nullable') nullable = true
 		root = root.prev
 	}
@@ -67,7 +67,7 @@ function outputOf(node: KNode, required: boolean): GenericValidator {
 			if (base !== current.validator) differs = true
 			break
 		}
-		if (current.op === 'optional') optional ??= true
+		if (current.op === 'optional' || current.op === 'partial') optional ??= true
 		else if (current.op === 'default') {
 			optional ??= false
 			differs = true
@@ -138,9 +138,12 @@ function compileRootOutput(root: KNode): GenericValidator {
 function compileRoot(node: KNode): KRequiredValidator {
 	switch (node.op) {
 		case 'string':
+		case 'isoDate':
+		case 'isoDateTime':
 			return v.string()
 		case 'number':
 		case 'int':
+		case 'timestamp':
 			return v.number()
 		case 'int64':
 			return v.int64()
@@ -151,8 +154,16 @@ function compileRoot(node: KNode): KRequiredValidator {
 		case 'bytes':
 			return v.bytes()
 		case 'any':
-		case 'json':
 			return v.any()
+		case 'json':
+			return v.union(
+				v.string(),
+				v.number(),
+				v.boolean(),
+				v.null(),
+				v.array(v.any()),
+				v.record(v.string(), v.any()),
+			)
 		case 'literal':
 			// SAFETY: k.literal stores its literal value as the root argument.
 			return v.literal(node.arg as KLiteralValue)
@@ -210,7 +221,6 @@ function requiredCopy(node: KNode): KRequiredValidator {
 }
 
 function compileEnum(values: readonly string[]): KRequiredValidator {
-	if (values.length === 1) return v.literal(values[0])
 	const members: KRequiredValidator[] = []
 	for (const value of values) members.push(v.literal(value))
 	return v.union(...members)

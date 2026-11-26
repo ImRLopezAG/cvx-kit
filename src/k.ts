@@ -25,6 +25,7 @@ export type {
 	KString,
 	KUnion,
 } from './k/kinds'
+export type { KIsoDate, KIsoDateTime, KTimestamp } from './k/dates'
 export type { KObject } from './k/object'
 export type {
 	KCheckContext,

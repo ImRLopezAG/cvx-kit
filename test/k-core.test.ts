@@ -104,9 +104,9 @@ describe('k native validators', () => {
 		expect(nativeJson(schema.validator)).toBe(JSON.stringify({ type: 'id', tableName: 'users' }))
 	})
 
-	it('builds enums as a literal union, and a single-value enum as its literal', () => {
+	it('builds enums as a literal union, and a single-value enum as a one-member union (v1 parity)', () => {
 		expectNative(k.enum(['a', 'b', 'c']), v.union(v.literal('a'), v.literal('b'), v.literal('c')))
-		expectNative(k.enum(['only']), v.literal('only'))
+		expectNative(k.enum(['only']), v.union(v.literal('only')))
 	})
 
 	it('builds arrays and unions', () => {

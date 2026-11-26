@@ -1,7 +1,9 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec'
 import type { GenericValidator, VAny, VNull, VUnion } from 'convex/values'
 import { compileNative, compileOutput } from './compile'
 import type { KIssueInput, KSafeParseResult } from './issues'
 import { parseSchema, safeParseSchema, type KPlan } from './parse'
+import { standardProps } from './standard'
 import type {
 	KArg,
 	KMessage,
@@ -23,6 +25,7 @@ import type {
  * transform sits inside, `N` the input-side native validator (`R` unless the chain is optional or
  * defaulted), `T` whether a transform or pipe sits inside.
  */
+// oxlint-disable-next-line typescript/no-unsafe-declaration-merging -- the merged interface only adds methods that cvx-kit/zod installs on the prototype.
 export abstract class KSchema<
 	Out = any,
 	R extends KRequiredValidator = KRequiredValidator,
@@ -120,6 +123,21 @@ export abstract class KSchema<
 		return safeParseSchema(this, input) as KSafeParseResult<Out>
 	}
 
+	/** A description for JSON Schema and tooling; it changes neither the validators nor parsing. */
+	describe(text: string): this {
+		return this.link('describe', text, undefined)
+	}
+
+	/** The nearest description declared on this chain. */
+	get description(): string | undefined {
+		return descriptionOf(this)
+	}
+
+	/** Standard Schema v1, so contracts and form libraries consume `k` schemas directly. */
+	get '~standard'(): StandardSchemaV1.Props<N['type'], Out> {
+		return standardProps(this)
+	}
+
 	protected link(op: KOp, arg: KArg, message: KMessage): this {
 		// SAFETY: every subclass inherits this constructor unchanged, so the record keeps its predecessor's class.
 		const Next = this.constructor as new (
@@ -141,6 +159,35 @@ export abstract class KSchema<
 export interface KCheckContext {
 	addIssue(issue: KIssueInput): void
 }
+
+declare global {
+	/**
+	 * Methods that optional cvx-kit entries add to every `k` schema; `cvx-kit/zod` adds `toZod()`. Empty
+	 * in core, so core declarations never name an optional peer's types.
+	 */
+	interface CvxKitSchemaMethods {}
+}
+
+/* oxlint-disable no-unused-vars -- A merged declaration must repeat the class's type parameters. */
+/** Adds the optional entries' methods to the class type; the entries install them at runtime. */
+export interface KSchema<
+	Out = any,
+	R extends KRequiredValidator = KRequiredValidator,
+	D extends boolean = false,
+	N extends GenericValidator = R,
+	T extends boolean = false,
+> extends CvxKitSchemaMethods {}
+/* oxlint-enable no-unused-vars */
+
+/**
+ * `.toZod()` exists only once `cvx-kit/zod` is imported, which also adds its type. Until then this stub
+ * names the entry; core declarations stay free of Zod types.
+ */
+Object.defineProperty(KSchema.prototype, 'toZod', {
+	value: missingZodEntry,
+	writable: true,
+	configurable: true,
+})
 
 export class KOptional<I extends KType> extends KSchema<
 	I['_output'] | undefined,
@@ -215,9 +262,24 @@ export class KPipe<I extends KType, P extends KType> extends KSchema<
 
 type NullableOf<V extends KRequiredValidator> = VUnion<V['type'] | null, [V, VNull<null>]>
 
+function missingZodEntry(): never {
+	throw new Error("k: .toZod() needs the Zod interop entry; add `import 'cvx-kit/zod'` first")
+}
+
+function descriptionOf(node: KNode): string | undefined {
+	for (let current: KNode | null = node; current !== null; current = current.prev) {
+		if (current.op === 'describe') {
+			// SAFETY: a describe record stores its text as the record argument.
+			return current.arg as string
+		}
+	}
+	return undefined
+}
+
 function wrappedBy(node: KNode, op: KOp): KNode {
 	let current = node
-	while (current.op !== op) current = prevOf(current)
+	while (current.op !== op && !(op === 'optional' && current.op === 'partial'))
+		current = prevOf(current)
 	return prevOf(current)
 }
 

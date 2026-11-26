@@ -74,7 +74,12 @@ const assertions: [
 	>,
 	Assert<Equal<typeof task.validator.fieldPaths, TaskPaths>>,
 	Assert<Equal<k.infer<ReturnType<typeof k.literal<'x'>>>, 'x'>>,
-	Assert<Equal<NativeOf<ReturnType<typeof k.enum<['only']>>>, VLiteral<'only', 'required'>>>,
+	Assert<
+		Equal<
+			NativeOf<ReturnType<typeof k.enum<['only']>>>,
+			VUnion<'only', [VLiteral<'only'>], 'required', never>
+		>
+	>,
 ] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true]
 void assertions
 

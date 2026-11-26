@@ -55,7 +55,8 @@ const kindAssertions: [
 	Assert<Equal<k.infer<typeof task>['count'], bigint>>,
 	Assert<Equal<typeof task.validator.fields.count, VInt64<bigint>>>,
 	Assert<Equal<typeof task.validator.fields.blob, VBytes<ArrayBuffer>>>,
-	Assert<Equal<typeof task.validator.fields.payload, VAny<JSONValue>>>,
+	Assert<Equal<(typeof task.validator.fields.payload)['type'], JSONValue>>,
+	Assert<Equal<(typeof task.validator.fields.payload)['members']['length'], 6>>,
 	Assert<Equal<typeof task.validator.fields.extra, VAny<any, 'optional'>>>,
 	Assert<Equal<(typeof figure.validator.members)[1]['fields']['side'], VFloat64<number>>>,
 	Assert<Equal<typeof figure.discriminator, 'kind'>>,
@@ -63,7 +64,9 @@ const kindAssertions: [
 	Assert<Equal<(typeof task)['shape']['title'], KString>>,
 	Assert<Equal<ReturnType<(typeof task)['shape']['title']['optional']>['unwrap'], () => KString>>,
 	Assert<Equal<NativeOf<(typeof task)['shape']['title']>, VString<string>>>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true]
+] = [
+	true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+]
 void kindAssertions
 
 const partial = task.pick('title', 'status').partial()

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { v } from 'convex/values'
 import type { GenericValidator, ValidatorJSON } from 'convex/values'
 import { describe, expect, it } from 'vitest'
@@ -29,7 +30,17 @@ describe('k kinds', () => {
 		expectNative(k.null(), v.null())
 		expectNative(k.bytes(), v.bytes())
 		expectNative(k.any(), v.any())
-		expectNative(k.json(), v.any())
+		expectNative(
+			k.json(),
+			v.union(
+				v.string(),
+				v.number(),
+				v.boolean(),
+				v.null(),
+				v.array(v.any()),
+				v.record(v.string(), v.any()),
+			),
+		)
 		expectNative(k.literal('a'), v.literal('a'))
 		expectNative(k.literal(1n), v.literal(1n))
 		expectNative(k.enum(['a', 'b']), v.union(v.literal('a'), v.literal('b')))
@@ -40,6 +51,16 @@ describe('k kinds', () => {
 		expectNative(k.string().optional(), v.optional(v.string()))
 		expectNative(k.string().nullable(), v.nullable(v.string()))
 		expectNative(k.string().default('x'), v.optional(v.string()))
+	})
+
+	it('matches the v1 parity snapshot for a one-value enum and a JSON field', () => {
+		const snapshot = JSON.parse(
+			readFileSync(new URL('./parity/v1-tables.snapshot.json', import.meta.url), 'utf8'),
+		)
+		const stored = (name: string, field: string) =>
+			snapshot[name].table.documentType.value[field].fieldType
+		expect(JSON.parse(nativeJson(k.enum(['only']).validator))).toEqual(stored('scalars', 'enumOne'))
+		expect(JSON.parse(nativeJson(k.json().validator))).toEqual(stored('opaque', 'jsonValue'))
 	})
 
 	it('builds records keyed by string and by id', () => {

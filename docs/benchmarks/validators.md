@@ -7,15 +7,15 @@ v1 is cvx-kit 0.1.35 (Zod, commit `8d979a5`). v2 is this tree (`k`, `kTable`, `k
 The app has 30 table boundaries (28 entity tables and two variant tables), relations with 34 joins, three thunk domain contracts with compact relation pagination over the variant tables, and auth builders with triggers and tenancy; one function module registers the 14 operations of one contract.
 Figures are for the `eager` variant (`args` and `returns` declared as properties); the `getter` variant is in the full tables below.
 
-| metric | v1 | v2 | change |
-|---|---:|---:|---:|
-| bundle KB | 815.8 | 218.1 | -73.3% |
-| Zod KB in bundle | 582.1 | 0.0 | -100% |
-| module load ms | 27.42 | 7.89 | -71.2% |
-| retained heap MB | 9.36 | 2.12 | -77.3% |
-| first validator build for one function (`listPayments`) ms | 3.04 | 3.32 | +9.0% |
-| first call ms (whole request without relations, `create`) | 1.53 | 0.84 | -45.2% |
-| tsc instantiations (fixture and the kit source it imports) | 804,286 | 257,654 | -68.0% |
+| metric                                                     |      v1 |      v2 | change |
+| ---------------------------------------------------------- | ------: | ------: | -----: |
+| bundle KB                                                  |   815.8 |   220.6 | -73.0% |
+| Zod KB in bundle                                           |   582.1 |     0.0 |  -100% |
+| module load ms                                             |   28.34 |    7.97 | -71.9% |
+| retained heap MB                                           |    9.37 |    2.03 | -78.3% |
+| first validator build for one function (`listPayments`) ms |    3.10 |    3.46 | +11.8% |
+| first call ms (whole request without relations, `create`)  |    1.60 |    0.85 | -47.0% |
+| tsc instantiations (fixture and the kit source it imports) | 804,286 | 259,983 | -67.7% |
 
 The first-call row comes from the smaller request fixture in section (d), because the full app's harness builds validators but does not call a function.
 
@@ -45,28 +45,28 @@ The translation is field for field: `z.object` and `z.strictObject` become `k.ob
 
 Phases: `tables` declares the 30 boundaries, `defineRelations` registers the joins, `contractsAndAuth` declares three domain contracts and the auth builders, `registration` registers the 14 functions. `invoke` reads `exportArgs()` and `exportReturns()` of `listPayments`, which builds its validators on first read.
 
-| case | functions | bundle KB | zod KB | load ms | retained MB | tables ms | defineRelations ms | contractsAndAuth ms | registration ms | invoke ms |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| v1-eager | 14 | 815.8 | 582.1 | 27.42 | 9.36 | 3.68 | 1.52 | 0.25 | 9.83 | 3.04 |
-| v1-getter | 14 | 815.9 | 582.1 | 17.95 | 6.41 | 3.68 | 1.53 | 0.25 | 0.23 | 7.93 |
-| v2-eager | 14 | 218.1 | 0.0 | 7.89 | 2.12 | 0.69 | 1.78 | 0.26 | 2.30 | 3.32 |
-| v2-getter | 14 | 218.2 | 0.0 | 5.82 | 1.84 | 0.69 | 1.79 | 0.26 | 0.24 | 4.69 |
+| case      | functions | bundle KB | zod KB | load ms | retained MB | tables ms | defineRelations ms | contractsAndAuth ms | registration ms | invoke ms |
+| --------- | --------: | --------: | -----: | ------: | ----------: | --------: | -----------------: | ------------------: | --------------: | --------: |
+| v1-eager  |        14 |     815.8 |  582.1 |   28.34 |        9.37 |      3.76 |               1.59 |                0.26 |           10.28 |      3.10 |
+| v1-getter |        14 |     815.9 |  582.1 |   18.46 |        6.41 |      3.76 |               1.61 |                0.28 |            0.25 |      8.21 |
+| v2-eager  |        14 |     220.6 |    0.0 |    7.97 |        2.03 |      0.72 |               1.20 |                0.27 |            2.80 |      3.46 |
+| v2-getter |        14 |     220.7 |    0.0 |    5.66 |        1.71 |      0.71 |               1.21 |                0.27 |            0.49 |      5.00 |
 
 Bytes in the bundle by owner:
 
-| bytes | v1-eager | v1-getter | v2-eager | v2-getter |
-|---|---:|---:|---:|---:|
-| zod | 596021 | 596021 | 0 | 0 |
-| convex | 73158 | 73158 | 72983 | 72983 |
-| convex-helpers | 16579 | 16579 | 15162 | 15162 |
-| cvx-kit | 124794 | 124794 | 125546 | 125546 |
-| fixture | 6515 | 6615 | 6565 | 6665 |
-| (glue) | 18337 | 18337 | 3037 | 3037 |
-| total | 835404 | 835504 | 223293 | 223393 |
+| bytes          | v1-eager | v1-getter | v2-eager | v2-getter |
+| -------------- | -------: | --------: | -------: | --------: |
+| zod            |   596021 |    596021 |        0 |         0 |
+| convex         |    73158 |     73158 |    72983 |     72983 |
+| convex-helpers |    16579 |     16579 |    15162 |     15162 |
+| cvx-kit        |   124794 |    124794 |   128181 |    128181 |
+| fixture        |     6515 |      6615 |     6565 |      6665 |
+| (glue)         |    18337 |     18337 |     3037 |      3037 |
+| total          |   835404 |    835504 |   225928 |    226028 |
 
 ```text
-v2-eager vs v1-eager: load ms -71.2%, retained MB -77.3%, bundle KB -73.3%, invoke ms 9.0%
-v2-getter vs v1-getter: load ms -67.6%, retained MB -71.2%, bundle KB -73.3%, invoke ms -40.8%
+v2-eager vs v1-eager: load ms -71.9%, retained MB -78.3%, bundle KB -73.0%, invoke ms 11.8%
+v2-getter vs v1-getter: load ms -69.3%, retained MB -73.3%, bundle KB -72.9%, invoke ms -39.1%
 ```
 
 Export parity: `exportArgs()`/`exportReturns()` JSON of all 14 functions is identical across v1-eager, v1-getter, v2-eager and v2-getter. No normalisation was applied; the fixture declares no `tools.*` ids and no `.optional().default()` field, the two documented v1 to v2 validator differences.
@@ -75,10 +75,10 @@ Export parity: `exportArgs()`/`exportReturns()` JSON of all 14 functions is iden
 
 `--types` runs `tsc --extendedDiagnostics` (strict, bundler resolution, `skipLibCheck`) on each side's entry. The kit is imported as source on both sides, so the figures include checking the kit's own files.
 
-| types | files | Types | Instantiations | Check ms |
-|---|---:|---:|---:|---:|
-| v1 | 372 | 301869 | 804286 | 231 |
-| v2 | 284 | 101625 | 257654 | 81 |
+| types | files |  Types | Instantiations | Check ms |
+| ----- | ----: | -----: | -------------: | -------: |
+| v1    |   372 | 301869 |         804286 |      243 |
+| v2    |   284 | 102488 |         259983 |       79 |
 
 Both sides typecheck with zero errors. The v1 fixture at `8d979a5` was only ever bundled and has three type errors: in `appSchemaTables` a union of `.index` overloads is not callable, and the `{ ...entities, payments, ledger }` spread in `defineAppTables` drops the generated index signature, so `tables[domain]` is untyped. For `--types` only, the bench applies to the extracted v1 copy the two edits the v2 fixture carries (`v1TypePatches` in the script): `Object.assign(entities, { payments, ledger })`, and `appSchemaTables` indexing the variant tables by name. The entry never calls `appSchemaTables`, and the runtime figures use the unedited v1 fixture.
 
@@ -89,27 +89,27 @@ Export ms is `exportArgs()` plus `exportReturns()` on all five functions, the de
 First-call and warm-call time is `create` invoked through Convex's `invokeMutation` hook with JSON args and a stubbed identity syscall; warm is the mean of 200 further calls.
 The bench also checks that both sides return the same results for valid calls and reject a `create` whose title fails `min(1)`.
 
-| case | bundle KB | zod KB | load ms | retained MB | tables ms | auth ms | registration ms | export ms | first-call ms | warm-call µs |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| v1 eager | 752.5 | 581.9 | 14.93 | 4.28 | 3.94 | 0.13 | 0.45 | 0.61 | 1.53 | 27.5 |
-| v1 getter | 752.5 | 581.9 | 14.71 | 4.21 | 3.96 | 0.13 | 0.16 | 0.94 | 1.65 | 28.1 |
-| v2 eager | 179.1 | 0.0 | 3.58 | 0.97 | 0.71 | 0.15 | 0.32 | 0.67 | 0.84 | 25.3 |
-| v2 getter | 179.1 | 0.0 | 3.40 | 1.51 | 0.71 | 0.15 | 0.15 | 0.85 | 0.84 | 25.2 |
+| case      | bundle KB | zod KB | load ms | retained MB | tables ms | auth ms | registration ms | export ms | first-call ms | warm-call µs |
+| --------- | --------: | -----: | ------: | ----------: | --------: | ------: | --------------: | --------: | ------------: | -----------: |
+| v1 eager  |     752.5 |  581.9 |   15.32 |        4.28 |      4.00 |    0.14 |            0.47 |      0.64 |          1.60 |         28.3 |
+| v1 getter |     752.5 |  581.9 |   15.09 |        4.21 |      4.04 |    0.14 |            0.16 |      0.95 |          1.71 |         28.7 |
+| v2 eager  |     181.4 |    0.0 |    3.77 |        0.98 |      0.73 |    0.16 |            0.33 |      0.73 |          0.85 |         26.4 |
+| v2 getter |     181.4 |    0.0 |    3.58 |        0.96 |      0.73 |    0.16 |            0.17 |      0.88 |          0.86 |         26.0 |
 
-| bytes | v1 eager | v1 getter | v2 eager | v2 getter |
-|---|---:|---:|---:|---:|
-| (glue) | 18190 | 18190 | 2926 | 2926 |
-| convex | 73128 | 73128 | 72942 | 72942 |
-| convex-helpers | 16579 | 16579 | 15162 | 15162 |
-| fixture | 4614 | 4614 | 4609 | 4609 |
-| src (rest) | 62178 | 62178 | 58116 | 58116 |
-| src/k | 0 | 0 | 29635 | 29635 |
-| zod | 595906 | 595906 | 0 | 0 |
-| total | 770595 | 770595 | 183390 | 183390 |
+| bytes          | v1 eager | v1 getter | v2 eager | v2 getter |
+| -------------- | -------: | --------: | -------: | --------: |
+| (glue)         |    18190 |     18190 |     2926 |      2926 |
+| convex         |    73128 |     73128 |    72942 |     72942 |
+| convex-helpers |    16579 |     16579 |    15162 |     15162 |
+| fixture        |     4614 |      4614 |     4609 |      4609 |
+| src (rest)     |    62178 |     62178 |    58385 |     58385 |
+| src/k          |        0 |         0 |    31742 |     31742 |
+| zod            |   595906 |    595906 |        0 |         0 |
+| total          |   770595 |    770595 |   185766 |    185766 |
 
 ```text
-v2 eager vs v1 eager: load ms -76.0%, retained MB -77.3%, bundle KB -76.2%, export ms 9.8%, first call ms -45.2%, warm call -8.3%
-v2 getter vs v1 getter: load ms -76.9%, retained MB -64.2%, bundle KB -76.2%, export ms -9.6%, first call ms -49.2%, warm call -10.1%
+v2 eager vs v1 eager: load ms -75.4%, retained MB -77.1%, bundle KB -75.9%, export ms 14.9%, first call ms -47.0%, warm call -6.8%
+v2 getter vs v1 getter: load ms -76.3%, retained MB -77.1%, bundle KB -75.9%, export ms -8.0%, first call ms -49.6%, warm call -9.4%
 ```
 
 Parity: `exportArgs()`/`exportReturns()` JSON of all five functions, the call results and the rejected invalid call match across the four cases.
@@ -128,22 +128,22 @@ The `convex` flavor cannot express checks or defaults, so it declares structure 
 
 400 schemas and 57 table-and-function groups, generated with seed 1 from the call-site mix of two consumer apps. Re-run on the final tree.
 
-| flavor | bundle KB | zod KB | declare ms | declare MB | +native ms | +native MB | Types | Instantiations |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| zod | 853.1 | 581.9 | 32.17 | 17.19 | 42.36 | 18.30 | 240071 | 2139108 |
-| zod-mini | 324.3 | 115.5 | 19.80 | 10.86 | 31.22 | 11.97 | 220446 | 2145139 |
-| convex | 276.5 | 0.0 | 9.71 | 2.49 | 10.16 | 2.58 | 43200 | 296109 |
-| k | 288.4 | 0.0 | 7.13 | 2.39 | 11.56 | 3.67 | 70897 | 369471 |
+| flavor   | bundle KB | zod KB | declare ms | declare MB | +native ms | +native MB |  Types | Instantiations |
+| -------- | --------: | -----: | ---------: | ---------: | ---------: | ---------: | -----: | -------------: |
+| zod      |     853.1 |  581.9 |      32.78 |      17.19 |      42.95 |      18.30 | 240071 |        2139108 |
+| zod-mini |     324.3 |  115.5 |      20.26 |      10.86 |      31.87 |      11.97 | 220446 |        2145139 |
+| convex   |     276.5 |    0.0 |       9.94 |       2.49 |      10.39 |       2.58 |  43200 |         296109 |
+| k        |     290.4 |    0.0 |       7.36 |       2.40 |      11.82 |       3.68 |  70886 |         373590 |
 
-| bytes | zod | zod-mini | convex | k |
-|---|---:|---:|---:|---:|
-| (glue) | 13542 | 10532 | 9570 | 9766 |
-| convex | 59263 | 59230 | 59055 | 59103 |
-| convex-helpers | 4731 | 4731 | 0 | 0 |
-| schemas | 200170 | 139329 | 214521 | 197173 |
-| src/k | 0 | 0 | 0 | 29264 |
-| zod | 595868 | 118257 | 0 | 0 |
-| total | 873574 | 332079 | 283146 | 295306 |
+| bytes          |    zod | zod-mini | convex |      k |
+| -------------- | -----: | -------: | -----: | -----: |
+| (glue)         |  13542 |    10532 |   9570 |   9766 |
+| convex         |  59263 |    59230 |  59055 |  59103 |
+| convex-helpers |   4731 |     4731 |      0 |      0 |
+| schemas        | 200170 |   139329 | 214521 | 197173 |
+| src/k          |      0 |        0 |      0 |  31371 |
+| zod            | 595868 |   118257 |      0 |      0 |
+| total          | 873574 |   332079 | 283146 | 297413 |
 
 ### A real module's schema graph
 
@@ -151,22 +151,22 @@ The schemas a consumer app's finance contracts declare on import, with the table
 The descriptor is kept outside this repository because the app is private; it was re-run on the final tree.
 Refinements, 39 in that module, have no descriptor form and are left out of every flavor.
 
-| flavor | bundle KB | zod KB | declare ms | declare MB | +native ms | +native MB | Types | Instantiations |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| zod | 782.4 | 581.9 | 23.12 | 10.56 | 35.32 | 11.93 | 124840 | 1319951 |
-| zod-mini | 285.2 | 115.5 | 13.44 | 6.32 | 26.14 | 7.68 | 116772 | 1319919 |
-| convex | 201.3 | 0.0 | 6.11 | 1.54 | 6.39 | 1.57 | 20595 | 194063 |
-| k | 220.6 | 0.0 | 4.64 | 1.61 | 7.84 | 2.25 | 42004 | 240646 |
+| flavor   | bundle KB | zod KB | declare ms | declare MB | +native ms | +native MB |  Types | Instantiations |
+| -------- | --------: | -----: | ---------: | ---------: | ---------: | ---------: | -----: | -------------: |
+| zod      |     782.4 |  581.9 |      23.44 |      10.56 |      35.92 |      11.93 | 124840 |        1319951 |
+| zod-mini |     285.2 |  115.5 |      13.68 |       6.32 |      26.46 |       7.68 | 116772 |        1319919 |
+| convex   |     201.3 |    0.0 |       6.24 |       1.54 |       6.57 |       1.57 |  20595 |         194063 |
+| k        |     222.7 |    0.0 |       4.78 |       1.61 |       7.98 |       2.26 |  41965 |         241745 |
 
-| bytes | zod | zod-mini | convex | k |
-|---|---:|---:|---:|---:|
-| (glue) | 16410 | 13400 | 12425 | 12623 |
-| convex | 59325 | 59281 | 59132 | 59156 |
-| convex-helpers | 4731 | 4731 | 0 | 0 |
-| schemas | 124774 | 96340 | 134572 | 124807 |
-| src/k | 0 | 0 | 0 | 29322 |
-| zod | 595913 | 118261 | 0 | 0 |
-| total | 801153 | 292013 | 206129 | 225908 |
+| bytes          |    zod | zod-mini | convex |      k |
+| -------------- | -----: | -------: | -----: | -----: |
+| (glue)         |  16410 |    13400 |  12425 |  12624 |
+| convex         |  59325 |    59281 |  59132 |  59154 |
+| convex-helpers |   4731 |     4731 |      0 |      0 |
+| schemas        | 124774 |    96340 | 134572 | 124815 |
+| src/k          |      0 |        0 |      0 |  31425 |
+| zod            | 595913 |   118261 |      0 |      0 |
+| total          | 801153 |   292013 | 206129 | 228018 |
 
 `zod/mini` still carries 115 KB of Zod because the Convex id helper imports classic Zod.
 
@@ -174,25 +174,26 @@ Refinements, 39 in that module, have no descriptor form and are left out of ever
 
 The plan allowed v2 to proceed only if none of four stop conditions held. Measured on the real module's graph with the prototype `k` (which was 4.7 KB of the bundle):
 
-| Stop condition | Threshold | Measured | Holds |
-|---|---|---|---|
-| Module eval gain against classic Zod too small | less than 50% lower | 81.6% lower (23.05 ms to 4.24 ms) | no |
-| `k` not clearly better than the `zod/mini` gain | within 10 points | `zod/mini` 42.2%, `k` 81.6% | no |
-| `k` costs too much over plain `v.*` | more than 15% slower | 30% faster to declare; 12.6% slower when every native validator is forced | no |
-| Type cost regresses | more instantiations than classic Zod | 220,395 against 1,319,951 | no |
+| Stop condition                                  | Threshold                            | Measured                                                                  | Holds |
+| ----------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------- | ----- |
+| Module eval gain against classic Zod too small  | less than 50% lower                  | 81.6% lower (23.05 ms to 4.24 ms)                                         | no    |
+| `k` not clearly better than the `zod/mini` gain | within 10 points                     | `zod/mini` 42.2%, `k` 81.6%                                               | no    |
+| `k` costs too much over plain `v.*`             | more than 15% slower                 | 30% faster to declare; 12.6% slower when every native validator is forced | no    |
+| Type cost regresses                             | more instantiations than classic Zod | 220,395 against 1,319,951                                                 | no    |
 
-The same conditions on the final `k` (table above): 79.9% lower than classic Zod (23.12 ms to 4.64 ms); `zod/mini` 41.9% against `k` 79.9%; 24.1% faster than `v.*` to declare and 22.7% slower when every native validator is forced; 240,646 instantiations against 1,319,951.
+The same conditions on the final `k` (table above): 79.6% lower than classic Zod (23.44 ms to 4.78 ms); `zod/mini` 41.6% against `k` 79.6%; 23.4% faster than `v.*` to declare and 21.5% slower when every native validator is forced; 241,745 instantiations against 1,319,951.
 
 ## What did not improve or got worse
 
-- The finished `k` is larger and slower than the prototype the gate passed on. On the real module's graph, `src/k` grew from 4.7 KB to 29.3 KB of the bundle, declare time from 4.24 ms to 4.64 ms, forced-native time from 7.23 ms to 7.84 ms and instantiations from 220,395 to 240,646. On the synthetic workload the `k` bundle went from 264.3 KB to 288.4 KB, which is now 11.9 KB more than plain `v.*` (276.5 KB).
-- With every native validator forced, `k` is 13.8% slower than plain `v.*` on the synthetic workload (11.56 ms against 10.16 ms) and 22.7% slower on the real module's graph (7.84 ms against 6.39 ms). The second figure is above the gate's 15% threshold; the gate was decided on declare time, where `k` is faster than `v.*` (4.64 ms against 6.11 ms).
-- Building validators on first read is not faster. In the full app, building `listPayments`'s validators takes 3.32 ms against 3.04 ms in v1 (+9.0%, eager). In the request fixture, exporting all five functions' validators takes 0.67 ms against 0.61 ms (+9.8%, eager) and 0.85 ms against 0.94 ms (-9.6%, getter): the deploy-analysis cost is the same within noise.
-- `defineRelations` is slower: 1.78 ms against 1.52 ms (+17.1%, eager) and 1.79 ms against 1.53 ms (getter).
-- `contractsAndAuth` is unchanged (0.26 ms against 0.25 ms), and auth construction in the request fixture is 0.15 ms against 0.13 ms.
-- The warm call is 8.3% (eager) to 10.1% (getter) faster; a call spends most of its time in the auth and row-level-security wrappers, and in production Convex checks argument structure outside the isolate.
-- The kit's own code is not smaller. cvx-kit contributes 125,546 bytes to the v2 app bundle against 124,794 in v1 (+0.6%); the bundle shrinks because Zod (596,021 bytes), its ESM glue and part of `convex-helpers` leave it.
-- In the request fixture the v2 getter variant retains more heap than the v2 eager variant (1.51 MB against 0.97 MB), unlike v1 (4.21 MB against 4.28 MB). This was not investigated.
+- The finished `k` is larger and slower than the prototype the gate passed on. On the real module's graph, `k`'s own code grew from 4.7 KB to 31,425 bytes of the bundle, declare time from 4.24 ms to 4.78 ms, forced-native time from 7.23 ms to 7.98 ms and instantiations from 220,395 to 241,745. On the synthetic workload the `k` bundle went from 264.3 KB to 290.4 KB, which is now 13.9 KB more than plain `v.*` (276.5 KB).
+- With every native validator forced, `k` is 13.8% slower than plain `v.*` on the synthetic workload (11.82 ms against 10.39 ms) and 21.5% slower on the real module's graph (7.98 ms against 6.57 ms). The second figure is above the gate's 15% threshold; the gate was decided on declare time, where `k` is faster than `v.*` (4.78 ms against 6.24 ms).
+- Building validators on first read is not faster. In the full app, building `listPayments`'s validators takes 3.46 ms against 3.10 ms in v1 (+11.8%, eager). In the request fixture, exporting all five functions' validators takes 0.73 ms against 0.64 ms (+14.9%, eager) and 0.88 ms against 0.95 ms (-8.0%, getter).
+- Registration in the getter variant of the full app takes 0.49 ms against 0.25 ms in v1. Both are under half a millisecond; in the eager variant registration is 2.80 ms against 10.28 ms.
+- `contractsAndAuth` is unchanged (0.27 ms against 0.26 ms eager), and auth construction in the request fixture is 0.16 ms against 0.14 ms.
+- The warm call is 6.8% (eager) to 9.4% (getter) faster; a call spends most of its time in the auth and row-level-security wrappers, and in production Convex checks argument structure outside the isolate.
+- The kit's own code is not smaller. cvx-kit contributes 128,181 bytes to the v2 app bundle against 124,794 in v1 (+2.7%); the bundle shrinks because Zod (596,021 bytes), its ESM glue and part of `convex-helpers` leave it.
+
+`defineRelations`, which an earlier run of this record listed as slower, is now faster than v1 (1.20 ms against 1.59 ms eager, -24.5%), since variant common fields and field references are computed on first read.
 
 ## Limits of the measurement
 

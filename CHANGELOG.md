@@ -28,6 +28,11 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `k.number()` accepts `NaN` and infinities, as native `v.number()` does, and `int()` no longer caps at the safe-integer range.
 - Out-of-range search options fail with `VALIDATION` instead of `SearchError('SEARCH_OPTIONS_UNSUPPORTED')`.
 - `AgentToolRecord.args` is a `k` schema; `approvalCallbackInput` is a `k` object and `approvalCallbackArgs` its native validator.
+- `k.record` keys must satisfy Convex's record-key rule after normalisation (non-empty, at most 1024 characters, printable ASCII, not starting with `$` or `_`); others fail with `invalid_format` at that key.
+- `k.timestamp()` accepts 1970-01-01T00:00:00.000Z through 9999-12-31T23:59:59.999Z; date conversions outside that range report an `invalid_value` issue instead of throwing.
+- Containers passed to `k.enum`, `k.union`, `k.discriminatedUnion`, `k.record` and `refine` options are frozen at declaration, and an object's field map is frozen when `.shape` is first read; `withFieldGroups` copies and freezes its map. Mutating a shared array or field object afterwards throws.
+- A `k.discriminatedUnion` whose options share a discriminator value throws when first used.
+- `k.input` of `k.object({})` is `{ readonly [key: string]: never }`, so an empty input rejects extra properties at the type level.
 
 ### Added
 
@@ -46,6 +51,13 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `toPublicDto` re-checks structure only; it no longer re-runs normalisers on stored values.
 - The `cvx-kit/oxlint` rules recognise `k`, `kTable`, `kVariantTable` and `cvx-kit/table`.
 - Relation helpers are memoised and immutable, and no longer depend on a list of audited Zod versions.
+- `min`, `max` and `length` reject `NaN`, and `.int()`/`k.int()` reject `NaN` and infinities; a bare `k.number()` still accepts both.
+- Async `transform` and `overwrite` callbacks fail with an issue, as async `refine` and `check` do.
+- `toZod` converts defaults to Zod's `prefault`, so they run through the rest of the chain as in `k`, and `partial()` fields carry no default.
+- `toJsonSchema` keeps the strongest of repeated bounds, emits extra `regex` checks as `allOf` patterns, and bounds timestamps.
+- With `skipConvexValidation`, the kit validates customization-declared args before the customization's `input` runs.
+- Pagination budgets (`maximumRowsRead`, `maximumBytesRead`) and search `numItems` are safe integers, and the Effect CRUD list `id` is finite, as in 0.1.x.
+- An Effect builder's registered return type is the handler's value when that satisfies `returns`, and the `returns` output otherwise.
 
 ### Removed
 
@@ -53,7 +65,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 
 ### Performance
 
-- Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On the representative benchmark app (about 30 tables, relations, contracts and auth), a function module's bundle fell from 815.8 KB to 218.1 KB, its load time from 27.42 ms to 7.89 ms and its retained heap from 9.36 MB to 2.12 MB. On one consumer app's schema graph, declaring the schemas on import fell from 23.12 ms to 4.64 ms. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
+- Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On the representative benchmark app (about 30 tables, relations, contracts and auth), a function module's bundle fell from 815.8 KB to 220.6 KB, its load time from 28.34 ms to 7.97 ms and its retained heap from 9.37 MB to 2.03 MB. On one consumer app's schema graph, declaring the schemas on import fell from 23.44 ms to 4.78 ms. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
 
 ## [0.1.35] - 2026-11-25
 

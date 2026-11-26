@@ -54,20 +54,37 @@ export type Document = k.infer<typeof documentInput> // status required
 | `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                           | `v.id('table')`                                                     |
 | `k.array(element)`                       | an array                                                                    | `v.array(...)`                                                      |
 | `k.object(fields)`                       | a plain object with exactly these keys                                      | `v.object(...)`                                                     |
-| `k.record(key, value)`                   | a plain object; `key` is a string schema                                    | `v.record(...)`                                                     |
+| `k.record(key, value)`                   | a plain object; `key` is a string schema; see [Records](#records)           | `v.record(...)`                                                     |
 | `k.union([a, b, ...])`                   | the first member that parses (two or more members)                          | `v.union(...)`                                                      |
-| `k.discriminatedUnion(key, [a, b, ...])` | the option whose `key` field (a literal or enum) matches                    | `v.union(...)` of the objects                                       |
+| `k.discriminatedUnion(key, [a, b, ...])` | the option whose `key` field (a literal or enum) matches; values unique     | `v.union(...)` of the objects                                       |
 | `k.isoDate()`                            | `YYYY-MM-DD` naming a real calendar day                                     | `v.string()`                                                        |
 | `k.isoDateTime()`                        | ISO 8601 date-time with seconds and a `Z` or `±HH:MM` offset                | `v.string()`                                                        |
-| `k.timestamp()`                          | integer milliseconds, not negative, within the safe-integer range           | `v.number()`                                                        |
+| `k.timestamp()`                          | integer milliseconds from 1970-01-01 through the end of 9999 (UTC)          | `v.number()`                                                        |
 
 Argument-less factories return one shared, immutable root, so `k.string()` allocates nothing.
 
-`k.number()` accepts `NaN` and infinities because native `v.number()` does. Add a check when the value must be finite:
+`k.number()` accepts `NaN` and infinities because native `v.number()` does. `min`, `max` and `length` reject `NaN`, and `.int()` and `k.int()` reject both `NaN` and infinities. Add a check when an unbounded number must be finite:
 
 ```ts
 const amount = k.number().refine(Number.isFinite, 'Expected a finite number')
 ```
+
+### Records
+
+After the key schema has run (including normalisers such as `trim`), each key must also satisfy Convex's record-key rule: non-empty, at most 1024 characters, printable ASCII, and not starting with `$` or `_`. A key that breaks the rule fails with an `invalid_format` issue at that key's path. Parse writes every output key as an own property, so a key such as `__proto__` cannot reach a prototype.
+
+### Discriminated unions
+
+Each discriminator value must belong to one option. Two options that share a value (two equal literals, or an enum that overlaps another option's literal) make the schema throw when it is first used, for example on the first `parse` or the first call of a function that declares it. Declaring it does not throw.
+
+### Immutability
+
+Schemas are immutable, and so are the containers they hold:
+
+- The arrays and objects passed to `k.enum`, `k.union`, `k.discriminatedUnion` and `k.record`, and the options object (and its `path`) passed to `refine`, are frozen at declaration.
+- An object's field map is frozen the first time `.shape` is read, including the field map of a `pick`, `omit`, `extend` or `partial` result.
+
+A shared array or field object therefore becomes read-only: a later `push` or property assignment throws in strict mode. Spreading it (`[...STATUSES, 'archived']`, `{ ...fields, extra }`) and `.extend(...)` still work. Do not mutate a field object after passing it to `k.object`.
 
 ## Chain methods
 
@@ -94,7 +111,7 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 
 Checks and normalisers run in declaration order after the structure is valid: normalisers first, then checks. Messages are optional; each check has a default message.
 
-Refinements and checks are synchronous. A `refine` callback that returns a promise fails with an `Invalid input` issue, and a `check` that returns one adds `A check must be synchronous`. Do asynchronous work in the handler.
+Refinements, checks, normalisers and transforms are synchronous. A `refine` callback that returns a promise fails with an `Invalid input` issue, a `check` that returns one adds `A check must be synchronous`, and a `transform` or `overwrite` that returns one fails with a `custom` issue saying async callbacks are not supported. Do asynchronous work in the handler.
 
 ```ts
 const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
@@ -160,6 +177,8 @@ The date schemas have no dependency and use UTC.
 | `k.isoDateTime()` | `.toTimestamp()` → milliseconds                                                    |
 | `k.timestamp()`   | `.toIsoDateTime()` → `YYYY-MM-DDTHH:mm:ss.sssZ`; `.toIsoDate()` → UTC `YYYY-MM-DD` |
 
+`k.timestamp()` accepts 1970-01-01T00:00:00.000Z through 9999-12-31T23:59:59.999Z (0 through 253402300799999); a negative value is `too_small` and a later one `too_big`. A conversion whose result falls outside that range, such as `k.isoDate().toTimestamp()` on `'1969-12-31'`, reports an `invalid_value` issue instead of throwing.
+
 The conversions are transforms, so table fields reject them. Store the ISO string or the timestamp and convert in args:
 
 ```ts
@@ -203,7 +222,7 @@ function issuesOf(error: unknown) {
 | `NativeOf<typeof S>`                       | the input-side native validator type                                                                         |
 | `OutputNativeOf<typeof S>`                 | the output-side native validator type                                                                        |
 
-Input and output types differ only for a schema that declares a default or a transform. Ids are branded on input too: a caller passes an `Id<'users'>`, not a plain string.
+Input and output types differ only for a schema that declares a default or a transform. `k.input` of an object with no fields, `k.object({})`, is `{ readonly [key: string]: never }`, so an empty command input rejects extra properties at the type level. Ids are branded on input too: a caller passes an `Id<'users'>`, not a plain string.
 
 ## Native validators
 
@@ -218,7 +237,7 @@ Every `k` schema implements Standard Schema v1 (`schema['~standard']`, vendor `c
 
 ## JSON Schema
 
-`toJsonSchema(schema, { $schema? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and objects have `additionalProperties: false`. Custom refinements are omitted. The entry is separate, so function bundles that do not import it do not load it.
+`toJsonSchema(schema, { $schema? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and objects have `additionalProperties: false`. Repeated bounds keep the strongest one (`.min(2).min(5)` emits `minLength: 5`), and several `regex` checks emit the first as `pattern` and the rest as `allOf` patterns. Timestamps carry `maximum: 253402300799999`. Custom refinements are omitted. The entry is separate, so function bundles that do not import it do not load it.
 
 ```ts
 import { toJsonSchema } from 'cvx-kit/json-schema'
@@ -237,7 +256,7 @@ const zodSchema = toZod(documentInput)
 const same = documentInput.toZod()
 ```
 
-Carried: structure, strict objects (`strip()` objects strip), ids with their table typing (through convex-helpers' `zid`), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps and descriptions. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod into that bundle, so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
+Carried: structure, strict objects (`strip()` objects strip), ids with their table typing (through convex-helpers' `zid`), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod into that bundle, so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
 
 ## Performance model
 

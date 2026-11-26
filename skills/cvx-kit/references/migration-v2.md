@@ -296,7 +296,7 @@ What to do: normalise external strings with `ctx.db.normalizeId('table', raw)` o
 
 ### Numbers accept NaN and Infinity
 
-`k.number()` accepts `NaN` and `±Infinity`, as native `v.number()` does; `z.number()` rejected them. `k.int()` and `.int()` check `Number.isInteger` and no longer cap at the safe-integer range.
+A bare `k.number()` accepts `NaN` and `±Infinity`, as native `v.number()` does; `z.number()` rejected them. Any `min`, `max` or `length` bound rejects `NaN`, and `k.int()` and `.int()` reject both `NaN` and infinities. `.int()` checks `Number.isInteger` and no longer caps at the safe-integer range.
 
 ```ts
 const amount = k.number().refine(Number.isFinite, 'Expected a finite number')
@@ -306,6 +306,32 @@ const count = k.int().refine(Number.isSafeInteger, 'Expected a safe integer')
 ### Dates
 
 `k.isoDate()`, `k.isoDateTime()` and `k.timestamp()` replace `z.iso.date()`, `z.iso.datetime()` and hand-written timestamp checks, with conversions (`toTimestamp()`, `toIsoDate()`, `toIsoDateTime()`) on input positions only. There is no date library in the kit. See [k](k.md#dates).
+
+`k.timestamp()` accepts 1970-01-01T00:00:00.000Z through 9999-12-31T23:59:59.999Z only. A negative timestamp fails with `too_small`, so do not use `k.timestamp()` for dates before 1970; use `k.number().int()` or store an ISO string. A conversion outside the range, such as `k.isoDate().toTimestamp()` on `'1969-12-31'`, reports an `invalid_value` issue instead of throwing.
+
+### Record keys follow Convex's rule
+
+After the key schema runs (including normalisers), each `k.record` key must be non-empty, at most 1024 characters, printable ASCII, and must not start with `$` or `_`. Otherwise parse reports an `invalid_format` issue at that key. Convex already rejected such keys on write, so the error now comes from the kit before the write. A key normaliser such as `.toLowerCase()` that produces a key Convex would reject fails the same way.
+
+### Shared arrays and field objects become read-only
+
+Arrays and objects handed to `k.enum`, `k.union`, `k.discriminatedUnion`, `k.record` and `refine` options are frozen at declaration, and an object's field map is frozen the first time `.shape` is read. `k` holds them by reference rather than copying them. Code that later mutates a shared vocabulary tuple or field object (`STATUSES.push(...)`, `fields.extra = ...`) now throws in strict mode.
+
+```ts
+const STATUSES = ['open', 'done'] as const
+const status = k.enum(STATUSES) // STATUSES is now frozen
+const extended = k.enum([...STATUSES, 'archived'] as const) // spreading still works
+```
+
+Build a new array or object instead, or use `.extend(...)` for objects.
+
+### Discriminator values must be unique
+
+A `k.discriminatedUnion` whose options share a value (two equal literals, or an enum that overlaps another option's literal) throws when it is first used, for example on the first `parse` or the first call of a function that declares it. Run each such schema once in a test so the error shows in CI.
+
+### An empty object input accepts no keys
+
+For `const empty = k.object({})`, `k.input<typeof empty>` is `{ readonly [key: string]: never }`, so passing extra properties to an empty command input is a type error, as it was with a strict empty Zod object.
 
 ### Relations and querying
 
@@ -331,6 +357,10 @@ returns: k.object({ ok: k.literal(true) }),
 ### Agent tools
 
 `AgentToolRecord.args` is a `k` schema. It implements Standard Schema v1 and parses with `args.parse`. Convert it for the agent library: `toJsonSchema(record.args)` from `cvx-kit/json-schema` for libraries that take JSON Schema, or `toZod(record.args)` from `cvx-kit/zod` for libraries that take Zod. See [agent-tools](agent-tools.md).
+
+### Zod interop
+
+`toZod(schema)` maps a `k` default to Zod's `prefault`, so the default runs through the rest of the chain (normalisers and checks) as it does in `k`; Zod's `default` would skip them. A `partial()` field converts without its default, matching `k`, where a partial field stays omitted.
 
 ### Components
 
@@ -485,4 +515,4 @@ No data migration is expected: the stored shape and indexes are unchanged. If `n
 
 ## Measured results
 
-The benchmark record is `docs/benchmarks/validators.md` in the repository. On one consumer app's finance-contract schema graph (350 schemas), declaring the schemas on import fell from 23.12 ms with classic Zod to 4.64 ms with `k` (79.9% lower), and retained heap from 10.56 MB to 1.61 MB. On the representative benchmark app a function module's bundle fell from 815.8 KB to 218.1 KB and its load time from 27.42 ms to 7.89 ms.
+The benchmark record is `docs/benchmarks/validators.md` in the repository. On one consumer app's finance-contract schema graph (350 schemas), declaring the schemas on import fell from 23.44 ms with classic Zod to 4.78 ms with `k` (79.6% lower), and retained heap from 10.56 MB to 1.61 MB. On the representative benchmark app a function module's bundle fell from 815.8 KB to 220.6 KB and its load time from 28.34 ms to 7.97 ms.

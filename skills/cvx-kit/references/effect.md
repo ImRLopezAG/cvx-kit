@@ -460,6 +460,18 @@ operations skip the same failure value. So a nested registry's own code
 survives, and a nested failure that a parent recovers from is still reported.
 Errors thrown by `emit` are ignored; the original failure is unchanged.
 
+Set `argumentFailure` on `createEffectFoundation` to control command and
+query `input` rejections. `'validation'` (the default) keeps the decoder's own
+failure: a `k` input fails with `KValidationError`, and the API adapter throws it
+to the client as `{ code: 'VALIDATION', issues }` even when an `errors`
+projection is configured. An Effect Schema or Standard Schema input keeps its
+typed failure. `'declared'` throws `INVALID_ARGUMENTS` and reports one entry
+with `declared: true`. The default and custom policies report validation
+failures as `UNKNOWN_FAILURE`.
+Input and details redactors are skipped for these entries. See
+[argument validation failures](client-failures.md#argument-validation-failures)
+for client decoding and custom policy hooks.
+
 ## Raising and recovering declared errors
 
 `effectErrors(contract)` binds `fail` and `attempt` to one declared error

@@ -3,6 +3,8 @@ import { memoize, registerLazyRegistry } from '../contracts/lazy'
 import { Cause, Effect, Exit } from 'effect'
 import type { AuditEntryInput } from '../../components/foundation/client'
 import type { ContractSchema } from '../contracts/contract'
+import type { ArgumentFailurePolicy } from '../contracts/errors'
+import { decodeOperationInput } from './input'
 import {
 	selectOperation,
 	type SelectedOperation,
@@ -99,6 +101,8 @@ export type EffectCommandDependencies = {
 	nestedAudit?: NestedAuditMode
 	/** Host-free sink for failed operations; see `FailureAuditOptions`. */
 	auditFailure?: FailureAuditOptions
+	/** How command input validation failures are thrown. */
+	argumentFailure?: ArgumentFailurePolicy
 }
 export type HostParameter<Policy> = [Exclude<Policy, undefined>] extends [never]
 	? unknown
@@ -228,11 +232,17 @@ export function createEffectCommand<
 					EffectOperationHandlerResult<Operations[Key]>,
 					EffectOperationResult<Operations[Key]>
 				>
-			// SAFETY: selected command input was parsed by its own paired schema.
-			return Effect.flatMap(decodeEffectContract(definition.input, input), (decoded) => {
+			const classification = definition.classification ?? kind
+			const decodedInput = decodeOperationInput(
+				definition.input,
+				input,
+				configuration.argumentFailure,
+				configuration.auditFailure,
+				{ kind, operation, classification },
+			)
+			return Effect.flatMap(decodedInput, (decoded) => {
 				// SAFETY: the selected operation's decoder owns this concrete domain input.
 				const command = decoded as EffectOperationInput<Operations[Key]>
-				const classification = definition.classification ?? kind
 				const audit = definition.audit
 				const observation = configuration.observability.start({ operation, classification })
 				// SAFETY: resolver identity owns its concrete invocation return and host parameter.

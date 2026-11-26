@@ -2,6 +2,8 @@ import { memoize, registerLazyRegistry } from '../contracts/lazy'
 /* oxlint-disable anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- Overload implementation storage is erased; public signatures retain concrete values, errors and services. */
 import { Effect, Exit } from 'effect'
 import type { ContractSchema } from '../contracts/contract'
+import type { ArgumentFailurePolicy } from '../contracts/errors'
+import { decodeOperationInput } from './input'
 import {
 	selectOperation,
 	type SelectedOperation,
@@ -116,6 +118,7 @@ export function createEffectQuery<
 	defaults?: { metadata?: object; guard?: (context: EffectValue<ContextReturned>) => GuardReturned }
 	observability?: ObservabilityOptions | Observability
 	auditFailure?: FailureAuditOptions
+	argumentFailure?: ArgumentFailurePolicy
 	contract?: Pick<DomainContract, 'errors'>
 }) {
 	const definitions = effectOperationFactory<
@@ -155,11 +158,16 @@ export function createEffectQuery<
 			}
 			// SAFETY: operation helpers check hooks before this heterogeneous storage seam.
 			const definition: QueryDefinition = operations[operation]
-			return Effect.flatMap(decodeEffectContract(definition.input, input), (parsedInput) => {
-				const observation = observability.start({
-					operation,
-					classification: definition.classification ?? 'query',
-				})
+			const classification = definition.classification ?? 'query'
+			const decodedInput = decodeOperationInput(
+				definition.input,
+				input,
+				configuration.argumentFailure,
+				configuration.auditFailure,
+				{ kind: 'query', operation, classification },
+			)
+			return Effect.flatMap(decodedInput, (parsedInput) => {
+				const observation = observability.start({ operation, classification })
 				const run = Effect.gen(function* () {
 					if (definition.permission !== undefined) {
 						const check = configuration.checkPermission
@@ -221,9 +229,11 @@ export function createEffectQuery<
 									reportFailure(configuration.auditFailure, exit, {
 										kind: 'query',
 										operation,
-										classification: definition.classification ?? 'query',
+										classification,
 										input: parsedInput,
-										contract: configuration.contract?.errors,
+										get contract() {
+											return configuration.contract?.errors
+										},
 										entered,
 										current,
 									}),
@@ -286,6 +296,7 @@ type PolicyReturned<Dependencies> = CallbackReturned<Policy<Dependencies>>
 export type EffectQueryDependencies = {
 	observability: Observability
 	auditFailure?: FailureAuditOptions
+	argumentFailure?: ArgumentFailurePolicy
 	// oxlint-disable-next-line anti-slop/no-unknown-returns -- Host policy storage is erased; the bound generic dependency retains its concrete E/R.
 	checkPermission?: (host: never, input: { permission: string; operation: string }) => unknown
 }

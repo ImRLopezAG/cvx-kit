@@ -87,6 +87,18 @@ const auth = createAuthFunctions({ ...config, argumentFailure: 'declared' })
 - `(failure) => thrown`: receives `{ source: 'arguments' | 'filter', issues }` and
   returns the value to throw, e.g. `appErrors.toConvexError('INVALID_INPUT', {})`.
 
+`createEffectAuthFunctions(config, options)` uses the same auth config
+for endpoint Zod arguments and compact filters. Configure
+`createEffectFoundation({ argumentFailure, ... })` for command and query
+`input` schema failures, including direct and nested `exec`. Under
+`'legacy'` the decoder's original failure is preserved, so endpoints
+with a declared errors projector continue to emit `UnknownFailure`
+for validation errors. The other policies throw the declared envelope
+or the hook's return value through the Effect API adapter. Hooks receive
+`source: 'arguments'` for operation input.
+
+The same option on `createEffectFoundation` covers Effect command, query and action `input` schemas.
+
 Issues are an allowlist of `{ path, code, message }`, capped by `ARGUMENT_ISSUE_LIMITS`
 (20 issues, 32 path segments, 256-char messages, 32 KB in total). The kit never adds the
 rejected value. Messages and path segments are the schema's own, as in the default payload,

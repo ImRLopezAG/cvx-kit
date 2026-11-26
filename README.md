@@ -370,6 +370,12 @@ issues, never the input), or a function returning the value to throw. Decode it
 with `combineErrorContracts(appErrors, argumentErrors)` from `cvx-kit/errors`; see
 [client failures](skills/cvx-kit/references/client-failures.md#argument-validation-failures).
 
+Set `argumentFailure` on `createEffectFoundation` for Effect command and query
+`input` validation, including direct `exec` calls. The default preserves the
+decoder failure (`UnknownFailure` at endpoints with declared error projection).
+Opt in to `'declared'` or supply a hook that receives
+`{ source: 'arguments', issues }` and returns the value to throw.
+
 For manual projection, `tasks.toPublicDto(row)` still omits IDs and unselected
 storage fields. `tasks.toPublicDto(row, true)` or `{ _id: true }` adds the branded
 ID only. Computed extensions use matching schemas:

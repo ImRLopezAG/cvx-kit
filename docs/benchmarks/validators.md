@@ -262,3 +262,13 @@ Most of the kit code in the app module is used by it: `relations.ts` (34.9 KB), 
 Relations were already per-table lazy: defining the app's relations reads each referenced table's `k` schema for its field names (all 30 tables here, because the app's edges name all of them) and builds no native validator; a first `paginationOpts` or `pageDto` on `payments` reads the native table and DTO of `payments` only. `test/relations-lazy.test.ts` (R22) pins this, so that phase changed nothing.
 
 On the request fixture (`node scripts/bench-request.mjs`), the v2 bundle fell from 190.5 KB to 189.7 KB; the session's first run of that bench was taken under load, so its timings are not compared.
+
+## Scalar wrappers and deferred filter predicates
+
+Two small follow-ups, measured on the synthetic workload in one session (medians of 15):
+
+- Argument-less scalar roots carry a prebuilt native validator, and chains that do not change the native shape reuse it. Building every native validator through `k` went from 14.60 to 13.29 ms, while plain `v.*` in the same runs went from 12.80 to 11.37 ms, so the gap to `v.*` did not close (about 17%); the target of 5% was not reached. A CPU profile put the remaining kit time mostly in building object fields.
+- `paginationOpts` checks its selection at the call and builds each field's operator schema on first use. Declaring a selection of two fields and a related table with two fields went from 54 chain records to 4, and from about 0.007 to 0.003 ms.
+
+Accepting native `v` validators as children of `k` containers was built and left out: it raised the app fixture from 254,719 to 279,371 `tsc` instantiations (+9.7%). Native validators remain accepted at the top level of a function's `args`.
+

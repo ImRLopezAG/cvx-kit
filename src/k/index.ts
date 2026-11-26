@@ -30,5 +30,5 @@ export const k = {
 export declare namespace k {
 	type infer<T extends KType> = T['_output']
 	type output<T extends KType> = T['_output']
-	type input<T extends KType> = T['_input']
+	type input<T extends KType> = T['validator']['type']
 }

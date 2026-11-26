@@ -1,33 +1,4 @@
-import type {
-	GenericValidator,
-	OptionalProperty,
-	VArray,
-	VBoolean,
-	VFloat64,
-	VId,
-	VLiteral,
-	VNull,
-	VObject,
-	VString,
-	VUnion,
-	Value,
-} from 'convex/values'
-
-/** Type-level tag of a schema class; chained checks keep the tag of their predecessor. */
-export type KKind =
-	| 'string'
-	| 'number'
-	| 'boolean'
-	| 'null'
-	| 'literal'
-	| 'enum'
-	| 'id'
-	| 'array'
-	| 'object'
-	| 'union'
-	| 'optional'
-	| 'nullable'
-	| 'default'
+import type { GenericValidator, Validator, Value } from 'convex/values'
 
 /** Runtime record operation. Roots (`prev === null`) carry a kind op; every other record carries a chain op. */
 export type KOp =
@@ -51,11 +22,19 @@ export type KOp =
 	| 'nullable'
 	| 'default'
 
-/** Minimal structural constraint for any `k` schema. Kept free of `validator` so constraint checks never evaluate `NativeOf`. */
+export type KRequiredValidator = Validator<any, 'required', any>
+
+/**
+ * Structural constraint for any `k` schema. Every member is a plain read of a class type argument:
+ * `_req` is the required native validator, `validator` the input-side one (optional when the chain is
+ * optional or defaulted) and `_d` whether a default sits anywhere inside, which is the only case where
+ * the output type differs from the native validator's type.
+ */
 export interface KType {
-	readonly _kind: KKind
 	readonly _output: any
-	readonly _input: any
+	readonly _req: KRequiredValidator
+	readonly _d: boolean
+	readonly validator: GenericValidator
 }
 
 export type KFields = Readonly<Record<string, KType>>
@@ -74,6 +53,14 @@ export type KArg =
 	| KFields
 	| KRefinement
 
+/** Input-side native Convex validator type of a `k` schema: a defaulted field is optional. */
+export type NativeOf<T extends KType> = T['validator']
+
+export type KNativeFields<F extends KFields> = { [K in keyof F]: F[K]['validator'] }
+
+export type KHasDefault<F extends KFields> = true extends F[keyof F]['_d'] ? true : false
+
+/** Output of an object that holds a default somewhere: a defaulted field is required. */
 export type KObjectOutput<F extends KFields> = Flat<
 	{
 		[K in keyof F as undefined extends F[K]['_output'] ? K : never]?: Exclude<
@@ -82,77 +69,5 @@ export type KObjectOutput<F extends KFields> = Flat<
 		>
 	} & { [K in keyof F as undefined extends F[K]['_output'] ? never : K]: F[K]['_output'] }
 >
-
-export type KObjectInput<F extends KFields> = Flat<
-	{
-		[K in keyof F as undefined extends F[K]['_input'] ? K : never]?: Exclude<
-			F[K]['_input'],
-			undefined
-		>
-	} & { [K in keyof F as undefined extends F[K]['_input'] ? never : K]: F[K]['_input'] }
->
-
-/** Input-side native Convex validator type of a `k` schema: a defaulted field is optional. */
-export type NativeOf<T extends KType> = T extends {
-	readonly _kind: 'optional' | 'default'
-	readonly _def: infer I extends KType
-}
-	? Build<I, 'optional', T['_input']>
-	: Build<T, 'required', T['_input']>
-
-type Build<T extends KType, O extends OptionalProperty, Type> = T extends {
-	readonly _kind: 'string'
-}
-	? VString<Type, O>
-	: T extends { readonly _kind: 'number' }
-		? VFloat64<Type, O>
-		: T extends { readonly _kind: 'object'; readonly _def: infer F extends KFields }
-			? VObject<Type, NativeFields<F>, O, FieldPathsOf<F>>
-			: T extends { readonly _kind: 'id' }
-				? VId<Type, O>
-				: T extends { readonly _kind: 'boolean' }
-					? VBoolean<Type, O>
-					: T extends { readonly _kind: 'literal' }
-						? VLiteral<Type, O>
-						: T extends { readonly _kind: 'enum'; readonly _def: infer V extends readonly string[] }
-							? V extends readonly [string]
-								? VLiteral<Type, O>
-								: VUnion<Type, { -readonly [I in keyof V]: VLiteral<V[I]> }, O>
-							: T extends { readonly _kind: 'array'; readonly _def: infer E extends KType }
-								? VArray<Type, Build<E, 'required', E['_input']>, O>
-								: T extends { readonly _kind: 'nullable'; readonly _def: infer I extends KType }
-									? VUnion<Type, [Build<I, 'required', I['_input']>, VNull<null>], O>
-									: T extends {
-												readonly _kind: 'union'
-												readonly _def: infer M extends readonly KType[]
-										  }
-										? VUnion<
-												Type,
-												{ -readonly [I in keyof M]: Build<M[I], 'required', M[I]['_input']> },
-												O
-											>
-										: T extends { readonly _kind: 'null' }
-											? VNull<Type, O>
-											: GenericValidator
-
-type NativeFields<F extends KFields> = { [K in keyof F]: NativeOf<F[K]> }
-
-type FieldPathsOf<F extends KFields> = {
-	[K in keyof F & string]: K | `${K}.${NestedPaths<F[K]>}`
-}[keyof F & string]
-
-type NestedPaths<T extends KType> = T extends {
-	readonly _kind: 'object'
-	readonly _def: infer F extends KFields
-}
-	? FieldPathsOf<F>
-	: T extends {
-				readonly _kind: 'optional' | 'default' | 'nullable'
-				readonly _def: infer I extends KType
-		  }
-		? NestedPaths<I>
-		: T extends { readonly _kind: 'union'; readonly _def: infer M extends readonly KType[] }
-			? NestedPaths<M[number]>
-			: never
 
 type Flat<T> = { [K in keyof T]: T[K] }

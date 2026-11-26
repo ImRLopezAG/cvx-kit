@@ -98,6 +98,28 @@ const unionAssertions: [
 ] = [true, true, true]
 void unionAssertions
 
+const optionalNullable = k.string().optional().nullable()
+const nullableOptional = k.string().nullable().optional()
+const nested = k.object({
+	inner: k.object({ n: k.number().default(0) }),
+	list: k.array(k.boolean()),
+})
+type NullableString = VUnion<
+	string | null | undefined,
+	[VString<string>, VNull<null>],
+	'optional',
+	never
+>
+const wrapperAssertions: [
+	Assert<Equal<typeof optionalNullable.validator, NullableString>>,
+	Assert<Equal<typeof nullableOptional.validator, NullableString>>,
+	Assert<Equal<k.infer<typeof optionalNullable>, string | null | undefined>>,
+	Assert<Equal<k.input<typeof optionalNullable>, string | null | undefined>>,
+	Assert<Equal<k.infer<typeof nested>, { inner: { n: number }; list: boolean[] }>>,
+	Assert<Equal<k.input<typeof nested>, { inner: { n?: number }; list: boolean[] }>>,
+] = [true, true, true, true, true, true]
+void wrapperAssertions
+
 const tasks = defineTable(task.validator)
 	.index('by_owner', ['owner'])
 	.index('by_priority', ['meta.priority'])

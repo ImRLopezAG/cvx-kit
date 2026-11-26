@@ -2,14 +2,14 @@ import { v } from 'convex/values'
 import type { GenericValidator, ValidatorJSON } from 'convex/values'
 import { describe, expect, it } from 'vitest'
 import { k } from '../src/k/index'
-import { KSchema } from '../src/k/schema'
+import type { KType } from '../src/k/types'
 
 function nativeJson(validator: GenericValidator): string {
 	// SAFETY: Convex validators expose the json getter at runtime; declarations mark it internal.
 	return JSON.stringify((validator as GenericValidator & { readonly json: ValidatorJSON }).json)
 }
 
-function expectNative(schema: KSchema, expected: GenericValidator) {
+function expectNative(schema: KType, expected: GenericValidator) {
 	expect(nativeJson(schema.validator)).toBe(nativeJson(expected))
 	expect(schema.validator.isOptional).toBe(expected.isOptional)
 }
@@ -52,6 +52,17 @@ describe('k chain records', () => {
 		const first = schema.validator
 		expect(schema.native).toBe(first)
 		expect(schema.validator).toBe(first)
+	})
+
+	it('shares immutable argument-less roots and their native validator', () => {
+		expect(k.string()).toBe(k.string())
+		expect(k.int()).not.toBe(k.number())
+		const a = k.string().min(1)
+		const b = k.string().max(2)
+		expect(a.prev).toBe(b.prev)
+		expect(a.validator).toBe(b.validator)
+		expect(a.validator).toBe(k.string().validator)
+		expect(k.string().optional().validator).not.toBe(k.string().validator)
 	})
 
 	it('keeps methods on shared prototypes, not on instances', () => {

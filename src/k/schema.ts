@@ -1,23 +1,32 @@
-import type { GenericValidator } from 'convex/values'
+import type { GenericValidator, VNull, VUnion } from 'convex/values'
 import { compileNative } from './compile'
-import type { KArg, KKind, KOp, KRefinement, KType, NativeOf } from './types'
+import type { KArg, KOp, KRefinement, KRequiredValidator, KType } from './types'
 
 /**
  * An immutable chain record. A root has `prev === null` and a kind op; every chained call allocates one
  * record pointing at its predecessor. Nothing is compiled until `validator` is first read.
+ *
+ * Type arguments: `Out` the parsed output, `R` the required native validator, `D` whether a default
+ * sits inside, `N` the input-side native validator (`R` unless the chain is optional or defaulted).
  */
-export abstract class KSchema<Out = any, In = Out> implements KType {
-	declare readonly _kind: KKind
+export abstract class KSchema<
+	Out = any,
+	R extends KRequiredValidator = KRequiredValidator,
+	D extends boolean = false,
+	N extends GenericValidator = R,
+> implements KType {
 	declare readonly _output: Out
-	declare readonly _input: In
-	readonly prev: KSchema | null
+	declare readonly _input: N['type']
+	declare readonly _req: R
+	declare readonly _d: D
+	readonly prev: AnySchema | null
 	readonly op: KOp
 	readonly arg: KArg
 	readonly message: string | undefined
 	/** Memo slot for the input-side native validator; `undefined` until `validator` is read. */
 	native: GenericValidator | undefined
 
-	constructor(prev: KSchema | null, op: KOp, arg: KArg, message: string | undefined) {
+	constructor(prev: AnySchema | null, op: KOp, arg: KArg, message: string | undefined) {
 		this.prev = prev
 		this.op = op
 		this.arg = arg
@@ -25,9 +34,9 @@ export abstract class KSchema<Out = any, In = Out> implements KType {
 		this.native = undefined
 	}
 
-	get validator(): NativeOf<this> {
-		// SAFETY: compileNative builds the validator NativeOf derives from this record's kind and chain.
-		return (this.native ??= compileNative(this)) as NativeOf<this>
+	get validator(): N {
+		// SAFETY: compileNative builds the validator that this record's class declares as N.
+		return (this.native ??= compileNative(this)) as N
 	}
 
 	optional(): KOptional<this> {
@@ -38,12 +47,12 @@ export abstract class KSchema<Out = any, In = Out> implements KType {
 		return new KNullable(this, 'nullable', undefined, undefined)
 	}
 
-	default(value: Exclude<this['_output'], undefined>): KDefault<this> {
+	default(value: Exclude<Out, undefined>): KDefault<this> {
 		// SAFETY: a default is a Convex value of this schema's output type.
 		return new KDefault(this, 'default', value as KArg, undefined)
 	}
 
-	refine(check: (value: this['_output']) => boolean, message?: string): this {
+	refine(check: (value: Out) => boolean, message?: string): this {
 		// SAFETY: the refinement is only ever called with values this schema produced.
 		return this.link('refine', check as KRefinement, message)
 	}
@@ -51,7 +60,7 @@ export abstract class KSchema<Out = any, In = Out> implements KType {
 	protected link(op: KOp, arg: KArg, message: string | undefined): this {
 		// SAFETY: every subclass inherits this constructor unchanged, so the record keeps its predecessor's class.
 		const Next = this.constructor as new (
-			prev: KSchema,
+			prev: AnySchema,
 			op: KOp,
 			arg: KArg,
 			message: string | undefined,
@@ -60,23 +69,29 @@ export abstract class KSchema<Out = any, In = Out> implements KType {
 	}
 }
 
+export type AnySchema = KSchema<any, any, any, any>
+
 export class KOptional<I extends KType> extends KSchema<
 	I['_output'] | undefined,
-	I['_input'] | undefined
-> {
-	declare readonly _kind: 'optional'
-	declare readonly _def: I
-}
-
-export class KNullable<I extends KType> extends KSchema<I['_output'] | null, I['_input'] | null> {
-	declare readonly _kind: 'nullable'
-	declare readonly _def: I
-}
+	I['_req'],
+	I['_d'],
+	ReturnType<I['_req']['optional']>
+> {}
 
 export class KDefault<I extends KType> extends KSchema<
 	Exclude<I['_output'], undefined>,
-	I['_input'] | undefined
-> {
-	declare readonly _kind: 'default'
-	declare readonly _def: I
-}
+	I['_req'],
+	true,
+	ReturnType<I['_req']['optional']>
+> {}
+
+export class KNullable<I extends KType> extends KSchema<
+	I['_output'] | null,
+	NullableOf<I>,
+	I['_d'],
+	I['validator']['isOptional'] extends 'optional'
+		? ReturnType<NullableOf<I>['optional']>
+		: NullableOf<I>
+> {}
+
+type NullableOf<I extends KType> = VUnion<I['_req']['type'] | null, [I['_req'], VNull<null>]>

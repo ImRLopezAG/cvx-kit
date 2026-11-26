@@ -1,34 +1,31 @@
 import { v } from 'convex/values'
-import type { GenericValidator, PropertyValidators, Validator } from 'convex/values'
-import type { KSchema } from './schema'
-import type { KFields, KLiteralValue, KType } from './types'
+import type { GenericValidator, PropertyValidators } from 'convex/values'
+import type { AnySchema } from './schema'
+import type { KFields, KLiteralValue, KRequiredValidator } from './types'
 
-type RequiredValidator = Validator<any, 'required', any>
+/** Native validators are immutable, so every nullable shares one null member. */
+const nullNative = v.null()
 
-/** Build the input-side native validator for a chain record. A defaulted or optional chain is optional. */
-export function compileNative(node: KSchema): GenericValidator {
-	if (node.prev === null) return compileRoot(node)
-	const inner = requiredOf(node)
-	return isOptionalChain(node) ? v.optional(inner) : inner
-}
-
-function requiredOf(node: KSchema): RequiredValidator {
-	if (node.prev === null) {
-		// SAFETY: a root record is never optional; only optional/default records make a chain optional.
-		return node.validator as RequiredValidator
+/**
+ * Build the input-side native validator for a chain record in one walk to its root. The root's validator
+ * is memoised on the root, so check records reuse it; `nullable` wraps it and `optional`/`default` make it optional.
+ */
+export function compileNative(node: AnySchema): GenericValidator {
+	let optional = false
+	let nullable = false
+	let root = node
+	while (root.prev !== null) {
+		if (root.op === 'optional' || root.op === 'default') optional = true
+		else if (root.op === 'nullable') nullable = true
+		root = root.prev
 	}
-	if (node.op === 'nullable') return v.union(requiredOf(node.prev), v.null())
-	return requiredOf(node.prev)
+	// SAFETY: root validators are never optional; only optional/default records make a chain optional.
+	let native = (root.native ??= compileRoot(root)) as KRequiredValidator
+	if (nullable) native = v.union(native, nullNative)
+	return optional ? v.optional(native) : native
 }
 
-function isOptionalChain(node: KSchema): boolean {
-	for (let current: KSchema | null = node; current !== null; current = current.prev) {
-		if (current.op === 'optional' || current.op === 'default') return true
-	}
-	return false
-}
-
-function compileRoot(node: KSchema): RequiredValidator {
+function compileRoot(node: AnySchema): KRequiredValidator {
 	switch (node.op) {
 		case 'string':
 			return v.string()
@@ -50,34 +47,45 @@ function compileRoot(node: KSchema): RequiredValidator {
 			return compileEnum(node.arg as readonly string[])
 		case 'array':
 			// SAFETY: k.array stores its element schema as the root argument.
-			return v.array(requiredOf(node.arg as KSchema))
+			return v.array(requiredOf(node.arg as AnySchema))
 		case 'object':
 			// SAFETY: k.object stores its field schemas as the root argument.
 			return v.object(compileFields(node.arg as KFields))
 		case 'union':
 			// SAFETY: k.union stores its member schemas as the root argument.
-			return v.union(...(node.arg as readonly KSchema[]).map(requiredOf))
+			return v.union(...(node.arg as readonly AnySchema[]).map(requiredOf))
 		default:
 			throw new Error(`k: '${node.op}' is not a root operation`)
 	}
 }
 
-function compileEnum(values: readonly string[]): RequiredValidator {
-	if (values.length === 1) return v.literal(values[0])
-	return v.union(...values.map(literalOf))
+function requiredOf(node: AnySchema): KRequiredValidator {
+	const native = node.validator
+	// SAFETY: an optional validator's required form is rebuilt only for the rare optional array element or union member.
+	return native.isOptional === 'optional' ? requiredCopy(node) : (native as KRequiredValidator)
 }
 
-function literalOf(value: string): RequiredValidator {
-	return v.literal(value)
+function requiredCopy(node: AnySchema): KRequiredValidator {
+	let nullable = false
+	let root = node
+	while (root.prev !== null) {
+		if (root.op === 'nullable') nullable = true
+		root = root.prev
+	}
+	// SAFETY: root validators are never optional.
+	const native = root.validator as KRequiredValidator
+	return nullable ? v.union(native, nullNative) : native
+}
+
+function compileEnum(values: readonly string[]): KRequiredValidator {
+	if (values.length === 1) return v.literal(values[0])
+	const members: KRequiredValidator[] = []
+	for (const value of values) members.push(v.literal(value))
+	return v.union(...members)
 }
 
 function compileFields(fields: KFields): PropertyValidators {
 	const out: Record<string, GenericValidator> = {}
-	for (const key in fields) out[key] = validatorOf(fields[key])
+	for (const key in fields) out[key] = fields[key].validator
 	return out
-}
-
-function validatorOf(field: KType): GenericValidator {
-	// SAFETY: every KType value at runtime is a KSchema instance created by a k factory.
-	return (field as KSchema).validator
 }

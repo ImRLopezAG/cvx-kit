@@ -1,3 +1,4 @@
+import { isLazyAccessor } from './shared/lazy'
 import { z } from 'zod'
 import { v, type GenericValidator } from 'convex/values'
 import { vRequired } from 'convex-helpers/validators'
@@ -208,8 +209,12 @@ export function captureDto<Schema extends z.ZodType>(schema: Schema): DtoRecipe<
 			for (const key of Reflect.ownKeys(object)) {
 				if (String(key) !== key) throw new Error('Unsupported DTO definition symbol')
 				const descriptor = Object.getOwnPropertyDescriptor(object, key)!
-				if (!('value' in descriptor)) throw new Error('Unsupported DTO schema accessor')
-				entries.push(Object.freeze([key, capture(descriptor.value, depth + 1)]))
+				// A kit-built lazy definition is captured as the schema it builds; other accessors are rejected.
+				const lazy = 'value' in descriptor ? undefined : descriptor.get
+				if (!('value' in descriptor) && !isLazyAccessor(lazy))
+					throw new Error('Unsupported DTO schema accessor')
+				const entry: unknown = isLazyAccessor(lazy) ? lazy.call(object) : descriptor.value
+				entries.push(Object.freeze([key, capture(entry, depth + 1)]))
 			}
 			recipe = { kind: 'record', entries: Object.freeze(entries) }
 		}

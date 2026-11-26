@@ -11,11 +11,22 @@ import { memoize } from '../../modules/contracts/lazy'
  */
 export function lazyOptional<T extends z.ZodType>(build: () => T): z.ZodOptional<T> {
 	const inner = memoize(build)
-	// SAFETY: the definition is exactly `.optional()`'s, with its inner schema T read on demand.
-	return new z.ZodOptional({
-		type: 'optional',
+	const definition = {
+		type: 'optional' as const,
 		get innerType() {
 			return inner()
 		},
-	}) as z.ZodOptional<T>
+	}
+	// The getter keeps its identity when zod clones the definition, so clones stay recognizable.
+	lazyAccessors.add(Object.getOwnPropertyDescriptor(definition, 'innerType')!.get!)
+	// SAFETY: the definition is exactly `.optional()`'s, with its inner schema T read on demand.
+	return new z.ZodOptional(definition) as z.ZodOptional<T>
+}
+
+type Accessor = () => z.ZodType
+const lazyAccessors = new WeakSet<Accessor>()
+
+/** True only for the accessor of a kit-built lazy definition; caller-owned getters stay untrusted. */
+export function isLazyAccessor(get: PropertyDescriptor['get']): get is Accessor {
+	return get !== undefined && lazyAccessors.has(get)
 }

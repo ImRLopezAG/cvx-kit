@@ -350,8 +350,10 @@ export function createEffectCommand<
 										operation,
 										classification,
 										input: command,
-										// Read per failure: reading it at registration forces a thunk-declared contract at import.
-										contract: internal.contract?.errors,
+										// Read on failure only: reading it at registration forces a thunk-declared contract at import.
+										get contract() {
+											return internal.contract?.errors
+										},
 										entered,
 										current,
 									}),

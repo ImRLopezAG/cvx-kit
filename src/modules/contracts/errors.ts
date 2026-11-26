@@ -269,7 +269,8 @@ export const queryErrors = defineErrorContract({
 
 /** One allowlisted, bounded argument issue. The rejected input value is never carried. */
 export type ArgumentIssue = Readonly<{
-	path: readonly (string | number)[]
+	// Mutable so the envelope stays assignable to Convex `Value`.
+	path: (string | number)[]
 	code: string
 	message: string
 }>

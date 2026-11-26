@@ -544,7 +544,10 @@ errors: { throw: (input) => { throw App.errors.from(input) } }
 
 Argument validation failures are separate from `errors`. `argumentFailure`
 (`'legacy'` default, `'declared'`, or `(failure) => thrown`) selects what every
-constructor throws when zod args or a compact filter reject the input; see
+constructor throws when Zod args or a compact filter reject the input.
+`createEffectAuthFunctions(config, options)` reads this setting from the
+shared auth `config`. Set the policy on `createEffectFoundation` for
+command and query `input` validation. See
 `client-failures.md` (Argument validation failures).
 
 ## Rules of thumb

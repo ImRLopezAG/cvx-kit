@@ -337,14 +337,14 @@ export const argumentErrors = defineErrorContract({
 
 /** What an app hook receives when arguments are rejected. */
 export type ArgumentFailure = Readonly<{
-	/** `arguments`: the function's zod args schema; `filter`: the compact pagination filter guard. */
+	/** `arguments`: a function or operation input schema; `filter`: the compact pagination filter guard. */
 	source: 'arguments' | 'filter'
 	issues: readonly ArgumentIssue[]
 }>
 
 /**
  * How argument rejections are thrown:
- * - `'legacy'` (default): `ConvexError({ ZodError: [...] })`, unchanged.
+ * - `'legacy'` (default): preserve the existing throw at that validation boundary.
  * - `'declared'`: `argumentErrors.toConvexError('INVALID_ARGUMENTS', { issues })`.
  * - a function: its return value is thrown (e.g. the app's own `toConvexError`).
  */

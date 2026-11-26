@@ -460,6 +460,14 @@ operations skip the same failure value. So a nested registry's own code
 survives, and a nested failure that a parent recovers from is still reported.
 Errors thrown by `emit` are ignored; the original failure is unchanged.
 
+Set `argumentFailure` on `createEffectFoundation` to control command and
+query `input` rejections. `'legacy'` keeps the decoder's existing failure.
+`'declared'` reports one `INVALID_ARGUMENTS` entry with `declared: true`.
+Legacy and custom policies report validation failures as `UNKNOWN_FAILURE`.
+Input and details redactors are skipped for these entries. See
+[argument validation failures](client-failures.md#argument-validation-failures)
+for client decoding and custom policy hooks.
+
 ## Raising and recovering declared errors
 
 `effectErrors(contract)` binds `fail` and `attempt` to one declared error

@@ -364,7 +364,7 @@ describe('kVariantTable boundaries', () => {
 				]),
 				{ discriminator: 'type', variants: { draft: {} } },
 			),
-		).toThrow(/duplicate/i)
+		).toThrow(/more than one option has 'type' value "draft"/)
 		expect(() =>
 			// SAFETY: mismatched discriminators are rejected for JS callers as well.
 			kVariantTable('payments', paymentStorage, { discriminator: 'kind', variants: {} } as never),
@@ -381,15 +381,13 @@ describe('kVariantTable boundaries', () => {
 	})
 
 	it('throws at definition when a branch omits the discriminator', () => {
-		const storage = k.discriminatedUnion('type', [
-			k.object({ type: k.literal('a') }),
-			// SAFETY: a branch without the key is what this test rejects.
-			k.object({ other: k.string() }) as never,
-		])
 		expect(() =>
-			// SAFETY: the storage above is deliberately invalid, so its options cannot be typed.
-			kVariantTable('rows', storage, { discriminator: 'type', variants: { a: {} } } as never),
-		).toThrow(/discriminator/)
+			k.discriminatedUnion('type', [
+				k.object({ type: k.literal('a') }),
+				// SAFETY: a branch without the key is what this test rejects.
+				k.object({ other: k.string() }) as never,
+			]),
+		).toThrow(/option 1 has no 'type' field/)
 	})
 
 	it('rejects bigint tool commands at construction and keeps storage-only bigints', () => {

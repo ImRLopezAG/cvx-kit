@@ -73,7 +73,7 @@ describe('k.partialRecord', () => {
 
 	it('refuses a string key', () => {
 		// @ts-expect-error a partial record needs a finite literal key set
-		expect(() => k.partialRecord(k.string(), k.number())).toThrow(/finite set of string literal/)
+		expect(() => k.partialRecord(k.string(), k.number())).toThrow(/finite set of string literal keys/)
 	})
 })
 

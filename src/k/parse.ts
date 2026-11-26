@@ -1,5 +1,6 @@
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- This module is the decoding boundary: it receives undecoded values, narrows them by representation and hands them back as the schema's output, which the typed callers in schema.ts name. */
 import { membersOf } from './compile'
+import { isFieldName } from './names'
 import { KConversionFailure, isIsoDate, isIsoDateTime, isTimestamp, maxTimestamp } from './formats'
 import {
 	KValidationError,
@@ -84,6 +85,47 @@ export function hasDeclaredBehaviour(schema: KNode): boolean {
 /** Whether a transform or pipe sits anywhere in the schema's tree; table fields and return shapes reject it. */
 export function containsTransform(schema: KNode): boolean {
 	return planOf(schema).transform
+}
+
+/**
+ * The path of the first transform or pipe in the schema's tree, for error messages: `''` for the
+ * schema itself, `'a.b'` for a field, `'items[]'` for an array element, `'[value]'` for a record value
+ * and `'|1'` for a union member. Undefined when the tree holds none.
+ */
+export function transformPath(schema: KNode): string | undefined {
+	if (!planOf(schema).transform) return undefined
+	let root = schema
+	while (root.prev !== null) {
+		if (root.op === 'transform' || root.op === 'pipe') return ''
+		root = root.prev
+	}
+	const below = (child: KNode, step: string, join: string) => {
+		const path = transformPath(child)
+		return path === undefined ? undefined : path === '' ? step : `${step}${join}${path}`
+	}
+	switch (root.op) {
+		case 'object':
+			for (const [key, field] of Object.entries(fieldsOf(root))) {
+				const path = transformPath(field)
+				if (path !== undefined) return path === '' || path.startsWith('[') || path.startsWith('|') ? key + path : `${key}.${path}`
+			}
+			return undefined
+		case 'array':
+			return below(argSchema(root), '[]', '.')
+		case 'record':
+			return below(recordOf(root)[1], '[value]', '.')
+		case 'union':
+		case 'discriminatedUnion': {
+			const members = membersOf(root)
+			for (let index = 0; index < members.length; index++) {
+				const path = below(members[index], `|${index}`, '.')
+				if (path !== undefined) return path
+			}
+			return undefined
+		}
+		default:
+			return undefined
+	}
 }
 
 const FAIL: unique symbol = Symbol('k.fail')
@@ -206,36 +248,9 @@ function combined(declared: boolean, transform: boolean): KPlan {
 	return declared ? checkedPlan : emptyPlan
 }
 
-function dispatchOf(root: KNode): Map<KLiteralValue, KNode> {
-	// SAFETY: k.discriminatedUnion stores its key and object options as the root argument.
-	const { key, options } = root.arg as KDiscriminated
-	const dispatch = new Map<KLiteralValue, KNode>()
-	for (const option of options) {
-		const member = asSchema(option)
-		const field = fieldsOf(rootOf(member))[key]
-		if (field === undefined)
-			throw new Error(`k.discriminatedUnion: an option has no '${key}' field`)
-		const fieldRoot = rootOf(asSchema(field))
-		if (fieldRoot.op === 'literal') dispatchTo(dispatch, key, literalOf(fieldRoot), member)
-		else if (fieldRoot.op === 'enum')
-			for (const value of enumOf(fieldRoot)) dispatchTo(dispatch, key, value, member)
-		else throw new Error(`k.discriminatedUnion: '${key}' must be a literal or enum on every option`)
-	}
-	return dispatch
-}
-
-/** Two options sharing a discriminator value would make dispatch pick a branch the native union may not. */
-function dispatchTo(
-	dispatch: Map<KLiteralValue, KNode>,
-	key: string,
-	value: KLiteralValue,
-	member: KNode,
-): void {
-	if (dispatch.has(value))
-		throw new Error(
-			`k.discriminatedUnion: more than one option has '${key}' value ${JSON.stringify(String(value))}`,
-		)
-	dispatch.set(value, member)
+function dispatchOf(root: KNode): ReadonlyMap<KLiteralValue, KNode> {
+	// SAFETY: k.discriminatedUnion stores its key, options and dispatch map as the root argument.
+	return (root.arg as KDiscriminated).dispatch
 }
 
 function walk(
@@ -727,12 +742,7 @@ const recordKeyMessage =
 
 /** The Convex record key rule (`v.record`), applied to the key after normalisation. */
 function isRecordKey(key: string): boolean {
-	if (key.length === 0 || key.length > 1024 || key[0] === '$' || key[0] === '_') return false
-	for (let index = 0; index < key.length; index++) {
-		const code = key.charCodeAt(index)
-		if (code < 32 || code >= 127) return false
-	}
-	return true
+	return key[0] !== '_' && isFieldName(key)
 }
 
 /** Write an own data property: a key taken from input (`__proto__`) never reaches a setter. */
@@ -874,12 +884,6 @@ function defaultsBelow(node: KNode): boolean {
 		if (current.op === 'transform' || current.op === 'pipe') return false
 	}
 	return false
-}
-
-function rootOf(node: KNode): KNode {
-	let root = node
-	while (root.prev !== null) root = root.prev
-	return root
 }
 
 function asSchema(value: unknown): KNode {

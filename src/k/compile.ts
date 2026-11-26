@@ -232,7 +232,7 @@ function compileFields(fields: KFields): PropertyValidators {
 	for (const key in fields) {
 		if (!isFieldName(key))
 			throw new Error(
-				`k.object() field '${key}' is not a valid Convex field name: non-empty printable ASCII, at most 1024 characters, not starting with '$'`,
+				`k.object() field '${key}' is not a valid Convex field name (non-empty printable ASCII, at most 1024 characters, no leading '$')`,
 			)
 		out[key] = fields[key].validator
 	}

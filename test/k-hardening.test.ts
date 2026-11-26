@@ -57,17 +57,43 @@ describe('numeric bounds', () => {
 })
 
 describe('discriminated unions', () => {
-	it('reject a repeated discriminator value when the plan is first built', () => {
-		const duplicate = k.discriminatedUnion('kind', [
-			k.object({ kind: k.literal('a'), x: k.number() }),
-			k.object({ kind: k.literal('a'), y: k.number() }),
+	it('reject a repeated discriminator value at declaration, naming the option', () => {
+		expect(() =>
+			k.discriminatedUnion('kind', [
+				k.object({ kind: k.literal('a'), x: k.number() }),
+				k.object({ kind: k.literal('a'), y: k.number() }),
+			]),
+		).toThrow(/'kind' value "a" \(option 1 repeats it\)/)
+		expect(() =>
+			k.discriminatedUnion('kind', [
+				k.object({ kind: k.enum(['a', 'b']) }),
+				k.object({ kind: k.literal('b'), y: k.number() }),
+			]),
+		).toThrow(/'kind' value "b"/)
+	})
+
+	it('dispatch on every literal of a union-of-literals discriminator', () => {
+		const event = k.discriminatedUnion('kind', [
+			k.object({ kind: k.union([k.literal('a'), k.literal('b')]), x: k.number() }),
+			k.object({ kind: k.literal('c'), y: k.string() }),
 		])
-		expect(() => duplicate.safeParse({ kind: 'a', x: 1 })).toThrow(/'kind' value "a"/)
-		const overlap = k.discriminatedUnion('kind', [
-			k.object({ kind: k.enum(['a', 'b']) }),
-			k.object({ kind: k.literal('b'), y: k.number() }),
-		])
-		expect(() => runDeclared(overlap, { kind: 'b', y: 1 })).toThrow(/'kind' value "b"/)
+		expect(event.parse({ kind: 'b', x: 1 })).toEqual({ kind: 'b', x: 1 })
+		expect(event.parse({ kind: 'c', y: 'z' })).toEqual({ kind: 'c', y: 'z' })
+		expect(event.safeParse({ kind: 'a', y: 'z' }).success).toBe(false)
+		expect(event.safeParse({ kind: 'd' }).success).toBe(false)
+	})
+
+	it('name the option and what it found for an unsupported discriminator, at declaration', () => {
+		expect(() =>
+			k.discriminatedUnion('kind', [
+				k.object({ kind: k.literal('a') }),
+				k.object({ kind: k.string() }),
+			]),
+		).toThrow(/option 1 has 'string'/)
+		expect(() =>
+			// @ts-expect-error an option without the key cannot dispatch
+			k.discriminatedUnion('kind', [k.object({ kind: k.literal('a') }), k.object({ other: k.number() })]),
+		).toThrow(/option 1 has no 'kind' field/)
 	})
 })
 

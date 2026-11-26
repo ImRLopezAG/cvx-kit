@@ -98,7 +98,12 @@ export type KMessage = string | KRefineOptions | undefined
 
 export type KCallback = (...args: never[]) => any
 
-export type KDiscriminated = { readonly key: string; readonly options: readonly KType[] }
+export type KDiscriminated = {
+	readonly key: string
+	readonly options: readonly KType[]
+	/** Each discriminator value to its option, built at declaration. */
+	readonly dispatch: ReadonlyMap<KLiteralValue, KNode>
+}
 
 export type KArg =
 	| Value

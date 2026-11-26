@@ -87,7 +87,7 @@ After the key schema has run (including normalisers such as `trim`), each key of
 
 ### Discriminated unions
 
-Each discriminator value must belong to one option. Two options that share a value (two equal literals, or an enum that overlaps another option's literal) make the schema throw when it is first used, for example on the first `parse` or the first call of a function that declares it. Declaring it does not throw.
+Every option must be a `k.object` whose discriminator field is a literal, an enum, or a union of literals and enums (natively the same union as an enum; parse dispatches on each value). Each discriminator value must belong to one option. Declaring the union throws if an option breaks either rule, naming the key, the option index and what was found (for example `option 1 has 'string'`, or `'kind' value "a" (option 1 repeats it)`). The check reads only the options' field maps and builds no validator.
 
 ### Immutability
 
@@ -204,7 +204,13 @@ A default makes the field optional on input and required on output:
 
 - Allowed on input positions: function args, command and contract inputs, and `parse`.
 - Rejected on table fields (`kTable`, `createTable`, `tenantTable`, `kVariantTable`), at the type level and when the table is defined.
-- Rejected on function `returns` when the validators are exported; the kit does not run return transforms.
+- Rejected on function `returns` when the validators are exported; the kit does not run return transforms. The error names the field that transforms (for example `field 'tags[].slug' uses transform or pipe`). A schema reused for both `args` and `returns` is the usual cause: declare `returns` with the output types instead, replacing the transforming field:
+
+```ts
+const input = k.object({ name: k.string(), slug: k.string().transform(toSlug) })
+const output = input.omit('slug').extend({ slug: k.string() })
+export const save = mutation({ args: input, returns: output, handler: … })
+```
 
 The type-preserving normalisers `trim`, `toLowerCase`, `toUpperCase` and `overwrite` are not transforms and are allowed everywhere, including table fields.
 

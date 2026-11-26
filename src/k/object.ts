@@ -158,9 +158,7 @@ export function partialRecord<
 export function partialRecord(key: KType, value: KType): KType {
 	const literals = recordKeyLiterals(key, 'k.partialRecord')
 	if (literals === null)
-		throw new Error(
-			'k.partialRecord() needs a finite set of string literal keys (k.enum, k.literal or a union of literals); use k.record() for string or id keys',
-		)
+		throw new Error('k.partialRecord() needs a finite set of string literal keys')
 	const optional = optionalOf(value)
 	const fields: Record<string, KType> = {}
 	for (const literal of literals) fields[literal] = optional
@@ -211,15 +209,11 @@ function rootKeyLiterals(root: KNode, factory: string): readonly string[] | null
 			}
 			if (native === members.length) return null
 			if (native > 0)
-				throw new Error(
-					`${factory}() key: a union cannot mix string literals with string or id kinds`,
-				)
+				throw new Error(`${factory}() key: a union cannot mix literals with strings or ids`)
 			return [...new Set(literals)]
 		}
 		default:
-			throw new Error(
-				`${factory}() key must be a string, id, k.enum, string k.literal or a union of string literals; got '${root.op}'`,
-			)
+			throw new Error(`${factory}() key must be a string, id or string literals; got '${root.op}'`)
 	}
 }
 
@@ -231,9 +225,7 @@ function rootKeyLiterals(root: KNode, factory: string): readonly string[] | null
 function checkedKeys(keys: readonly string[], factory: string): readonly string[] {
 	for (const key of keys)
 		if (!isFieldName(key))
-			throw new Error(
-				`${factory}() key '${key}' is not a valid Convex field name: non-empty printable ASCII, at most 1024 characters, not starting with '$'`,
-			)
+			throw new Error(`${factory}() key '${key}' is not a valid Convex field name`)
 	return keys
 }
 

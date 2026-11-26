@@ -285,6 +285,28 @@ describe('export to Convex', () => {
 	it('rejects a transforming returns schema at export', () => {
 		const fn = query({ returns: k.string().transform(Number), handler: () => 1 })
 		expect(() => runtime(fn).exportReturns()).toThrow('A returns schema cannot transform')
+		expect(() => runtime(fn).exportReturns()).toThrow('the schema itself uses transform or pipe')
+	})
+
+	it('names the transforming field of a returns schema reused from args', () => {
+		const shared = k.object({
+			name: k.string(),
+			tags: k.array(k.object({ slug: k.string().transform((value) => value.toLowerCase()) })),
+			either: k.union([k.number(), k.object({ at: k.string().pipe(k.string()) })]),
+		})
+		const fn = query({
+			args: shared,
+			returns: shared,
+			handler: () => ({ name: 'n', tags: [], either: 1 }),
+		})
+		expect(() => runtime(fn).exportReturns()).toThrow("field 'tags[].slug' uses transform or pipe")
+		const other = query({ returns: shared.omit('tags'), handler: () => ({ name: 'n', either: 1 }) })
+		expect(() => runtime(other).exportReturns()).toThrow("field 'either|1.at'")
+		const fixed = query({
+			returns: shared.omit('tags', 'either').extend({ tags: k.array(k.object({ slug: k.string() })) }),
+			handler: () => ({ name: 'n', tags: [] }),
+		})
+		expect(() => runtime(fixed).exportReturns()).not.toThrow()
 	})
 
 	it('reuses scalar natives and builds no container validator until export', async () => {

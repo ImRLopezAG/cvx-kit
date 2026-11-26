@@ -15,6 +15,7 @@ import type {
 	VString,
 	VUnion,
 } from 'convex/values'
+import { discriminatorDispatch } from './dispatch'
 import { checkMessage } from './messages'
 import { KSchema } from './schema'
 import type { KCheckMessage, KDiscriminated, KLiteralValue, KNode, KOutputRequired, KType } from './types'
@@ -356,7 +357,11 @@ export function discriminatedUnion<
 	return new KDiscriminatedUnion<Key, M>(
 		null,
 		'discriminatedUnion',
-		Object.freeze({ key, options: Object.freeze(options) }),
+		Object.freeze({
+			key,
+			options: Object.freeze(options),
+			dispatch: discriminatorDispatch(key, options),
+		}),
 		undefined,
 	)
 }

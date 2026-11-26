@@ -13,6 +13,7 @@ export function tableKind(ctx, call) {
 		const imported = ctx.kit.get(callee.name)?.imported
 		if (TABLE_FUNCTIONS.has(imported)) return imported
 		if (ctx.tableFactories.has(callee.name)) return 'createTable'
+		if (ctx.v2Tables.has(callee.name)) return 'kTable'
 	}
 	if (callee.type === 'CallExpression' && isCreateTable(ctx, callee)) return 'createTable'
 	return null

@@ -1,7 +1,7 @@
 // Factories and chain methods: rewrites `z.<factory>(…)` to `k.<factory>(…)` and
 // the chain methods applied to a proven schema, or records why a site stays Zod.
-import { chainOf, isShadowed, outerChain, unwrap } from './ast.mjs'
-import { addEdit, addInfo, addSkip } from './sites.mjs'
+import { chainOf, isShadowed, outerChain, unwrap, walk } from './ast.mjs'
+import { addEdit, addSkip } from './sites.mjs'
 
 const FACTORIES = new Map([
 	['string', 'string'],
@@ -93,14 +93,25 @@ const KEPT_METHODS = new Set([
 	'partial',
 	'strip',
 	'unwrap',
+	'positive',
+	'negative',
+	'nonnegative',
+	'nonpositive',
+	'finite',
+	'safe',
+	'required',
+	'keyof',
+	'exclude',
+	'extract',
+	'removeDefault',
+	'check',
 ])
 
+/** Steps that build a new object from an object, whose strictness `.strip()` must restate. */
+const OBJECT_STEPS = new Set(['extend', 'pick', 'omit', 'partial', 'required'])
+
 // Zod spellings of an inclusive bound, rewritten to the k method that expresses it.
-const BOUND_ALIASES = new Map([
-	['nonnegative', ['min', '0']],
-	['nonpositive', ['max', '0']],
-	['nonempty', ['min', '1']],
-])
+const BOUND_ALIASES = new Map([['nonempty', ['min', '1']]])
 
 const TERMINAL_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync'])
 
@@ -136,6 +147,10 @@ export function isSchemaExpression(ctx, expression) {
 	if (ctx.zodNamespaces.has(root.name)) {
 		const first = steps[0]
 		return first?.kind === 'member' && first.name !== null && !first.name.startsWith('Zod')
+	}
+	if (root.name === 'k' && ctx.hasK) {
+		const first = steps[0]
+		return first?.kind === 'member' && steps[1]?.kind === 'call'
 	}
 	if (ctx.schemaBindings.has(root.name)) return steps.length === 0 || steps[0].kind === 'member'
 	if (ctx.tableBindings.has(root.name)) return tableSchemaSteps(steps) > 0
@@ -211,7 +226,14 @@ export function processZodChain(ctx, unit, id) {
 	if (factory !== first) {
 		addEdit(unit, { start: first.node.property.start, end: factory.node.property.end }, target)
 	} else if (target !== first.name) addEdit(unit, first.node.property, target)
-	if (first.name === 'object') addInfo(ctx, unit, span(next), 'object-now-strict')
+	if (first.name === 'object' || first.name === 'strictObject') {
+		unit.objectSites.push({
+			site: span(next),
+			end: steps[next].node.end,
+			strict: first.name === 'strictObject' || setsStrictness(steps, next + 1),
+			derived: false,
+		})
+	}
 	processSteps(ctx, unit, steps, next + 1, outer)
 }
 
@@ -273,6 +295,8 @@ function processSteps(ctx, unit, steps, from, outer) {
 			addEdit(unit, { start: step.node.object.end, end: call.end }, '')
 		} else if (step.name === 'pick' || step.name === 'omit') {
 			maskStep(ctx, unit, call, site)
+		} else if (step.name === 'check' && isZodCheck(call)) {
+			addSkip(ctx, unit, site, 'zod-check')
 		} else if (REPORTED_METHODS.has(step.name)) {
 			addSkip(ctx, unit, site, REPORTED_METHODS.get(step.name))
 		} else if (STRING_FORMATS.has(step.name)) {
@@ -280,8 +304,54 @@ function processSteps(ctx, unit, steps, from, outer) {
 		} else if (!KEPT_METHODS.has(step.name)) {
 			addSkip(ctx, unit, site, 'unknown-method')
 		}
+		if (OBJECT_STEPS.has(step.name)) {
+			unit.objectSites.push({
+				site,
+				end: call.end,
+				strict: setsStrictness(steps, index + 2),
+				derived: true,
+			})
+		}
 		index += 2
 	}
+}
+
+/** Whether a later step states the object's unknown-key handling (`.strict()` or `.strip()`). */
+function setsStrictness(steps, from) {
+	for (let index = from; index < steps.length; index++) {
+		const step = steps[index]
+		if (step.kind !== 'member') continue
+		if (step.name === 'strict' || step.name === 'strip') return true
+		if (OBJECT_STEPS.has(step.name)) return false
+	}
+	return false
+}
+
+/**
+ * Zod's `.check(…)` takes check functions (`z.minLength(3)`) or a callback
+ * reading `ctx.value` and pushing to `ctx.issues`; `k`'s callback takes
+ * `(value, ctx)`. A one-parameter callback that reads `.value` or `.issues` on
+ * its parameter is the Zod form.
+ */
+function isZodCheck(call) {
+	const callback = call.arguments[0]
+	if (call.arguments.length !== 1 || !callback) return true
+	if (callback.type !== 'ArrowFunctionExpression' && callback.type !== 'FunctionExpression')
+		return false
+	if (callback.params.length !== 1 || callback.params[0].type !== 'Identifier') return false
+	const name = callback.params[0].name
+	let zodForm = false
+	walk(callback.body, (node) => {
+		if (
+			node.type === 'MemberExpression' &&
+			!node.computed &&
+			node.object.type === 'Identifier' &&
+			node.object.name === name &&
+			(node.property.name === 'value' || node.property.name === 'issues')
+		)
+			zodForm = true
+	})
+	return zodForm
 }
 
 /** `.pick({ a: true })` → `.pick('a')`; string arguments are already the v2 form. */

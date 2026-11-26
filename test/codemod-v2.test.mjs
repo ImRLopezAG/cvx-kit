@@ -171,8 +171,12 @@ describe('codemod-v2 CLI', () => {
 	it('--write rewrites in place and a second run changes nothing', () => {
 		withTempTree(tree, (root) => {
 			run(['src', '--write', '--ignore', 'src/broken.ts'], root)
+			// No file of the run imports `Plain`, so its consumers are unknown and it keeps stripping.
 			expect(readFileSync(join(root, 'src/strict.ts'), 'utf8')).toBe(
-				fixture('strict-object', 'expected.ts'),
+				fixture('strict-object', 'expected.ts').replace(
+					'k.object({ c: k.boolean().nullable() })',
+					'k.object({ c: k.boolean().nullable() }).strip()',
+				),
 			)
 			expect(readFileSync(join(root, 'src/mixed.ts'), 'utf8')).toBe(
 				fixture('mixed-file', 'expected.ts'),
@@ -206,8 +210,91 @@ describe('codemod-v2 CLI', () => {
 		expect(() => run(['src', '--force'])).toThrow('Unknown option --force')
 	})
 
-	it('reports the keep marker only on an exact comment', () => {
+	it('reports the keep marker only as the start of a comment', () => {
 		const source = `// keep this file\n${fixture('strict-object', 'input.ts')}`
 		expect(transformSource('a.ts', source).status).toBe('rewritten')
+		const prefixed = `// cvx-kit-codemod: keep-zodiac\n${fixture('strict-object', 'input.ts')}`
+		expect(transformSource('a.ts', prefixed).status).toBe('rewritten')
+		const reasoned = `// cvx-kit-codemod: keep-zod -- SDK\n${fixture('strict-object', 'input.ts')}`
+		expect(transformSource('a.ts', reasoned).status).toBe('kept')
+	})
+})
+
+describe('codemod-v2 object classification', () => {
+	const info = (outcome) => outcome.info.map(({ line, code }) => ({ line, code }))
+
+	it('reports parsed objects, boundary-only objects and table spreads', () => {
+		const outcome = transformSource('p.ts', fixture('parsed-objects', 'input.ts'))
+		expect(info(outcome)).toEqual([
+			{ line: 4, code: 'object-parsed-stripped' },
+			{ line: 5, code: 'object-parsed-stripped' },
+			{ line: 6, code: 'object-parsed-stripped' },
+			{ line: 7, code: 'object-now-strict' },
+			{ line: 12, code: 'table-spread' },
+		])
+	})
+
+	it('--no-strip-parsed leaves parsed objects strict and reports them', () => {
+		const outcome = transformSource('p.ts', fixture('parsed-objects', 'input.ts'), {
+			stripParsed: false,
+		})
+		expect(outcome.output).not.toContain('}).strip()\nconst Customer')
+		expect(outcome.output).toContain('const Declared = k.object({ id: k.string() }).strip()')
+		expect(outcome.output.match(/\.strip\(\)/g)).toHaveLength(1)
+		expect(info(outcome).filter(({ code }) => code === 'object-parsed-now-strict')).toHaveLength(3)
+	})
+})
+
+describe('codemod-v2 cross-file knowledge', () => {
+	function tree(files, body) {
+		const root = mkdtempSync(join(tmpdir(), 'cvx-codemod-run-'))
+		try {
+			for (const [path, source] of Object.entries(files)) {
+				mkdirSync(join(root, path, '..'), { recursive: true })
+				writeFileSync(join(root, path), source)
+			}
+			return body(root)
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+		}
+	}
+
+	it('rewrites a type helper on a schema imported from a file the run rewrites, and reports one that stays Zod', () => {
+		tree(
+			{
+				'src/schemas.ts':
+					"import { z } from 'zod'\nexport const Ok = z.object({ a: z.string() })\nexport const Loose = z.looseObject({})\n",
+				'src/types.ts':
+					"import { z } from 'zod'\nimport { Ok, Loose } from './schemas'\nexport type Ok = z.infer<typeof Ok>\nexport type Loose = z.infer<typeof Loose>\n",
+			},
+			(root) => {
+				const { report } = run(['src', '--write'], root)
+				expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toBe(
+					"import { z } from 'zod'\nimport { Ok, Loose } from './schemas'\nimport { k } from 'cvx-kit'\nexport type Ok = k.infer<typeof Ok>\nexport type Loose = z.infer<typeof Loose>\n",
+				)
+				const types = report.files.find((file) => file.path.endsWith('types.ts'))
+				expect(types.skipped.map(({ code }) => code)).toEqual(['type-helper-unknown'])
+			},
+		)
+	})
+
+	it('strips an exported object that another file of the run parses, not one only used as args', () => {
+		tree(
+			{
+				'src/schemas.ts':
+					"import { z } from 'zod'\nexport const Payload = z.object({ id: z.string() })\nexport const Args = z.object({ id: z.string() })\n",
+				'src/webhook.ts':
+					"import { Payload } from './schemas'\nexport const read = (body: unknown) => Payload.parse(body)\n",
+				'src/functions.ts':
+					"import { Args } from './schemas'\nexport const definition = { args: Args }\n",
+			},
+			(root) => {
+				const { report } = run(['src', '--write'], root)
+				expect(readFileSync(join(root, 'src/schemas.ts'), 'utf8')).toBe(
+					"import { k } from 'cvx-kit'\nexport const Payload = k.object({ id: k.string() }).strip()\nexport const Args = k.object({ id: k.string() })\n",
+				)
+				expect(report.info).toEqual({ 'object-now-strict': 1, 'object-parsed-stripped': 1 })
+			},
+		)
 	})
 })

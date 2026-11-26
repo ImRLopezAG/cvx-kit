@@ -1,11 +1,27 @@
 // Imports: resolves what `z` and the kit names are bound to, then plans the
-// import edits once every unit's fate is known (add `k`, drop Zod when unused,
-// move `cvx-kit/zod-table` names to `cvx-kit/table`, rename kit helpers).
+// import edits once every unit's fate is known (add `k`, drop Zod when unused).
+// Kit entry imports are always rewritten, whatever happens to the file's Zod:
+// `cvx-kit/zod-table` names move to `cvx-kit/table`, convex-helpers' Zod
+// function builders move to `cvx-kit/registration`, renamed kit helpers take
+// their v2 name, and a moved name joins an existing import of its new module.
 
 export const ZOD_MODULES = new Set(['zod', 'zod/v4', 'zod/v3'])
 const TABLE_MODULE = 'cvx-kit/zod-table'
 const NEXT_TABLE_MODULE = 'cvx-kit/table'
 const ZID_MODULES = new Set(['convex-helpers/server/zod4', 'convex-helpers/server/zod'])
+const REGISTRATION_MODULE = 'cvx-kit/registration'
+/** convex-helpers' Zod function builders, which take `k` args only once renamed. */
+const CUSTOM_BUILDERS = new Map([
+	['zCustomQuery', 'kCustomQuery'],
+	['zCustomMutation', 'kCustomMutation'],
+	['zCustomAction', 'kCustomAction'],
+	['ZCustomCtx', 'KCustomCtx'],
+])
+/** Modules whose `k` import is the kit's `k`. */
+const K_MODULES = new Set(['cvx-kit', 'cvx-kit/k'])
+/** v2 table functions; a binding initialised by one is a table boundary. */
+export const V2_TABLE_FUNCTIONS = new Set(['kTable', 'kVariantTable', 'tenantTable'])
+const V2_TABLE_MODULES = new Set(['cvx-kit', 'cvx-kit/table'])
 const KIT_MODULE_NAMES = new Map([
 	[
 		'cvx-kit',
@@ -27,7 +43,25 @@ export const KIT_RENAMES = new Map([
 	['zodVariantTable', 'kVariantTable'],
 	['zodContract', 'kContract'],
 	['effectZodApiBuilder', 'effectApiBuilder'],
+	...CUSTOM_BUILDERS,
 ])
+
+/** The module a kit binding's v2 name is imported from, when it moves. */
+function movedModule(binding) {
+	if (binding.module === TABLE_MODULE) return NEXT_TABLE_MODULE
+	if (ZID_MODULES.has(binding.module) && CUSTOM_BUILDERS.has(binding.imported))
+		return REGISTRATION_MODULE
+	return null
+}
+
+/** Whether a kit binding is always rewritten to its v2 form, in every unit. */
+export function alwaysRewritten(binding) {
+	return (
+		!ZOD_INTEROP.has(binding.imported) &&
+		binding.imported !== 'zid' &&
+		(KIT_RENAMES.has(binding.imported) || movedModule(binding) !== null)
+	)
+}
 
 export const ZOD_INTEROP = new Set(['zodToConvex', 'convexToZod', 'jsonSafeZid'])
 
@@ -59,11 +93,21 @@ function collectKitImport(ctx, decl, module) {
 	for (const spec of decl.specifiers) {
 		const local = spec.local.name
 		if (local === 'k') {
-			if (module === 'cvx-kit' && spec.type === 'ImportSpecifier' && importedName(spec) === 'k') {
+			if (K_MODULES.has(module) && spec.type === 'ImportSpecifier' && importedName(spec) === 'k') {
 				ctx.hasK = true
 			} else ctx.kConflict = spec
 		}
+		if (
+			V2_TABLE_MODULES.has(module) &&
+			spec.type === 'ImportSpecifier' &&
+			V2_TABLE_FUNCTIONS.has(importedName(spec))
+		)
+			ctx.v2Tables.add(local)
+		if (spec.type === 'ImportSpecifier' && !ZOD_MODULES.has(module))
+			ctx.imported.set(local, { source: module, imported: importedName(spec) })
 	}
+	if (decl.importKind !== 'type' && decl.specifiers.length > 0 && decl.specifiers.every(isNamed))
+		ctx.moduleDecls.set(module, ctx.moduleDecls.get(module) ?? decl)
 	if (module === 'cvx-kit' && decl.importKind !== 'type' && decl.specifiers.every(isNamed)) {
 		ctx.kitRootDecl ??= decl
 	}
@@ -72,7 +116,7 @@ function collectKitImport(ctx, decl, module) {
 		const imported = importedName(spec)
 		const wanted =
 			module === TABLE_MODULE ||
-			(ZID_MODULES.has(module) && imported === 'zid') ||
+			(ZID_MODULES.has(module) && (imported === 'zid' || CUSTOM_BUILDERS.has(imported))) ||
 			names?.has(imported) === true
 		if (!wanted) continue
 		ctx.kit.set(spec.local.name, {
@@ -81,7 +125,7 @@ function collectKitImport(ctx, decl, module) {
 			module,
 			decl,
 			spec,
-			isType: spec.importKind === 'type',
+			isType: spec.importKind === 'type' || decl.importKind === 'type',
 			refs: [],
 		})
 	}
@@ -126,14 +170,39 @@ export function planImports(ctx, isLeft, needsK) {
 		byDecl.get(binding.decl).push(binding)
 	}
 	let addK = needsK && !ctx.hasK
+	const planned = []
+	const movedBy = new Map()
 	for (const [decl, bindings] of byDecl) {
 		const withK = addK && decl === ctx.kitRootDecl
-		const planned = planKitDecl(ctx, decl, bindings, isLeft, withK)
-		if (!planned) continue
+		const plan = planKitDecl(ctx, decl, bindings, isLeft, withK)
+		if (!plan) continue
 		if (withK) addK = false
-		oldKitRemains ||= planned.oldRemains
-		if (planned.lines.length > 0) {
-			edits.push(replacement(ctx, decl, planned.lines))
+		oldKitRemains ||= plan.oldRemains
+		planned.push({ decl, plan })
+		for (const [module, specs] of plan.moved) {
+			if (!movedBy.has(module)) movedBy.set(module, { origin: decl, specs: [] })
+			movedBy.get(module).specs.push(...specs)
+		}
+	}
+	const linesOf = new Map(planned.map(({ decl, plan }) => [decl, [...plan.lines]]))
+	for (const [module, { origin, specs }] of movedBy) {
+		const existing = ctx.moduleDecls.get(module)
+		const present = new Set(existing?.specifiers.map((spec) => spec.local.name) ?? [])
+		const unique = specs.filter((spec) => {
+			if (present.has(spec.local)) return false
+			present.add(spec.local)
+			return true
+		})
+		if (unique.length === 0) continue
+		if (existing && !byDecl.has(existing)) {
+			const last = existing.specifiers[existing.specifiers.length - 1]
+			edits.push({ start: last.end, end: last.end, text: `, ${unique.map(renderSpec).join(', ')}` })
+		} else linesOf.get(origin).unshift(renderSource(ctx, origin, unique, module))
+	}
+	for (const { decl } of planned) {
+		const lines = linesOf.get(decl)
+		if (lines.length > 0) {
+			edits.push(replacement(ctx, decl, lines))
 			continue
 		}
 		const edit = removal(ctx, decl)
@@ -146,7 +215,7 @@ export function planImports(ctx, isLeft, needsK) {
 
 function planKitDecl(ctx, decl, bindings, isLeft, withK) {
 	const tracked = new Map(bindings.map((binding) => [binding.spec, binding]))
-	const moved = []
+	const moved = new Map()
 	const kept = []
 	let changed = false
 	let oldRemains = false
@@ -162,46 +231,47 @@ function planKitDecl(ctx, decl, bindings, isLeft, withK) {
 			else kept.push(original)
 			continue
 		}
-		const needOld = binding.refs.some(isLeft)
-		const needNew = binding.refs.length === 0 || binding.refs.some((unit) => !isLeft(unit))
-		const renamed = KIT_RENAMES.get(binding.imported)
-		if (needOld) {
-			keepOld(original)
-			if (renamed) oldRemains = true
-		}
 		if (binding.imported === 'zid') {
-			changed ||= !needOld
+			if (binding.refs.some(isLeft)) keepOld(original)
+			else changed = true
 			continue
 		}
-		if (!needNew) continue
+		const renamed = KIT_RENAMES.get(binding.imported)
 		const local = renamed && binding.local === binding.imported ? renamed : binding.local
 		const next = specOf(renamed ?? binding.imported, local, binding.isType)
-		if (binding.module === TABLE_MODULE) {
-			moved.push(next)
+		const module = movedModule(binding)
+		if (module) {
+			if (!moved.has(module)) moved.set(module, [])
+			moved.get(module).push(next)
 			changed = true
 		} else if (renamed) {
 			kept.push(next)
 			changed = true
-		} else if (!needOld) kept.push(original)
+		} else kept.push(original)
 	}
 	if (!changed) return null
 	if (withK) kept.push(specOf('k', 'k', false))
+	const seen = new Set()
+	const unique = kept.filter((spec) => !seen.has(spec.local) && seen.add(spec.local))
 	const lines = []
-	if (moved.length > 0) lines.push(renderSource(ctx, decl, moved, NEXT_TABLE_MODULE))
-	if (kept.length > 0) lines.push(renderSource(ctx, decl, kept))
-	return { lines, oldRemains }
+	if (unique.length > 0) lines.push(renderSource(ctx, decl, unique))
+	return { lines, moved, oldRemains }
 }
 
 function specOf(imported, local, isType) {
 	return { imported, local, isType }
 }
 
+function renderSpec(spec) {
+	const entry = spec.imported === spec.local ? spec.local : `${spec.imported} as ${spec.local}`
+	return spec.isType ? `type ${entry}` : entry
+}
+
 function renderSource(ctx, decl, specs, module = decl.source.value) {
 	const typeOnly = decl.importKind === 'type'
-	const names = specs.map((spec) => {
-		const entry = spec.imported === spec.local ? spec.local : `${spec.imported} as ${spec.local}`
-		return spec.isType && !typeOnly ? `type ${entry}` : entry
-	})
+	const names = specs.map((spec) =>
+		typeOnly ? renderSpec({ ...spec, isType: false }) : renderSpec(spec),
+	)
 	return `import ${typeOnly ? 'type ' : ''}{ ${names.join(', ')} } from '${module}'${semicolon(ctx, decl)}`
 }
 

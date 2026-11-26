@@ -1,5 +1,13 @@
 {
 	"status": "mixed",
-	"skipped": [{ "line": 6, "code": "tuple" }],
-	"declarations": { "rewritten": 1, "left": 1 }
+	"skipped": [
+		{
+			"line": 6,
+			"code": "tuple"
+		}
+	],
+	"declarations": {
+		"rewritten": 1,
+		"left": 1
+	}
 }

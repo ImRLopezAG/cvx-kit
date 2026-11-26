@@ -1,4 +1,8 @@
 {
-	"status": "mixed",
-	"skipped": [{ "line": 11, "code": "unknown-method" }]
+	"status": "rewritten",
+	"skipped": [],
+	"declarations": {
+		"rewritten": 3,
+		"left": 0
+	}
 }

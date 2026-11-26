@@ -1,8 +1,21 @@
 {
 	"status": "mixed",
 	"skipped": [
-		{ "line": 4, "code": "zod-type" },
-		{ "line": 6, "code": "table-callback-complex" },
-		{ "line": 11, "code": "table-callback-complex" }
-	]
+		{
+			"line": 4,
+			"code": "zod-type"
+		},
+		{
+			"line": 6,
+			"code": "table-callback-complex"
+		},
+		{
+			"line": 11,
+			"code": "table-callback-complex"
+		}
+	],
+	"declarations": {
+		"rewritten": 1,
+		"left": 2
+	}
 }

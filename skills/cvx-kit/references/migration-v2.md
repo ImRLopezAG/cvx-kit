@@ -416,60 +416,74 @@ node path/to/cvx-kit/tools/codemod-v2/index.mjs convex src --report codemod-repo
 node path/to/cvx-kit/tools/codemod-v2/index.mjs convex src --write --report codemod-report.json
 ```
 
-Options: `--write` writes the files (without it nothing is written), `--report <file>` writes the JSON report, `--ext ts,tsx,mts` sets the extensions, `--no-getters` keeps function `args` and `returns` as data properties, and `--ignore <glob…>` skips paths. `node_modules`, `dist`, `build`, `.next`, `_generated`, `.git` and `.d.ts` files are always skipped. Run it on a clean working tree so the diff is reviewable. Running it twice changes nothing the second time.
+Options: `--write` writes the files (without it nothing is written), `--report <file>` writes the JSON report, `--ext ts,tsx,mts` sets the extensions, `--no-getters` keeps function `args` and `returns` as data properties, `--no-strip-parsed` leaves parsed objects strict (see [Strict objects](#strict-objects-in-the-codemod)), and `--ignore <glob…>` skips paths. `node_modules`, `dist`, `build`, `.next`, `_generated`, `.git` and `.d.ts` files are always skipped. Run it on a clean working tree so the diff is reviewable. Running it twice changes nothing the second time. Pass every directory of the app in one run: the codemod reads all the files twice, so a type helper on an imported schema and a schema parsed in another file are judged with the whole run in view.
 
 What it rewrites:
 
-- `import { z } from 'zod'` → `import { k } from 'cvx-kit'`, dropping the Zod import when nothing uses it.
+- `import { z } from 'zod'` → `import { k } from 'cvx-kit'`, dropping the Zod import when nothing uses it. A file that already imports `k` from `cvx-kit` or `cvx-kit/k` keeps that import, so a re-run after fixing reported sites picks up the rest.
 - Factories (`z.object`, `z.strictObject` → `k.object`, `z.bigint` → `k.int64`, `z.unknown` → `k.any`, `z.iso.date` → `k.isoDate`, `z.iso.datetime` → `k.isoDateTime`, and the rest by name).
-- Chains: `.nullish()` → `.nullable().optional()`, `.nonnegative()` → `.min(0)`, `.nonpositive()` → `.max(0)`, `.nonempty()` → `.min(1)`, `.strict()` removed, `.pick({ a: true })`/`.omit({ a: true })` → string keys.
+- Chains: `.nullish()` → `.nullable().optional()`, `.nonempty()` → `.min(1)`, `.strict()` removed, `.pick({ a: true })`/`.omit({ a: true })` → string keys. `.positive()`, `.negative()`, `.nonnegative()`, `.nonpositive()`, `.finite()`, `.safe()`, `.required()`, `.keyof()`, `.exclude()`, `.extract()`, `.removeDefault()` and a `k`-form `.check((value, ctx) => …)` are kept as written.
+- The same chain rewrites on a chain that starts at a schema the codemod can see is `k` (declared with `k.` in the file, or rewritten in this run) or at a table boundary member (`ledger.storage.pick({ amount: true })` → `.pick('amount')`), including tables already declared with `kTable`.
 - `zid('t')` → `k.id('t')`; the table callback form `(id) => ({ … })` → a plain object, for `zodTable`, `createTable(...)`, `tenantTable` and `zodVariantTable`.
-- `zodTable` → `kTable`, `zodVariantTable` → `kVariantTable`, `zodContract` → `kContract`, `effectZodApiBuilder` → `effectApiBuilder`, and `cvx-kit/zod-table` imports → `cvx-kit/table`.
-- `z.infer`, `z.input`, `z.output` → `k.infer`, `k.input`, `k.output`.
+- `zodTable` → `kTable`, `zodVariantTable` → `kVariantTable`, `zodContract` → `kContract`, `effectZodApiBuilder` → `effectApiBuilder`, and `cvx-kit/zod-table` imports → `cvx-kit/table`. convex-helpers' `zCustomQuery`, `zCustomMutation`, `zCustomAction` (from `convex-helpers/server/zod4`) → `kCustomQuery`, `kCustomMutation`, `kCustomAction`, and `ZCustomCtx` → `KCustomCtx`, imported from `cvx-kit/registration`. These kit imports and names are rewritten in every file, including files with no Zod and statements left as Zod, because the v1 entries do not exist in v2. A moved name joins an existing import of its new module instead of adding a second one.
+- `z.infer`, `z.input`, `z.output` → `k.infer`, `k.input`, `k.output` when the type argument is `typeof` a schema that is `k` after the run: declared in the file, or imported from a file of the run that exports it as `k`. Otherwise the helper stays Zod and is reported as `type-helper-unknown`, because `k.infer` of a Zod schema is silently `unknown`.
 - Function definitions (an object literal passed to a call and carrying a `handler`): `args: <expr>` and `returns: <expr>` become `get args() { return <expr> }` and `get returns() { return <expr> }`, unless the value is a plain reference (`NoteArgs`, `schemas.byId`) or mentions `this`, `await` or `yield`. Convex re-evaluates a module's import graph on every call, so a getter makes a call build only the validators of the function it serves; on the benchmark app (about 30 tables, 14 functions) module load went from 8.43 ms to 6.30 ms. The getters are written on one line; run your formatter afterwards. Pass `--no-getters` to keep data properties, which stay supported.
 
 Within a file, statements whose schemas reference each other move together: if one of them has an unsupported site, the whole group stays Zod byte for byte and the others are reported as `mixed-reference`. Each file gets a status: `rewritten`, `mixed` (some Zod or v1 kit names remain), `kept` (keep marker), `untouched` or `error` (the file did not parse).
 
-Add the keep marker as a comment anywhere in a file the codemod must leave alone, such as a module that parses external data with Zod:
+Add the keep marker as a comment anywhere in a file the codemod must leave alone, such as a module that parses external data with Zod. A reason may follow it:
 
 ```ts
-// cvx-kit-codemod: keep-zod
+// cvx-kit-codemod: keep-zod -- the provider SDK validates with Zod
 ```
 
 The report holds `summary` (file counts by status), `declarations` (rewritten and left), `mechanicalShare`, `totals` and `info` (counts by reason code), and `files` with every skipped site's `line`, `column`, `code` and `text`.
 
-| Reason code              | Meaning                                                                          | What to do                                                            |
-| ------------------------ | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `loose-object`           | `z.looseObject`, `.passthrough()` or `.catchall()`                               | Decide per site; see [No v2 form](#constructs-with-no-v2-form).       |
-| `catch`                  | `.catch(...)` on a schema                                                        | Replace with explicit fallback handling.                              |
-| `recursive`              | `z.lazy`                                                                         | Restructure the data.                                                 |
-| `tuple`                  | `z.tuple`                                                                        | Use an object or a checked array.                                     |
-| `custom`                 | `z.custom`, `z.instanceof`                                                       | A structural schema plus `.refine`.                                   |
-| `coerce`                 | `z.coerce.*`, `z.preprocess`, `z.codec`                                          | An input-position `.transform`.                                       |
-| `super-refine`           | `.superRefine(...)`                                                              | Rewrite as `.check((value, ctx) => ctx.addIssue({ message, path }))`. |
-| `meta`                   | `.meta(...)`                                                                     | `.describe(text)`.                                                    |
-| `brand`                  | `.brand()`, `.readonly()`                                                        | Remove; brand in app types if needed.                                 |
-| `string-format`          | `z.email()`, `.url()`, `z.iso.time()`, other formats                             | `k.string().regex(...)`.                                              |
-| `json-schema`            | `z.toJSONSchema`                                                                 | `toJsonSchema` from `cvx-kit/json-schema`.                            |
-| `unknown-factory`        | a `z.` factory with no `k` form (for example `z.date()`), or `z` used as a value | Pick the `k` factory by hand.                                         |
-| `unknown-method`         | a chain method with no `k` form (for example `.positive()`, `.gt()`)             | Use the [Zod to `k` map](#zod-to-k-map).                              |
-| `mask-dynamic`           | `.pick`/`.omit` with a mask that is not a literal `{ key: true }` object         | Pass string keys.                                                     |
-| `table-callback-complex` | a table callback that is not a plain `(id) => ({ … })`                           | Write the field object by hand with `k.id(...)`.                      |
-| `zod-type`               | a Zod type (`z.ZodType`, `z.ZodString`, …) or a named Zod import                 | Use `KType` or the `k` schema types from `cvx-kit/k`, or `k.infer`.   |
-| `zod-introspection`      | `.error` on a `safeParse` result, `.def`, `._zod`                                | Read `result.issues`.                                                 |
-| `zod-interop`            | `zodToConvex`, `convexToZod`, `jsonSafeZid`                                      | Use `schema.validator`, `toZod`, or `k.id`.                           |
-| `zid-value`              | `zid` used as a value rather than called                                         | Replace with `k.id` usage by hand.                                    |
-| `k-shadowed`             | a local `k` binding would shadow the import at that site                         | Rename the local binding, then run again.                             |
-| `k-conflict`             | the file already binds `k` to something else; the file is left untouched         | Rename that binding, then run again.                                  |
-| `mixed-reference`        | the statement references a schema left as Zod in the same file                   | Fix the referenced statement first, then run again.                   |
+| Reason code              | Meaning                                                                                                                                    | What to do                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `loose-object`           | `z.looseObject`, `.passthrough()` or `.catchall()`                                                                                         | Decide per site; see [No v2 form](#constructs-with-no-v2-form).                         |
+| `catch`                  | `.catch(...)` on a schema                                                                                                                  | Replace with explicit fallback handling.                                                |
+| `recursive`              | `z.lazy`                                                                                                                                   | Restructure the data.                                                                   |
+| `tuple`                  | `z.tuple`                                                                                                                                  | Use an object or a checked array.                                                       |
+| `custom`                 | `z.custom`, `z.instanceof`                                                                                                                 | A structural schema plus `.refine`.                                                     |
+| `coerce`                 | `z.coerce.*`, `z.preprocess`, `z.codec`                                                                                                    | An input-position `.transform`.                                                         |
+| `super-refine`           | `.superRefine(...)`                                                                                                                        | Rewrite as `.check((value, ctx) => ctx.addIssue({ message, path }))`.                   |
+| `meta`                   | `.meta(...)`                                                                                                                               | `.describe(text)`.                                                                      |
+| `brand`                  | `.brand()`, `.readonly()`                                                                                                                  | Remove; brand in app types if needed.                                                   |
+| `string-format`          | `z.email()`, `.url()`, `z.iso.time()`, other formats                                                                                       | `k.string().regex(...)`.                                                                |
+| `json-schema`            | `z.toJSONSchema`                                                                                                                           | `toJsonSchema` from `cvx-kit/json-schema`.                                              |
+| `unknown-factory`        | a `z.` factory with no `k` form (for example `z.date()`), or `z` used as a value                                                           | Pick the `k` factory by hand.                                                           |
+| `unknown-method`         | a chain method with no `k` form (for example `.gt()`, `.multipleOf()`)                                                                     | Use the [Zod to `k` map](#zod-to-k-map).                                                |
+| `zod-check`              | Zod's `.check(...)`: check functions, or a callback reading `ctx.value`/`ctx.issues`                                                       | Rewrite as `.check((value, ctx) => ctx.addIssue({ message }))`, then run again.         |
+| `type-helper-unknown`    | `z.infer`/`z.input`/`z.output` of a schema not known to be `k` after the run                                                               | Migrate that schema (or pass its file in the same run), then run again; or keep it Zod. |
+| `unproven-mask`          | `.pick({ a: true })`/`.omit({ … })` on a value the codemod cannot prove is a schema or table (an import from outside the run, a parameter) | Pass string keys if it is a `k` schema. Does not hold the rest of the statement as Zod. |
+| `unproven-strict`        | `.strict()` on such a value                                                                                                                | Remove it if it is a `k` schema. Does not hold the rest of the statement as Zod.        |
+| `mask-dynamic`           | `.pick`/`.omit` with a mask that is not a literal `{ key: true }` object                                                                   | Pass string keys.                                                                       |
+| `table-callback-complex` | a table callback that is not a plain `(id) => ({ … })`                                                                                     | Write the field object by hand with `k.id(...)`.                                        |
+| `zod-type`               | a Zod type (`z.ZodType`, `z.ZodString`, …) or a named Zod import                                                                           | Use `KType` or the `k` schema types from `cvx-kit/k`, or `k.infer`.                     |
+| `zod-introspection`      | `.error` on a `safeParse` result, `.def`, `._zod`                                                                                          | Read `result.issues`.                                                                   |
+| `zod-interop`            | `zodToConvex`, `convexToZod`, `jsonSafeZid`                                                                                                | Use `schema.validator`, `toZod`, or `k.id`.                                             |
+| `zid-value`              | `zid` used as a value rather than called                                                                                                   | Replace with `k.id` usage by hand.                                                      |
+| `k-shadowed`             | a local `k` binding would shadow the import at that site                                                                                   | Rename the local binding, then run again.                                               |
+| `k-conflict`             | the file already binds `k` to something else; the file is left untouched                                                                   | Rename that binding, then run again.                                                    |
+| `mixed-reference`        | the statement references a schema left as Zod in the same file                                                                             | Fix the referenced statement first, then run again.                                     |
 
-The informational code `object-now-strict` marks each `z.object` rewritten to the strict `k.object`. Check those sites for code that relied on stripping.
+### Strict objects in the codemod
+
+Each rewritten object schema is classified by how its declaration is used in the run:
+
+- Only reaches kit boundaries (table fields, function `args`/`returns`, contracts). Convex already rejected unknown keys there, so nothing changes. Reported as the informational `object-now-strict`.
+- Parsed: the declaration, or one that nests it or derives from it (`extend`, `pick`, …), is passed to `.parse`/`.safeParse`/`.parseAsync`/`.safeParseAsync` in its file or in a file of the run that imports it, or it is exported and no file of the run imports it, so its consumers are unknown. By default the codemod appends `.strip()` to these objects and to the objects derived from them, which keeps v1's parse behaviour exactly while the native validator stays strict; they are reported as `object-parsed-stripped`. With `--no-strip-parsed` they stay strict and are reported as `object-parsed-now-strict`: review each for provider payloads and context objects that relied on stripping.
+
+An object that already says `.strict()` or `.strip()`, or was a `z.strictObject`, is left as declared. `.strip()` is the default because a codemod should not change what a parse accepts; drop it by hand where strictness is wanted.
+
+The informational `table-spread` marks a spread of a table boundary (`{ ...table, table: other }`). It works in 2.0 (see [Replacing a member](table.md#replacing-a-member)) and builds every boundary of that table at the spread.
 
 Limits:
 
-- References across files are not tracked. A rewritten module that imports a Zod schema from a file the codemod left as Zod is not reported; the typecheck finds it.
+- Across files the codemod knows only the files of the run, resolved through relative imports. A rewritten module that uses a schema from a file outside the run, or through a path alias, is judged as unknown: its type helpers are reported, and a value use is left for the typecheck.
 - `insert({ a: true })` and `update({ a: true })` call sites on table boundaries are not rewritten or reported; the typecheck finds them. Change them to `insert('a')`.
-- Every rewritten `z.object` becomes strict. The codemod cannot tell whether code relied on stripping.
+- Strictness is judged from parse calls the codemod can see; a schema handed to another library that parses it counts as boundary-only unless it is exported to files outside the run.
 - It does not change behaviour that the code depends on: return stripping, `ZodError` readers, async refinements and branded ids on input are yours to fix.
 
 ## Migration order

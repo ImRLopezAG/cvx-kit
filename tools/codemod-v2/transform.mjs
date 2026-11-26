@@ -3,6 +3,7 @@
 // unsupported site stays Zod byte for byte while the rest is rewritten.
 import {
 	applyEdits,
+	chainOf,
 	isReference,
 	lineIndex,
 	parentMap,
@@ -11,14 +12,23 @@ import {
 	unwrap,
 	walk,
 } from './transforms/ast.mjs'
-import { collectImports, KIT_RENAMES, planImports, ZOD_INTEROP } from './transforms/imports.mjs'
+import {
+	alwaysRewritten,
+	collectImports,
+	KIT_RENAMES,
+	planImports,
+	ZOD_INTEROP,
+} from './transforms/imports.mjs'
+import { classifyObjects } from './transforms/objects.mjs'
 import { isSchemaExpression, processBoundChain, processZodChain } from './transforms/schema.mjs'
 import { getterEdits } from './transforms/getters.mjs'
-import { addEdit, addSkip } from './transforms/sites.mjs'
+import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
 import { isCreateTable, processTableCall, tableKind } from './transforms/tables.mjs'
 import { processZodType } from './transforms/types.mjs'
 
 export const KEEP_MARKER = 'cvx-kit-codemod: keep-zod'
+// The marker, optionally followed by a reason: `// cvx-kit-codemod: keep-zod -- SDK needs Zod`.
+const KEEP_COMMENT = /^cvx-kit-codemod: keep-zod(?:\s|$)/
 
 // Kit functions whose arguments are schemas, so v1 and v2 schemas cannot meet in them.
 const SCHEMA_ARGUMENT_FUNCTIONS = new Set([
@@ -33,6 +43,10 @@ const TYPE_DECLARATIONS = new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclara
 /**
  * `options.getters` (default `true`): rewrite `args` / `returns` of function
  * definitions to getters, see `transforms/getters.mjs`.
+ * `options.stripParsed` (default `true`): append `.strip()` to object schemas
+ * that are parsed, so parse keeps v1's stripping (see `transforms/objects.mjs`).
+ * `options.run`: what the CLI knows about the other files of the run, see
+ * `index.mjs`; without it only this file is known.
  */
 export function transformSource(path, source, options = {}) {
 	let parsed
@@ -42,11 +56,15 @@ export function transformSource(path, source, options = {}) {
 		return failure(path, source, error.message)
 	}
 	if (parsed.errors.length > 0) return failure(path, source, parsed.errors[0].message)
-	if (parsed.comments.some((comment) => comment.value.trim() === KEEP_MARKER)) {
+	if (parsed.comments.some((comment) => KEEP_COMMENT.test(comment.value.trim()))) {
 		return result(path, source, 'kept')
 	}
 	try {
-		return rewrite(path, source, parsed.program, options.getters !== false)
+		return rewrite(path, source, parsed.program, {
+			getters: options.getters !== false,
+			stripParsed: options.stripParsed !== false,
+			run: options.run ?? null,
+		})
 	} catch (error) {
 		return failure(path, source, error.message)
 	}
@@ -60,6 +78,7 @@ function result(path, output, status, fields = {}) {
 		skipped: [],
 		info: [],
 		declarations: { rewritten: 0, left: 0 },
+		facts: null,
 		output,
 		...fields,
 	}
@@ -69,8 +88,10 @@ function failure(path, source, message) {
 	return result(path, source, 'error', { error: message })
 }
 
-function createContext(source, program) {
+function createContext(path, source, program, options) {
 	return {
+		path,
+		options,
 		source,
 		program,
 		parents: parentMap(program),
@@ -83,6 +104,10 @@ function createContext(source, program) {
 		kitRootDecl: null,
 		hasK: false,
 		kConflict: null,
+		v2Tables: new Set(),
+		imported: new Map(),
+		moduleDecls: new Map(),
+		parsedNames: new Set(),
 		schemaBindings: new Set(),
 		tableBindings: new Set(),
 		tableFactories: new Set(),
@@ -104,6 +129,9 @@ function createUnit(node, index) {
 		contexts: [],
 		refs: [],
 		safeResults: new Set(),
+		kitEdits: [],
+		manual: [],
+		objectSites: [],
 		zodValue: false,
 		zodRefs: 0,
 		tableCall: false,
@@ -120,9 +148,10 @@ function declaredNames(declaration) {
 	return declaration.id?.type === 'Identifier' ? [declaration.id.name] : []
 }
 
-function rewrite(path, source, program, getters) {
-	const ctx = createContext(source, program)
+function rewrite(path, source, program, options) {
+	const ctx = createContext(path, source, program, options)
 	collectImports(ctx)
+	collectParsed(ctx)
 	const units = program.body
 		.filter((node) => node.type !== 'ImportDeclaration')
 		.map((node, index) => createUnit(node, index))
@@ -134,23 +163,27 @@ function rewrite(path, source, program, getters) {
 		}
 	}
 	if (ctx.zodNamespaces.size === 0 && ctx.zodNamed.size === 0 && ctx.kit.size === 0) {
-		return result(path, source, 'untouched')
+		return result(path, source, 'untouched', { facts: factsOf(ctx, units, () => false) })
 	}
 	classifyBindings(ctx, units)
 	for (const unit of units) scanUnit(ctx, unit)
-	if (getters) for (const unit of units) unit.getterEdits = getterEdits(unit.node)
+	if (options.getters) for (const unit of units) unit.getterEdits = getterEdits(unit.node)
 	const left = decideComponents(ctx, units)
 	if (ctx.kConflict && units.some((unit) => unit.edits.length > 0)) {
 		const skipped = [{ ...siteAt(ctx, ctx.kConflict), code: 'k-conflict' }]
 		return result(path, source, 'untouched', { skipped })
 	}
 	const isLeft = (unit) => left.has(unit)
-	const editsOf = (unit) => [...unit.edits, ...unit.getterEdits]
+	classifyObjects(ctx, units, isLeft)
+	const facts = factsOf(ctx, units, isLeft)
+	const editsOf = (unit) =>
+		isLeft(unit) ? unit.kitEdits : [...unit.edits, ...unit.getterEdits, ...unit.kitEdits]
 	const applied = units.filter((unit) => !isLeft(unit) && editsOf(unit).length > 0)
-	if (applied.length === 0) return summarize(path, source, ctx, units, isLeft, source)
 	const needsK = applied.some((unit) => unit.edits.some((edit) => edit.usesK))
 	const imports = planImports(ctx, (index) => isLeft(units[index]), needsK)
-	const output = applyEdits(source, [...applied.flatMap(editsOf), ...imports.edits])
+	const edits = [...units.flatMap(editsOf), ...imports.edits]
+	if (edits.length === 0) return summarize(path, source, ctx, units, isLeft, source, facts)
+	const output = applyEdits(source, edits)
 	const mixed =
 		imports.zodRemains ||
 		imports.oldKitRemains ||
@@ -162,9 +195,42 @@ function rewrite(path, source, program, getters) {
 		units,
 		isLeft,
 		output,
+		facts,
 		mixed ? 'mixed' : 'rewritten',
 		applied.length,
 	)
+}
+
+/**
+ * What other files of a run need to know about this one: the exported names that
+ * are `k` schemas or tables once it is written, the imports it reads, and the
+ * imported names it parses. `index.mjs` resolves these across the run.
+ */
+function factsOf(ctx, units, isLeft) {
+	const kLocals = new Set()
+	for (const unit of units) {
+		if (isLeft(unit)) continue
+		for (const name of declaredNames(unit.declaration)) {
+			if (ctx.schemaBindings.has(name) || ctx.tableBindings.has(name)) kLocals.add(name)
+		}
+	}
+	const exports = new Map()
+	for (const unit of units) {
+		if (unit.node.type !== 'ExportNamedDeclaration') continue
+		if (unit.node.declaration) {
+			for (const name of declaredNames(unit.node.declaration)) exports.set(name, name)
+		} else if (!unit.node.source) {
+			for (const spec of unit.node.specifiers) {
+				const exported =
+					spec.exported.type === 'Identifier' ? spec.exported.name : spec.exported.value
+				if (spec.local.type === 'Identifier') exports.set(exported, spec.local.name)
+			}
+		}
+	}
+	const kExports = [...exports].filter(([, local]) => kLocals.has(local)).map(([name]) => name)
+	const imports = [...ctx.imported].map(([local, binding]) => ({ local, ...binding }))
+	const parsedImports = imports.filter(({ local }) => ctx.parsedNames.has(local))
+	return { kExports, imports, parsedImports }
 }
 
 function siteAt(ctx, node) {
@@ -183,11 +249,22 @@ function counted(unit) {
 	)
 }
 
-function summarize(path, source, ctx, units, isLeft, output, status = 'untouched', rewritten = 0) {
+function summarize(
+	path,
+	source,
+	ctx,
+	units,
+	isLeft,
+	output,
+	facts,
+	status = 'untouched',
+	rewritten = 0,
+) {
 	const skipped = []
 	const info = []
 	const declarations = { rewritten: 0, left: 0 }
 	for (const unit of units) {
+		skipped.push(...unit.manual)
 		if (isLeft(unit)) skipped.push(...unit.skips)
 		else info.push(...unit.info)
 		if (!counted(unit)) continue
@@ -195,11 +272,13 @@ function summarize(path, source, ctx, units, isLeft, output, status = 'untouched
 		else declarations.rewritten++
 	}
 	skipped.sort((left, right) => left.line - right.line || left.column - right.column)
+	info.sort((left, right) => left.line - right.line || left.column - right.column)
 	return result(path, output, output === source ? 'untouched' : status, {
 		rewritten,
 		skipped,
 		info,
 		declarations,
+		facts,
 	})
 }
 
@@ -239,6 +318,11 @@ function scanUnit(ctx, unit) {
 		const kind = tableKind(ctx, call)
 		if (kind) processTableCall(ctx, unit, call, kind)
 	}
+	for (const call of calls) unprovenSchemaCall(ctx, unit, call)
+	walk(unit.node, (node) => {
+		if (node.type !== 'SpreadElement' || node.argument.type !== 'Identifier') return
+		if (ctx.tableBindings.has(node.argument.name)) addInfo(ctx, unit, node, 'table-spread')
+	})
 	for (const [node, parent] of identifiers) {
 		if (!isReference(node, parent)) continue
 		const name = node.name
@@ -259,6 +343,51 @@ function scanUnit(ctx, unit) {
 		if (node.object.type !== 'Identifier' || !unit.safeResults.has(node.object.name)) return
 		if (node.property.name === 'error') addSkip(ctx, unit, node, 'zod-introspection')
 	})
+}
+
+const PARSE_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync'])
+
+/** Names whose chain ends in a parse call anywhere in the file (`x.parse(…)`, `x.strip().safeParse(…)`). */
+function collectParsed(ctx) {
+	walk(ctx.program, (node) => {
+		if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression') return
+		const callee = node.callee
+		if (callee.computed || !PARSE_METHODS.has(callee.property.name)) return
+		const { root } = chainOf(callee.object)
+		if (root.type === 'Identifier') ctx.parsedNames.add(root.name)
+	})
+}
+
+/**
+ * Zod-only spellings (`.strict()`, a `{ key: true }` mask on `pick`/`omit`) on a
+ * chain whose root the codemod cannot prove is a schema or a table: reported,
+ * not rewritten, and the unit's other sites are unaffected.
+ */
+function unprovenSchemaCall(ctx, unit, call) {
+	const callee = call.callee
+	if (callee.type !== 'MemberExpression' || callee.computed) return
+	const name = callee.property.name
+	const mask =
+		(name === 'pick' || name === 'omit') &&
+		call.arguments.length === 1 &&
+		call.arguments[0].type === 'ObjectExpression' &&
+		call.arguments[0].properties.some(
+			(property) => property.type === 'Property' && unwrap(property.value)?.value === true,
+		)
+	const strict = name === 'strict' && call.arguments.length === 0
+	if (!mask && !strict) return
+	const { root } = chainOf(callee.object)
+	if (root.type === 'Identifier') {
+		if (ctx.zodNamespaces.has(root.name)) return
+		if (ctx.schemaBindings.has(root.name) || ctx.tableBindings.has(root.name)) return
+		if (root.name === 'k' && ctx.hasK) return
+	}
+	addManual(
+		ctx,
+		unit,
+		{ start: callee.property.start, end: call.end },
+		mask ? 'unproven-mask' : 'unproven-strict',
+	)
 }
 
 function countZodRef(ctx, unit, name) {
@@ -292,7 +421,11 @@ function kitReference(ctx, unit, node, parent) {
 		return
 	}
 	const renamed = KIT_RENAMES.get(binding.imported)
-	if (renamed && binding.local === binding.imported) addEdit(unit, node, renamed)
+	if (!renamed || binding.local !== binding.imported) return
+	// A kit name is renamed in every unit: its v1 module no longer exists in v2.
+	if (alwaysRewritten(binding))
+		unit.kitEdits.push({ start: node.start, end: node.end, text: renamed })
+	else addEdit(unit, node, renamed)
 }
 
 /**
@@ -336,16 +469,7 @@ function decideComponents(ctx, units) {
 			}
 		}
 	}
-	for (const binding of ctx.kit.values()) {
-		// v1 and v2 forms cannot share one local name: an aliased rename, or a
-		// `cvx-kit/zod-table` name that moves to `cvx-kit/table` unchanged.
-		const renamed = KIT_RENAMES.has(binding.imported)
-		const conflicts = renamed
-			? binding.local !== binding.imported
-			: binding.module === 'cvx-kit/zod-table'
-		if (!conflicts || binding.imported === 'zid' || ZOD_INTEROP.has(binding.imported)) continue
-		for (const index of binding.refs.slice(1)) union(binding.refs[0], index)
-	}
+	// Kit names are rewritten in every unit (see kitReference), so their uses need not stay together.
 	const blocked = new Set(
 		units.filter((unit) => unit.skips.length > 0).map((unit) => find(unit.index)),
 	)

@@ -1,12 +1,18 @@
 #!/usr/bin/env node
 // cvx-kit v2 codemod: rewrites the mechanical majority of Zod schema and kit
 // table call sites to `k` and reports every site it left for manual work.
-// Usage: node tools/codemod-v2/index.mjs <path…> [--write] [--report out.json]
-//          [--ext ts,tsx,mts] [--no-getters] [--ignore glob…]
+// Usage: cvx-kit-codemod-v2 <path…> [--write] [--report out.json]
+//          [--ext ts,tsx,mts] [--no-getters] [--no-strip-parsed] [--ignore glob…]
 // --no-getters keeps function `args` / `returns` as data properties.
+// --no-strip-parsed leaves parsed object schemas strict instead of adding `.strip()`.
 // Without --write it is a dry run and writes nothing but the optional report.
+//
+// The run reads every file twice: the first pass records what each file exports
+// as `k`, imports and parses; the second rewrites with that knowledge, so a
+// type helper on an imported schema and a schema parsed in another file are
+// judged by the whole run, not one file.
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { join, matchesGlob, relative, resolve } from 'node:path'
+import { dirname, join, matchesGlob, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildReport, formatSummary } from './report.mjs'
 import { transformSource } from './transform.mjs'
@@ -28,6 +34,7 @@ export function parseArguments(argv) {
 		extensions: ['ts', 'tsx', 'mts'],
 		ignore: [],
 		getters: true,
+		stripParsed: true,
 	}
 	let list = options.paths
 	for (let index = 0; index < argv.length; index++) {
@@ -43,6 +50,9 @@ export function parseArguments(argv) {
 			list = options.paths
 		} else if (arg === '--no-getters') {
 			options.getters = false
+			list = options.paths
+		} else if (arg === '--no-strip-parsed') {
+			options.stripParsed = false
 			list = options.paths
 		} else if (arg === '--ignore') {
 			list = options.ignore
@@ -79,10 +89,17 @@ export function collectFiles(options, cwd = process.cwd()) {
 
 export function run(argv, cwd = process.cwd()) {
 	const options = parseArguments(argv)
+	const files = collectFiles(options, cwd).map((file) => ({
+		file,
+		path: relative(cwd, file),
+		source: readFileSync(file, 'utf8'),
+	}))
+	const transformOptions = { getters: options.getters, stripParsed: options.stripParsed }
+	const first = files.map(({ path, source }) => transformSource(path, source, transformOptions))
+	const knowledge = runKnowledge(files, first, cwd)
 	const results = []
-	for (const file of collectFiles(options, cwd)) {
-		const source = readFileSync(file, 'utf8')
-		const outcome = transformSource(relative(cwd, file), source, { getters: options.getters })
+	for (const { file, path, source } of files) {
+		const outcome = transformSource(path, source, { ...transformOptions, run: knowledge })
 		if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
 		results.push(outcome)
 	}
@@ -90,6 +107,59 @@ export function run(argv, cwd = process.cwd()) {
 	if (options.report)
 		writeFileSync(resolve(cwd, options.report), `${JSON.stringify(report, null, '\t')}\n`)
 	return { report, summary: formatSummary(report, options.write) }
+}
+
+const RESOLVED_EXTENSIONS = ['', '.ts', '.tsx', '.mts', '/index.ts', '/index.tsx', '/index.mts']
+
+/** Resolve a relative import specifier to a file of the run, by its run-relative path. */
+function resolver(files, cwd) {
+	const known = new Set(files.map(({ path }) => path))
+	const cache = new Map()
+	return (fromPath, specifier) => {
+		if (!specifier.startsWith('.')) return null
+		const key = `${fromPath}\0${specifier}`
+		if (cache.has(key)) return cache.get(key)
+		const base = resolve(cwd, dirname(fromPath), specifier.replace(/\.(?:m?js|jsx)$/, ''))
+		let found = null
+		for (const extension of RESOLVED_EXTENSIONS) {
+			const candidate = relative(cwd, base + extension)
+			if (known.has(candidate)) {
+				found = candidate
+				break
+			}
+		}
+		cache.set(key, found)
+		return found
+	}
+}
+
+/** What the first pass learned about every file, as the questions `transformSource` asks. */
+function runKnowledge(files, outcomes, cwd) {
+	const resolve = resolver(files, cwd)
+	const kExports = new Map()
+	const imported = new Set()
+	const parsed = new Set()
+	files.forEach(({ path }, index) => {
+		const facts = outcomes[index].facts
+		if (!facts) return
+		kExports.set(path, new Set(facts.kExports))
+		for (const binding of facts.imports) {
+			const target = resolve(path, binding.source)
+			if (target) imported.add(`${target}#${binding.imported}`)
+		}
+		for (const binding of facts.parsedImports) {
+			const target = resolve(path, binding.source)
+			if (target) parsed.add(`${target}#${binding.imported}`)
+		}
+	})
+	return {
+		isK(fromPath, specifier, name) {
+			const target = resolve(fromPath, specifier)
+			return target !== null && kExports.get(target)?.has(name) === true
+		},
+		isImported: (path, name) => imported.has(`${path}#${name}`),
+		isParsed: (path, name) => parsed.has(`${path}#${name}`),
+	}
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

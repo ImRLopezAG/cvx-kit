@@ -57,6 +57,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 
 ### Fixed (since 2.0.0-beta.0)
 
+- Codemod: the keep marker accepts a reason (`// cvx-kit-codemod: keep-zod -- reason`); kit entry imports and renamed kit names are rewritten in every file, and moved names merge into an existing import of their module; a file importing `k` from `cvx-kit/k` is no longer skipped as a `k` conflict, so re-runs pick up the remaining Zod; `zCustomQuery`/`zCustomMutation`/`zCustomAction`/`ZCustomCtx` from convex-helpers become the `k` builders and `KCustomCtx`; the new number checks and `.check` are rewritten directly, and Zod-only chain spellings on `k` schemas and table members are rewritten, or reported (`unproven-mask`, `unproven-strict`) when the root cannot be proven; a type helper is rewritten only when its schema is known to be `k` (`type-helper-unknown` otherwise); objects that are parsed get `.strip()` by default (`--no-strip-parsed` to keep them strict) and are reported apart from boundary-only objects; table spreads are reported.
 - An object spread of a table boundary (`{ ...table, table: other }`) keeps `schema`, `publicDto`, `storage` and the other lazy members, for `kTable`, `createTable`, `tenantTable` and `kVariantTable`.
 - `k.object` rejected class instances with `expected object, received object`; see the plain-object entry above.
 - `k.infer` of an object holding a `k.any()` field beside a defaulted field made the `any` field optional.

@@ -106,9 +106,8 @@ function rootSchema(root: KNode, strip: boolean): Mini {
 		case 'isoDateTime':
 			return z.iso.datetime({ offset: true })
 		case 'id':
-			// SAFETY: k.id stores its table name as the root argument; zid's schema is a Zod 4 core schema
-			// with the same `check` surface.
-			return zid(root.arg as string) as unknown as Mini
+			// SAFETY: k.id stores its table name as the root argument.
+			return asMini(zid(root.arg as string))
 		case 'number':
 			return z.number()
 		case 'int':
@@ -161,6 +160,12 @@ function rootSchema(root: KNode, strip: boolean): Mini {
 		default:
 			throw new Error(`toZod: '${root.op}' is not a root operation`)
 	}
+}
+
+/** convex-helpers builds `zid` with classic Zod; it is the same Zod 4 core schema with the same `check` surface. */
+function asMini(schema: z.core.$ZodType): Mini {
+	// SAFETY: every Zod 4 schema carries `_zod`, `check`, `parse` and `safeParse`, which is all this module reads.
+	return schema as Mini
 }
 
 /** Apply one run of chained conveniences: normalisers first, then checks, as `k` parses them. */

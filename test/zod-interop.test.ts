@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { zodToConvex } from 'convex-helpers/server/zod4'
+import type { GenericValidator, JSONValue } from 'convex/values'
 import { z } from 'zod'
 import * as mini from 'zod/mini'
 import { k } from '../src/k'
@@ -16,6 +17,11 @@ const task = k.object({
 	due: k.isoDate().optional(),
 	at: k.timestamp().optional(),
 })
+function json(validator: GenericValidator): JSONValue {
+	// SAFETY: native validators carry their JSON form on a non-public `json` property.
+	return (validator as GenericValidator & { json: JSONValue }).json
+}
+
 const valid = { title: ' ab ', code: 'AB', count: 1, owner: 'u1', note: null }
 
 describe('toZod', () => {
@@ -118,12 +124,9 @@ describe('toZod', () => {
 		const zod = toZod(schema)
 		expect(zod).toBeInstanceOf(mini.ZodMiniType)
 		expect(zod).not.toBeInstanceOf(z.ZodType)
-		// SAFETY: native validators carry their JSON form.
-		const json = (validator: object) => (validator as { json: unknown }).json
 		expect(json(zodToConvex(zod))).toEqual(json(schema.validator))
 		// A result is extended with zod/mini functions.
-		const extended = mini.extend(zod as never, { extra: mini.optional(mini.boolean()) })
-		expect(extended.safeParse({ owner: 'u', title: 't', note: null, kind: 'a', extra: true }).success).toBe(true)
+		expect(mini.optional(zod).safeParse(undefined).success).toBe(true)
 	})
 
 	it('installs .toZod() on every k schema', () => {

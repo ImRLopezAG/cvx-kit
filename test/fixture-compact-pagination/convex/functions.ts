@@ -1,5 +1,5 @@
 import { k } from 'cvx-kit/k'
-import { createKAuthFunctions } from 'cvx-kit/auth'
+import { createAuthFunctions } from 'cvx-kit/auth'
 import {
 	query,
 	mutation,
@@ -11,7 +11,7 @@ import {
 import type { DataModel } from './_generated/dataModel'
 import { scalarOptions, relationOptions, idOptions, variantIdOptions } from './tables'
 
-const auth = createKAuthFunctions<DataModel, 'reader'>({
+const auth = createAuthFunctions<DataModel, 'reader'>({
 	query,
 	mutation,
 	action,

@@ -1,6 +1,6 @@
 import type { GenericDatabaseWriter } from 'convex/server'
 import { v } from 'convex/values'
-import { createKAuthFunctions } from 'cvx-kit/auth'
+import { createAuthFunctions } from 'cvx-kit/auth'
 import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
 import { defineErrorContract } from 'cvx-kit/errors'
 import { k } from 'cvx-kit/k'
@@ -27,7 +27,7 @@ interface Repository {
 }
 class Notes extends Context.Service<Notes, Repository>()('NativeAsyncDomainNotes') {}
 
-const auth = createKAuthFunctions<DataModel, 'owner' | 'viewer'>({
+const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	query,
 	mutation,
 	action,

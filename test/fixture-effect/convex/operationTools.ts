@@ -5,7 +5,7 @@ import {
 	selectOperation,
 } from 'cvx-kit/agent-tools'
 import { v } from 'convex/values'
-import { createKAuthFunctions } from 'cvx-kit/auth'
+import { createAuthFunctions } from 'cvx-kit/auth'
 import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
 import { k } from 'cvx-kit/k'
 import { Context, Effect } from 'effect'
@@ -30,7 +30,7 @@ type QueryToolOutcome =
 	| { _tag: 'Success'; value: { title: string } | null }
 	| { _tag: 'UnknownFailure'; version: 1 }
 
-const auth = createKAuthFunctions<DataModel, 'owner' | 'viewer'>({
+const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	query,
 	mutation,
 	action,

@@ -1,24 +1,24 @@
 import { defineSchema } from 'convex/server'
-import { z } from 'zod'
-import { zodTable } from '../../src/zod-table'
+import { k } from '../../src/k'
+import { kTable } from '../../src/table'
 
-export const documents = zodTable(
+export const documents = kTable(
 	'documents',
-	() => ({
-		title: z.string(),
-		ownerId: z.string(),
-		secretNote: z.string(),
-	}),
+	{
+		title: k.string(),
+		ownerId: k.string(),
+		secretNote: k.string(),
+	},
 	{
 		commandFields: ['title'],
 		publicFields: ['title', 'ownerId'],
 	},
 )
 
-export const documentHistory = zodTable('documentHistory', () => ({
-	documentTitle: z.string(),
-	actorId: z.string(),
-}))
+export const documentHistory = kTable('documentHistory', {
+	documentTitle: k.string(),
+	actorId: k.string(),
+})
 
 export default defineSchema({
 	documents: documents.table.index('by_owner', ['ownerId']),

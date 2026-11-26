@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vite-plus/test'
 import { k, KValidationError } from '../src/k'
 import { toJsonSchema } from '../src/json-schema'
 import { createTable, kTable, tenantTable, TIMESTAMP_FIELDS } from '../src/table'
-import * as v1 from '../src/zod-table'
+import * as namespaces from '../src/namespace'
+import * as root from '../src/index'
 import * as v2 from '../src/table'
 
 /** A typed id for test rows; ids are strings at runtime. */
@@ -228,7 +229,7 @@ describe('kTable public DTOs (R16, AE7)', () => {
 		}
 	})
 
-	it('keeps missing optional public fields as undefined keys, like v1', () => {
+	it('keeps missing optional public fields as undefined keys', () => {
 		const notes = kTable(
 			'notes',
 			{ text: k.string().optional(), secret: k.string() },
@@ -239,6 +240,31 @@ describe('kTable public DTOs (R16, AE7)', () => {
 		const dto = notes.toPublicDto({ secret: 'hidden' })
 		expect(dto).toEqual({ text: undefined })
 		expect(Object.keys(dto)).toEqual(['text'])
+		const extend = { url: k.string().optional() }
+		const extended = notes.toPublicDto({ secret: 'hidden' }, { extend, values: {} })
+		expect(extended).toEqual({ text: undefined })
+		expect(notes.dto({ extend }).parse(extended)).toEqual(extended)
+	})
+
+	it('validates nested refinements and optionals against the actual projector output', () => {
+		const extend = {
+			extra: k.object({
+				name: k
+					.string()
+					.min(1)
+					.refine((value) => value !== 'hidden'),
+				note: k.string().optional(),
+			}),
+		}
+		const dto = documents.toPublicDto(row, { extend, values: { extra: { name: 'visible' } } })
+		expect(documents.dto({ extend }).parse(dto)).toEqual(dto)
+		expect(() =>
+			documents.toPublicDto(row, { extend, values: { extra: { name: 'hidden' } } }),
+		).toThrow(KValidationError)
+		expect(() =>
+			// @ts-expect-error extension values require an explicit schema
+			documents.toPublicDto(row, { values: { url: 'https://example.com' } }),
+		).toThrow()
 	})
 })
 
@@ -387,6 +413,7 @@ const shared = {
 
 describe('createTable', () => {
 	it('is re-exported from the table entry and keeps shared fields ordinary by default', () => {
+		expect(root.createTable).toBe(createTable)
 		const customTable = createTable(shared)
 		const tasks = customTable('tasks', { title: k.string() })
 		const issues = customTable('issues', { severity: k.number() })
@@ -404,6 +431,7 @@ describe('createTable', () => {
 		expect(tasks.storage.shape).not.toHaveProperty('severity')
 		expect(tasks.storage.shape.owner).toBe(shared.owner)
 		expect(tasks.storage.shape.workspace).toBe(shared.workspace)
+		expect(tasks.storage.safeParse({ ...task, workspace: 'blocked' }).success).toBe(false)
 		expect(Object.keys(tasks.storage.shape).slice(0, 5)).toEqual([
 			'owner',
 			'workspace',
@@ -463,6 +491,12 @@ describe('createTable', () => {
 			label: 'visible',
 		})
 		expect(tasks.dto({ _id: true, extend }).parse(dto)).toEqual(dto)
+		expect(
+			tasks
+				.paginationOpts({ workspace: true, owner: true })
+				.parse({ numItems: 1, cursor: null, filters: { workspace: 'work', owner: task.owner } })
+				.filters,
+		).toEqual({ workspace: 'work', owner: task.owner })
 	})
 
 	it('persists two independent schemas with shared indexes and native id validation', async () => {
@@ -638,7 +672,7 @@ describe('laziness (F2, R22)', () => {
 })
 
 describe('namespace helpers', () => {
-	it('are one implementation shared by both entries', () => {
+	it('are one implementation shared by the namespace module, the table entry and the root entry', () => {
 		for (const name of [
 			'createModule',
 			'memberName',
@@ -647,8 +681,10 @@ describe('namespace helpers', () => {
 			'namespaceName',
 			'namespacePrefix',
 			'tablesOf',
-		] as const)
-			expect(v2[name], name).toBe(v1[name])
+		] as const) {
+			expect(v2[name], name).toBe(namespaces[name])
+			expect(root[name], name).toBe(namespaces[name])
+		}
 	})
 
 	it('accept v2 table boundaries as namespace members', () => {

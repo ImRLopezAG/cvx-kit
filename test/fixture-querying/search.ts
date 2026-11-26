@@ -62,7 +62,7 @@ import {
 } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { Effect } from 'effect'
-import { createKAuthFunctions } from '../../src/auth'
+import { createAuthFunctions } from '../../src/auth'
 import { createEffectAuthFunctions } from '../../src/effect'
 import { createQueryEngine, queryFailureContract } from '../../src/querying'
 import { cursor } from './scalar'
@@ -107,7 +107,7 @@ export function searchFixture(budgets?: Partial<ManagedBudgets>) {
 			}),
 		},
 	}
-	const auth = createKAuthFunctions<DM, 'reader'>(config)
+	const auth = createAuthFunctions<DM, 'reader'>(config)
 	const effect = createEffectAuthFunctions(config, {
 		query: { errors: queryFailureContract },
 		mutation: {},

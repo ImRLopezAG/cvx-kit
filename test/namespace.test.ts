@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	createModule,
 	memberName,
@@ -8,13 +8,13 @@ import {
 	namespaceName,
 	namespacePrefix,
 	tablesOf,
-	zodTable,
-} from '../src/zod-table'
+	kTable,
+} from '../src/table'
 
-const items = zodTable('items', () => ({ no: z.string() }))
-const itemLedgerEntries = zodTable('itemLedgerEntries', () => ({ qty: z.number() }))
-const salesOrders = zodTable('salesOrders', () => ({ no: z.string() }))
-const users = zodTable('users', () => ({ name: z.string() }))
+const items = kTable('items', { no: k.string() })
+const itemLedgerEntries = kTable('itemLedgerEntries', { qty: k.number() })
+const salesOrders = kTable('salesOrders', { no: k.string() })
+const users = kTable('users', { name: k.string() })
 
 describe('namespace', () => {
 	const Inventory = namespace('Inventory', {
@@ -68,7 +68,7 @@ describe('namespace', () => {
 	})
 
 	it('strips the namespace prefix from stored table names', () => {
-		const stored = zodTable('Inventory_Items', () => ({ no: z.string() }))
+		const stored = kTable('Inventory_Items', { no: k.string() })
 		const Inv = namespace('Inventory', { Inventory_Items: stored, legacyBins: users.table })
 		const Fin = namespace('Microsoft.Finance', { Microsoft_Finance_GLEntries: users.table })
 		const names = namespaceIndex(Inv, Fin)

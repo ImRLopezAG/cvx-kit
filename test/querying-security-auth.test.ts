@@ -13,7 +13,6 @@ import {
 } from 'convex/server'
 import { anyApi } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
 import { k } from '../src/k'
 import { describe, expect, it } from 'vite-plus/test'
 import { createAuthFunctions } from '../src/auth'
@@ -241,14 +240,14 @@ const openRead = unrestricted.authQuery({
 	}),
 })
 const create = auth.authMutation({
-	args: { name: z.string(), permission: z.string() },
+	args: { name: k.string(), permission: k.string() },
 	handler: async (ctx, args) => {
 		const permission = ctx.db.normalizeId('permissions', args.permission)!
 		return ctx.db.insert('tasks', { name: args.name, tenant: ctx.tenant, permission })
 	},
 })
 const modify = auth.authMutation({
-	args: { id: z.string() },
+	args: { id: k.string() },
 	handler: async (ctx, args) => {
 		const id = ctx.db.normalizeId('tasks', args.id)!
 		await ctx.db.patch('tasks', id, { name: 'modified' })
@@ -261,7 +260,7 @@ const modify = auth.authMutation({
 	},
 })
 const changedDependency = auth.authMutation({
-	args: { permission: z.string() },
+	args: { permission: k.string() },
 	handler: async (ctx, args) => {
 		const permission = ctx.db.normalizeId('permissions', args.permission)!
 		await ctx.db.insert('tasks', { name: 'before', tenant: ctx.tenant, permission })
@@ -437,7 +436,7 @@ it('seals and opens a bigint payload through a registered authenticated query', 
 		adminRoles: [],
 	})
 	const endpoint = codecAuth.authQuery({
-		args: { token: z.string().optional() },
+		args: { token: k.string().optional() },
 		handler: (ctx, args) => {
 			const codec = engine.cursorCodec(ctx, {
 				domain: 'native-clients-v1',
@@ -532,7 +531,7 @@ it('keeps public cursor integrity separate from current native consumer authoriz
 		handler: (ctx) => engine.cursorCodec(ctx, options).seal({ seen: 1n }),
 	})
 	const resume = codecAuth.authQuery({
-		args: { cursor: z.string() },
+		args: { cursor: k.string() },
 		handler: async (ctx, args) => {
 			const value = engine.cursorCodec(ctx, options).open(args.cursor)
 			if (!(await ctx.db.query('permissions').first())?.clients) throw new Error('DENIED')

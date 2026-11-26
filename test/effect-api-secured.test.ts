@@ -15,7 +15,7 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { createKAuthFunctions } from '../src/auth'
+import { createAuthFunctions } from '../src/auth'
 import { effectApiBuilder } from '../src/effect'
 import { k } from '../src/k'
 import { createTriggers } from '../src/triggers'
@@ -54,7 +54,7 @@ function harness() {
 			value: change.newDoc.value,
 		})
 	})
-	const auth = createKAuthFunctions<DataModel, Role>({
+	const auth = createAuthFunctions<DataModel, Role>({
 		triggers,
 		query: queryGeneric,
 		mutation: mutationGeneric,

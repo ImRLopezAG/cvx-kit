@@ -16,7 +16,7 @@ import {
 	type GenericDatabaseWriter,
 	type GenericDatabaseReader,
 } from 'convex/server'
-import { createKAuthFunctions } from 'cvx-kit/auth'
+import { createAuthFunctions } from 'cvx-kit/auth'
 import { createEffectFoundation, createEffectCrud, effectApiBuilder } from 'cvx-kit/effect'
 import { defineErrorContract } from 'cvx-kit/errors'
 import { k } from 'cvx-kit/k'
@@ -236,7 +236,7 @@ function repository(db: GenericDatabaseWriter<Model>, tenant: string): Repositor
 		},
 	}
 }
-const auth = createKAuthFunctions<Model, 'owner'>({
+const auth = createAuthFunctions<Model, 'owner'>({
 	query,
 	mutation,
 	action,

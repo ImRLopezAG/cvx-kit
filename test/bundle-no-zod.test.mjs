@@ -1,41 +1,37 @@
 // @vitest-environment node
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'vite-plus/test'
 
 const checkout = resolve(import.meta.dirname, '..')
 const esbuild = createRequire(join(checkout, 'package.json'))('esbuild')
+const manifest = JSON.parse(readFileSync(join(checkout, 'package.json'), 'utf8'))
 const dir = mkdtempSync(join(tmpdir(), 'cvx-bundle-no-zod-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 /**
- * v2 core entries that must never pull Zod into a Convex function bundle. Append each new v2 entry
- * (src/table.ts, src/registration.ts, ...) here; v1 entries still import Zod until the cutover.
+ * Every package entry except the opt-in `./zod` interop entry, as its `src/` file: the export's
+ * built target with `dist/` mapped back to `src/`. Skipped: `./package.json`, the type-only component
+ * `_generated` exports (no runtime target) and `./test`, the vitest-only helper that ships as source
+ * and loads the built components from `dist/`, so it never reaches a Convex bundle.
  */
 const coreEntries = [
-	'src/k.ts',
-	'src/json-schema.ts',
-	'src/table.ts',
-	'src/registration.ts',
-	'src/filters.ts',
-	'src/relations-public.ts',
-	'src/querying.ts',
-	'src/crud.ts',
-	'src/triggers.ts',
-	'src/middleware.ts',
-	'src/webhooks.ts',
-	'src/agent-tools.ts',
-	'src/contracts.ts',
-	'src/idempotency.ts',
-	'src/workflow.ts',
-	'src/errors.ts',
+	...new Set(
+		Object.entries(manifest.exports)
+			.filter(([path]) => !['./package.json', './zod', './test'].includes(path))
+			// A string export is its own target; a conditional one runs its `import` target.
+			.flatMap(([, target]) => (target.types === undefined ? [target] : (target.import ?? [])))
+			.map((target) => target.replace(/^\.\/dist\//, 'src/').replace(/\.(mjs|js)$/, '.ts')),
+	),
 ]
+/** The lint plugin runs in Node beside native oxc bindings, never in a Convex bundle. */
+const nodeOnly = new Set(['src/oxlint.ts'])
 const zodInputs = [/node_modules\/zod\//, /node_modules\/convex-helpers\/server\/zod4/]
 
 /** Bundle a module that re-exports `entries` like Convex does, and return the input bytes by path. */
-async function bundleInputs(name, entries, imports = []) {
+async function bundleInputs(name, entries, imports = [], node = false) {
 	const entry = join(dir, `${name}.ts`)
 	writeFileSync(
 		entry,
@@ -48,14 +44,14 @@ async function bundleInputs(name, entries, imports = []) {
 		absWorkingDir: checkout,
 		entryPoints: [entry],
 		bundle: true,
-		platform: 'browser',
+		platform: node ? 'node' : 'browser',
 		format: 'esm',
 		target: 'esnext',
 		outfile: join(dir, `${name}.mjs`),
 		conditions: ['convex', 'module'],
 		treeShaking: true,
 		logLevel: 'silent',
-		external: ['node:*'],
+		external: node ? ['node:*', 'oxc-parser', 'oxc-resolver', '@oxlint/plugins'] : ['node:*'],
 		metafile: true,
 	})
 	const output = Object.values(result.metafile.outputs).find((item) => item.entryPoint)
@@ -71,13 +67,24 @@ function bytesMatching(inputs, patterns) {
 }
 
 describe('v2 bundles', () => {
-	it('contain no Zod or convex-helpers zod4 bytes from the core entries', async () => {
-		const inputs = await bundleInputs('core', coreEntries)
+	it('derive the core entries from every package export except the interop entry', () => {
+		expect(coreEntries).toContain('src/index.ts')
+		expect(coreEntries).toContain('src/k.ts')
+		expect(coreEntries).toContain('src/components/foundation/convex.config.ts')
+		expect(coreEntries).not.toContain('src/zod.ts')
+		expect(coreEntries.length).toBeGreaterThan(25)
+	})
+
+	it.each(coreEntries)('contain no Zod or convex-helpers zod4 bytes from %s', async (entry) => {
+		const inputs = await bundleInputs(entry.replaceAll('/', '_'), [entry], [], nodeOnly.has(entry))
 		expect(bytesMatching(inputs, zodInputs)).toBe(0)
 	})
 
 	it('contain Zod once the interop entry is imported', async () => {
-		const inputs = await bundleInputs('interop', [...coreEntries, 'src/zod.ts'])
+		const inputs = await bundleInputs('interop', [
+			...coreEntries.filter((entry) => !nodeOnly.has(entry)),
+			'src/zod.ts',
+		])
 		expect(bytesMatching(inputs, [zodInputs[0]])).toBeGreaterThan(0)
 		expect(bytesMatching(inputs, [zodInputs[1]])).toBeGreaterThan(0)
 	})
@@ -106,5 +113,30 @@ describe('v2 bundles', () => {
 		]
 		expect(inputs.filter(({ input }) => server.some((pattern) => pattern.test(input)))).toEqual([])
 		expect(bytesMatching(inputs, [/src\/querying\/shared\/contract\.ts$/])).toBeGreaterThan(0)
+	})
+})
+
+describe('v1 removal', () => {
+	/** Every TypeScript source file under src/, relative to the checkout. */
+	function sourceFiles(folder = join(checkout, 'src')) {
+		return readdirSync(folder, { withFileTypes: true }).flatMap((entry) => {
+			const path = join(folder, entry.name)
+			if (entry.isDirectory()) return sourceFiles(path)
+			return /\.tsx?$/.test(entry.name) ? [relative(checkout, path)] : []
+		})
+	}
+	const zodImport =
+		/(?:from|import)\s*\(?\s*['"](?:zod(?:\/[^'"]*)?|convex-helpers\/server\/zod4)['"]/
+
+	it('leaves src/zod.ts as the only source file importing zod or convex-helpers zod4', () => {
+		const importing = sourceFiles().filter((file) =>
+			zodImport.test(readFileSync(join(checkout, file), 'utf8')),
+		)
+		expect(importing).toEqual(['src/zod.ts'])
+	})
+
+	it('publishes no ./zod-table entry and keeps zod an optional peer', () => {
+		expect(manifest.exports['./zod-table']).toBeUndefined()
+		expect(manifest.peerDependenciesMeta.zod).toEqual({ optional: true })
 	})
 })

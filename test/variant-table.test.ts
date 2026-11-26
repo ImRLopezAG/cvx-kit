@@ -247,6 +247,49 @@ describe('kVariantTable boundaries', () => {
 			).toThrow(/Reserved table field/)
 	})
 
+	it('uses ordinary writable masks for explicit timestamps without server ownership', () => {
+		const table = kVariantTable(
+			'ledger',
+			k.discriminatedUnion('type', [
+				k.object({ type: k.literal('adjustment'), createdAt: k.int().min(0) }),
+			]),
+			{
+				discriminator: 'type',
+				timestamps: false,
+				variants: { adjustment: { commandFields: ['createdAt'], publicFields: [] } },
+			},
+		)
+		for (const schema of [
+			table.commandInput,
+			table.insertSchema,
+			table.updateSchema,
+			table.tools.insert,
+			table.tools.update.shape.data,
+		]) {
+			expect(schema.parse({ type: 'adjustment', createdAt: 1 })).toEqual({
+				type: 'adjustment',
+				createdAt: 1,
+			})
+			expect(schema.safeParse({ type: 'adjustment', createdAt: -1 }).success).toBe(false)
+		}
+		expect(table.insertSchema.safeParse({ type: 'adjustment' }).success).toBe(false)
+		expect(table.updateSchema.parse({ type: 'adjustment' })).toEqual({ type: 'adjustment' })
+		expect(table.toPublicDto({ type: 'adjustment', createdAt: 1 })).toEqual({ type: 'adjustment' })
+		expect(
+			table.storage.safeParse({ type: 'adjustment', createdAt: 1, updatedAt: 1 }).success,
+		).toBe(false)
+	})
+
+	it('stores a native union whose branches keep table-branded ids and optional timestamps', () => {
+		const native = payments.storage.validator
+		expect(native.kind).toBe('union')
+		for (const branch of native.members) {
+			if (branch.kind !== 'object') throw new Error('Expected an object branch')
+			expect(branch.fields.clientId).toMatchObject({ kind: 'id', tableName: 'clients' })
+			expect(branch.fields.createdAt.isOptional).toBe('optional')
+		}
+	})
+
 	it('keeps managed timestamp collisions and system fields reserved', () => {
 		for (const key of ['createdAt', 'updatedAt', 'archivedAt', '_id', '_creationTime']) {
 			const storage = k.discriminatedUnion('type', [

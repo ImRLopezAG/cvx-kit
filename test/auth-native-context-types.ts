@@ -17,8 +17,8 @@ import { v } from 'convex/values'
 import { k } from 'cvx-kit/k'
 import { Context } from 'effect'
 import {
-	createKAuthFunctions,
-	createKAuthReaders,
+	createAuthFunctions,
+	createAuthReaders,
 	type AuthBundle,
 	type AuthReadersConfig,
 	type Include,
@@ -28,7 +28,7 @@ import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
 const schema = defineSchema({ notes: defineTable({ title: v.string() }) })
 type Model = DataModelFromSchemaDefinition<typeof schema>
 type Role = 'owner' | 'viewer'
-const auth = createKAuthFunctions<Model, Role>({
+const auth = createAuthFunctions<Model, Role>({
 	query: queryGeneric,
 	mutation: mutationGeneric,
 	action: actionGeneric,
@@ -179,7 +179,7 @@ effectApiBuilder(auth.authMutation, { services: () => Context.empty() })({
 })
 
 // Existing one-argument principal resolvers remain assignable.
-const legacyLookup: Parameters<typeof createKAuthFunctions<Model, Role>>[0]['getAuthUser'] = async (
+const legacyLookup: Parameters<typeof createAuthFunctions<Model, Role>>[0]['getAuthUser'] = async (
 	ctx,
 ) => ({ id: (await ctx.auth.getUserIdentity())?.subject ?? 'missing' })
 void legacyLookup
@@ -195,8 +195,8 @@ const readerBase = {
 	mapRole: (slug?: string): Role | null => (slug === 'owner' || slug === 'viewer' ? slug : null),
 	adminRoles: ['owner'],
 } satisfies AuthReadersConfig<Model, Role>
-const readers = createKAuthReaders<Model, Role>(readerBase)
-createKAuthFunctions<Model, Role>({
+const readers = createAuthReaders<Model, Role>(readerBase)
+createAuthFunctions<Model, Role>({
 	...readerBase,
 	mutation: mutationGeneric,
 	internalMutation: internalMutationGeneric,
@@ -217,6 +217,6 @@ void readers.authMutation
 // @ts-expect-error readers expose no mutation constructors
 void readers.systemMutation
 // @ts-expect-error readers take no trigger registry
-createKAuthReaders<Model, Role>({ ...readerBase, triggers: undefined })
+createAuthReaders<Model, Role>({ ...readerBase, triggers: undefined })
 // @ts-expect-error readers take no trigger wrapper
-createKAuthReaders<Model, Role>({ ...readerBase, wrapDB: (ctx: GenericMutationCtx<Model>) => ctx })
+createAuthReaders<Model, Role>({ ...readerBase, wrapDB: (ctx: GenericMutationCtx<Model>) => ctx })

@@ -1,17 +1,30 @@
 export { defaultErrors, KitError, type ErrorFactory } from './errors'
-export { kTable, kVariantTable } from './table'
 export {
 	createModule,
 	createTable,
-	jsonSafeZid,
+	kTable,
+	kVariantTable,
+	memberName,
+	namespace,
+	namespaceIndex,
+	namespaceName,
+	namespacePrefix,
 	paginated,
+	tablesOf,
 	tenantTable,
 	TIMESTAMP_FIELDS,
-	zodTable,
-	zodVariantTable,
-	type TableBoundaryOptions,
-	type DtoOptions,
-} from './zod-table'
+	type EnginePaginationResult,
+	type KDtoOptions as DtoOptions,
+	type KDtoOptions,
+	type KTableBoundary,
+	type KTableOptions as TableBoundaryOptions,
+	type KTableOptions,
+	type KVariantOptions,
+	type KVariantTableBoundary,
+	type Namespace,
+	type NamespaceTag,
+	type PageCompleteness,
+} from './table'
 export {
 	assertTenantOwned,
 	composeRules,
@@ -97,6 +110,6 @@ export {
 	type RelationTables,
 	type RelationDeclarations,
 } from './relations'
-export type { ServerFilter, ScalarFilters, ScalarSelection } from './querying/v1-zod-filters'
+export type { ServerFilter, ScalarFilters, ScalarSelection } from './querying/filters'
 export { createQueryEngine, type QueryEngineConfig } from './querying'
 export { k } from './k'

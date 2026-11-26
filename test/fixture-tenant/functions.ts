@@ -10,7 +10,7 @@ import {
 	type DataModelFromSchemaDefinition,
 	type GenericMutationCtx,
 } from 'convex/server'
-import { createKAuthFunctions } from '../../src/auth'
+import { createAuthFunctions } from '../../src/auth'
 import { Foundation } from '../../src/components/foundation/client'
 import { createCrudCommands } from '../../src/crud'
 import { k } from '../../src/k'
@@ -29,7 +29,7 @@ export const triggers = createTriggers<FixtureDataModel>()
 timestamps(triggers, 'projects')
 tenantOwnership(triggers, ...TENANT_TABLES)
 
-export const auth = createKAuthFunctions<FixtureDataModel, FixtureRole>({
+export const auth = createAuthFunctions<FixtureDataModel, FixtureRole>({
 	triggers,
 	query: queryGeneric,
 	mutation: mutationGeneric,

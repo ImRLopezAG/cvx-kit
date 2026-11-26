@@ -20,7 +20,7 @@ import { v } from 'convex/values'
 import { k } from '../src/k'
 import { describe, expect, it } from 'vite-plus/test'
 import {
-	createKAuthFunctions,
+	createAuthFunctions,
 	type AuthBundle,
 	type AuthFunctionsConfig,
 	type SecurityConfig,
@@ -73,7 +73,7 @@ const config: AuthFunctionsConfig<DM, Role> = {
 	adminRoles: ['owner'],
 	security: { tenancy: { tables: ['notes'] }, rules },
 }
-const auth = createKAuthFunctions<DM, Role>(config)
+const auth = createAuthFunctions<DM, Role>(config)
 const managed = createManagedSecurity<DM>({ tables: ['notes'], policyVersion: 'v1' })
 
 function bundleFor(clientId: string, organizationId: string) {
@@ -247,7 +247,7 @@ describe('service principal constructors', () => {
 		const f = groupDeclarations()
 		type FDM = DataModelFromSchemaDefinition<typeof f.schema>
 		// The query engine's boundaries are k schemas; the v2 constructors register them.
-		const fixtureAuth = createKAuthFunctions<FDM, Role>({
+		const fixtureAuth = createAuthFunctions<FDM, Role>({
 			...builders,
 			getAuthUser: async () => null,
 			mapRole: () => 'owner',

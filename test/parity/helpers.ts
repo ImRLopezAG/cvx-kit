@@ -1,5 +1,6 @@
-// Zod-free helpers for comparing v2 tables with the v1 parity snapshot. The JSON normalisation is the
-// one v1-snapshot.test.ts writes: keys sorted, `undefined` as "$undefined", a bigint as "$bigint:<n>".
+// Zod-free helpers for comparing v2 tables with the frozen v1 parity snapshot. The JSON normalisation
+// is the one the snapshot was recorded with: keys sorted, `undefined` as "$undefined", a bigint as
+// "$bigint:<n>".
 import { readFileSync } from 'node:fs'
 import type { TableDefinition } from 'convex/server'
 import type { GenericValidator, ValidatorJSON } from 'convex/values'

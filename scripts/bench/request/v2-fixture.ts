@@ -13,7 +13,7 @@ import {
 import { Triggers } from 'convex-helpers/server/triggers'
 import { k } from '../../../src/k'
 import { kTable, kVariantTable } from '../../../src/table'
-import { createKAuthFunctions } from '../../../src/auth'
+import { createAuthFunctions } from '../../../src/auth'
 import type { Operation } from './register'
 
 export const DOMAIN_COUNT = 28
@@ -96,7 +96,7 @@ export function defineAppTables() {
 export function defineAppAuth() {
 	const triggers = new Triggers<GenericDataModel>()
 	for (let i = 0; i < 6; i++) triggers.register(`entity${i}`, async () => {})
-	return createKAuthFunctions<GenericDataModel, 'admin' | 'member'>({
+	return createAuthFunctions<GenericDataModel, 'admin' | 'member'>({
 		query: queryGeneric,
 		mutation: mutationGeneric,
 		action: actionGeneric,

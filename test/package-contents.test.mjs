@@ -23,7 +23,10 @@ const packedFiles = (() => {
 				stdio: 'pipe',
 			})
 			return execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8' })
-				.trim().split('\n').map((file) => file.replace(/^package\//, '')).sort()
+				.trim()
+				.split('\n')
+				.map((file) => file.replace(/^package\//, ''))
+				.sort()
 		} finally {
 			rmSync(temporary, { recursive: true, force: true })
 		}
@@ -66,6 +69,28 @@ describe('packed Convex components', () => {
 			'./dist/relations.mjs',
 		])
 			expect(manifest.exports[path]).toBeUndefined()
+	})
+	it('ships the v2 entries, no v1 entry and no v1 build output', () => {
+		const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+		for (const stem of ['k', 'table', 'registration', 'json-schema', 'zod']) {
+			expect(manifest.exports[`./${stem}`]).toEqual({
+				types: `./dist/${stem}.d.mts`,
+				import: `./dist/${stem}.mjs`,
+			})
+			expect(packedFiles).toContain(`dist/${stem}.mjs`)
+			expect(packedFiles).toContain(`dist/${stem}.d.mts`)
+		}
+		expect(manifest.exports['./zod-table']).toBeUndefined()
+		expect(
+			packedFiles.filter((file) =>
+				/^dist\/(zod-(table|registration|convex)|querying\/v1-zod-[^/]*)\./.test(file),
+			),
+		).toEqual([])
+		// A string export is its own target; a conditional one lists every target.
+		for (const target of Object.values(manifest.exports).flatMap((entry) =>
+			entry.types === undefined ? [entry] : Object.values(entry),
+		))
+			expect(packedFiles, target).toContain(target.replace(/^\.\//, ''))
 	})
 	it('keeps the optional Effect peer outside Convex component discovery', () => {
 		for (const file of packedFiles.filter((path) => /^dist\/components\/.*\.mjs$/.test(path))) {

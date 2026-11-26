@@ -16,21 +16,15 @@ import {
 	type MutationBuilder,
 	type QueryBuilder,
 } from 'convex/server'
-import type {
-	GenericValidator,
-	Infer,
-	ObjectType,
-	PropertyValidators,
-	VObject,
-} from 'convex/values'
+import type { GenericValidator, Infer, ObjectType, PropertyValidators } from 'convex/values'
 import { NoOp, type Registration } from 'convex-helpers/server/customFunctions'
 import type { Scope } from 'effect'
-import type { KObject } from '../../k/object'
-import type { KType, OutputNativeOf } from '../../k/types'
+import type { KType } from '../../k/types'
 import {
 	kCustomQuery,
-	type KArgFields,
 	type KArgs,
+	type KArgsInput,
+	type KArgsOutput,
 	type KCustomBuilder,
 	type KReturns,
 } from '../../registration'
@@ -48,37 +42,16 @@ import type { CallbackRequirements, EffectValue } from './operation'
 
 // The argument and result grammar of src/registration.ts: `k` schemas, native validators, or both.
 type Expand<Value> = { [Key in keyof Value]: Value[Key] }
-type Overwrite<Input, Custom> = keyof Custom extends never ? Input : Omit<Input, keyof Custom> & Custom
-type Props<Fields> = Fields extends PropertyValidators ? Fields : never
-type InputFields<Fields extends KArgFields> = {
-	[Key in keyof Fields]: Fields[Key] extends KType ? Fields[Key]['validator'] : Fields[Key]
-}
-type OutputFields<Fields extends KArgFields> = {
-	[Key in keyof Fields]: Fields[Key] extends KType ? OutputNativeOf<Fields[Key]> : Fields[Key]
-}
-/** Caller-facing args: a defaulted `k` field is optional, a transformed one has its input type. */
-type ArgsInput<Args> = [Args] extends [KObject<any>]
-	? Args['_input']
-	: [Args] extends [VObject<any, any, any>]
-		? Args['type']
-		: [Args] extends [KArgFields]
-			? ObjectType<Props<InputFields<Args>>>
-			: DefaultFunctionArgs
-/** Handler-facing args: defaults filled and transforms applied. */
-type ArgsOutput<Args> = [Args] extends [KObject<any>]
-	? Args['_output']
-	: [Args] extends [VObject<any, any, any>]
-		? Args['type']
-		: [Args] extends [KArgFields]
-			? ObjectType<Props<OutputFields<Args>>>
-			: DefaultFunctionArgs
+type Overwrite<Input, Custom> = keyof Custom extends never
+	? Input
+	: Omit<Input, keyof Custom> & Custom
 type HandlerArgs<Args, Made> = [Args] extends [void]
 	? Made extends Record<string, never>
 		? [DefaultFunctionArgs]
 		: [Expand<DefaultFunctionArgs & Made>]
 	: Made extends Record<string, never>
-		? [ArgsOutput<Args>]
-		: [Expand<ArgsOutput<Args> & Made>]
+		? [KArgsOutput<Args>]
+		: [Expand<KArgsOutput<Args> & Made>]
 /** A handler without declared args may still annotate its own (Convex's native rule). */
 type HandlerArgsBound<Args, Made> =
 	| HandlerArgs<Args, Made>
@@ -92,8 +65,8 @@ type RawArgs<
 		? ArgsArrayToObject<OneOrZeroArgs>
 		: Expand<DefaultFunctionArgs & ObjectType<Custom>>
 	: Custom extends Record<string, never>
-		? ArgsInput<Args>
-		: Expand<ArgsInput<Args> & ObjectType<Custom>>
+		? KArgsInput<Args>
+		: Expand<KArgsInput<Args> & ObjectType<Custom>>
 /** The value a handler must produce: the output side of a `k` schema, which Convex validates. */
 type ResultValue<Returns> = [Returns] extends [KType]
 	? Returns['_output']
@@ -132,12 +105,14 @@ export type EffectApiBuilder<
 		Args extends KArgs | void = void,
 		Returns extends KReturns | void = void,
 		Returned extends EffectApiHandlerValue<
-			| ResultValue<Returns>
-			| (null extends ResultValue<Returns> ? undefined | void : never)
+			ResultValue<Returns> | (null extends ResultValue<Returns> ? undefined | void : never)
 		> = EffectApiHandlerValue<
 			ResultValue<Returns> | (null extends ResultValue<Returns> ? undefined | void : never)
 		>,
-		OneOrZeroArgs extends HandlerArgsBound<Args, CustomMadeArgs> = HandlerArgs<Args, CustomMadeArgs>,
+		OneOrZeroArgs extends HandlerArgsBound<Args, CustomMadeArgs> = HandlerArgs<
+			Args,
+			CustomMadeArgs
+		>,
 	>(
 		definition: (
 			| ({

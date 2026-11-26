@@ -1,20 +1,22 @@
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/no-unknown-parameters -- Negative fixtures deliberately build cyclic, accessor-bearing and unsupported raw values. */
 // `kTable(...).paginationOpts(...)`, `paginated(dto)` and the compact filter boundary on `k`
-// registration (U23), end to end in convex-test. These are the `k` twins of compact-registration.test.ts
-// and the pagination parts of zod-table.test.ts, which keep testing the v1 bridge until the cutover.
-// Kit-raised failures now carry the KTD6 payload `{ code: 'VALIDATION', issues }` instead of `ZodError`.
+// registration, end to end in convex-test. This suite replaced the v1 compact-registration.test.ts and
+// the pagination parts of zod-table.test.ts. Kit-raised failures carry the KTD6 payload
+// `{ code: 'VALIDATION', issues }` where v1 raised `ZodError`.
 import { NoOp } from 'convex-helpers/server/customFunctions'
 import {
 	actionGeneric,
 	defineSchema,
+	defineTable,
 	makeFunctionReference,
 	mutationGeneric,
+	paginationOptsValidator,
 	queryGeneric,
 	type GenericDatabaseReader,
 	type GenericDataModel,
 } from 'convex/server'
 import { ConvexError, v, type GenericValidator, type ValidatorJSON } from 'convex/values'
-import { convexTest } from 'convex-test'
+import { convexTest, defineTestApp } from 'convex-test'
 import { describe, expect, test } from 'vite-plus/test'
 import { k } from '../src/k'
 import { compileFilters } from '../src/querying/filters'
@@ -24,7 +26,7 @@ import {
 	type FilterGrammar,
 } from '../src/querying/shared/filters'
 import { kCustomAction, kCustomMutation, kCustomQuery } from '../src/registration'
-import { kTable, paginated } from '../src/table'
+import { kTable, paginated, tenantTable } from '../src/table'
 
 const tasks = kTable(
 	'tasks',
@@ -418,7 +420,7 @@ describe('paired compact registration boundary on k', () => {
 		expect(calls).toBe(6)
 	})
 
-	test('leaves unsupported wrappers and skip mode on full conversion', async () => {
+	test('leaves unsupported wrappers, defaults and skip mode on full conversion', async () => {
 		const page = k.object({ filters: root().optional() })
 		for (const args of [
 			k.object({ pages: k.array(page) }),
@@ -554,6 +556,23 @@ describe('paired compact registration boundary on k', () => {
 		expect({ refinements, inputs, handlers }).toEqual({ refinements: 1, inputs: 1, handlers: 0 })
 	})
 
+	test('does not run a consumer transformation twice and exports it on full conversion', async () => {
+		let transforms = 0
+		const transformed = root().transform((value) => {
+			transforms++
+			return value
+		})
+		const fn = kCustomQuery(
+			queryGeneric,
+			NoOp,
+		)({ args: { filters: transformed }, handler: () => null })
+		expect(JSON.parse(runtime(fn).exportArgs()).value.filters.fieldType).toEqual(
+			JSON.parse(JSON.stringify(nativeJson(root().validator))),
+		)
+		await runtime(fn)._handler({}, { filters: { value: 'valid' } })
+		expect(transforms).toBe(1)
+	})
+
 	test('mixed native and k fields keep their native validators beside the projection', () => {
 		const fn = kCustomQuery(
 			queryGeneric,
@@ -585,3 +604,384 @@ function paginationOptsFields() {
 		maximumBytesRead: v.optional(v.number()),
 	}
 }
+
+// The table pagination boundary checks carried over from the v1 zod-table suite.
+describe('kTable paginationOpts boundary', () => {
+	const records = kTable(
+		'records',
+		{
+			name: k.string(),
+			count: k.number(),
+			active: k.boolean(),
+			status: k.enum(['open', 'done']),
+			note: k.string().optional(),
+			object: k.object({ nested: k.string() }),
+			list: k.array(k.string()),
+			owner: k.id('users'),
+		},
+		{ serverFields: ['active'] },
+	)
+	const innerFilters = () =>
+		records.paginationOpts({ count: true, owner: true }).shape.filters.unwrap()
+
+	test.each(['and', 'or', 'in'] as const)('preflights sparse %s array length', (key) => {
+		const sparse: number[] = []
+		sparse.length = 1000
+		const result = innerFilters().safeParse(
+			key === 'in' ? { count: { in: sparse } } : { [key]: sparse },
+		)
+		expect(result.success).toBe(false)
+		if (!result.success) expect(result.issues).toHaveLength(1)
+	})
+
+	test.each(['inherited', 'nonenumerable', 'accessor'] as const)(
+		'rejects unsupported %s layouts before reading children',
+		(layout) => {
+			let reads = 0
+			const children = Array.from({ length: 200 }, () => ({ count: 1 }))
+			const filters = layout === 'inherited' ? Object.create({ and: children }) : {}
+			if (layout === 'nonenumerable') Object.defineProperty(filters, 'and', { value: children })
+			if (layout === 'accessor')
+				Object.defineProperty(filters, 'and', {
+					enumerable: true,
+					get() {
+						reads++
+						return children
+					},
+				})
+			const result = innerFilters().safeParse(filters)
+			expect(result.success).toBe(false)
+			if (!result.success) expect(result.issues).toHaveLength(1)
+			expect(reads).toBe(0)
+		},
+	)
+
+	test.each(['describe', 'refine'] as const)(
+		'retains preflight through inner %s and outer composition',
+		(method) => {
+			const inner = innerFilters()
+			const composed = method === 'describe' ? inner.describe('filters') : inner.refine(() => true)
+			const filters = { and: Array.from({ length: 200 }, () => ({ count: 1 })) }
+			const result = composed.safeParse(filters)
+			expect(result.success).toBe(false)
+			if (!result.success) expect(result.issues).toHaveLength(1)
+			const outer = k
+				.object({ filters: composed.optional() })
+				.describe('options')
+				.refine(() => true)
+			expect(outer.safeParse({ filters }).success).toBe(false)
+			expect(outer.parse({ filters: { count: { in: [1] } } })).toEqual({
+				filters: { count: { in: [1] } },
+			})
+			const cycle: { not: object } = { not: {} }
+			cycle.not = cycle
+			const cyclic = composed.safeParse(cycle)
+			expect(cyclic.success).toBe(false)
+			if (!cyclic.success) expect(cyclic.issues).toHaveLength(1)
+		},
+	)
+
+	test('checks nested layouts without invoking array or predicate accessors', () => {
+		let reads = 0
+		const getter = {
+			enumerable: true,
+			get: () => {
+				reads++
+				return 1
+			},
+		}
+		const accessorArray = [1]
+		Object.defineProperty(accessorArray, '0', getter)
+		for (const filters of [
+			{ fields: Object.create({ count: 1 }) },
+			{ count: Object.defineProperty({}, 'eq', { value: 1 }) },
+			{ count: Object.defineProperty({}, 'eq', getter) },
+			{ count: { in: accessorArray } },
+		])
+			expect(innerFilters().safeParse(filters).success).toBe(false)
+		expect(reads).toBe(0)
+	})
+
+	test('preserves native options and supports selected private and system fields', () => {
+		const input = records.paginationOpts({
+			name: true,
+			active: true,
+			owner: true,
+			_id: true,
+			_creationTime: true,
+		})
+		const native = {
+			numItems: 100,
+			cursor: null,
+			endCursor: 'end',
+			maximumRowsRead: 200,
+			maximumBytesRead: 1000,
+		}
+		expect(input.parse(native)).toEqual(native)
+		const args = {
+			...native,
+			order: 'desc',
+			filters: {
+				name: { gte: 'a' },
+				active: false,
+				owner: { in: ['users:1'] },
+				_creationTime: { gt: 0 },
+			},
+		}
+		expect(input.parse(args)).toEqual(args)
+		const converted = input.validator
+		expect(converted.fields.endCursor).toEqual(paginationOptsValidator.fields.endCursor)
+		expect(converted.fields.cursor).toEqual(paginationOptsValidator.fields.cursor)
+	})
+
+	test('rejects sizes, read limits, unknown options and malformed filters', () => {
+		const input = records.paginationOpts({
+			count: true,
+			active: true,
+			note: true,
+			status: true,
+			owner: true,
+		})
+		for (const numItems of [0, -1, 1.5, 101, Infinity, NaN])
+			expect(input.safeParse({ numItems, cursor: null }).success).toBe(false)
+		for (const key of ['maximumRowsRead', 'maximumBytesRead'])
+			for (const value of [0, -1, 1.5, Infinity])
+				expect(input.safeParse({ numItems: 1, cursor: null, [key]: value }).success).toBe(false)
+		for (const extra of [
+			{ order: 'sideways' },
+			{ extra: 1 },
+			{ filters: { name: 'x' } },
+			{ filters: { count: '1' } },
+			{ filters: { count: { eq: '1' } } },
+			{ filters: { active: { gt: true } } },
+			{ filters: { status: { eq: 'missing' } } },
+			{ filters: { owner: { lt: 'users:1' } } },
+			{ filters: { count: { exists: false } } },
+			{ filters: { count: { nope: 1 } } },
+			{ filters: { count: {} } },
+			{ filters: { and: [] } },
+		])
+			expect(
+				input.safeParse({ numItems: 1, cursor: null, ...extra }).success,
+				JSON.stringify(extra),
+			).toBe(false)
+		// The empty membership set is admitted; execution returns no rows.
+		expect(
+			input.parse({ numItems: 1, cursor: null, filters: { count: { in: [] } } }).filters,
+		).toEqual({
+			count: { in: [] },
+		})
+		expect(
+			input.parse({
+				numItems: 1,
+				cursor: null,
+				filters: {
+					and: [{ count: { gte: 1, lt: 9 } }, { not: { active: true } }],
+					note: { exists: false },
+				},
+			}).filters,
+		).toBeDefined()
+	})
+
+	test('rejects false and non-scalar selections at construction', () => {
+		for (const selection of [{ count: false }, { object: true }, { list: true }])
+			// SAFETY: deliberate JS bypass exercises runtime selection guards.
+			expect(() => records.paginationOpts(selection as never)).toThrow()
+	})
+
+	test('bounds recursive validation before parsing nested predicates', () => {
+		const input = records.paginationOpts({ count: true })
+		type NestedFilter = { count?: { eq: number }; not?: NestedFilter }
+		let filters: NestedFilter = { count: { eq: 1 } }
+		for (let i = 0; i < 100; i++) filters = { not: filters }
+		expect(input.safeParse({ numItems: 1, cursor: null, filters }).success).toBe(false)
+		const cycle: NestedFilter = {}
+		cycle.not = cycle
+		expect(input.safeParse({ numItems: 1, cursor: null, filters: cycle }).success).toBe(false)
+		expect(
+			input.safeParse({
+				numItems: 1,
+				cursor: null,
+				filters: { count: { in: Array.from({ length: 1000 }, () => 1) } },
+			}).success,
+		).toBe(false)
+	})
+
+	test('a tenant table filters on its public tenant and timestamps', () => {
+		const valid = tenantTable(
+			'valid',
+			{ name: k.string() },
+			{ publicFields: ['tenant', 'createdAt'] },
+		)
+		expect(valid.publicDto.parse({ tenant: 't', createdAt: 1 })).toEqual({
+			tenant: 't',
+			createdAt: 1,
+		})
+		expect(valid.commandInput.parse({})).toEqual({})
+		expect(
+			valid
+				.paginationOpts({ tenant: true, createdAt: true })
+				.parse({ numItems: 1, cursor: null, filters: { tenant: 't', createdAt: { exists: true } } })
+				.filters,
+		).toBeDefined()
+	})
+
+	test('uses native literal and input kinds for scalar predicates', () => {
+		const native = kTable('native', {
+			owner: k.id('users').optional(),
+			text: k.string().trim(),
+			literal: k.literal(2),
+			big: k.int64(),
+			nil: k.null(),
+			flag: k.literal(false),
+			anything: k.any(),
+		})
+		const schema = native.paginationOpts({
+			owner: true,
+			text: true,
+			literal: true,
+			big: true,
+			nil: true,
+			flag: true,
+		})
+		const filters = {
+			owner: { eq: 'users:1', exists: true },
+			text: ' untrimmed ',
+			literal: { lt: 2, in: [2] },
+			big: { gt: 2n },
+			nil: null,
+			flag: false,
+		}
+		expect(schema.parse({ numItems: 1, cursor: null, filters }).filters).toEqual(filters)
+		for (const invalid of [
+			{ literal: { eq: 3 } },
+			{ literal: { gt: '2' } },
+			{ big: 2 },
+			{ flag: { gt: false } },
+			{ nil: 'null' },
+		])
+			expect(schema.safeParse({ numItems: 1, cursor: null, filters: invalid }).success).toBe(false)
+		// @ts-expect-error native any is not a supported scalar
+		expect(() => native.paginationOpts({ anything: true })).toThrow()
+	})
+
+	test.each(['original', 'describe', 'refine'] as const)(
+		'retains %s id metadata and rejects wrong domains in every predicate branch',
+		async (method) => {
+			const boundary = kTable('records', { owner: k.id('users').nullable() })
+			const inner = boundary.paginationOpts({ owner: true }).shape.filters.unwrap()
+			const filtersSchema =
+				method === 'describe'
+					? inner.describe('filters')
+					: method === 'refine'
+						? inner.refine(() => true)
+						: inner
+			const options = k
+				.object({
+					numItems: k.number(),
+					cursor: k.string().nullable(),
+					filters: filtersSchema.optional(),
+				})
+				.describe('options')
+				.refine(() => true)
+			const base = defineTestApp({
+				schema: defineSchema({
+					users: defineTable({ name: v.string() }),
+					other: defineTable({ name: v.string() }),
+				}),
+			})
+			const app = base.defineModules({
+				functions: {
+					validate: base.query({ args: { options: options.validator }, handler: () => true }),
+				},
+			})
+			const t = app.createTest()
+			const [owner, foreign] = await t.run(async (ctx) => [
+				await ctx.db.insert('users', { name: 'u' }),
+				await ctx.db.insert('other', { name: 'o' }),
+			])
+			for (const value of [foreign, 'not-an-id'])
+				for (const filters of [
+					{ owner: value },
+					{ owner: { eq: value } },
+					{ owner: { in: [value] } },
+					{ and: [{ not: { owner: { eq: value } } }] },
+				])
+					await expect(
+						t.query(app.api.functions.validate, {
+							// SAFETY: deliberately send malformed and foreign ids to exercise native validation.
+							options: { numItems: 1, cursor: null, filters } as never,
+						}),
+					).rejects.toThrow()
+			for (const filters of [
+				{ owner },
+				{ owner: { eq: owner } },
+				{ owner: { in: [owner] } },
+				{ or: [{ not: { owner } }] },
+			])
+				expect(
+					await t.query(app.api.functions.validate, {
+						options: { numItems: 1, cursor: null, filters },
+					}),
+				).toBe(true)
+		},
+	)
+
+	test('supports nested native scalar unions such as nullable enums', () => {
+		const nullable = kTable('nullable', { status: k.enum(['open', 'done']).nullable() })
+		const options = nullable.paginationOpts({ status: true })
+		expect(
+			options.parse({ numItems: 1, cursor: null, filters: { status: { in: ['open', null] } } })
+				.filters,
+		).toEqual({ status: { in: ['open', null] } })
+		expect(
+			options.safeParse({ numItems: 1, cursor: null, filters: { status: { gt: 'open' } } }).success,
+		).toBe(false)
+	})
+
+	test.each(['original', 'describe', 'refine'] as const)(
+		'accepts namespaced membership at the exact boolean depth boundary through %s',
+		(method) => {
+			const inner = tasks.paginationOpts({ title: true }).shape.filters.unwrap()
+			const composed =
+				method === 'describe'
+					? inner.describe('filters')
+					: method === 'refine'
+						? inner.refine(() => true)
+						: inner
+			type Nested = {
+				title?: { in: string[] }
+				fields?: { title: { in: string[] } }
+				and?: Nested[]
+			}
+			let filters: Nested = { fields: { title: { in: ['x'] } } }
+			let direct: Nested = { title: { in: ['x'] } }
+			for (let depth = 0; depth < 4; depth++) {
+				filters = { and: [filters] }
+				direct = { and: [direct] }
+			}
+			expect(composed.parse(filters)).toEqual(filters)
+			expect(composed.parse(direct)).toEqual(direct)
+			expect(composed.safeParse({ and: [filters] }).success).toBe(false)
+		},
+	)
+
+	test('filters every scalar name through an unambiguous field namespace', () => {
+		const logicalNames = kTable('logicalNames', {
+			and: k.string(),
+			or: k.number(),
+			not: k.boolean(),
+			fields: k.string(),
+		})
+		const schema = logicalNames.paginationOpts({ and: true, or: true, not: true, fields: true })
+		const filters = {
+			fields: { and: 'a', or: { gt: 0 }, not: false, fields: 'f' },
+			not: { fields: { not: true } },
+		}
+		expect(schema.parse({ numItems: 1, cursor: null, filters }).filters).toEqual(filters)
+		expect(
+			schema.safeParse({ numItems: 1, cursor: null, filters: { fields: { unknown: 'x' } } })
+				.success,
+		).toBe(false)
+	})
+})

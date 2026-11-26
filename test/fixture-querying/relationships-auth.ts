@@ -9,7 +9,7 @@ import {
 	type GenericQueryCtx,
 	type DataModelFromSchemaDefinition,
 } from 'convex/server'
-import { createKAuthFunctions } from '../../src/auth'
+import { createAuthFunctions } from '../../src/auth'
 import { relationshipFixture } from './relationships'
 import type { ManagedBudgets } from '../../src/querying/security'
 
@@ -29,7 +29,7 @@ export function relationshipAuthFixture(
 		internalMutation: internalMutationGeneric,
 		internalAction: internalActionGeneric,
 	}
-	const auth = createKAuthFunctions<DM, 'owner'>({
+	const auth = createAuthFunctions<DM, 'owner'>({
 		...builders,
 		getAuthUser: async (ctx: GenericQueryCtx<DM> | { auth: GenericQueryCtx<DM>['auth'] }) => {
 			const id = await ctx.auth.getUserIdentity()

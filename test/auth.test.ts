@@ -1,21 +1,25 @@
 import {
 	actionGeneric,
+	defineSchema,
+	defineTable,
 	internalActionGeneric,
 	internalMutationGeneric,
 	internalQueryGeneric,
+	makeFunctionReference,
 	mutationGeneric,
 	queryGeneric,
-	defineSchema,
-	defineTable,
-	makeFunctionReference,
+	type DataModelFromSchemaDefinition,
+	type DefaultFunctionArgs,
+	type GenericDatabaseReader,
 	type GenericTableInfo,
+	type GenericMutationCtx,
+	type GenericQueryCtx,
 	type QueryInitializer,
 	type UserIdentity,
 } from 'convex/server'
-import { convexTest } from 'convex-test'
 import { v } from 'convex/values'
+import { convexTest } from 'convex-test'
 import { describe, expect, it } from 'vite-plus/test'
-
 import {
 	createAuthFunctions,
 	createAuthReaders,
@@ -24,6 +28,7 @@ import {
 	type AuthFunctionsConfig,
 } from '../src/auth'
 import { KitError } from '../src/errors'
+import { k } from '../src/k'
 
 describe('defaultRoleMap', () => {
 	it('maps WorkOS member onto writer and passes known roles through', () => {
@@ -114,8 +119,10 @@ const resolvedIdentity: UserIdentity = {
 	role: 'writer',
 }
 const emptySchema = defineSchema({})
+type EmptyModel = DataModelFromSchemaDefinition<typeof emptySchema>
+type Role = NonNullable<ReturnType<typeof defaultRoleMap>>
 
-describe('resolved auth identity', () => {
+describe('createAuthFunctions: resolved auth identity', () => {
 	it('passes the exact identity and unchanged context to an identity-aware principal lookup', async () => {
 		const t = convexTest(emptySchema, { './_generated/server.ts': async () => ({}) })
 		await t.run(async (nativeCtx) => {
@@ -157,7 +164,7 @@ describe('resolved auth identity', () => {
 		'no-org',
 		'resolver-error',
 		'user-error',
-	] as const)('preserves legacy call order and errors: %s', async (scenario) => {
+	] as const)('preserves call order and errors: %s', async (scenario) => {
 		const calls: string[] = []
 		const t = convexTest(emptySchema, { './_generated/server.ts': async () => ({}) })
 		await t.run(async (nativeCtx) => {
@@ -176,10 +183,7 @@ describe('resolved auth identity', () => {
 					},
 				},
 			}
-			const authOptions: AuthFunctionsConfig<
-				import('convex/server').DataModelFromSchemaDefinition<typeof emptySchema>,
-				NonNullable<ReturnType<typeof defaultRoleMap>>
-			> = {
+			const authOptions: AuthFunctionsConfig<EmptyModel, Role> = {
 				...authBuilders,
 				getAuthUser: async (receivedCtx) => {
 					calls.push('user')
@@ -199,8 +203,7 @@ describe('resolved auth identity', () => {
 					throw new Error('resolver failed')
 				}
 			}
-			const auth = createAuthFunctions(authOptions)
-			const result = auth.authenticatedUser(ctx)
+			const result = createAuthFunctions(authOptions).authenticatedUser(ctx)
 			if (scenario === 'success')
 				await expect(result).resolves.toMatchObject({ user: { id: 'user' }, tenant: 'org' })
 			else
@@ -220,12 +223,12 @@ describe('resolved auth identity', () => {
 
 	it('keeps action membership failure after principal and role resolution', async () => {
 		const calls: string[] = []
-		const config = {
+		const auth = createAuthFunctions<EmptyModel, Role>({
 			...authBuilders,
 			getAuthUser: async (ctx) => {
 				calls.push('user')
 				await ctx.auth.getUserIdentity()
-				calls.push('legacy-identity')
+				calls.push('identity-in-lookup')
 				return { id: 'user' }
 			},
 			mapRole: (slug) => {
@@ -237,11 +240,7 @@ describe('resolved auth identity', () => {
 				calls.push('membership')
 				throw new Error('offline')
 			},
-		} satisfies AuthFunctionsConfig<
-			import('convex/server').GenericDataModel,
-			'reader' | 'writer' | 'admin'
-		>
-		const auth = createAuthFunctions(config)
+		})
 		const check = auth.authAction({
 			args: {},
 			handler: () => {
@@ -256,40 +255,88 @@ describe('resolved auth identity', () => {
 		await expect(
 			t.action(makeFunctionReference<'action', {}, null>('functions:check'), {}),
 		).rejects.toThrow(/FORBIDDEN/)
-		expect(calls).toEqual(['user', 'legacy-identity', 'role', 'membership'])
+		expect(calls).toEqual(['user', 'identity-in-lookup', 'role', 'membership'])
+	})
+})
+
+describe('createAuthFunctions: args', () => {
+	const checked: string[] = []
+	const auth = createAuthFunctions<EmptyModel, Role>({
+		...authBuilders,
+		getAuthUser: async (_ctx, identity) => ({ id: identity.subject }),
+		mapRole: defaultRoleMap,
+		adminRoles: ['admin'],
+	})
+	const name = k
+		.string()
+		.trim()
+		.refine((value) => {
+			checked.push(value)
+			return value.length > 0
+		})
+	const greet = auth.authQuery({
+		args: { name, times: k.number().default(1) },
+		handler: (ctx, args) => `${ctx.user.id}:${args.name}:${args.times}`,
+	})
+	const rename = auth.authMutation({
+		args: k.object({ name }),
+		handler: (ctx, args) => `${ctx.actor.role}:${args.name}`,
+	})
+	const t = convexTest(emptySchema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ greet, rename }),
+	})
+	const greetRef = makeFunctionReference<'query', { name: string; times?: number }, string>(
+		'functions:greet',
+	)
+	const renameRef = makeFunctionReference<'mutation', { name: string }, string>('functions:rename')
+
+	it('rejects an unauthenticated call before any args parse', async () => {
+		checked.length = 0
+		await expect(t.query(greetRef, { name: ' ada ' })).rejects.toThrow(/UNAUTHENTICATED/)
+		await expect(t.mutation(renameRef, { name: ' ada ' })).rejects.toThrow(/UNAUTHENTICATED/)
+		expect(checked).toEqual([])
+	})
+
+	it('passes parsed args to an authenticated handler and reports failures as VALIDATION', async () => {
+		checked.length = 0
+		const caller = t.withIdentity(resolvedIdentity)
+		expect(await caller.query(greetRef, { name: ' ada ' })).toBe('subject:ada:1')
+		expect(await caller.mutation(renameRef, { name: ' ada ' })).toBe('writer:ada')
+		expect(checked).toEqual(['ada', 'ada'])
+		await expect(caller.query(greetRef, { name: '  ' })).rejects.toMatchObject({
+			data: { code: 'VALIDATION', issues: [{ path: ['name'], code: 'custom' }] },
+		})
 	})
 })
 
 const notesSchema = defineSchema({
 	notes: defineTable({ tenant: v.string(), title: v.string() }),
 })
-type NotesModel = import('convex/server').DataModelFromSchemaDefinition<typeof notesSchema>
-type NotesRole = 'reader' | 'writer' | 'admin'
+type NotesModel = DataModelFromSchemaDefinition<typeof notesSchema>
+type AuthContext = Parameters<AuthFunctionsConfig<NotesModel, Role>['getAuthUser']>[0]
 
 describe('createAuthReaders', () => {
 	const { mutation, internalMutation, ...readerBuilders } = authBuilders
-	function base(verifyMembership?: AuthFunctionsConfig<NotesModel, NotesRole>['verifyMembership']) {
+	function base(verifyMembership?: AuthFunctionsConfig<NotesModel, Role>['verifyMembership']) {
 		return {
 			...readerBuilders,
-			// oxlint-disable-next-line anti-slop/no-unknown-parameters -- The fixture resolves users from the identity alone.
-			getAuthUser: async (_ctx: unknown, identity: UserIdentity) => ({ id: identity.subject }),
+			getAuthUser: async (_ctx: AuthContext, identity: UserIdentity) => ({
+				id: identity.subject,
+			}),
 			mapRole: defaultRoleMap,
 			adminRoles: ['admin'],
 			verifyMembership,
 			security: { tenancy: { tables: ['notes'] as const } },
-		} satisfies Parameters<typeof createAuthReaders<NotesModel, NotesRole>>[0]
+		} satisfies Parameters<typeof createAuthReaders<NotesModel, Role>>[0]
 	}
 	function constructorsFor(config: ReturnType<typeof base>) {
-		const readers = createAuthReaders<NotesModel, NotesRole>(config)
-		const full = createAuthFunctions<NotesModel, NotesRole>({
-			...config,
-			mutation,
-			internalMutation,
-		})
+		const readers = createAuthReaders<NotesModel, Role>(config)
+		const full = createAuthFunctions<NotesModel, Role>({ ...config, mutation, internalMutation })
 		return { readers, full }
 	}
 	function modules(auth: ReturnType<typeof constructorsFor>['readers']) {
-		const list = (ctx: { db: import('convex/server').GenericDatabaseReader<NotesModel> }) =>
+		const list = (ctx: { db: GenericDatabaseReader<NotesModel> }) =>
 			ctx.db
 				.query('notes')
 				.collect()
@@ -321,16 +368,8 @@ describe('createAuthReaders', () => {
 		return t
 	}
 
-	it('exposes no mutation constructors', () => {
-		const { readers } = constructorsFor(base())
-		for (const key of [
-			'authMutation',
-			'roleMutation',
-			'adminMutation',
-			'serviceMutation',
-			'systemMutation',
-		])
-			expect(readers).not.toHaveProperty(key)
+	it('exposes every reader constructor and no mutation constructors', () => {
+		const { readers, full } = constructorsFor(base())
 		expect(Object.keys(readers).sort()).toEqual(
 			[
 				'include',
@@ -346,10 +385,20 @@ describe('createAuthReaders', () => {
 				'systemAction',
 			].sort(),
 		)
+		expect(Object.keys(full).sort()).toEqual(
+			[
+				...Object.keys(readers),
+				'authMutation',
+				'roleMutation',
+				'adminMutation',
+				'serviceMutation',
+				'systemMutation',
+			].sort(),
+		)
 	})
 
 	it.each(['readers', 'full'] as const)(
-		'%s: resolves identity and hides cross-tenant rows from one shared base config',
+		'%s: resolves identity and hides cross-tenant rows',
 		async (kind) => {
 			const t = await harness(constructorsFor(base())[kind])
 			const caller = t.withIdentity(identity('org', 'writer'))
@@ -386,5 +435,89 @@ describe('createAuthReaders', () => {
 		expect(
 			await verified.withIdentity(identity('org', 'writer')).action(ref('action', 'act'), {}),
 		).toBe('admin')
+	})
+})
+
+describe('createAuthFunctions: service principals', () => {
+	type Ctx = GenericQueryCtx<NotesModel> | GenericMutationCtx<NotesModel>
+	const auth = createAuthFunctions<NotesModel, Role>({
+		...authBuilders,
+		getAuthUser: async () => {
+			throw new Error('getAuthUser must not run for service principals')
+		},
+		mapRole: defaultRoleMap,
+		adminRoles: ['admin'],
+		security: { tenancy: { tables: ['notes'] } },
+	})
+	function bundleFor(tenant: string) {
+		return {
+			identity: resolvedIdentity,
+			user: { id: `agent:${tenant}` },
+			org: { organizationId: tenant, role: 'writer' as const },
+			role: 'writer' as const,
+			actor: { userId: `agent:${tenant}`, organizationId: tenant, role: 'writer' as const },
+			tenant,
+		}
+	}
+	/** The host derives the principal from the raw args of the invocation. */
+	const principal = (_ctx: Ctx, args: DefaultFunctionArgs) => bundleFor(String(args.tenant))
+	const scope = { tenant: k.string().trim() }
+	const list = auth.serviceQuery(principal)({
+		args: scope,
+		handler: async (ctx, args) => ({
+			actor: ctx.actor.userId,
+			parsed: args.tenant,
+			titles: (await ctx.db.query('notes').collect()).map((row) => row.title),
+		}),
+	})
+	const write = auth.serviceMutation(principal)({
+		args: { ...scope, title: k.string() },
+		handler: async (ctx, args) => {
+			await ctx.db.insert('notes', { tenant: ctx.tenant, title: args.title })
+			return null
+		},
+	})
+	// A host bug: the JSON round trip hides a bundle outside the contract from the type checker.
+	const badBundle: ReturnType<typeof bundleFor> = JSON.parse(
+		JSON.stringify({ ...bundleFor('org'), tenant: 7 }),
+	)
+	const malformed = auth.serviceQuery(() => badBundle)({
+		args: {},
+		handler: () => null,
+	})
+	const override = auth.serviceQuery((ctx: Ctx, args: DefaultFunctionArgs) => ({
+		...principal(ctx, args),
+		db: ctx.db,
+	}))({ args: scope, handler: () => null })
+	const t = convexTest(notesSchema, {
+		'./_generated/server.ts': async () => ({}),
+		'./functions.ts': async () => ({ list, write, malformed, override }),
+	})
+
+	it('derives the principal from raw args and applies the rules', async () => {
+		await t.run(async (ctx) => {
+			await ctx.db.insert('notes', { tenant: 'org', title: 'mine' })
+			await ctx.db.insert('notes', { tenant: 'other', title: 'theirs' })
+		})
+		await t.mutation(makeFunctionReference<'mutation'>('functions:write'), {
+			tenant: 'org',
+			title: 'added',
+		})
+		// The principal sees the raw ' org ' tenant; the handler sees the trimmed arg.
+		expect(
+			await t.query(makeFunctionReference<'query'>('functions:list'), { tenant: ' org ' }),
+		).toEqual({ actor: 'agent: org ', parsed: 'org', titles: [] })
+		expect(
+			await t.query(makeFunctionReference<'query'>('functions:list'), { tenant: 'org' }),
+		).toEqual({ actor: 'agent:org', parsed: 'org', titles: ['mine', 'added'] })
+	})
+
+	it('rejects a principal outside the contract and one overriding native fields', async () => {
+		await expect(
+			t.query(makeFunctionReference<'query'>('functions:malformed'), {}),
+		).rejects.toThrow('A service principal must be an AuthBundle with user.id and tenant')
+		await expect(
+			t.query(makeFunctionReference<'query'>('functions:override'), { tenant: 'org' }),
+		).rejects.toThrow('cannot override native context fields: db')
 	})
 })

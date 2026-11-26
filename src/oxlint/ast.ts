@@ -1,16 +1,19 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, resolve, sep } from 'node:path'
 import type { Context, ESTree, RuleMeta, Scope, Visitor } from '@oxlint/plugins'
-import { z } from 'zod'
 import { parseSync, type Node } from 'oxc-parser'
 import { createResolver, resolveImport } from './architecture'
 import { findComponentRoot, conventionalComponentRoot } from './components'
+import { k } from '../k/index'
 
-export const consumerOptions = z.object({
-	convexDir: z.string().min(1).default('convex'),
-	componentDirs: z.array(z.string().min(1)).default([]),
-	domainPublicFiles: z.record(z.string(), z.array(z.string().min(1))).default({}),
-})
+/** Options every consumer-facing rule accepts; unknown keys are ignored. */
+export const consumerOptions = k
+	.object({
+		convexDir: k.string().min(1).default('convex'),
+		componentDirs: k.array(k.string().min(1)).default([]),
+		domainPublicFiles: k.record(k.string(), k.array(k.string().min(1))).default({}),
+	})
+	.strip()
 
 export function appFile(context: Context, filename = context.filename) {
 	const requestedRoot = resolve(

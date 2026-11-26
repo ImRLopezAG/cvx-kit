@@ -14,7 +14,7 @@ import { k } from '../../src/k'
 import { kTable, kVariantTable } from '../../src/table'
 import { defineRelations, withFieldGroups } from '../../src/relations'
 import { createQueryEngine, type FieldGroupPolicyContext } from '../../src/querying'
-import { createKAuthFunctions } from '../../src/auth'
+import { createAuthFunctions } from '../../src/auth'
 import { cursor } from './scalar'
 import type { ManagedBudgets } from '../../src/querying/security'
 
@@ -92,7 +92,7 @@ export function fieldGroupFixture(budgets?: Partial<ManagedBudgets>) {
 		internalMutation: internalMutationGeneric,
 		internalAction: internalActionGeneric,
 	}
-	const auth = createKAuthFunctions<DM, 'reader'>({
+	const auth = createAuthFunctions<DM, 'reader'>({
 		...builders,
 		getAuthUser: async (ctx: GenericQueryCtx<DM> | { auth: GenericQueryCtx<DM>['auth'] }) => {
 			const identity = await ctx.auth.getUserIdentity()

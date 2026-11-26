@@ -1,4 +1,4 @@
-import { createKAuthFunctions } from 'cvx-kit/auth'
+import { createAuthFunctions } from 'cvx-kit/auth'
 import { createTriggers, tenantOwnership } from 'cvx-kit/triggers'
 import {
 	action,
@@ -23,7 +23,7 @@ triggers.register('crudNotes', async (ctx, change) => {
 	await ctx.innerDb.insert('crudHistory', { id: change.id, operation: change.operation })
 })
 
-const auth = createKAuthFunctions<DataModel, 'owner' | 'viewer'>({
+const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	triggers,
 	query,
 	mutation,

@@ -33,7 +33,7 @@ export function createModule<const Maps extends readonly Record<string, TableDef
 
 type FlatTables<Map> = { [Key in keyof Map as Key extends string ? Key : never]: Map[Key] }
 
-const namespaceKey: unique symbol = Symbol.for('cvx-kit/zod-table/namespace')
+const namespaceKey: unique symbol = Symbol.for('cvx-kit/table/namespace')
 
 /** Declaration-level metadata carried by a `namespace(...)` table map. */
 export type NamespaceInfo<Name extends string, Tables extends string> = {

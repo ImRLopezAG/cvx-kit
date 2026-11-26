@@ -1,9 +1,8 @@
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening, anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof -- Negative fixtures deliberately build cyclic, accessor-bearing and unsupported raw values. */
-// The filter grammar, compact projection and shared contract on `k` (U23). These are the `k` twins
-// of filters-lazy-boundary.unit.test.ts, compact-pagination.test.ts and filter-contracts.unit.test.ts,
-// which keep testing the v1 bridge until the cutover; assertions that read Zod internals (clone, meta,
-// mutable check definitions, z.lazy capture fallbacks) have no `k` counterpart, since `k` records are
-// immutable and have no such API.
+// The filter grammar, compact projection and shared contract on `k`. This suite replaced the v1
+// filters-lazy-boundary.unit.test.ts and compact-pagination.test.ts; their assertions that read Zod
+// internals (clone, meta, mutable check definitions, z.lazy capture fallbacks) have no `k`
+// counterpart, since `k` records are immutable and have no such API.
 import type { GenericValidator, ValidatorJSON } from 'convex/values'
 import { describe, expect, test, vi } from 'vite-plus/test'
 import { k, KValidationError, type KType } from '../src/k'
@@ -18,12 +17,6 @@ import {
 	type FilterGrammar,
 } from '../src/querying/shared/filters'
 import { kTable } from '../src/table'
-import { z } from 'zod'
-import {
-	relationFilterSchema as v1RelationFilterSchema,
-	scalarPredicateFromSchema as v1ScalarPredicate,
-	type FilterGrammar as V1FilterGrammar,
-} from '../src/querying/v1-zod-shared-filters'
 
 function predicate(schema: KType, range = false, optional = false) {
 	return optionalOf(scalarPredicateFromSchema(schema, range, optional))
@@ -146,40 +139,18 @@ describe('lazy engine filter boundary on k', () => {
 	})
 
 	test('accepts and rejects exactly what the v1 Zod grammar did on the whole corpus', () => {
-		const zodPredicate = (schema: z.ZodType, range = false, optional = false) =>
-			v1ScalarPredicate(schema, range, optional).optional()
-		const teams: V1FilterGrammar = { fields: { title: zodPredicate(z.string()) }, relations: {} }
-		const people: V1FilterGrammar = {
-			fields: {
-				name: zodPredicate(z.string()),
-				age: zodPredicate(z.number(), true),
-				nick: zodPredicate(z.string(), false, true),
-			},
-			relations: {},
-		}
-		const card: V1FilterGrammar = { fields: { last4: zodPredicate(z.string()) }, relations: {} }
-		const cash: V1FilterGrammar = {
-			fields: { till: zodPredicate(z.number(), true) },
-			relations: {},
-		}
-		const payments: V1FilterGrammar = {
-			fields: {
-				kind: zodPredicate(z.enum(['card', 'cash'])),
-				amount: zodPredicate(z.number(), true),
-			},
-			variants: { discriminator: 'kind', options: { card, cash } },
-			relations: {},
-		}
-		people.relations.team = { cardinality: 'one', target: teams }
-		teams.relations.members = { cardinality: 'many', target: people }
-		people.relations.payments = { cardinality: 'many', target: payments }
-		card.relations.owner = { cardinality: 'one', target: people }
-		const v1 = v1RelationFilterSchema(people).optional()
+		// Frozen v1 verdicts, one per corpus entry, as the Zod grammar returned them at 8c4cc14 (where
+		// this test compared both grammars live).
+		const v1Accepted = [
+			...Array.from({ length: 13 }, () => true),
+			false,
+			true,
+			true,
+			true,
+			...Array.from({ length: 19 }, () => false),
+		]
 		const v2 = optionalOf(relationFilterSchema(grammars().people))
-		for (const input of corpus)
-			expect(schemaParse(v2, input).success, JSON.stringify(input)).toBe(
-				v1.safeParse(input).success,
-			)
+		expect(corpus.map((input) => schemaParse(v2, input).success)).toEqual(v1Accepted)
 	})
 
 	test('one lazy schema stays exact across many inputs and reuses its shapes', () => {
@@ -456,6 +427,55 @@ describe('compact native projection on k', () => {
 			{ type: 'object', value: { some: { fieldType: { type: 'any' }, optional: false } } },
 			{ type: 'object', value: { none: { fieldType: { type: 'any' }, optional: false } } },
 		])
+	})
+
+	test('shrinks relation/variant projections tenfold and never grows the ID floor', () => {
+		for (const [name, grammar] of [
+			['relation', relationGrammar],
+			['ids', idGrammar],
+		] as const) {
+			const baseline = JSON.stringify(nativeJson(relationFilterSchema(grammar).validator)).length
+			const candidate = JSON.stringify(
+				nativeJson(compactNativeFilter(compactRoot(grammar))!),
+			).length
+			if (name === 'ids') expect(candidate).toBeLessThanOrEqual(baseline)
+			else expect(candidate * 10).toBeLessThan(baseline)
+		}
+	})
+
+	test('retains exact predicates through both namespaces on every relation, variant and boolean edge', () => {
+		const root = compactRoot({
+			...relationGrammar,
+			fields: {
+				...relationGrammar.fields,
+				and: predicate(k.string()),
+				fields: predicate(k.string()),
+				variant: predicate(k.string()),
+			},
+		})
+		const before: any = nativeJson(root.validator)
+		const after: any = nativeJson(compactNativeFilter(root)!)
+		function predicates(a: any, b: any) {
+			for (const key of ['status', 'email', 'fields'])
+				if (a.value[key]) expect(b.value[key]).toEqual(a.value[key])
+		}
+		predicates(before, after)
+		for (const key of ['and', 'or'])
+			predicates(before.value[key].fieldType.value, after.value[key].fieldType.value)
+		predicates(before.value.not.fieldType, after.value.not.fieldType)
+		predicates(before.value.contact.fieldType.value[0], after.value.contact.fieldType.value[0])
+		for (const [index, key] of ['some', 'none'].entries())
+			predicates(
+				before.value.contacts.fieldType.value[index].value[key].fieldType,
+				after.value.contacts.fieldType.value[index].value[key].fieldType,
+			)
+		for (const [index, branch] of before.value.variant.fieldType.value.entries()) {
+			expect(after.value.variant.fieldType.value[index].value.tag).toEqual(branch.value.tag)
+			predicates(
+				branch.value.filters.fieldType,
+				after.value.variant.fieldType.value[index].value.filters.fieldType,
+			)
+		}
 	})
 
 	test('falls back for unknown native scalar metadata', () => {

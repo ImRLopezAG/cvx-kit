@@ -350,8 +350,8 @@ export interface ParsedFilterRequest {
 }
 
 /**
- * Plan already validated filters: index choice, bindings, ranges and expansion. Shared by the `k`
- * boundary above and the v1 bridge, so both raise the same transportable fan-out error.
+ * Plan already validated filters: index choice, bindings, ranges and expansion, raising the
+ * transportable fan-out error.
  */
 export function planParsedFilters(request: ParsedFilterRequest): CompiledFilters {
 	const { grammar, indexes, conditions, ordering } = request

@@ -1,5 +1,5 @@
 // cvx-kit 2 function registration: custom query/mutation/action builders over `k` schemas and native
-// Convex validators. Same customization contract as convex-helpers' customQuery and v1's zCustomQuery.
+// Convex validators. Same customization contract as convex-helpers' customQuery.
 //
 // What Convex reads, and when:
 // - At registration (`query(definition)`): only `handler`. `exportArgs`/`exportReturns` are closures.
@@ -58,26 +58,25 @@ type InputFields<A extends KArgFields> = {
 type OutputFields<A extends KArgFields> = {
 	[Key in keyof A]: A[Key] extends KType ? OutputNativeOf<A[Key]> : A[Key]
 }
-type OneArgArray = [DefaultFunctionArgs]
 type Props<T> = T extends PropertyValidators ? T : never
 
-/** Caller-facing args: a defaulted `k` field is optional. */
-type ArgsInput<A> = [A] extends [KObject<any>]
-	? [A['_input']]
+/** Caller-facing args of an `args` declaration: a defaulted `k` field is optional, a transformed one has its input type. */
+export type KArgsInput<A> = [A] extends [KObject<any>]
+	? A['_input']
 	: [A] extends [VObject<any, any, any>]
-		? [A['type']]
+		? A['type']
 		: [A] extends [KArgFields]
-			? [ObjectType<Props<InputFields<A>>>]
-			: OneArgArray
+			? ObjectType<Props<InputFields<A>>>
+			: DefaultFunctionArgs
 
-/** Handler-facing args: defaults filled and transforms applied. */
-type ArgsOutput<A> = [A] extends [KObject<any>]
-	? [A['_output']]
+/** Handler-facing args of an `args` declaration: defaults filled and transforms applied. */
+export type KArgsOutput<A> = [A] extends [KObject<any>]
+	? A['_output']
 	: [A] extends [VObject<any, any, any>]
-		? [A['type']]
+		? A['type']
 		: [A] extends [KArgFields]
-			? [ObjectType<Props<OutputFields<A>>>]
-			: OneArgArray
+			? ObjectType<Props<OutputFields<A>>>
+			: DefaultFunctionArgs
 
 type ReturnValueFor<R> = [R] extends [KType]
 	? ValidatorTypeToReturnType<R['_output']>
@@ -125,24 +124,22 @@ export type KCustomBuilder<
 					skipConvexValidation?: boolean
 					handler: (
 						ctx: Overwrite<InputCtx, CustomCtx>,
-						...args: ArgsForHandlerType<ArgsOutput<ArgsValidator>, CustomMadeArgs>
+						...args: ArgsForHandlerType<[KArgsOutput<ArgsValidator>], CustomMadeArgs>
 					) => ReturnValue
 			  } & {
 					[Key in keyof ExtraArgs as Key extends ReservedKey ? never : Key]: ExtraArgs[Key]
 			  })
 			| ((
 					ctx: Overwrite<InputCtx, CustomCtx>,
-					...args: ArgsForHandlerType<ArgsOutput<ArgsValidator>, CustomMadeArgs>
+					...args: ArgsForHandlerType<[KArgsOutput<ArgsValidator>], CustomMadeArgs>
 			  ) => ReturnValue),
 	): Registration<
 		FuncType,
 		Visibility,
 		ArgsArrayToObject<
 			CustomArgsValidator extends Record<string, never>
-				? ArgsInput<ArgsValidator>
-				: ArgsInput<ArgsValidator> extends [infer A]
-					? [Expand<A & ObjectType<CustomArgsValidator>>]
-					: [ObjectType<CustomArgsValidator>]
+				? [KArgsInput<ArgsValidator>]
+				: [Expand<KArgsInput<ArgsValidator> & ObjectType<CustomArgsValidator>>]
 		>,
 		ReturnValue
 	>

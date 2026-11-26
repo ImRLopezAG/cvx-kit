@@ -1,16 +1,16 @@
 import { tenantTable, createQueryEngine, type QueryEngineConfig, type RelationRegistryIdentity } from 'cvx-kit'
 import { defineRelations } from 'cvx-kit/relations'
 import type { TableQuery } from 'cvx-kit/querying'
-import type { PageCompleteness } from 'cvx-kit/zod-table'
+import type { PageCompleteness } from 'cvx-kit/table'
 import type { GenericId } from 'convex/values'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { tasks, labels } from './convex/domain/tasks/schema'
 import { relations } from './convex/relations'
 import { querying } from './convex/querying'
 import type { QueryCtx } from './convex/_generated/server'
 import schema from './convex/schema'
 import { edges } from './convex/domain/tasks/schema'
-const tenant = tenantTable('tenanted', () => ({ title: z.string() }), { publicFields: ['title'] })
+const tenant = tenantTable('tenanted', { title: k.string() }, { publicFields: ['title'] })
 void tenant.paginationOpts({ tenant: true, title: true })
 const config: QueryEngineConfig<typeof schema, { tasks: typeof tasks; labels: typeof labels; edges: typeof edges }, never> | undefined = undefined
 void config
@@ -22,7 +22,7 @@ const inferredChain: Chain | undefined = undefined
 void inferredChain
 const identity: RelationRegistryIdentity = relations
 void identity
-function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
+function check(ctx: QueryCtx, row: k.output<typeof tasks.schema>) {
  querying(ctx).tasks.orderBy('by_priority').where({ priority: { gte: 0, lt: 10 } }).with({}).paginate({ numItems: 1, cursor: null, order: 'desc' })
  querying(ctx).tasks.where({ priority: { in: [0, 2, 0] } }).paginate({ numItems: 2, cursor: null })
  querying(ctx).tasks.orderBy('by_priority').paginate({numItems: 1, cursor: null, filters: { priority: {in: []} }})
@@ -36,8 +36,8 @@ function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
  const dto = tasks.toPublicDto(row, true)
  const id: GenericId<'tasks'> = dto._id
  const same = tasks.toPublicDto(row, { _id: true })
- const extended = tasks.toPublicDto(row, { _id: true, extend: { url: z.url() }, values: { url: 'https://example.test/task' } })
- tasks.dto({ _id: true, extend: { url: z.url() } }).parse(extended)
+ const extended = tasks.toPublicDto(row, { _id: true, extend: { url: k.string().regex(/^https?:\/\/[^\s/]+/) }, values: { url: 'https://example.test/task' } })
+ tasks.dto({ _id: true, extend: { url: k.string().regex(/^https?:\/\/[^\s/]+/) } }).parse(extended)
  void same
  void id
  // @ts-expect-error DTO excludes storage secret
@@ -46,9 +46,9 @@ function check(ctx: QueryCtx, row: z.output<typeof tasks.schema>) {
  const wrong: GenericId<'labels'> = dto._id
  void wrong
  // @ts-expect-error reserved extension fields cannot be declared
- tasks.dto({ extend: { _creationTime: z.number() } })
+ tasks.dto({ extend: { _creationTime: k.number() } })
  // @ts-expect-error command inputs do not contain server-owned fields
- const input: z.input<typeof tasks.commandInput> = { authorized: true }
+ const input: k.input<typeof tasks.commandInput> = { authorized: true }
  void input
  querying(ctx).tasks.with({ labels: { owner: true }, referenceTask: true }).paginate({ numItems: 1, cursor: null, onEmptyBudget: 'split' }).then((p) => {
   const completeness: PageCompleteness | undefined = p.completeness
@@ -89,16 +89,16 @@ void privateMasks
 
 // U6 public consumer contract: opening proves integrity, never row authorization.
 function cursorTypes(ctx: QueryCtx) {
- const codec = querying.cursorCodec(ctx, { domain: 'custom-native', bind: { sort: 'asc' }, schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }) })
+ const codec = querying.cursorCodec(ctx, { domain: 'custom-native', bind: { sort: 'asc' }, schema: k.object({ native: k.string().nullable(), seen: k.int64() }) })
  const opened: { native: string | null; seen: bigint } = codec.open(codec.seal({ native: null, seen: 2n }))
  // @ts-expect-error input bigint cannot be a string
  codec.seal({ native: null, seen: '2' })
  // @ts-expect-error no reader escapes through the codec
  void codec.db
  // @ts-expect-error no caller-provided key ring on the configured facade
- querying.cursorCodec(ctx, { domain: 'native', bind: null, schema: z.string(), keys: {} })
+ querying.cursorCodec(ctx, { domain: 'native', bind: null, schema: k.string(), keys: {} })
  // @ts-expect-error actions without a reader cannot use the facade
- querying.cursorCodec({}, { domain: 'native', bind: null, schema: z.string() })
+ querying.cursorCodec({}, { domain: 'native', bind: null, schema: k.string() })
  void opened
 }
 void cursorTypes

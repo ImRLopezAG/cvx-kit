@@ -12,17 +12,13 @@ import {
 	type GenericDataModel,
 	type GenericQueryCtx,
 } from 'convex/server'
-import { ConvexError, v, type Value } from 'convex/values'
+import { asObjectValidator, ConvexError, v, type GenericValidator, type Value } from 'convex/values'
 import { convexTest } from 'convex-test'
 import { describe, expect, it } from 'vite-plus/test'
-import { k } from '../src/k'
+import { createAuthFunctions } from '../src/auth'
+import { k, type KType } from '../src/k'
 import { hasDeclaredBehaviour } from '../src/k/parse'
-import {
-	kCustomAction,
-	kCustomMutation,
-	kCustomQuery,
-	rawFunctionArgs,
-} from '../src/registration'
+import { kCustomAction, kCustomMutation, kCustomQuery, rawFunctionArgs } from '../src/registration'
 
 const schema = defineSchema({})
 const modules = { './_generated/server.ts': async () => ({}) }
@@ -158,14 +154,20 @@ describe('function boundary: declared behaviour only (KTD3, R19)', () => {
 		})
 		expect(await call(fn, { from: 1, to: 3 })).toBe(2)
 		await expect(call(fn, { from: 3, to: 1 })).rejects.toMatchObject({
-			data: { code: 'VALIDATION', issues: [{ path: ['to'], code: 'custom', message: 'backwards' }] },
+			data: {
+				code: 'VALIDATION',
+				issues: [{ path: ['to'], code: 'custom', message: 'backwards' }],
+			},
 		})
 	})
 
 	it('passes native args through untouched', async () => {
 		let received: DefaultFunctionArgs | undefined
 		const raw = { when: 1, label: '  spaced  ' }
-		for (const args of [{ when: v.number(), label: v.string() }, v.object({ when: v.number(), label: v.string() })]) {
+		for (const args of [
+			{ when: v.number(), label: v.string() },
+			v.object({ when: v.number(), label: v.string() }),
+		]) {
 			const fn = query({
 				args,
 				handler: (_ctx, parsed) => {
@@ -295,9 +297,13 @@ describe('export to Convex', () => {
 		// Calls do not build validators either.
 		await call(fn, { name: ' a ' })
 		await call(objectFn, { id: 'x' })
-		expect([name.native, count.native, returns.native, returns.outputNative, object.native]).toEqual(
-			[undefined, undefined, undefined, undefined, undefined],
-		)
+		expect([
+			name.native,
+			count.native,
+			returns.native,
+			returns.outputNative,
+			object.native,
+		]).toEqual([undefined, undefined, undefined, undefined, undefined])
 		runtime(fn).exportArgs()
 		expect(name.native).toBeDefined()
 		expect(count.native).toBeDefined()
@@ -334,7 +340,10 @@ describe('export to Convex', () => {
 			kCustomQuery(queryGeneric, NoOp)({ args, returns: k.null(), handler: () => null }),
 			kCustomQuery(internalQueryGeneric, NoOp)({ args, returns: k.null(), handler: () => null }),
 			kCustomMutation(mutationGeneric, NoOp)({ args, returns: k.null(), handler: () => null }),
-			kCustomMutation(internalMutationGeneric, NoOp)({
+			kCustomMutation(
+				internalMutationGeneric,
+				NoOp,
+			)({
 				args,
 				returns: k.null(),
 				handler: () => null,
@@ -473,5 +482,288 @@ describe('customization', () => {
 		})
 		await expect(call(fn, { name: 'a' })).rejects.toBeInstanceOf(ConvexError)
 		expect(events).toEqual(['input', 'check'])
+	})
+})
+
+/** A field object the test edits after registration. */
+interface MutableArgumentFields {
+	[field: string]: KType
+}
+
+// Behaviours of the customization contract carried over from the v1 registration suite.
+describe('customization contract', () => {
+	it('invokes real public query, mutation and action registrations', async () => {
+		const args = { value: k.string().trim() }
+		const functions = {
+			query: kCustomQuery(
+				queryGeneric,
+				NoOp,
+			)({ args, returns: k.string(), handler: (_ctx, a) => a.value }),
+			mutation: kCustomMutation(
+				mutationGeneric,
+				NoOp,
+			)({
+				args,
+				returns: k.string(),
+				handler: (_ctx, a) => a.value,
+			}),
+			action: kCustomAction(
+				actionGeneric,
+				NoOp,
+			)({ args, returns: k.string(), handler: (_ctx, a) => a.value }),
+		}
+		const t = convexTest(schema, { ...modules, './functions.ts': async () => functions })
+		expect(
+			await t.query(makeFunctionReference<'query', { value: string }, string>('functions:query'), {
+				value: ' q ',
+			}),
+		).toBe('q')
+		expect(
+			await t.mutation(
+				makeFunctionReference<'mutation', { value: string }, string>('functions:mutation'),
+				{ value: ' m ' },
+			),
+		).toBe('m')
+		expect(
+			await t.action(
+				makeFunctionReference<'action', { value: string }, string>('functions:action'),
+				{
+					value: ' a ',
+				},
+			),
+		).toBe('a')
+	})
+
+	it('passes the native ctx to input, lets made args win, and surfaces a failing success hook', async () => {
+		let nativeCtx: GenericQueryCtx<GenericDataModel> | undefined
+		const events: string[] = []
+		const fn = kCustomQuery(queryGeneric, {
+			args: {},
+			input: (ctx) => {
+				events.push('input')
+				expect(ctx).toBe(nativeCtx)
+				return {
+					ctx: { patched: true },
+					args: { text: 'made' },
+					onSuccess: ({ ctx: successCtx, args, result }) => {
+						events.push('success')
+						expect(successCtx).toBe(nativeCtx)
+						expect(args).toEqual({ text: 'four' })
+						expect(result).toBe('made')
+						throw new Error('hook failure')
+					},
+				}
+			},
+		})({
+			args: { text: k.string().trim() },
+			handler: (ctx, args) => {
+				events.push('handler')
+				expect(ctx.patched).toBe(true)
+				return args.text
+			},
+		})
+		await expect(
+			harness().run((ctx) => {
+				nativeCtx = ctx
+				return runtime(fn)._handler(ctx, { text: ' four ' })
+			}),
+		).rejects.toThrow('hook failure')
+		expect(events).toEqual(['input', 'handler', 'success'])
+	})
+
+	it('never runs the success hook after an args or handler failure, and lets input deny first', async () => {
+		const events: string[] = []
+		const builder = kCustomQuery(queryGeneric, {
+			args: {},
+			input: () => {
+				events.push('input')
+				return { ctx: {}, args: {}, onSuccess: () => void events.push('success') }
+			},
+		})
+		const fn = builder({
+			args: { value: k.number().min(0) },
+			handler: (_ctx, args) => {
+				events.push('handler')
+				if (args.value === 0) throw new Error('handler failure')
+				return args.value
+			},
+		})
+		await expect(call(fn, { value: -1 })).rejects.toBeInstanceOf(ConvexError)
+		expect(events).toEqual(['input'])
+		events.length = 0
+		await expect(call(fn, { value: 0 })).rejects.toThrow('handler failure')
+		expect(events).toEqual(['input', 'handler'])
+		const denied = kCustomQuery(queryGeneric, {
+			args: {},
+			input: () => {
+				throw new Error('customization denial')
+			},
+		})({ args: { value: k.number().min(0) }, handler: () => null })
+		await expect(call(denied, { value: -1 })).rejects.toThrow('customization denial')
+	})
+
+	it('hands raw args, made args and empty extras through a no-args definition', async () => {
+		const seen: object[] = []
+		const fn = kCustomQuery(queryGeneric, {
+			args: { token: v.string() },
+			input: (_ctx, args, extra) => {
+				seen.push({ args, extra })
+				return {
+					ctx: {},
+					args: { added: true },
+					onSuccess: ({ args, result }) => void seen.push({ args, result }),
+				}
+			},
+		})({ handler: (_ctx, args) => args })
+		const raw = { token: 'secret', free: 42 }
+		expect(await call(fn, raw)).toEqual({ ...raw, added: true })
+		expect(seen).toEqual([
+			{ args: raw, extra: {} },
+			{ args: raw, result: { ...raw, added: true } },
+		])
+		expect(JSON.parse(runtime(fn).exportArgs())).toEqual({ type: 'any' })
+	})
+
+	it('rejects overlapping customization and declared args of different kinds at export', () => {
+		const builder = kCustomQuery(queryGeneric, {
+			args: { value: v.string() },
+			input: () => ({ ctx: {}, args: {} }),
+		})
+		const fn = builder({ args: { value: k.number() }, handler: () => null })
+		expect(() => runtime(fn).exportArgs()).toThrow(
+			'Cannot intersect validators with different kinds: float64 and string',
+		)
+		const optional = builder({ args: { value: k.string().optional() }, handler: () => null })
+		expect(JSON.parse(runtime(optional).exportArgs()).value.value.optional).toBe(false)
+	})
+
+	it('shares one native validator for a schema repeated across fields and auth query constructors', () => {
+		const captured: GenericValidator[] = []
+		const nativeQuery: typeof queryGeneric = (definition) => {
+			if ('args' in definition && definition.args) captured.push(asObjectValidator(definition.args))
+			return queryGeneric(definition)
+		}
+		const nativeInternalQuery: typeof internalQueryGeneric = (definition) => {
+			if ('args' in definition && definition.args) captured.push(asObjectValidator(definition.args))
+			return internalQueryGeneric(definition)
+		}
+		const child = k.object({ id: k.id('tasks'), text: k.string() })
+		const array = k.array(child)
+		const union = k.union([child, array])
+		const optional = union.optional()
+		const args = {
+			a: child,
+			b: child,
+			c: array,
+			d: array,
+			e: union,
+			f: union,
+			g: optional,
+			h: optional,
+		}
+		const auth = createAuthFunctions({
+			query: nativeQuery,
+			internalQuery: nativeInternalQuery,
+			mutation: mutationGeneric,
+			internalMutation: internalMutationGeneric,
+			action: actionGeneric,
+			internalAction: internalActionGeneric,
+			getAuthUser: async () => ({ id: 'user' }),
+			mapRole: () => 'owner',
+			adminRoles: ['owner'],
+		})
+		const plain = kCustomQuery(nativeQuery, {
+			args: { token: v.id('sessions') },
+			input: () => ({ ctx: {}, args: {} }),
+		})({ args, handler: () => null })
+		const exported = [runtime(plain).exportArgs()]
+		for (const builder of [
+			auth.authQuery,
+			auth.roleQuery('owner'),
+			auth.adminQuery,
+			auth.systemQuery,
+		])
+			exported.push(runtime(builder({ args, handler: () => null })).exportArgs())
+		expect(captured).toHaveLength(5)
+		for (const native of captured) {
+			if (native.kind !== 'object') throw new Error('Missing native object validator')
+			for (const [a, b] of [
+				['a', 'b'],
+				['c', 'd'],
+				['e', 'f'],
+				['g', 'h'],
+			])
+				expect(native.fields[a]).toBe(native.fields[b])
+		}
+		expect(JSON.parse(exported[0]).value.token).toEqual({
+			fieldType: { type: 'id', tableName: 'sessions' },
+			optional: false,
+		})
+		for (const json of exported.slice(1)) expect(json).toBe(exported[1])
+	})
+
+	it('passes a definition-supplied __proto__ option through as an own extra field', async () => {
+		let extra: { admin?: unknown; tag?: unknown } | undefined
+		const builder = kCustomQuery(queryGeneric, {
+			args: {},
+			input: (_ctx, _args, options) => {
+				// SAFETY: the kit forwards the definition's extra options record unchanged.
+				extra = options as typeof extra
+				return { ctx: {}, args: {} }
+			},
+		})
+		// SAFETY: JSON.parse creates an own `__proto__` key, the shape object rest preserved.
+		const options = JSON.parse('{"__proto__": {"admin": true}, "tag": "x"}') as object
+		// SAFETY: the extra options are untyped on purpose; only their forwarding is under test.
+		const fn = builder({ ...options, handler: () => null } as never)
+		await call(fn, {})
+		expect(Object.getPrototypeOf(extra)).toBe(Object.prototype)
+		expect(Object.hasOwn(extra!, '__proto__')).toBe(true)
+		expect(extra!.admin).toBeUndefined()
+		expect(extra!.tag).toBe('x')
+	})
+
+	it('captures the args field object at registration', async () => {
+		const fields: MutableArgumentFields = { value: k.string() }
+		const fn = query({ args: fields, handler: (_ctx, parsed) => parsed })
+		fields.later = k.string()
+		fields.value = k.number()
+		expect(JSON.parse(runtime(fn).exportArgs())).toEqual({
+			type: 'object',
+			value: { value: { fieldType: { type: 'string' }, optional: false } },
+		})
+		expect(Object.isFrozen(fields)).toBe(false)
+	})
+
+	it('surfaces a throwing args getter at export and invocation, never running unvalidated', async () => {
+		let reads = 0
+		const handled: unknown[] = []
+		const fn = query({
+			get args(): { value: KType } {
+				reads++
+				throw new Error('broken args')
+			},
+			handler: (_ctx, args) => {
+				handled.push(args)
+				return null
+			},
+		})
+		expect(reads).toBe(0)
+		expect(() => runtime(fn).exportArgs()).toThrow('broken args')
+		for (let attempt = 0; attempt < 2; attempt++)
+			await expect(call(fn, { value: 'x' })).rejects.toThrow('broken args')
+		expect(handled).toEqual([])
+		expect(reads).toBe(1)
+	})
+
+	it('rejects nonobject getter args at export instead of registration', () => {
+		const fn = query({
+			// @ts-expect-error runtime rejection of nonobject argument schemas
+			get args() {
+				return k.string()
+			},
+			handler: () => null,
+		})
+		expect(() => runtime(fn).exportArgs()).toThrow('Unsupported args schema')
 	})
 })

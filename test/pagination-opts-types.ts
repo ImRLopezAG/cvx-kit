@@ -11,7 +11,7 @@ import {
 } from 'convex/server'
 import type { GenericId } from 'convex/values'
 import type { KObject } from '../src/k'
-import { createKAuthFunctions } from '../src/auth'
+import { createAuthFunctions } from '../src/auth'
 import { defineRelations } from '../src/relations'
 import { kTable } from '../src/table'
 
@@ -31,7 +31,7 @@ const relational = registry.tables.tasks.paginationOpts({
 	parent: true,
 	parentTask: { title: true },
 })
-const auth = createKAuthFunctions<DataModelFromSchemaDefinition<typeof schema>, 'viewer'>({
+const auth = createAuthFunctions<DataModelFromSchemaDefinition<typeof schema>, 'viewer'>({
 	query: queryGeneric,
 	mutation: mutationGeneric,
 	action: actionGeneric,

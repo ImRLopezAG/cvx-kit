@@ -16,7 +16,7 @@ import {
 	type GenericDatabaseWriter,
 } from 'convex/server'
 import { v } from 'convex/values'
-import { createKAuthFunctions } from '../src/auth'
+import { createAuthFunctions } from '../src/auth'
 import { createTriggers } from '../src/triggers'
 import { effectApiBuilder } from '../src/effect'
 import { createEffectCrud, type EffectCrudPagination } from '../src/modules/effect/crud'
@@ -494,7 +494,7 @@ function securedHarness() {
 				text: change.newDoc.text,
 			})
 	})
-	const auth = createKAuthFunctions<SecuredModel, 'owner' | 'viewer'>({
+	const auth = createAuthFunctions<SecuredModel, 'owner' | 'viewer'>({
 		triggers,
 		query: queryGeneric,
 		mutation: mutationGeneric,

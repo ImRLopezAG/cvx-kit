@@ -1,14 +1,13 @@
 // Characterises the native wire forms of the query engine's bottom layer (U23): the validators
 // Convex receives for `paginationOpts(...)` and `paginated(dto)` args and page results, the shared
-// filter contract schema, and the sealed cursor tokens. The snapshot was written from v1 (Zod) before
-// the layer moved to `k`; v1 and v2 must both keep producing it, and v2 must open v1's tokens.
+// filter contract schema, and the sealed cursor tokens. The snapshot is frozen v1 (Zod) output (see
+// README.md); v2 must keep producing it and must open v1's tokens.
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { NoOp } from 'convex-helpers/server/customFunctions'
 import { queryGeneric } from 'convex/server'
 import { v } from 'convex/values'
 import { describe, expect, test } from 'vite-plus/test'
-import { z } from 'zod'
 
 import { k, type KType } from '../../src/k'
 import { defineFilterContract } from '../../src/filters'
@@ -20,10 +19,6 @@ import {
 } from '../../src/querying/cursors'
 import { kCustomQuery, type KArgs } from '../../src/registration'
 import { kTable, paginated } from '../../src/table'
-import { createScopedCursorCodec as createV1ScopedCursorCodec } from '../../src/querying/v1-zod-cursors'
-import { defineFilterContract as defineV1FilterContract } from '../../src/querying/v1-zod-contract'
-import { zCustomQuery } from '../../src/zod-registration'
-import { paginated as v1Paginated, zodTable, zodToConvex } from '../../src/zod-table'
 import { toSnapshot, validatorJson, type Snapshot } from './helpers'
 
 const SNAPSHOT_FILE = new URL('./v1-pagination.snapshot.json', import.meta.url)
@@ -108,68 +103,7 @@ export const cursorScope = {
 export const scopedOptions = { domain: 'native-v1', bind: { filters: { status: 'open' } } }
 export const scopedPayload = { native: 'private-native-position', seen: 9n }
 
-/** v1 observations, keyed like the snapshot. */
-function v1Observations(): Snapshot {
-	const tasks = zodTable('tasks', (id) => ({
-		status: z.enum(['open', 'done']),
-		title: z.string(),
-		score: z.number(),
-		count: z.bigint().optional(),
-		active: z.boolean(),
-		note: z.string().nullable(),
-		owner: id('users'),
-	}))
-	const members = zodTable('members', (id) => ({
-		member: z.union([id('users'), z.string()]),
-		tag: z.union([z.literal('a'), z.literal(1)]),
-	}))
-	const register = (args: z.ZodObject | Record<string, z.ZodType>, returns?: z.ZodType) =>
-		exported(zCustomQuery(queryGeneric, NoOp)({ args, returns, handler: () => null }))
-	const taskOpts = tasks.paginationOpts(taskSelection)
-	const memberOpts = members.paginationOpts(memberSelection)
-	const compactOpts = tasks.paginationOpts(taskSelection, { validator: 'compact' })
-	const page = v1Paginated(tasks.publicDto.extend({ title: z.string() }))
-	const contract = defineV1FilterContract(contractFields)
-	const transport = createCursorCodec(cursorConfig())
-	const scoped = createV1ScopedCursorCodec(transport.custom, cursorScope, {
-		...scopedOptions,
-		schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
-	})
-	return toSnapshot({
-		paginationOpts: {
-			tasks: {
-				validator: digest(validatorJson(zodToConvex(taskOpts))),
-				registered: register(taskOpts),
-			},
-			members: {
-				validator: digest(validatorJson(zodToConvex(memberOpts))),
-				registered: register(memberOpts),
-			},
-			tasksCompact: {
-				validator: digest(validatorJson(zodToConvex(compactOpts))),
-				registered: register(compactOpts),
-			},
-			nested: register({ paginationOpts: taskOpts }),
-		},
-		paginated: {
-			args: register(page.args),
-			result: register({}, page.result).returns,
-		},
-		contract: {
-			schema: digest(validatorJson(zodToConvex(contract.schema))),
-			native: contract.native,
-			describe: contract.describe(),
-			registered: register({ filters: contract.schema.optional() }),
-		},
-		cursors: {
-			pc: transport.seal('opaque helper continuation', cursorBinding()),
-			cc: transport.custom.seal('opaque custom', cursorBinding()),
-			scoped: scoped.seal(scopedPayload),
-		},
-	})
-}
-
-/** The same observations from the v2 `k` layer: kTable, kCustomQuery and the `k` contract and codec. */
+/** The observations from the v2 `k` layer: kTable, kCustomQuery and the `k` contract and codec. */
 function v2Observations(): Snapshot {
 	const tasks = kTable('tasks', {
 		status: k.enum(['open', 'done']),
@@ -238,15 +172,6 @@ export function readPaginationSnapshot(): Snapshot {
 	return JSON.parse(readFileSync(SNAPSHOT_FILE, 'utf8'))
 }
 
-describe('v1 pagination, filter and cursor wire forms', () => {
-	test('match the recorded snapshot', () => {
-		const observed = v1Observations()
-		if (!existsSync(SNAPSHOT_FILE))
-			writeFileSync(SNAPSHOT_FILE, `${JSON.stringify(observed, null, '\t')}\n`)
-		expect(observed).toEqual(readPaginationSnapshot())
-	})
-})
-
 describe('v2 pagination, filter and cursor wire forms', () => {
 	test('match the v1 snapshot', () => {
 		expect(v2Observations()).toEqual(readPaginationSnapshot())
@@ -254,7 +179,7 @@ describe('v2 pagination, filter and cursor wire forms', () => {
 
 	test('open the sealed v1 tokens and reject tampered ones', () => {
 		const recorded = readPaginationSnapshot()
-		// SAFETY: the snapshot file is written by the v1 section above with these string tokens.
+		// SAFETY: the frozen snapshot records these tokens as strings.
 		const tokens = (recorded as { cursors: { pc: string; cc: string; scoped: string } }).cursors
 		const transport = createCursorCodec(cursorConfig())
 		expect(transport.open(tokens.pc, cursorBinding())).toBe('opaque helper continuation')

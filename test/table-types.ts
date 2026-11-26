@@ -195,3 +195,214 @@ const dynamicShared = createTable(Object.fromEntries([['common', k.string()]]))
 dynamicShared('dynamic', { title: k.string() })
 // @ts-expect-error a transform inside one union member is still a type error
 kTable('t', { either: k.union([k.string().transform((value) => value.length), k.null()]) })
+
+// Carried over from the v1 table type suite: DTO options and the scalar pagination boundary.
+const disabled = documents.toPublicDto(row, false)
+const explicitDisabled = documents.toPublicDto(row, { _id: false })
+const defaultOptions = documents.toPublicDto(row, {})
+const defaultExtended = documents.toPublicDto(row, { extend, values: { url: 'u' } })
+const carriedDtoChecks: [
+	Assert<Equal<typeof disabled, typeof ordinary>>,
+	Assert<Equal<typeof explicitDisabled, typeof ordinary>>,
+	Assert<Equal<typeof defaultOptions, typeof ordinary>>,
+	Assert<Equal<k.infer<ReturnType<typeof documents.dto<false>>>, typeof ordinary>>,
+	Assert<Equal<k.infer<typeof documents.publicDto>, typeof ordinary>>,
+] = [true, true, true, true, true]
+void carriedDtoChecks
+// @ts-expect-error default extensions do not implicitly include an id
+void defaultExtended._id
+// @ts-expect-error an id-bearing DTO does not expose creation time
+void withId._creationTime
+// @ts-expect-error wrong table brand
+const wrongTableId: GenericId<'users'> = withId._id
+void wrongTableId
+// @ts-expect-error values cannot be supplied without schemas
+documents.toPublicDto(row, { values: { url: 'u' } })
+// @ts-expect-error reserved id collisions are rejected even with id disabled
+documents.dto({ _id: false, extend: { _id: k.string() } })
+// @ts-expect-error creation time is reserved
+documents.toPublicDto(row, { extend: { _creationTime: k.number() }, values: { _creationTime: 1 } })
+// @ts-expect-error tenant ownership is reserved
+documents.dto({ extend: { tenant: k.string() } })
+documents.toPublicDto(row, {
+	// @ts-expect-error extension keys remain known when some keys collide
+	extend: { url: k.string(), title: k.string() },
+	values: { url: 'u', title: 't' },
+})
+// @ts-expect-error a pipe extension is rejected
+documents.toPublicDto(row, { extend: { name: k.string().pipe(k.string()) }, values: { name: 'n' } })
+
+const filterTable = kTable(
+	'filterRecords',
+	{
+		text: k.string(),
+		count: k.number(),
+		active: k.boolean(),
+		owner: k.id('users').optional(),
+		status: k.enum(['open', 'done']),
+		object: k.object({ name: k.string() }),
+		list: k.array(k.string()),
+	},
+	{ serverFields: ['active'] },
+)
+const pagination = filterTable.paginationOpts({
+	text: true,
+	count: true,
+	owner: true,
+	active: true,
+	status: true,
+	_id: true,
+	_creationTime: true,
+})
+type PaginationInput = k.input<typeof pagination>
+type PaginationOutput = k.output<typeof pagination>
+declare const userId: GenericId<'users'>
+declare const recordId: GenericId<'filterRecords'>
+const validPagination: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	order: 'desc',
+	filters: {
+		text: { gte: 'a' },
+		count: { in: [1, 2] },
+		active: false,
+		owner: { eq: userId, exists: true },
+		and: [{ status: 'open' }],
+		_id: recordId,
+	},
+}
+void validPagination
+const paginationAssertions: [
+	Assert<Equal<Extract<NonNullable<PaginationInput['filters']>['text'], string>, string>>,
+	Assert<
+		Equal<
+			Extract<NonNullable<PaginationOutput['filters']>['_id'], string>,
+			GenericId<'filterRecords'>
+		>
+	>,
+] = [true, true]
+void paginationAssertions
+// @ts-expect-error unknown selections are rejected
+filterTable.paginationOpts({ missing: true })
+// @ts-expect-error false is not a selection
+filterTable.paginationOpts({ text: false })
+// @ts-expect-error nested objects are unsupported
+filterTable.paginationOpts({ object: true })
+// @ts-expect-error arrays are unsupported
+filterTable.paginationOpts({ list: true })
+const wrongOperator: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error boolean ranges are unsupported
+	filters: { active: { gt: true } },
+}
+const wrongIdRange: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error id ranges are unsupported
+	filters: { owner: { gt: userId } },
+}
+const wrongExists: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error only optional fields support existence
+	filters: { count: { exists: true } },
+}
+const wrongEnum: PaginationInput = {
+	numItems: 1,
+	cursor: null,
+	// @ts-expect-error literal domain retained
+	filters: { status: { eq: 'other' } },
+}
+// @ts-expect-error unselected fields remain unavailable
+const wrongField: PaginationInput = { numItems: 1, cursor: null, filters: { createdAt: 1 } }
+void [wrongOperator, wrongIdRange, wrongExists, wrongEnum, wrongField]
+tenantTable(
+	'valid',
+	{ name: k.string() },
+	{ publicFields: ['tenant', 'createdAt'] },
+).paginationOpts({
+	tenant: true,
+	createdAt: true,
+})
+
+const nullableIdOpts = kTable('nullableIds', {
+	owner: k.id('users').nullable(),
+	mixed: k.union([k.id('users'), k.number()]),
+}).paginationOpts({ owner: true, mixed: true })
+const nullableIdAssertions: [
+	Assert<
+		Equal<
+			Extract<NonNullable<k.output<typeof nullableIdOpts>['filters']>['owner'], string | null>,
+			GenericId<'users'> | null
+		>
+	>,
+] = [true]
+void nullableIdAssertions
+const nestedOpts = kTable('nullableEnum', {
+	status: k.enum(['open', 'done']).nullable(),
+}).paginationOpts({ status: true })
+const nestedInput: k.input<typeof nestedOpts> = {
+	numItems: 1,
+	cursor: null,
+	filters: { status: { in: ['open', null] } },
+}
+void nestedInput
+const logicalOpts = kTable('logicalFields', {
+	and: k.string(),
+	or: k.number(),
+	not: k.boolean(),
+	fields: k.string(),
+}).paginationOpts({ and: true, or: true, not: true, fields: true })
+const logicalInput: k.input<typeof logicalOpts> = {
+	numItems: 1,
+	cursor: null,
+	filters: {
+		fields: { and: 'a', or: { gt: 0 }, not: false, fields: 'f' },
+		and: [{ fields: { not: true } }],
+	},
+}
+void logicalInput
+
+// Carried over from the v1 createTable type suite.
+const sameBoundary: typeof canonical = tasks
+const sameCustomBoundary: typeof tasks = canonical
+void [sameBoundary, sameCustomBoundary]
+const sharedDto = tasks.dto({ _id: true, extend: { label: k.string() } })
+const sharedMaskChecks: [
+	Assert<
+		Equal<
+			'owner' extends keyof k.input<ReturnType<typeof tasks.insert<'owner'>>> ? true : false,
+			false
+		>
+	>,
+	Assert<Equal<k.infer<typeof sharedDto>['_id'], GenericId<'tasks'>>>,
+	Assert<Equal<k.infer<typeof sharedDto>['label'], string>>,
+	Assert<Equal<keyof k.infer<typeof tasks.publicDto>, 'title' | 'owner' | 'note' | 'createdAt'>>,
+	Assert<Equal<k.infer<typeof tasks.tools.update>['id'], GenericId<'tasks'>>>,
+] = [true, true, true, true, true]
+void sharedMaskChecks
+tasks.paginationOpts({ owner: true, _id: true })
+const issues = customTable('issues', { severity: k.number() })
+const issuesCanonical = kTable('issues', { ...shared, severity: k.number() })
+const issueChecks: [
+	Assert<Equal<k.infer<typeof issues.schema>['_id'], GenericId<'issues'>>>,
+	Assert<Equal<k.input<typeof issues.insertSchema>['secret'], string>>,
+	Assert<Equal<k.infer<typeof issues.commandInput>, k.infer<typeof issuesCanonical.commandInput>>>,
+] = [true, true, true]
+void issueChecks
+// @ts-expect-error reserved shared creation time
+createTable({ _creationTime: k.number() })
+// @ts-expect-error declared reserved fields
+customTable('tasks', { _id: k.string() })
+// @ts-expect-error server ownership cannot reference another table's fields
+customTable('tasks', { title: k.string() }, { serverFields: ['severity'] })
+// @ts-expect-error absent specific fields cannot be indexed
+issues.table.index('by_title', ['title'])
+const invalidCommand: k.input<typeof tasks.tools.insert> = {
+	title: 't',
+	owner: k.id('users').parse('users:1'),
+	// @ts-expect-error command fields exclude note
+	note: 'n',
+}
+void invalidCommand

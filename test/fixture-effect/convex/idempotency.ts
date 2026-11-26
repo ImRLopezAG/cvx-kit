@@ -1,4 +1,4 @@
-import { createKAuthFunctions } from 'cvx-kit/auth'
+import { createAuthFunctions } from 'cvx-kit/auth'
 import {
 	createEffectCrud,
 	createEffectFoundation,
@@ -36,7 +36,7 @@ const bounds = {
 	maxArrayLength: 20,
 	maxObjectFields: 20,
 }
-const auth = createKAuthFunctions<DataModel, 'owner' | 'viewer'>({
+const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	query,
 	mutation,
 	action,

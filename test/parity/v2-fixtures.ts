@@ -1,5 +1,5 @@
-// v2 (`k`) translations of the v1 parity fixtures in ./v1-fixtures.ts, one per table and in the same
-// order. `z.object`, `z.strictObject`, `z.looseObject` and `.catchall(...)` all become `k.object`,
+// v2 (`k`) translations of the v1 parity fixtures the snapshot was recorded from (see README.md), one
+// per table and in the same order. `z.object`, `z.strictObject`, `z.looseObject` and `.catchall(...)` all become `k.object`,
 // because v1 stored all four as the same closed object; `z.bigint` becomes `k.int64`; `z.unknown`
 // becomes `k.any`; `nullish` becomes `.nullable().optional()`; `z.email` and `z.url` become string
 // checks (checks never reach the stored validator). The v1 `transforms` fixture has no v2 table:

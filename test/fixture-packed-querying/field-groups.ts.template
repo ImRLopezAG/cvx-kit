@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { convexTest } from 'convex-test'
-import { z } from 'zod'
 import { defineSchema, queryGeneric, mutationGeneric, actionGeneric, internalQueryGeneric, internalMutationGeneric, internalActionGeneric, anyApi, type DataModelFromSchemaDefinition, type GenericQueryCtx } from 'convex/server'
-import { zodTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
 import { defineRelations } from 'cvx-kit/relations'
 import { createQueryEngine } from 'cvx-kit/querying'
 import { createAuthFunctions } from 'cvx-kit/auth'
 
-const records = zodTable('records', () => ({ title: z.string(), amount: z.bigint(), transformed: z.number().transform(String), secret: z.string() }), { publicFields: ['title'] })
+const records = kTable('records', { title: k.string(), amount: k.int64(), transformed: k.number(), secret: k.string() }, { publicFields: ['title'] })
 const relations = defineRelations({ records: { ...records, fieldGroups: { finance: ['amount', 'transformed'] as const } } }, () => ({}))
 const schema = defineSchema({ records: records.table })
 type DM = DataModelFromSchemaDefinition<typeof schema>
@@ -23,7 +23,7 @@ export async function groupTypes(ctx: Parameters<typeof querying>[0]) {
   const required = await querying(ctx).records.include({ finance: 'required' }).paginate({ cursor: null, numItems: 1 })
   const amount: bigint = required.page[0].amount
   const native: number = required.page[0].transformed
-  // @ts-expect-error native storage retains number, never a private parser's string output
+  // @ts-expect-error grouped fields keep their stored number type
   const transformed: string = required.page[0].transformed
   const optional = await querying(ctx).records.include(options.fieldGroups).paginate({ cursor: null, numItems: 1 })
   const maybe: bigint | undefined = optional.page[0].amount
@@ -37,7 +37,6 @@ export async function groupTypes(ctx: Parameters<typeof querying>[0]) {
 }
 export async function runFieldGroups() {
   const t = convexTest(schema, { './_generated/server.ts': async () => builders, './functions.ts': async () => ({ page }) })
-  // @ts-expect-error existing table types infer parser output; the native validator stores number
   await t.run(({ db }) => db.insert('records', { title: 'public', amount: 73n, transformed: 5, secret: 'never-public' }))
   const allowed = await t.withIdentity({ subject: 'allowed', org_id: 'one', role: 'reader' }).query(anyApi.functions.page, { cursor: null, numItems: 1 })
   assert.equal(allowed.page[0].amount, 73n)

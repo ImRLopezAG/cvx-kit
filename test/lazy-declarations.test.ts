@@ -1,51 +1,14 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from 'vite-plus/test'
 import { Effect } from 'effect'
-import { z } from 'zod'
 import { k } from '../src/k'
 import { KObject } from '../src/k/object'
 import { kTable } from '../src/table'
-import { zodTable, zodVariantTable } from '../src/zod-table'
 import { createEffectFoundation } from '../src/effect'
 import { defineDomainContract } from '../src/contracts'
 import { checkArchitecture } from '../src/oxlint'
 
 afterEach(() => vi.restoreAllMocks())
-
-it.each(['ordinary', 'variant'] as const)(
-	'%s declaration defers derived schemas and memoizes first reads',
-	(kind) => {
-		const partial = vi.spyOn(z.ZodObject.prototype, 'partial')
-		const boundary =
-			kind === 'ordinary'
-				? zodTable('items', () => ({ name: z.string() }), {
-						publicFields: ['name'],
-						commandFields: ['name'],
-					})
-				: zodVariantTable(
-						'items',
-						z.discriminatedUnion('type', [
-							z.strictObject({ type: z.literal('item'), name: z.string() }),
-						]),
-						{
-							discriminator: 'type',
-							variants: { item: { publicFields: ['name'], commandFields: ['name'] } },
-						},
-					)
-		expect(partial).not.toHaveBeenCalled()
-		expect(boundary.table).toBeDefined()
-		const update = boundary.updateSchema
-		expect(partial).toHaveBeenCalledTimes(1)
-		expect(boundary.updateSchema).toBe(update)
-		expect(boundary.publicDto).toBe(boundary.dto())
-		expect(boundary.tools).toBe(boundary.tools)
-		expect(
-			boundary.insertSchema.safeParse(
-				kind === 'ordinary' ? { name: 'ok' } : { type: 'item', name: 'ok' },
-			).success,
-		).toBe(true)
-	},
-)
 
 it('builds thunk contracts on property read and preserves enumeration and schema identities', () => {
 	let builds = 0
@@ -150,23 +113,6 @@ it('memoizes page composition and shares the immutable k validator', async () =>
 	extend.mockRestore()
 })
 
-it('reuses ordinary pagination native field conversion and preserves fresh validators', () => {
-	const items = zodTable('items', () => ({ name: z.string() }), { publicFields: ['name'] })
-	const first = items.paginationOpts({ name: true })
-	const fields = items.schema._zod.def.shape
-	const nativeReads = vi.fn(() => fields)
-	Object.defineProperty(items.schema._zod.def, 'shape', { configurable: true, get: nativeReads })
-	const second = items.paginationOpts({ name: true })
-	expect(nativeReads).not.toHaveBeenCalled()
-	expect(second).not.toBe(first)
-	expect(second.safeParse({ numItems: 1, cursor: null, filters: { name: 'ok' } }).success).toBe(
-		true,
-	)
-	expect(
-		second.safeParse({ numItems: 1, cursor: null, filters: { secret: 'hidden' } }).success,
-	).toBe(false)
-})
-
 it.each(['Query', 'Command'] as const)(
 	'%s defers configuration defects through exec and caches failures',
 	async (kind) => {
@@ -258,13 +204,4 @@ it('memoizes relation pagination predicates and shares the immutable k validator
 	expect(first.safeParse(invalid).success).toBe(false)
 	expect(second.safeParse({ ...invalid, filters: { rank: 1 } }).success).toBe(true)
 	extend.mockRestore()
-})
-
-it('preserves writable public declaration properties without replacing the internal DTO owner', () => {
-	const items = zodTable('items', () => ({ name: z.string() }), { publicFields: ['name'] })
-	const replacement = z.strictObject({ name: z.string().min(5) })
-	items.publicDto = replacement
-	expect(items.publicDto).toBe(replacement)
-	expect(items.dto().safeParse({ name: 'ok' }).success).toBe(true)
-	expect(items.publicDto.safeParse({ name: 'ok' }).success).toBe(false)
 })

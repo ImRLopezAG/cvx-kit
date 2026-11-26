@@ -6,15 +6,15 @@ import type {
 	GenericActionCtx,
 } from 'convex/server'
 import {
-	createKAuthFunctions,
-	type KAuthFunctions as AuthFunctions,
+	createAuthFunctions,
+	type AuthFunctions,
 	type AuthFunctionsConfig,
 	type AuthBundle,
 	type DefaultRole,
 	type Include,
 	type ServicePrincipal,
-	type KServiceQuery as ServiceQuery,
-	type KServiceMutation as ServiceMutation,
+	type ServiceQuery,
+	type ServiceMutation,
 } from '../../auth'
 import type { KCustomBuilder } from '../../registration'
 import { effectApiBuilder, type EffectApiBuilder } from './api'
@@ -183,7 +183,7 @@ export function createEffectAuthFunctions<
 	SystemActionServices,
 	SystemActionAdded
 > {
-	const auth = createKAuthFunctions(config)
+	const auth = createAuthFunctions(config)
 	return {
 		include: auth.include,
 		authenticatedUser: auth.authenticatedUser,
@@ -191,8 +191,7 @@ export function createEffectAuthFunctions<
 		roleQuery: (...allowed) => effectApiBuilder(auth.roleQuery(...allowed), options.query),
 		adminQuery: effectApiBuilder(auth.adminQuery, options.query),
 		authMutation: effectApiBuilder(auth.authMutation, options.mutation),
-		roleMutation: (...allowed) =>
-			effectApiBuilder(auth.roleMutation(...allowed), options.mutation),
+		roleMutation: (...allowed) => effectApiBuilder(auth.roleMutation(...allowed), options.mutation),
 		adminMutation: effectApiBuilder(auth.adminMutation, options.mutation),
 		authAction: effectApiBuilder(auth.authAction, options.action),
 		roleAction: (...allowed) => effectApiBuilder(auth.roleAction(...allowed), options.action),

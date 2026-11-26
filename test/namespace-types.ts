@@ -1,5 +1,5 @@
 import type { TableDefinition } from 'convex/server'
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	createModule,
 	namespace,
@@ -7,17 +7,17 @@ import {
 	namespaceName,
 	tablesOf,
 	tenantTable,
-	zodTable,
-} from '../src/zod-table'
+	kTable,
+} from '../src/table'
 
 type Equal<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
 
-const items = tenantTable('items', () => ({ no: z.string() }))
-const itemLedgerEntries = tenantTable('itemLedgerEntries', () => ({ qty: z.number() }))
-const salesOrders = zodTable('salesOrders', () => ({ no: z.string() }))
-const users = zodTable('users', () => ({ name: z.string() }))
+const items = tenantTable('items', { no: k.string() })
+const itemLedgerEntries = tenantTable('itemLedgerEntries', { qty: k.number() })
+const salesOrders = kTable('salesOrders', { no: k.string() })
+const users = kTable('users', { name: k.string() })
 
 const Inventory = namespace('Inventory', {
 	items: items.table.index('by_no', ['tenant', 'no']),
@@ -69,12 +69,12 @@ namespaceIndex({ users: users.table })
 // @ts-expect-error unknown namespace name
 names.tablesOf('Purchase')
 
-const invItems = tenantTable('Inventory_Items', () => ({ no: z.string() }))
+const invItems = tenantTable('Inventory_Items', { no: k.string() })
 const PrefixedInventory = namespace(
 	'Inventory',
 	{
 		Inventory_Items: invItems.table.index('by_no', ['tenant', 'no']),
-		Inventory_ItemLedgerEntries: tenantTable('Inventory_ItemLedgerEntries', () => ({})),
+		Inventory_ItemLedgerEntries: tenantTable('Inventory_ItemLedgerEntries', {}),
 	},
 	{ prefixed: true },
 )

@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { z } from 'zod'
 import { convexTest } from 'convex-test'
 import {
 	defineSchema,
@@ -13,13 +12,14 @@ import {
 	type DataModelFromSchemaDefinition,
 	type GenericQueryCtx,
 } from 'convex/server'
-import { zodTable, zodToConvex } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
 import { defineRelations } from 'cvx-kit/relations'
 import { createQueryEngine } from 'cvx-kit/querying'
 import { createAuthFunctions } from 'cvx-kit/auth'
 import { filters, encoded } from './filters.ts'
-const records = zodTable('records', () => filters.fields)
-const targets = zodTable('targets', () => ({ active: z.boolean() }))
+const records = kTable('records', filters.fields)
+const targets = kTable('targets', { active: k.boolean() })
 const relations = defineRelations({ records, targets }, () => ({}))
 const schema = defineSchema({ records: records.table, targets: targets.table })
 type DM = DataModelFromSchemaDefinition<typeof schema>
@@ -68,7 +68,7 @@ const ownId = await t.run((ctx) =>
 	}),
 )
 const client = t.withIdentity({ subject: 'reader', org_id: 'org', role: 'reader' })
-const valid: z.input<typeof filters.schema>[] = [
+const valid: k.input<typeof filters.schema>[] = [
 	{ status: { in: ['open', 'done'] } },
 	{ count: { gte: 1n, lt: 3n } },
 	{ nullable: null },
@@ -125,7 +125,7 @@ console.log('U7 packed registered auth endpoint, native ID rejection, engine and
 
 const cyclic: any = {}
 cyclic.not = cyclic
-assert.equal(filters.schema.clone().safeParse(cyclic).success, false)
+assert.equal(filters.schema.describe('filters').safeParse(cyclic).success, false)
 assert.equal(filters.evaluate({ not: { count: { exists: false } } }, {}, new Set()), 'unknown')
 
 const missingId = await t.run((ctx) =>
@@ -150,11 +150,11 @@ assert.deepEqual(
 assert.equal(filters.evaluate({ count: { exists: false } }, {}, new Set(['count'])), true)
 
 // Derived shared IDs retain native validation, including immutable table snapshots.
-for (const field of [filters.fields.reference.clone(), filters.fields.reference.describe('Reference'), filters.fields.reference.meta({ title: 'Reference' }), filters.fields.reference.refine(() => true)]) {
- const derived = zodTable('derived', () => ({ reference: field }), { publicFields: ['reference'] })
+for (const field of [filters.fields.reference, filters.fields.reference.describe('Reference'), filters.fields.reference.refine(() => true)]) {
+ const derived = kTable('derived', { reference: field }, { publicFields: ['reference'] })
  const registry = defineRelations({ derived }, () => ({}))
- assert.ok(JSON.stringify(zodToConvex(registry.tables.derived.pageDto({}))).includes('"tableName":"targets"'))
- const derivedEndpoint = auth.authQuery({ args: { reference: field }, returns: z.any(), handler: (_ctx, args) => args.reference })
+ assert.ok(JSON.stringify(registry.tables.derived.pageDto({}).validator).includes('"tableName":"targets"'))
+ const derivedEndpoint = auth.authQuery({ args: { reference: field }, returns: k.any(), handler: (_ctx, args) => args.reference })
  const derivedTest = convexTest(schema, {
   './_generated/server.ts': async () => builders,
   './functions.ts': async () => ({ derivedEndpoint }),

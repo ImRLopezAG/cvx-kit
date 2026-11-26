@@ -214,10 +214,7 @@ export interface ScopedCursorParser<Output> {
 	parse(value: unknown): Output
 }
 
-/**
- * The scoped codec around any synchronous parser. `createScopedCursorCodec` supplies the `k` parse;
- * the v1 bridge supplies its guarded Zod parse until the cutover.
- */
+/** The scoped codec around any synchronous parser; `createScopedCursorCodec` supplies the `k` parse. */
 export function scopedCursorCodec<Input, Output>(
 	transport: ReturnType<typeof createCursorCodec>['custom'],
 	scope: ManagedScope & { readonly policyVersion: string },

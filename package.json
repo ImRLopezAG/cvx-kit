@@ -1,12 +1,12 @@
 {
 	"name": "cvx-kit",
 	"version": "0.1.35",
-	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
+	"description": "Reusable Convex application kit: foundation kernels, approvals component, table boundaries on native Convex validators, WorkOS-backed auth function constructors, and audited command protocol.",
 	"keywords": [
 		"component",
 		"convex",
-		"workos",
-		"zod"
+		"validators",
+		"workos"
 	],
 	"homepage": "https://github.com/ImRLopezAG/cvx-kit#readme",
 	"bugs": {
@@ -34,10 +34,6 @@
 		".": {
 			"types": "./dist/index.d.mts",
 			"import": "./dist/index.mjs"
-		},
-		"./zod-table": {
-			"types": "./dist/zod-table.d.mts",
-			"import": "./dist/zod-table.mjs"
 		},
 		"./relations": {
 			"types": "./dist/relations-public.d.mts",

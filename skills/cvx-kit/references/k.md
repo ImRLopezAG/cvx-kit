@@ -319,11 +319,19 @@ Both are built on first read and memoised. Native validators can sit next to `k`
 
 Every `k` schema implements Standard Schema v1 (`schema['~standard']`, vendor `cvx-kit`), and `validate` runs the same walker as `safeParse`. Contracts (`standardContract`) and form libraries that accept Standard Schema take `k` schemas directly.
 
+Importing `cvx-kit/json-schema` also makes every schema implement Standard JSON Schema v1: `schema['~standard'].jsonSchema.input({ target })` and `.output({ target })` return the JSON Schema of `toJsonSchema(schema, { $schema: true, io })`, for `target` `'draft-2020-12'` or `'draft-07'` (any other target throws, as the spec asks). Libraries that read tool or form schemas through it, such as TanStack AI, then take `k` schemas directly. Pass `libraryOptions: { refs: true }` for `$defs` reuse. Without that import the property is absent, so the converter (about 10 KB unminified, 5 KB minified) stays out of function bundles that only use `k`; importing the entry for its side effect is enough:
+
+```ts
+import 'cvx-kit/json-schema' // once, in the module that hands schemas to the AI library
+```
+
 ## JSON Schema
 
-`toJsonSchema(schema, { $schema?, io? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and objects have `additionalProperties: false`. Repeated bounds keep the strongest one (`.min(2).min(5)` emits `minLength: 5`), and several `regex` checks emit the first as `pattern` and the rest as `allOf` patterns. Timestamps carry `maximum: 253402300799999`. `.positive()`/`.negative()` emit `exclusiveMinimum`/`exclusiveMaximum`, and `.safe()` emits an integer with the safe range. Custom refinements are omitted.
+`toJsonSchema(schema, { $schema?, io?, refs? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and objects have `additionalProperties: false`. Repeated bounds keep the strongest one (`.min(2).min(5)` emits `minLength: 5`), and several `regex` checks emit the first as `pattern` and the rest as `allOf` patterns. Timestamps carry `maximum: 253402300799999`. `.positive()`/`.negative()` emit `exclusiveMinimum`/`exclusiveMaximum`, and `.safe()` emits an integer with the safe range. Custom refinements are omitted.
 
 `{ io: 'output' }` describes what parse returns instead, as Zod's `io` option: a defaulted field is required, a pipe emits its target's output, and a transform emits `{}` (any value), as `outputValidator` emits `v.any()`. The entry is separate, so function bundles that do not import it do not load it.
+
+`{ refs: true }` emits a sub-schema that occurs more than once (the same object, array, record or union schema instance) once under `$defs` and points to it with `$ref` (`#/$defs/s0`, …); `draft-07` output through `~standard.jsonSchema` uses `definitions`. A contract that repeats a relation filter or DTO schema in many places stays small this way. It is off by default so existing output does not change; scalar schemas such as `k.string()` are shared instances and are never moved into `$defs`.
 
 ```ts
 import { toJsonSchema } from 'cvx-kit/json-schema'

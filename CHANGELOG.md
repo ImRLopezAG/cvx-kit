@@ -52,6 +52,8 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 
 ### Added (since 2.0.0-beta.0)
 
+- Importing `cvx-kit/json-schema` makes every `k` schema implement Standard JSON Schema v1 (`~standard.jsonSchema.input/output({ target: 'draft-2020-12' | 'draft-07' })`), so libraries such as TanStack AI take `k` tool schemas directly. Without the import the property is absent and the converter stays out of the bundle. `toJsonSchema(schema, { refs: true })` emits repeated sub-schemas once under `$defs` (opt-in; default output unchanged).
+- `k.partialRecord(key, value)`.
 - `KCustomCtx<typeof builder>` (`cvx-kit/registration`, `cvx-kit`): the handler ctx of a `KCustomBuilder`, replacing convex-helpers' `ZCustomCtx`. `KCustomBuilder` is also exported from `cvx-kit`.
 - `AnyKSchema` (a parameter type for any `k` schema) and `KRecordKey` from `cvx-kit/k`; `KCursorSchema` from `cvx-kit/querying`.
 - Zod-parity members: `KArray.element`, `KObject.keyof()`, `KObject.required(...keys)`, `k.enum(...).exclude/extract/.enum`, number `.positive()`, `.negative()`, `.nonnegative()`, `.nonpositive()`, `.finite()`, `.safe()`, and `removeDefault()` (an alias of `unwrap()` on a default). The number checks leave the native validator unchanged; `toJsonSchema` and `toZod` describe them.

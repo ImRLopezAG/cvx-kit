@@ -143,8 +143,10 @@ export abstract class KSchema<
 	}
 
 	/** Standard Schema v1, so contracts and form libraries consume `k` schemas directly. */
-	get '~standard'(): StandardSchemaV1.Props<N['type'], Out> {
-		return standardProps(this)
+	get '~standard'(): StandardSchemaV1.Props<N['type'], Out> & CvxKitStandardProps {
+		// SAFETY: `jsonSchema` is present exactly when cvx-kit/json-schema, which declares it on
+		// CvxKitStandardProps, is imported and has installed its converter.
+		return standardProps(this) as StandardSchemaV1.Props<N['type'], Out> & CvxKitStandardProps
 	}
 
 	protected link(op: KOp, arg: KArg, message: KMessage): this {
@@ -220,6 +222,11 @@ declare global {
 	 * in core, so core declarations never name an optional peer's types.
 	 */
 	interface CvxKitSchemaMethods {}
+	/**
+	 * Members that optional cvx-kit entries add to every schema's `~standard` props;
+	 * `cvx-kit/json-schema` adds Standard JSON Schema's `jsonSchema`. Empty in core.
+	 */
+	interface CvxKitStandardProps {}
 }
 
 /* oxlint-disable no-unused-vars -- A merged declaration must repeat the class's type parameters. */

@@ -27,6 +27,8 @@ const tools = createAgentTools(<entities>, {
 // const agentTools = Object.fromEntries(Object.values(tools).map((t) =>
 //   [t.name, createTool({ description: t.description, args: toZod(t.args), handler: t.handler })]))
 // with a library that takes JSON Schema: toJsonSchema(t.args) from 'cvx-kit/json-schema'
+// with a library that reads Standard JSON Schema (TanStack AI): import 'cvx-kit/json-schema' once,
+// then pass t.args itself; it exposes ~standard.jsonSchema.input({ target: 'draft-2020-12' })
 ```
 
 ## Contracts
@@ -37,6 +39,11 @@ const tools = createAgentTools(<entities>, {
   Schema v1, with `args.parse`). Ids stay `k.id(...)`, typed `Id<...>`; they
   are plain strings in the JSON Schema from `toJsonSchema` (`cvx-kit/json-schema`).
   For a library that only accepts Zod, convert with `toZod(args)` from `cvx-kit/zod`.
+  A library that reads Standard JSON Schema (`~standard.jsonSchema`, for example
+  TanStack AI tool schemas) takes `args` directly once `cvx-kit/json-schema` is
+  imported in that module; without the import it fails with `does not expose a
+  JSON Schema converter on ~standard.jsonSchema`. Large contracts can pass
+  `toJsonSchema(args, { refs: true })` to share repeated sub-schemas via `$defs`.
 - **Only the kinds you supply handlers for are emitted**; names are
   `<tableName>_<verb>`; descriptions are derived and overridable via
   `options.descriptions`.

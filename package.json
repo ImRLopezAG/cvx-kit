@@ -34,7 +34,9 @@
 	"type": "module",
 	"sideEffects": [
 		"./dist/zod.mjs",
-		"./src/zod.ts"
+		"./src/zod.ts",
+		"./dist/json-schema.mjs",
+		"./src/json-schema.ts"
 	],
 	"exports": {
 		"./package.json": "./package.json",

@@ -1,12 +1,17 @@
 /** JSON Schema for `k` schemas (KTD8): a separate entry, so core function bundles never load it. */
+import type { StandardJSONSchemaV1 } from '@standard-schema/spec'
 import type { JSONValue, Value } from 'convex/values'
 import { membersOf } from './k/compile'
 import { maxTimestamp } from './k/formats'
+import { installJsonSchemaConverter } from './k/standard'
 import type { KDiscriminated, KFields, KLiteralValue, KNode, KType } from './k/types'
 
 /** The JSON Schema (draft 2020-12) subset `toJsonSchema` emits. */
-export interface JsonSchema {
+export type JsonSchema = {
 	$schema?: string
+	$ref?: string
+	$defs?: Record<string, JsonSchema>
+	definitions?: Record<string, JsonSchema>
 	type?: 'string' | 'number' | 'integer' | 'boolean' | 'null' | 'array' | 'object'
 	format?: 'date' | 'date-time'
 	contentEncoding?: 'base64'
@@ -42,7 +47,30 @@ export type JsonSchemaOptions = {
 	 * transform emits `{}` (any value), as `outputValidator` emits `v.any()`.
 	 */
 	readonly io?: 'input' | 'output'
+	/**
+	 * Emit a sub-schema that occurs more than once (the same object, array, record or union schema
+	 * instance, by identity) once under `$defs` and reference it with `$ref`. Off by default, so the
+	 * inline output stays as before; turn it on for large contracts that repeat a filter or DTO schema.
+	 */
+	readonly refs?: boolean
 }
+
+/** The JSON Schema dialects `~standard.jsonSchema` produces; others throw, as the spec asks. */
+const DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema'
+const DRAFT_07 = 'http://json-schema.org/draft-07/schema#'
+
+declare global {
+	interface CvxKitStandardProps {
+		/**
+		 * Standard JSON Schema v1 (`@standard-schema/spec`): `input` and `output` JSON Schema for
+		 * `draft-2020-12` and `draft-07`. Installed by importing `cvx-kit/json-schema`.
+		 */
+		readonly jsonSchema: StandardJSONSchemaV1.Converter
+	}
+}
+
+/** Repeated sub-schemas of the conversion in progress, when `refs` is on. */
+let shared: { names: Map<KNode, string>; defs: Record<string, JsonSchema> } | null = null
 
 /**
  * The input-side JSON Schema of a `k` schema, for agent tool inputs and forms: optional and defaulted
@@ -51,13 +79,109 @@ export type JsonSchemaOptions = {
  * expressible and are omitted.
  */
 export function toJsonSchema(schema: KType, options?: JsonSchemaOptions): JsonSchema {
-	const out = convert(schema, options?.io === 'output')
-	if (options?.$schema === true)
-		return { $schema: 'https://json-schema.org/draft/2020-12/schema', ...out }
-	return out
+	return document(schema, options, DRAFT_2020_12, '$defs')
+}
+
+installJsonSchemaConverter((schema) => ({
+	input: (options) => standardDocument(schema, options, 'input'),
+	output: (options) => standardDocument(schema, options, 'output'),
+}))
+
+function standardDocument(
+	schema: KNode,
+	options: StandardJSONSchemaV1.Options,
+	io: 'input' | 'output',
+): JsonSchema {
+	const draft07 = options.target === 'draft-07'
+	if (!draft07 && options.target !== 'draft-2020-12')
+		throw new Error(
+			`cvx-kit: JSON Schema target '${options.target}' is not supported; use 'draft-2020-12' or 'draft-07'`,
+		)
+	const refs = options.libraryOptions?.refs === true
+	return document(
+		schema,
+		{ $schema: true, io, refs },
+		draft07 ? DRAFT_07 : DRAFT_2020_12,
+		draft07 ? 'definitions' : '$defs',
+	)
+}
+
+function document(
+	schema: KNode,
+	options: JsonSchemaOptions | undefined,
+	dialect: string,
+	defsKey: '$defs' | 'definitions',
+): JsonSchema {
+	const output = options?.io === 'output'
+	const previous = shared
+	shared = options?.refs === true ? { names: repeated(schema, output, defsKey), defs: {} } : null
+	try {
+		const out = convert(schema, output)
+		const head: JsonSchema = options?.$schema === true ? { $schema: dialect } : {}
+		const defs = shared?.defs
+		return defs !== undefined && Object.keys(defs).length > 0
+			? { ...head, ...out, [defsKey]: defs }
+			: { ...head, ...out }
+	} finally {
+		shared = previous
+	}
+}
+
+/** Container sub-schemas met more than once in the tree, by identity, each with its `$ref` target. */
+function repeated(schema: KNode, output: boolean, defsKey: string): Map<KNode, string> {
+	const seen = new Map<KNode, number>()
+	const visit = (node: KNode) => {
+		let root = node
+		for (; root.prev !== null; root = root.prev)
+			if (output && root.op === 'pipe') visit(argNode(root.arg))
+		const container = CONTAINERS.has(root.op)
+		if (container) {
+			const count = (seen.get(node) ?? 0) + 1
+			seen.set(node, count)
+			if (count > 1) return
+		}
+		for (const child of childrenOf(root)) visit(child)
+	}
+	visit(schema)
+	const names = new Map<KNode, string>()
+	for (const [node, count] of seen)
+		if (count > 1 && node !== schema) names.set(node, `#/${defsKey}/s${names.size}`)
+	return names
+}
+
+const CONTAINERS = new Set(['object', 'array', 'record', 'union', 'discriminatedUnion'])
+
+function childrenOf(root: KNode): readonly KNode[] {
+	switch (root.op) {
+		case 'array':
+			return [argNode(root.arg)]
+		case 'object':
+			return Object.values(fieldsOf(root))
+		case 'record':
+			// SAFETY: k.record stores its key and value schemas as the root argument.
+			return root.arg as readonly KType[]
+		case 'union':
+		case 'discriminatedUnion':
+			return membersOf(root)
+		default:
+			return []
+	}
 }
 
 function convert(node: KNode, output: boolean): JsonSchema {
+	const ref = shared?.names.get(node)
+	if (ref === undefined || shared === null) return convertNode(node, output)
+	const name = ref.slice(ref.lastIndexOf('/') + 1)
+	if (!(name in shared.defs)) {
+		const defs = shared.defs
+		// Reserve the name first so a nested repeat of a different schema numbers after it.
+		defs[name] = {}
+		defs[name] = convertNode(node, output)
+	}
+	return { $ref: ref }
+}
+
+function convertNode(node: KNode, output: boolean): JsonSchema {
 	const records: KNode[] = []
 	for (let current: KNode | null = node; current !== null; current = current.prev)
 		records.push(current)

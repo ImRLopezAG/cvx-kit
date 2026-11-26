@@ -46,4 +46,9 @@ describe('k Standard Schema', () => {
 		// repository-wide augmentation in src/zod.ts.
 		expect(() => schema.toZod()).toThrow(/cvx-kit\/zod/)
 	})
+
+	it('has no ~standard.jsonSchema until cvx-kit/json-schema is imported', () => {
+		// This file never imports src/json-schema.ts, so no converter is installed.
+		expect('jsonSchema' in schema['~standard']).toBe(false)
+	})
 })

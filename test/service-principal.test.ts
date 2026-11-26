@@ -17,11 +17,9 @@ import {
 	type UserIdentity,
 } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
 import { k } from '../src/k'
 import { describe, expect, it } from 'vite-plus/test'
 import {
-	createAuthFunctions,
 	createKAuthFunctions,
 	type AuthBundle,
 	type AuthFunctionsConfig,
@@ -75,7 +73,7 @@ const config: AuthFunctionsConfig<DM, Role> = {
 	adminRoles: ['owner'],
 	security: { tenancy: { tables: ['notes'] }, rules },
 }
-const auth = createAuthFunctions<DM, Role>(config)
+const auth = createKAuthFunctions<DM, Role>(config)
 const managed = createManagedSecurity<DM>({ tables: ['notes'], policyVersion: 'v1' })
 
 function bundleFor(clientId: string, organizationId: string) {
@@ -93,7 +91,7 @@ function bundleFor(clientId: string, organizationId: string) {
 function principal(_ctx: GenericQueryCtx<DM> | GenericMutationCtx<DM>, args: DefaultFunctionArgs) {
 	return bundleFor(String(args.clientId), String(args.organizationId))
 }
-const scope = { clientId: z.string(), organizationId: z.string() }
+const scope = { clientId: k.string(), organizationId: k.string() }
 const agentQuery = auth.serviceQuery(principal)
 const agentMutation = auth.serviceMutation(principal)
 
@@ -111,11 +109,11 @@ const list = agentQuery({
 	},
 })
 const forged = agentQuery({
-	args: { ...scope, principal: z.any().optional() },
+	args: { ...scope, principal: k.any().optional() },
 	handler: async (ctx) => ctx.clientId,
 })
 const write = agentMutation({
-	args: { ...scope, body: z.string(), clientFor: z.string() },
+	args: { ...scope, body: k.string(), clientFor: k.string() },
 	handler: async (ctx, args) => {
 		await ctx.db.insert('notes', { tenant: ctx.tenant, clientId: args.clientFor, body: args.body })
 		return null
@@ -174,7 +172,7 @@ const effectList = effectAuth.serviceQuery(principal)({
 		})),
 })
 const effectWrite = effectAuth.serviceMutation(principal)({
-	args: { ...scope, clientFor: z.string() },
+	args: { ...scope, clientFor: k.string() },
 	handler: (ctx, args) =>
 		Effect.promise(() =>
 			ctx.db.insert('notes', { tenant: ctx.tenant, clientId: args.clientFor, body: 'fx' }),

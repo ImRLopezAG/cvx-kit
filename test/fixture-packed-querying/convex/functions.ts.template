@@ -1,10 +1,10 @@
-import { createAuthFunctions } from 'cvx-kit/auth'
+import { createKAuthFunctions } from 'cvx-kit/auth'
 import { createEffectAuthFunctions } from 'cvx-kit/effect'
 import { queryFailureContract } from 'cvx-kit/querying'
 import { query, mutation, action, internalQuery, internalMutation, internalAction } from './_generated/server'
 import type { DataModel } from './_generated/dataModel'
 import { getAuthUser, mapRole, readRules } from './domain/tasks/security'
-export const { authQuery } = createAuthFunctions<DataModel, 'owner' | 'reader'>({
+export const { authQuery } = createKAuthFunctions<DataModel, 'owner' | 'reader'>({
  query, mutation, action, internalQuery, internalMutation, internalAction,
  getAuthUser, mapRole, adminRoles: ['owner'],
  security: { tenancy: { tables: ['tasks', 'labels'] }, rules: readRules },

@@ -3,15 +3,15 @@ import { convexTest } from 'convex-test'
 import { defineSchema, queryGeneric, mutationGeneric, actionGeneric, internalQueryGeneric, internalMutationGeneric, internalActionGeneric, anyApi, type DataModelFromSchemaDefinition } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { Effect } from 'effect'
-import { z } from 'zod'
-import { zodTable } from 'cvx-kit/zod-table'
-import { defineRelations } from 'cvx-kit/relations'
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
+import { defineRelations, withFieldGroups } from 'cvx-kit/relations'
 import { createQueryEngine, queryFailureContract } from 'cvx-kit/querying'
 import { createEffectAuthFunctions } from 'cvx-kit/effect'
 import { queryErrors, decodeFailure, combineErrorContracts, defineErrorContract, isFailure, failureOf, matchFailure } from 'cvx-kit/errors'
-const records = zodTable('records', () => ({ key: z.string(), secret: z.string() }), { publicFields: ['key'] })
+const records = kTable('records', { key: k.string(), secret: k.string() }, { publicFields: ['key'] })
 const recordsTable = records.table.index('by_key', ['key'])
-const relations = defineRelations({ records: { ...records, fieldGroups: { private: ['secret'] as const } } }, () => ({}))
+const relations = defineRelations({ records: withFieldGroups(records, { private: ['secret'] as const }) }, () => ({}))
 const schema = defineSchema({ records: recordsTable })
 type DM = DataModelFromSchemaDefinition<typeof schema>
 const builders = { query: queryGeneric, mutation: mutationGeneric, action: actionGeneric, internalQuery: internalQueryGeneric, internalMutation: internalMutationGeneric, internalAction: internalActionGeneric }
@@ -37,8 +37,8 @@ for (const [name, code] of [['invalid', 'invalid-cursor'], ['group', 'FIELD_GROU
 console.log(JSON.stringify({ registeredRawEnvelopes: envelopes }, null, 2))
 
 // These proofs run in both the current and minimum-peer packed consumers.
-const domainA = defineErrorContract({ SHARED: { message: 'Shared', details: { value: z.string() } }, A: { message: 'A', details: {} } })
-const domainB = defineErrorContract({ SHARED: { message: 'Shared', details: { value: z.number() } }, B: { message: 'B', details: {} } })
+const domainA = defineErrorContract({ SHARED: { message: 'Shared', details: { value: k.string() } }, A: { message: 'A', details: {} } })
+const domainB = defineErrorContract({ SHARED: { message: 'Shared', details: { value: k.number() } }, B: { message: 'B', details: {} } })
 const combined = combineErrorContracts(domainA, domainB)
 assert.equal('create' in combined, false)
 for (const error of [domainA.toConvexError('SHARED', { value: 'a' }), domainB.toConvexError('SHARED', { value: 2 })]) {

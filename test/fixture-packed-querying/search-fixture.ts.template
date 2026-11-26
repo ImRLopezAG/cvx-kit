@@ -9,24 +9,24 @@ import {
 	type DataModelFromSchemaDefinition,
 } from 'convex/server'
 import { ConvexError } from 'convex/values'
-import { z } from 'zod'
 import { Effect } from 'effect'
-import { createAuthFunctions } from 'cvx-kit/auth'
+import { createKAuthFunctions } from 'cvx-kit/auth'
 import { createEffectAuthFunctions } from 'cvx-kit/effect'
 import { createQueryEngine, queryFailureContract } from 'cvx-kit/querying'
-import { defineRelations } from 'cvx-kit/relations'
-import { zodTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { defineRelations, withFieldGroups } from 'cvx-kit/relations'
+import { kTable } from 'cvx-kit/table'
 
-export const docs = zodTable(
+export const docs = kTable(
 	'docs',
-	() => ({
-		text: z.string().refine((value) => !value.includes('broken-dto')),
-		status: z.string(),
-		secret: z.string(),
-	}),
+	{
+		text: k.string().refine((value) => !value.includes('broken-dto')),
+		status: k.string(),
+		secret: k.string(),
+	},
 	{ publicFields: ['text', 'status'] },
 )
-export const children = zodTable('children', (id) => ({ parent: id('docs'), name: z.string() }), {
+export const children = kTable('children', { parent: k.id('docs'), name: k.string() }, {
 	publicFields: ['name'],
 })
 const table = docs.table
@@ -34,7 +34,7 @@ const table = docs.table
 	.searchIndex('staged', { searchField: 'text', staged: true })
 const childTable = children.table.index('by_parent', ['parent'])
 export const relations = defineRelations(
-	{ docs: { ...docs, table }, children: { ...children, table: childTable } },
+	{ docs: withFieldGroups(docs, { private: ['secret'] as const }), children },
 	(r) => ({
 		docs: { children: r.many.children({ from: r.docs._id, to: r.children.parent }) },
 		children: {},
@@ -69,7 +69,7 @@ const config = {
 		}),
 	},
 }
-const auth = createAuthFunctions<DM, 'reader' | 'owner'>(config)
+const auth = createKAuthFunctions<DM, 'reader' | 'owner'>(config)
 const effect = createEffectAuthFunctions(config, {
 	query: { errors: queryFailureContract },
 	mutation: {},
@@ -90,21 +90,19 @@ export const engine = createQueryEngine(
 		budgets: { searchCandidates: 3 },
 	},
 )
-const args = z.object({
-	text: z.string(),
-	cursor: z.string().nullable(),
-	scanLimit: z.number().optional(),
+const args = k.object({
+	text: k.string(),
+	cursor: k.string().nullable(),
+	scanLimit: k.number().optional(),
 })
-function run(ctx: Parameters<typeof engine>[0], { text, ...options }: z.output<typeof args>) {
+function run(ctx: Parameters<typeof engine>[0], { text, ...options }: k.infer<typeof args>) {
 	return engine(ctx)
 		.docs.search('search_text', text)
 		.paginate({ ...options, numItems: 2 })
 }
 export const page = auth.authQuery({
 	args,
-	returns: relations.tables.docs
-		.pageDto({})
-		.and(z.object({ paginationMode: z.literal('native-search') })),
+	returns: relations.tables.docs.pageDto({}),
 	handler: async (ctx, a) => {
 		try {
 			return await run(ctx, a)
@@ -115,16 +113,12 @@ export const page = auth.authQuery({
 })
 export const effectPage = effect.authQuery({
 	args,
-	returns: relations.tables.docs
-		.pageDto({})
-		.and(z.object({ paginationMode: z.literal('native-search') })),
+	returns: relations.tables.docs.pageDto({}),
 	handler: (ctx, a) => Effect.tryPromise({ try: () => run(ctx, a), catch: (error) => error }),
 })
 export const nested = auth.authQuery({
 	args,
-	returns: relations.tables.docs
-		.pageDto({ children: true })
-		.and(z.object({ paginationMode: z.literal('native-search') })),
+	returns: relations.tables.docs.pageDto({ children: true }),
 	handler: async (ctx, { text, ...options }) => {
 		try {
 			return await engine(ctx)

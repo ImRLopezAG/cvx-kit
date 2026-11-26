@@ -1,12 +1,12 @@
 import type { Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineErrorContract, type DeclaredError } from '../src/modules/contracts/errors'
 import { defineDomainContract } from '../src/modules/contracts/domain'
 import { createEffectFoundation, effectErrors } from '../src/effect'
 
 const definitions = {
 	NOT_FOUND: { message: 'Not found', details: {} },
-	LIMIT: { message: 'Limit reached', details: { max: z.number() } },
+	LIMIT: { message: 'Limit reached', details: { max: k.number() } },
 } as const
 const errors = defineErrorContract(definitions)
 type Errors = typeof errors extends { create: (code: never, details: never) => infer Error }
@@ -32,7 +32,7 @@ const foundation = createEffectFoundation({
 foundation.Command({
 	contract: defineDomainContract({
 		errors,
-		commands: { save: { input: z.string(), result: z.string(), classification: 'business' } },
+		commands: { save: { input: k.string(), result: k.string(), classification: 'business' } },
 	}),
 	context: () => ({}),
 	audit: () => null,
@@ -42,7 +42,7 @@ foundation.Command({
 })
 foundation.Command({
 	contract: defineDomainContract({
-		commands: { save: { input: z.string(), result: z.string(), classification: 'business' } },
+		commands: { save: { input: k.string(), result: k.string(), classification: 'business' } },
 	}),
 	context: () => ({}),
 	audit: () => null,

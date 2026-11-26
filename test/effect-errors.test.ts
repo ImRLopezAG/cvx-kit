@@ -8,7 +8,7 @@ import {
 } from 'convex/server'
 import { ConvexError, v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { combineErrorContracts, defineErrorContract } from '../src/modules/contracts/errors'
 import { defineDomainContract } from '../src/modules/contracts/domain'
 import { createEffectFoundation } from '../src/modules/effect/foundation'
@@ -19,7 +19,7 @@ type Host = GenericMutationCtx<DataModelFromSchemaDefinition<typeof schema>>
 const modules = import.meta.glob('./fixture/**/*.ts')
 const errors = defineErrorContract({
 	NOT_FOUND: { message: 'Not found', details: {} },
-	LIMIT: { message: 'Limit reached', details: { max: z.number() } },
+	LIMIT: { message: 'Limit reached', details: { max: k.number() } },
 })
 const { fail, attempt } = effectErrors(errors)
 
@@ -106,7 +106,7 @@ describe('contracted registry factories', () => {
 		const contract = defineDomainContract({
 			errors,
 			commands: {
-				'notes.save': { input: z.string(), result: z.string(), classification: 'business' },
+				'notes.save': { input: k.string(), result: k.string(), classification: 'business' },
 			},
 		})
 		const notes = foundation.Command({
@@ -148,7 +148,7 @@ describe('contracted registry factories', () => {
 		const queries = foundation.Query({
 			contract: defineDomainContract({
 				errors: combineErrorContracts(errors),
-				queries: { 'notes.get': { input: z.string(), result: z.string() } },
+				queries: { 'notes.get': { input: k.string(), result: k.string() } },
 			}),
 			context: () => ({}),
 			operations: (define) => {

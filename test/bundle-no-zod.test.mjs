@@ -22,6 +22,15 @@ const coreEntries = [
 	'src/filters.ts',
 	'src/relations-public.ts',
 	'src/querying.ts',
+	'src/crud.ts',
+	'src/triggers.ts',
+	'src/middleware.ts',
+	'src/webhooks.ts',
+	'src/agent-tools.ts',
+	'src/contracts.ts',
+	'src/idempotency.ts',
+	'src/workflow.ts',
+	'src/errors.ts',
 ]
 const zodInputs = [/node_modules\/zod\//, /node_modules\/convex-helpers\/server\/zod4/]
 

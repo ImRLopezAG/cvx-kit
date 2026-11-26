@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vite-plus/test'
 import { ConvexError } from 'convex/values'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { Effect } from 'effect'
 import { convexTest } from 'convex-test'
 import {
@@ -24,11 +24,11 @@ import {
 } from '../src/errors'
 
 const first = defineErrorContract({
-	SHARED: { message: 'Shared', details: { value: z.string() } },
+	SHARED: { message: 'Shared', details: { value: k.string() } },
 	FIRST: { message: 'First', details: {} },
 })
 const second = defineErrorContract({
-	SHARED: { message: 'Shared', details: { value: z.number() } },
+	SHARED: { message: 'Shared', details: { value: k.number() } },
 	SECOND: { message: 'Second', details: {} },
 })
 const unknown = { _tag: 'UnknownFailure', version: 1 }
@@ -66,9 +66,9 @@ describe('error contract helpers', () => {
 	})
 	it('uses the first successful decoder in declaration order', () => {
 		const a = defineErrorContract({
-			SAME: { message: 'Same', details: { value: z.coerce.string() } },
+			SAME: { message: 'Same', details: { value: k.number().transform((value) => String(value)) } },
 		})
-		const b = defineErrorContract({ SAME: { message: 'Same', details: { value: z.number() } } })
+		const b = defineErrorContract({ SAME: { message: 'Same', details: { value: k.number() } } })
 		const payload = b.envelope('SAME', { value: 2 })
 		expect(combineErrorContracts(a, b).decode(payload)).toEqual({
 			...payload,

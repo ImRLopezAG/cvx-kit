@@ -1,10 +1,10 @@
-import { createAuthFunctions } from 'cvx-kit/auth'
+import { createKAuthFunctions } from 'cvx-kit/auth'
 import {
 	createEffectCrud,
 	createEffectFoundation,
 	effectContract,
 	effectTransactionalIdempotency,
-	effectZodApiBuilder,
+	effectApiBuilder,
 } from 'cvx-kit/effect'
 import {
 	captureIdempotencyInvocation,
@@ -13,8 +13,7 @@ import {
 } from 'cvx-kit/idempotency'
 import { Context, Effect } from 'effect'
 import { v } from 'convex/values'
-import { zid } from 'cvx-kit/zod-table'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import type { GenericDatabaseWriter } from 'convex/server'
 import type { DataModel, Id } from './_generated/dataModel'
 import {
@@ -37,7 +36,7 @@ const bounds = {
 	maxArrayLength: 20,
 	maxObjectFields: 20,
 }
-const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
+const auth = createKAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	query,
 	mutation,
 	action,
@@ -77,9 +76,9 @@ type Host = {
 	mode: Mode
 }
 class Writer extends Context.Service<Writer, Host>()('NativeIdempotencyWriter') {}
-const finalResult = z.object({ id: zid('idempotentNotes'), title: z.string() }).strict()
-const finalWire = z.object({ version: z.literal(1), value: finalResult }).strict()
-const replayResult = effectContract<z.input<typeof finalWire>, z.output<typeof finalResult>, Error>(
+const finalResult = k.object({ id: k.id('idempotentNotes'), title: k.string() })
+const finalWire = k.object({ version: k.literal(1), value: finalResult })
+const replayResult = effectContract<k.input<typeof finalWire>, k.infer<typeof finalResult>, Error>(
 	(wire) =>
 		Effect.suspend(() => {
 			const parsed = finalWire.safeParse(wire)
@@ -91,7 +90,7 @@ const replayResult = effectContract<z.input<typeof finalWire>, z.output<typeof f
 const capability = effectTransactionalIdempotency({
 	final: {
 		replayResult,
-		encode: (result: z.output<typeof finalResult>) => ({ version: 1 as const, value: result }),
+		encode: (result: k.infer<typeof finalResult>) => ({ version: 1 as const, value: result }),
 	},
 	fingerprint: (canonical: string) => canonical,
 	authorize: () =>
@@ -154,7 +153,7 @@ const foundation = createEffectFoundation({
 					tenant: host.tenant,
 					scope: host.scope,
 					key: host.key,
-					id: zid('idempotentNotes').parse(entry.aggregate.id),
+					id: k.id('idempotentNotes').parse(entry.aggregate.id),
 					operation: entry.operation,
 				}),
 			)
@@ -183,7 +182,7 @@ const commands = foundation.Command({
 	context: (host: Host) => host,
 	operations: ({ command }) => ({
 		create: command({
-			input: z.object({ title: z.string().trim().toLowerCase() }).strict(),
+			input: k.object({ title: k.string().trim().toLowerCase() }),
 			result: finalResult
 				.refine((value) => value.title !== 'INVALID', { message: 'IDEMPOTENCY_RESULT' })
 				.transform((value) => ({ ...value, title: `${value.title}!` })),
@@ -204,14 +203,14 @@ const commands = foundation.Command({
 		}),
 	}),
 })
-const securedMutation = effectZodApiBuilder(auth.authMutation, { services: () => Context.empty() })
+const securedMutation = effectApiBuilder(auth.authMutation, { services: () => Context.empty() })
 export const nativeIdempotencyOperation = commands.expose(Symbol('idempotentNotes'), 'create')
 export const save = securedMutation({
 	args: {
-		key: z.string(),
-		payload: z.object({ title: z.string() }).strict(),
-		normalized: z.boolean().optional(),
-		mode: z.enum(['success', 'audit', 'completion', 'result', 'cleanup']).optional(),
+		key: k.string(),
+		payload: k.object({ title: k.string() }),
+		normalized: k.boolean().optional(),
+		mode: k.enum(['success', 'audit', 'completion', 'result', 'cleanup']).optional(),
 	},
 	returns: finalResult,
 	handler: (ctx, args) => {
@@ -219,7 +218,7 @@ export const save = securedMutation({
 		// SAFETY: Canonical normalization accepts untrusted wire data and validates it here.
 		// oxlint-disable-next-line anti-slop/no-unknown-parameters
 		const normalize = (raw: unknown) => {
-			const input = z.object({ title: z.string() }).parse(raw)
+			const input = k.object({ title: k.string() }).parse(raw)
 			return { title: input.title.trim().toLowerCase() }
 		}
 		const canonical: IdempotencyCapture['canonical'] = args.normalized

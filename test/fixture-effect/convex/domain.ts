@@ -1,7 +1,7 @@
 import { createEffectFoundation } from 'cvx-kit/effect'
 import { defineErrorContract } from 'cvx-kit/errors'
+import { k } from 'cvx-kit/k'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import type { MutationCtx, QueryCtx } from './_generated/server'
 
 export class Reader extends Context.Service<
@@ -15,7 +15,7 @@ export class FixtureFailure {
 }
 
 export const declaredErrors = defineErrorContract({
-	DENIED: { message: 'Operation denied', details: { key: z.string() } },
+	DENIED: { message: 'Operation denied', details: { key: k.string() } },
 })
 
 const observability = {
@@ -27,8 +27,8 @@ const primitiveQueries = queryFoundation.Query({
 	context: (ctx: QueryCtx) => ctx,
 	operations: ({ query }) => ({
 		ordinary: query({
-			input: z.object({ key: z.string() }),
-			result: z.number(),
+			input: k.object({ key: k.string() }),
+			result: k.number(),
 			handler: async ({ key }, ctx) =>
 				(
 					await ctx.db
@@ -38,8 +38,8 @@ const primitiveQueries = queryFoundation.Query({
 				).length,
 		}),
 		named: query({
-			input: z.object({ key: z.string() }),
-			result: z.number(),
+			input: k.object({ key: k.string() }),
+			result: k.number(),
 			handler: Effect.fn('fixture.named')(function* ({ key }: { key: string }) {
 				const reader = yield* Reader
 				return (yield* Effect.promise(() => reader.read(key))).length
@@ -51,8 +51,8 @@ export const queries = queryFoundation.Query({
 	context: (ctx: QueryCtx) => ctx,
 	operations: ({ query }) => ({
 		composed: query({
-			input: z.object({ key: z.string() }),
-			result: z.object({ count: z.number(), events: z.array(z.string()) }),
+			input: k.object({ key: k.string() }),
+			result: k.object({ count: k.number(), events: k.array(k.string()) }),
 			handler: (input, ctx) =>
 				Effect.gen(function* () {
 					const reader = yield* Reader
@@ -85,8 +85,8 @@ export const commands = commandFoundation.Command({
 	context: (host: CommandHost) => host,
 	operations: ({ command }) => ({
 		save: command({
-			input: z.object({}),
-			result: z.literal('saved'),
+			input: k.object({}),
+			result: k.literal('saved'),
 			classification: 'business',
 			permission: 'fixture:write',
 			prepare: (host) => ({

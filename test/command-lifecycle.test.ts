@@ -7,18 +7,13 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { describe, expect, expectTypeOf, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	Foundation,
 	type CommandHandlerResult,
 	type CommandResult,
 } from '../src/components/foundation/client'
-import {
-	convexContract,
-	standardContract,
-	zodContract,
-	type StandardSchema,
-} from '../src/contracts'
+import { convexContract, standardContract, kContract, type StandardSchema } from '../src/contracts'
 
 type Equal<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -40,8 +35,8 @@ const { Command: ContractCommand } = new Foundation(
 )
 const contractOperations = {
 	measure: ContractCommand.withContext<Context>().operation({
-		command: zodContract(z.string().transform(async (value) => value.length)),
-		result: zodContract(z.number().transform(async (length) => ({ length }))),
+		command: kContract(k.string().transform((value) => value.length)),
+		result: kContract(k.number().transform((length) => ({ length }))),
 		replayResult: convexContract(v.object({ length: v.number() })),
 		classification: 'business',
 		audit: ({ command, result }) => {
@@ -76,7 +71,7 @@ function contractNegativeChecks(context: Context) {
 	ContractCommand.withContext<Context>().operation({
 		// @ts-expect-error optional Effect decoders cannot enter Promise declarations
 		command: { kind: 'effect-contract', decode: () => Promise.resolve({ value: 3 }) },
-		result: z.number(),
+		result: k.number(),
 		classification: 'business',
 		audit: () => null,
 	})
@@ -122,8 +117,8 @@ function harness(
 	)
 	const operations = {
 		save: Command.withContext<Context>().operation({
-			command: z.object({ key: z.string().trim() }),
-			result: z.object({ ok: z.literal(true) }).refine(() => options.fail !== 'result'),
+			command: k.object({ key: k.string().trim() }),
+			result: k.object({ ok: k.literal(true) }).refine(() => options.fail !== 'result'),
 			classification: 'business',
 			permission: 'save',
 			aggregates,
@@ -193,11 +188,10 @@ describe('transactional command completion', () => {
 				version: 1,
 				vendor: 'test',
 				validate: async (value) => {
-					await Promise.resolve()
 					events.push('input')
 					if (inputDefect) throw inputDefect
-					const parsed = z.object({ key: z.string() }).safeParse(value)
-					if (!parsed.success) return { issues: parsed.error.issues }
+					const parsed = k.object({ key: k.string() }).safeParse(value)
+					if (!parsed.success) return { issues: parsed.issues }
 					return { value: { key: parsed.data.key.trim().length } }
 				},
 			},
@@ -207,9 +201,8 @@ describe('transactional command completion', () => {
 				version: 1,
 				vendor: 'test',
 				validate: async (value) => {
-					await Promise.resolve()
 					events.push('result')
-					const parsed = z.number().nonnegative().safeParse(value)
+					const parsed = k.number().min(0).safeParse(value)
 					return parsed.success
 						? { value: { length: parsed.data } }
 						: { issues: [{ message: 'invalid length' }] }
@@ -238,7 +231,7 @@ describe('transactional command completion', () => {
 			measure: typed.operation({
 				command: input,
 				result: resultContract,
-				replayResult: zodContract(z.object({ length: z.number().nonnegative() })),
+				replayResult: kContract(k.object({ length: k.number().min(0) })),
 				classification: 'business',
 				permission: 'measure',
 				prepare: (_context, command) => {
@@ -358,15 +351,13 @@ describe('transactional command completion', () => {
 		)
 		const operations = {
 			save: Command.withContext<Context>().operation({
-				command: z.object({ key: z.string() }).transform(async ({ key }) => {
-					await Promise.resolve()
+				command: k.object({ key: k.string() }).transform(({ key }) => {
 					events.push('input')
 					return { key: key.trim() }
 				}),
-				result: z
+				result: k
 					.string()
-					.transform(async (key) => {
-						await Promise.resolve()
+					.transform((key) => {
 						events.push('result')
 						return { key }
 					})
@@ -437,12 +428,12 @@ describe('transactional command completion', () => {
 		)
 		const operations = {
 			measure: Command.withContext<ReceiptContext>().operation({
-				command: z.object({ key: z.string(), title: z.string().trim() }),
-				result: z.string().transform((value) => {
+				command: k.object({ key: k.string(), title: k.string().trim() }),
+				result: k.string().transform((value) => {
 					transforms++
 					return value.length
 				}),
-				replayResult: z.number().int().nonnegative(),
+				replayResult: k.int().min(0),
 				classification: 'business',
 				prepare: async (context, command) => {
 					const receipt = await context.db

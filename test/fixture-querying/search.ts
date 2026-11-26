@@ -64,7 +64,6 @@ import { ConvexError } from 'convex/values'
 import { Effect } from 'effect'
 import { createKAuthFunctions } from '../../src/auth'
 import { createEffectAuthFunctions } from '../../src/effect'
-import { toZod } from '../../src/zod'
 import { createQueryEngine, queryFailureContract } from '../../src/querying'
 import { cursor } from './scalar'
 import type { ManagedBudgets, SecurityPolicyContext } from '../../src/querying/security'
@@ -180,16 +179,13 @@ export function searchFixture(budgets?: Partial<ManagedBudgets>) {
 			}
 		},
 	})
-	// The Effect constructors are still Zod-based (U16); the interop entry converts the k boundaries.
 	const effectDefinition = {
-		args: toZod(args),
-		returns: toZod(f.relations.tables.docs.pageDto({})),
+		args,
+		returns: f.relations.tables.docs.pageDto({}),
 		handler: (ctx: Parameters<typeof engine>[0], a: k.infer<typeof args>) =>
 			Effect.tryPromise({ try: () => run(ctx, a), catch: (error) => error }),
 	}
-	// SAFETY: the interop schemas validate exactly the k boundaries' values; only the Zod builder's
-	// deep inference over them is bypassed, and the handler states the k-derived types itself.
-	const effectPage = effect.authQuery(effectDefinition as never)
+	const effectPage = effect.authQuery(effectDefinition)
 	const equivalentPage = auth.authQuery({
 		args,
 		returns: f.relations.tables.docs.pageDto({}),

@@ -16,15 +16,15 @@ import { groupDeclarations } from './fixture-querying/field-groups'
 import { cursor } from './fixture-querying/scalar'
 import { Cause, Context, Effect, Exit } from 'effect'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { ConvexError } from 'convex/values'
 import { decodeFailure, matchFailure } from '../src/react/failures'
 import { defineErrorContract } from '../src/modules/contracts/errors'
 import { projectErrorCause } from '../src/modules/effect/errors'
 
 const errors = defineErrorContract({
-	NotFound: { message: 'Record not found', details: { id: z.string() } },
-	Conflict: { message: 'Conflict', details: { revision: z.number().int() } },
+	NotFound: { message: 'Record not found', details: { id: k.string() } },
+	Conflict: { message: 'Conflict', details: { revision: k.number().int() } },
 })
 const unknown = { _tag: 'UnknownFailure', version: 1 }
 type CyclicDetail = { child?: CyclicDetail }
@@ -32,7 +32,7 @@ type CyclicDetail = { child?: CyclicDetail }
 describe('declared safe error contracts', () => {
 	it('supports a declared underscore code with a fallback that narrows the full failure union', () => {
 		const contract = defineErrorContract({
-			_: { message: 'Underscore', details: { id: z.string() } },
+			_: { message: 'Underscore', details: { id: k.string() } },
 		})
 		const handlers = {
 			_: (failure: ReturnType<typeof contract.decode>) =>
@@ -70,7 +70,7 @@ describe('declared safe error contracts', () => {
 		])
 			expect(errors.project(error)).toEqual(unknown)
 		const other = defineErrorContract({
-			NotFound: { message: 'Other', details: { id: z.string() } },
+			NotFound: { message: 'Other', details: { id: k.string() } },
 		})
 		expect(errors.project(other.create('NotFound', { id: '1' }))).toEqual(unknown)
 	})
@@ -114,7 +114,7 @@ describe('declared safe error contracts', () => {
 
 	it('does not let mutation of created errors or projections change later public data', () => {
 		const nested = defineErrorContract({
-			Nested: { message: 'Safe', details: { value: z.object({ id: z.string() }) } },
+			Nested: { message: 'Safe', details: { value: k.object({ id: k.string() }) } },
 		})
 		const error = nested.create('Nested', { value: { id: 'safe' } })
 		error.details.value.id = 'private'

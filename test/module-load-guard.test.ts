@@ -2,27 +2,20 @@ import { NoOp } from 'convex-helpers/server/customFunctions'
 import { actionGeneric, mutationGeneric, queryGeneric } from 'convex/server'
 import { v } from 'convex/values'
 import { beforeEach, describe, expect, it, vi } from 'vite-plus/test'
-import { z } from 'zod'
-
 const conversions = vi.hoisted(() => ({ args: 0, returns: 0, fields: 0 }))
 
-vi.mock('../src/zod-convex', async (importOriginal) => {
-	const original = await importOriginal<typeof import('../src/zod-convex')>()
+// The v2 conversion points: a `k` schema's input-side and output-side native validators.
+vi.mock('../src/k/compile', async (importOriginal) => {
+	const original = await importOriginal<typeof import('../src/k/compile')>()
 	return {
 		...original,
-		zodToConvex: (...input: Parameters<typeof original.zodToConvex>) => {
+		compileNative: (...input: Parameters<typeof original.compileNative>) => {
 			conversions.args++
-			return original.zodToConvex(...input)
+			return original.compileNative(...input)
 		},
-	}
-})
-vi.mock('convex-helpers/server/zod4', async (importOriginal) => {
-	const original = await importOriginal<typeof import('convex-helpers/server/zod4')>()
-	return {
-		...original,
-		zodOutputToConvex: (...input: Parameters<typeof original.zodOutputToConvex>) => {
+		compileOutput: (...input: Parameters<typeof original.compileOutput>) => {
 			conversions.returns++
-			return original.zodOutputToConvex(...input)
+			return original.compileOutput(...input)
 		},
 	}
 })
@@ -37,7 +30,11 @@ vi.mock('convex-helpers/validators', async (importOriginal) => {
 	}
 })
 
-const { zCustomAction, zCustomMutation, zCustomQuery } = await import('../src/zod-registration')
+const { kCustomAction, kCustomMutation, kCustomQuery } = await import('../src/registration')
+const { k } = await import('../src/k')
+
+// `k.string()` and other leaf factories share one immutable root; `.min(1)` makes each declaration its
+// own record, so every count below belongs to the function under test.
 
 function exported(fn: { isConvexFunction: true }) {
 	// SAFETY: native builders attach these export thunks at runtime; the public type strips them.
@@ -47,9 +44,9 @@ function exported(fn: { isConvexFunction: true }) {
 
 const customization = { args: { token: v.string() }, input: () => ({ ctx: {}, args: {} }) }
 const builders = {
-	query: zCustomQuery(queryGeneric, customization),
-	mutation: zCustomMutation(mutationGeneric, customization),
-	action: zCustomAction(actionGeneric, NoOp),
+	query: kCustomQuery(queryGeneric, customization),
+	mutation: kCustomMutation(mutationGeneric, customization),
+	action: kCustomAction(actionGeneric, NoOp),
 }
 
 describe('registration defers validator conversion', () => {
@@ -64,18 +61,18 @@ describe('registration defers validator conversion', () => {
 			let reads = 0
 			const functions = [
 				builder({
-					args: { value: z.string() },
-					returns: z.object({ ok: z.boolean() }),
+					args: { value: k.string().min(1) },
+					returns: k.object({ ok: k.boolean() }),
 					handler: () => ({ ok: true }),
 				}),
 				builder({
 					get args() {
 						reads++
-						return { value: z.string() }
+						return { value: k.string().min(1) }
 					},
 					get returns() {
 						reads++
-						return z.object({ ok: z.boolean() })
+						return k.object({ ok: k.boolean() })
 					},
 					handler: () => ({ ok: true }),
 				}),
@@ -101,26 +98,34 @@ describe('Effect API adapters', () => {
 	})
 
 	it('keep getter-declared args and returns unread through registration', async () => {
-		const { effectZodApiBuilder } = await import('../src/modules/effect/api-zod')
-		let reads = 0
-		const query = effectZodApiBuilder(zCustomQuery(queryGeneric, NoOp), {})
-		const fn = query({
-			get args() {
-				reads++
-				return { value: z.string() }
-			},
-			get returns() {
-				reads++
-				return z.string()
-			},
-			handler: (_ctx, { value }) => value,
-		})
-		expect(reads).toBe(0)
-		expect(conversions).toEqual({ args: 0, returns: 0, fields: 0 })
-		expect(JSON.parse(exported(fn).exportArgs())).toEqual({
-			type: 'object',
-			value: { value: { fieldType: { type: 'string' }, optional: false } },
-		})
-		expect(reads).toBe(1)
+		const { effectApiBuilder } = await import('../src/effect')
+		const adapters = [
+			effectApiBuilder(kCustomQuery(queryGeneric, NoOp), {}),
+			effectApiBuilder(queryGeneric, {}),
+		]
+		for (const query of adapters) {
+			let reads = 0
+			const fn = query({
+				get args() {
+					reads++
+					return { value: k.string().min(1) }
+				},
+				get returns() {
+					reads++
+					return k.string()
+				},
+				handler: (_ctx, { value }) => value,
+			})
+			expect(reads).toBe(0)
+			expect(conversions).toEqual({ args: 0, returns: 0, fields: 0 })
+			expect(JSON.parse(exported(fn).exportArgs())).toEqual({
+				type: 'object',
+				value: { value: { fieldType: { type: 'string' }, optional: false } },
+			})
+			expect(reads).toBe(1)
+			expect(conversions.returns).toBe(0)
+			conversions.args = 0
+			conversions.fields = 0
+		}
 	})
 })

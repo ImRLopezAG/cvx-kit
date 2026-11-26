@@ -5,15 +5,15 @@ import {
 	isFailure,
 	matchFailure,
 } from '../src/errors'
-import { z } from 'zod'
+import { k } from '../src/k'
 import type { Command } from '../src/react'
 import type { FunctionReference } from 'convex/server'
 const a = defineErrorContract({
-	SAME: { message: 'Same', details: { value: z.string() } },
+	SAME: { message: 'Same', details: { value: k.string() } },
 	A: { message: 'A', details: {} },
 })
 const b = defineErrorContract({
-	SAME: { message: 'Same', details: { value: z.number() } },
+	SAME: { message: 'Same', details: { value: k.number() } },
 	B: { message: 'B', details: {} },
 })
 const combined = combineErrorContracts(a, b)

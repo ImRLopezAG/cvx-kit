@@ -7,6 +7,7 @@ it('keeps the documented public consumer example synchronized with its compile f
 	)
 	const snippet = guide.split('```ts\n')[1].split('```')[0].trim()
 	const fixture = readFileSync(new URL('./domain-contract-guide-types.ts', import.meta.url), 'utf8')
+		.replaceAll('../src/k', 'cvx-kit/k')
 		.replaceAll('../src/index', 'cvx-kit')
 		.replaceAll('../src/contracts', 'cvx-kit/contracts')
 		.replaceAll('../src/errors', 'cvx-kit/errors')

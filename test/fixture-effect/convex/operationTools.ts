@@ -5,11 +5,10 @@ import {
 	selectOperation,
 } from 'cvx-kit/agent-tools'
 import { v } from 'convex/values'
-import { createAuthFunctions } from 'cvx-kit/auth'
-import { createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
-import { zid } from 'cvx-kit/zod-table'
+import { createKAuthFunctions } from 'cvx-kit/auth'
+import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
+import { k } from 'cvx-kit/k'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import type { GenericDatabaseReader } from 'convex/server'
 import { api, internal } from './_generated/api'
 import { declaredErrors } from './domain'
@@ -31,7 +30,7 @@ type QueryToolOutcome =
 	| { _tag: 'Success'; value: { title: string } | null }
 	| { _tag: 'UnknownFailure'; version: 1 }
 
-const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
+const auth = createKAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	query,
 	mutation,
 	action,
@@ -47,8 +46,8 @@ const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	security: { tenancy: { tables: ['crudNotes'] } },
 })
 type QueryHost = { db: GenericDatabaseReader<DataModel>; role: string | null }
-const queryInput = z.object({ id: zid('crudNotes') }).strict()
-const queryResult = z.object({ title: z.string() }).strict().nullable()
+const queryInput = k.object({ id: k.id('crudNotes') })
+const queryResult = k.object({ title: k.string() }).nullable()
 const queryFoundation = createEffectFoundation({
 	writeAudit: () => Effect.void,
 	observability: {
@@ -73,7 +72,7 @@ const queries = queryFoundation.Query({
 	}),
 })
 const selectedQuery = queries.expose(Symbol('operation-tool-query'), 'get')
-const securedQuery = effectZodApiBuilder(auth.authQuery, { services: () => Context.empty() })
+const securedQuery = effectApiBuilder(auth.authQuery, { services: () => Context.empty() })
 export const getNote = securedQuery({
 	args: queryInput.shape,
 	returns: queryResult,
@@ -120,7 +119,9 @@ export const invokeQuery = action({
 				},
 			},
 		})
-		return tools.getNote.invoke(args)
+		// SAFETY: The raw transport string is deliberately undecoded here; the registered query's
+		// native table-specific validator rejects an invalid id.
+		return tools.getNote.invoke({ ...args, id: args.id as Id<'crudNotes'> })
 	},
 })
 
@@ -189,8 +190,8 @@ export const invoke = action({
 })
 
 const selectedFailure = selectOperation(Symbol('native-failure-tool'), 'mutation', 'fail', {
-	input: z.object({ key: z.string(), composite: z.boolean() }).strict(),
-	result: z.null(),
+	input: k.object({ key: k.string(), composite: k.boolean() }),
+	result: k.null(),
 })
 export const invokeDeclaredFailure = action({
 	args: { key: v.string(), composite: v.boolean() },

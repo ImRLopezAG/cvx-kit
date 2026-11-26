@@ -1,12 +1,12 @@
 import type { DataModelFromSchemaDefinition, DocumentByName, GenericQueryCtx } from 'convex/server'
 import { defineSchema } from 'convex/server'
 import { Effect } from 'effect'
-import { z } from 'zod'
-import { zodTable } from '../src/zod-table'
 import { defineDomainContract } from '../src/contracts'
 import { createEffectFoundation } from '../src/effect'
+import { k } from '../src/k'
+import { kTable } from '../src/table'
 
-const intents = zodTable('intents', () => ({ key: z.string() }))
+const intents = kTable('intents', { key: k.string() })
 const schema = defineSchema({ intents: intents.table })
 type DataModel = DataModelFromSchemaDefinition<typeof schema>
 type Row = DocumentByName<DataModel, 'intents'>
@@ -17,12 +17,12 @@ const { Query } = createEffectFoundation({
 	},
 	writeAudit: () => undefined,
 })
-const args = z.object({ id: intents.schema.shape._id })
+const args = k.object({ id: intents.schema.shape._id })
 const contract = defineDomainContract({
 	queries: {
 		read: { input: args, result: intents.schema.nullable() },
 		effectRead: { input: args, result: intents.schema.nullable() },
-		required: { input: args, result: intents.schema.required({ createdAt: true }).nullable() },
+		required: { input: args, result: intents.schema.extend({ createdAt: k.number() }).nullable() },
 	},
 })
 Query({
@@ -38,7 +38,7 @@ Query({
 		required: query.required({ handler: ({ id }, ctx) => ctx.db.get(id) }),
 	}),
 })
-const required = intents.schema.required({ createdAt: true })
+const required = intents.schema.extend({ createdAt: k.number() })
 Query({
 	contract: defineDomainContract({
 		queries: { read: { input: args, result: required.nullable() } },

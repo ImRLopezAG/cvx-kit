@@ -1,8 +1,8 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import { createEffectFoundation } from '../src/effect'
 import { createEffectCrud, type EffectCrudPagination } from '../src/modules/effect/crud'
-import { paginated, tenantTable, zodTable } from '../src/zod-table'
+import { k } from '../src/k'
+import { kTable, paginated, tenantTable } from '../src/table'
 import type { GenericId } from 'convex/values'
 type Equal<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -30,10 +30,16 @@ class ArchiveError {
 	readonly _tag = 'ArchiveError'
 }
 type Host = { actor: string; tenant: string }
-const table = tenantTable('notes', () => ({ text: z.string(), secret: z.string() }), {
-	commandFields: ['text'],
-	publicFields: ['text'],
-})
+const table = tenantTable(
+	'notes',
+	{ text: k.string(), secret: k.string() },
+	{
+		commandFields: ['text'],
+		publicFields: ['text'],
+	},
+)
+// k.id's input type is the branded ID, so executor callers pass one.
+const noteId = table.tools.id.parse({ id: 'id' }).id
 const foundation = createEffectFoundation({
 	observability: {
 		enabled: false,
@@ -56,12 +62,12 @@ const configuration = {
 			Effect.andThen(Effect.fail(new EnrichError())),
 		),
 	repository: {
-		insert: (_ctx: Host, _values: z.input<typeof table.storage>) =>
+		insert: (_ctx: Host, _values: k.input<typeof table.storage>) =>
 			Effect.gen(function* () {
 				yield* Repository
 				return yield* Effect.fail(new CreateError())
 			}),
-		patch: (_ctx: Host, _id: GenericId<'notes'>, _values: Partial<z.input<typeof table.storage>>) =>
+		patch: (_ctx: Host, _id: GenericId<'notes'>, _values: Partial<k.input<typeof table.storage>>) =>
 			Effect.fail(new PatchError()),
 	},
 	guards: {
@@ -72,7 +78,7 @@ const configuration = {
 	},
 	read: {
 		maxPageSize: 10,
-		project: (row: z.input<typeof table.storage>) => ({ text: row.text }),
+		project: (row: k.input<typeof table.storage>) => ({ text: row.text }),
 		get: (_ctx: Host, _id: GenericId<'notes'>) => Effect.fail(new GetError()),
 		list: (_ctx: Host, _input: { numItems: number; cursor: string | null }) =>
 			Promise.resolve({ page: [], isDone: true, continueCursor: '' }),
@@ -103,10 +109,10 @@ const created = crud.commands.exec(
 )
 const updated = crud.commands.exec(
 	'notes.update',
-	{ id: 'id', data: {} },
+	{ id: noteId, data: {} },
 	{ actor: 'actor', tenant: 'tenant' },
 )
-const got = crud.queries.exec('notes.get', { id: 'id' }, { actor: 'actor', tenant: 'tenant' })
+const got = crud.queries.exec('notes.get', { id: noteId }, { actor: 'actor', tenant: 'tenant' })
 type CreateSuccess = Assert<Equal<Effect.Success<typeof created>, { id: GenericId<'notes'> }>>
 type CreateErrors = Assert<
 	Equal<Effect.Error<typeof created>, CreateError | EnrichError | GuardError>
@@ -137,7 +143,7 @@ crud.commands.exec(
 crud.commands.exec(
 	'notes.update',
 	// @ts-expect-error tenant is not accepted by the command mask
-	{ id: 'id', data: { tenant: 'forged' } },
+	{ id: noteId, data: { tenant: 'forged' } },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 // @ts-expect-error operation keys preserve the literal table name
@@ -157,7 +163,7 @@ const overridden = createEffectCrud({
 })
 const archived = overridden.commands.exec(
 	'notes.archive',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 type ArchiveErrors = Assert<Equal<Effect.Error<typeof archived>, ArchiveError>>
@@ -174,7 +180,7 @@ createEffectCrud({
 	...configuration,
 	overrides: {
 		// @ts-expect-error contracts cannot be replaced via operation overrides
-		archive: { input: z.string(), handler: () => ({ ok: true }) },
+		archive: { input: k.string(), handler: () => ({ ok: true }) },
 	},
 })
 
@@ -205,7 +211,7 @@ const effectRead = createEffectCrud({
 })
 const projected = effectRead.queries.exec(
 	'notes.get',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 type ProjectionErrors = Assert<
@@ -224,7 +230,7 @@ const optionalOverride = createEffectCrud({
 })
 const optionalArchive = optionalOverride.commands.exec(
 	'notes.archive',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 type OptionalOverrideErrors = Assert<
@@ -275,7 +281,7 @@ const serviceCreate = serviceCallbacks.commands.exec(
 )
 const serviceGet = serviceCallbacks.queries.exec(
 	'notes.get',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 type ServiceCreateErrors = Assert<
@@ -347,7 +353,7 @@ const hostPolicyCreate = hostPolicyCrud.commands.exec(
 )
 const hostPolicyGet = hostPolicyCrud.queries.exec(
 	'notes.get',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 type HostPolicyCreateErrors = Assert<
@@ -372,31 +378,38 @@ const hostPolicyAssertions: [
 void hostPolicyAssertions
 
 // Decoded fields must fit storage INPUT, independently for create/update.
-const transformedTable = zodTable(
-	'lengths',
-	() => ({ text: z.string().transform((value) => value.length) }),
-	{
-		commandFields: ['text'],
-		publicFields: ['text'],
+// k table fields cannot change type, so the incompatible boundary is composed by hand:
+// EffectCrudTable is structural, and the command and public contracts decode string -> number.
+const lengthsTable = kTable('lengths', { text: k.string() }, { publicFields: ['text'] })
+const decodedLength = k.string().transform((value) => value.length)
+const transformedTable = {
+	tableName: lengthsTable.tableName,
+	storage: lengthsTable.storage,
+	publicDto: k.object({ text: decodedLength }),
+	commandInput: k.object({ text: decodedLength }),
+	tools: {
+		id: lengthsTable.tools.id,
+		update: k.object({ id: k.id('lengths'), data: k.object({ text: decodedLength.optional() }) }),
 	},
-)
+}
+const lengthsId = transformedTable.tools.id.parse({ id: 'id' }).id
 const transformedConfiguration = {
 	...configuration,
 	table: transformedTable,
 	guards: undefined,
 	enrich: undefined,
 	repository: {
-		insert: (_ctx: Host, _values: z.input<typeof transformedTable.storage>) =>
+		insert: (_ctx: Host, _values: k.input<typeof transformedTable.storage>) =>
 			transformedTable.tools.id.parse({ id: 'id' }).id,
 		patch: (
 			_ctx: Host,
 			_id: GenericId<'lengths'>,
-			_values: Partial<z.input<typeof transformedTable.storage>>,
+			_values: Partial<k.input<typeof transformedTable.storage>>,
 		) => undefined,
 	},
 	read: {
 		maxPageSize: 2,
-		project: (row: z.input<typeof transformedTable.storage>) => ({ text: row.text }),
+		project: (row: k.input<typeof transformedTable.storage>) => ({ text: row.text }),
 		get: () => null,
 		list: () => ({ page: [], isDone: true, continueCursor: '' }),
 	},
@@ -414,10 +427,10 @@ createEffectCrud({
 	overrides: { update: () => ({ ok: true as const }) },
 })
 const transformedHandlers = {
-	create: (input: z.output<typeof transformedTable.commandInput>, ctx: Host) => ({
+	create: (input: k.infer<typeof transformedTable.commandInput>, ctx: Host) => ({
 		id: transformedConfiguration.repository.insert(ctx, { text: String(input.text) }),
 	}),
-	update: (input: z.output<typeof transformedTable.tools.update>, ctx: Host) => {
+	update: (input: k.infer<typeof transformedTable.tools.update>, ctx: Host) => {
 		transformedConfiguration.repository.patch(
 			ctx,
 			input.id,
@@ -486,17 +499,17 @@ const checked = createEffectCrud({
 })
 const checkedGet = checked.queries.exec(
 	'notes.get',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const checkedUpdate = checked.commands.exec(
 	'notes.update',
-	{ id: 'id', data: {} },
+	{ id: noteId, data: {} },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const checkedArchive = checked.commands.exec(
 	'notes.archive',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const checkedCreate = checked.commands.exec(
@@ -563,17 +576,17 @@ const optionalCheckedCreate = optionalChecked.commands.exec(
 )
 const optionalCheckedUpdate = optionalChecked.commands.exec(
 	'notes.update',
-	{ id: 'id', data: {} },
+	{ id: noteId, data: {} },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const optionalCheckedArchive = optionalChecked.commands.exec(
 	'notes.archive',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const optionalCheckedGet = optionalChecked.queries.exec(
 	'notes.get',
-	{ id: 'id' },
+	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const optionalCheckedAssertions: [
@@ -598,7 +611,7 @@ void optionalCheckedAssertions
 const effectMapped = createEffectCrud({
 	...transformedConfiguration,
 	repository: {
-		insert: (_ctx: Host, _values: z.input<typeof transformedTable.storage>) =>
+		insert: (_ctx: Host, _values: k.input<typeof transformedTable.storage>) =>
 			Effect.gen(function* () {
 				yield* Repository
 				return yield* Effect.fail(new CreateError())
@@ -606,7 +619,7 @@ const effectMapped = createEffectCrud({
 		patch: (
 			_ctx: Host,
 			_id: GenericId<'lengths'>,
-			_values: Partial<z.input<typeof transformedTable.storage>>,
+			_values: Partial<k.input<typeof transformedTable.storage>>,
 		) => Effect.fail(new PatchError()),
 	},
 	overrides: {
@@ -631,12 +644,12 @@ const effectMappedCreate = effectMapped.commands.exec(
 )
 const effectMappedUpdate = effectMapped.commands.exec(
 	'lengths.update',
-	{ id: 'id', data: { text: 'raw' } },
+	{ id: lengthsId, data: { text: 'raw' } },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const effectMappedGet = effectMapped.queries.exec(
 	'lengths.get',
-	{ id: 'id' },
+	{ id: lengthsId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const effectMappedAssertions: [
@@ -664,7 +677,7 @@ const checkedMappedCreate = checkedMapped.commands.exec(
 )
 const checkedMappedUpdate = checkedMapped.commands.exec(
 	'lengths.update',
-	{ id: 'id', data: {} },
+	{ id: lengthsId, data: {} },
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const checkedMappedAssertions: [
@@ -746,7 +759,7 @@ const paginationAssertions: [
 				splitCursor?: string | null
 				pageStatus?: 'SplitRecommended' | 'SplitRequired' | null
 				completeness?: 'complete' | 'row-budget' | 'byte-budget' | 'native-limit' | 'result-cap'
-						paginationMode?: 'native-search'
+				paginationMode?: 'native-search'
 			}
 		>
 	>,

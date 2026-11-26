@@ -53,12 +53,7 @@ export {
 	type EffectCrudRepository,
 	type EffectCrudTable,
 } from './modules/effect/client'
-export {
-	effectApiBuilder,
-	type EffectApiBuilder,
-	effectZodApiBuilder,
-	type EffectZodApiBuilder,
-} from './modules/effect/client'
+export { effectApiBuilder, type EffectApiBuilder } from './modules/effect/client'
 export {
 	projectErrorCause,
 	effectContract,

@@ -11,7 +11,7 @@ import {
 } from 'convex/server'
 import { ConvexError, v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { combineErrorContracts, defineErrorContract } from '../src/modules/contracts/errors'
 import { defineDomainContract } from '../src/modules/contracts/domain'
 import { effectApiBuilder } from '../src/modules/effect/api'
@@ -31,7 +31,7 @@ const notesErrors = defineErrorContract({
 	NOT_FOUND: { message: 'Note not found', details: {} },
 	LOCKED: {
 		message: 'Note locked',
-		details: { owner: { parse: (value: unknown) => z.string().parse(value) } },
+		details: { owner: { parse: (value: unknown) => k.string().parse(value) } },
 	},
 })
 const tenancyErrors = defineErrorContract({
@@ -55,7 +55,7 @@ function setup(options: Partial<FailureAuditOptions> & { emitFails?: boolean } =
 	const tenancy = foundation.Query({
 		contract: defineDomainContract({
 			errors: tenancyErrors,
-			queries: { 'tenancy.require': { input: z.string(), result: z.string() } },
+			queries: { 'tenancy.require': { input: k.string(), result: k.string() } },
 		}),
 		context: () => ({}),
 		operations: ({ query }) => ({
@@ -69,13 +69,13 @@ function setup(options: Partial<FailureAuditOptions> & { emitFails?: boolean } =
 			errors: notesErrors,
 			commands: {
 				'notes.save': {
-					input: z.object({ failure: z.string(), secret: z.string() }),
-					result: z.string(),
+					input: k.object({ failure: k.string(), secret: k.string() }),
+					result: k.string(),
 					classification: 'business',
 				},
 				'notes.tenant': {
-					input: z.object({ recover: z.boolean() }),
-					result: z.string(),
+					input: k.object({ recover: k.boolean() }),
+					result: k.string(),
 					classification: 'business',
 				},
 			},
@@ -235,8 +235,8 @@ describe('failure audit', () => {
 			context: () => ({}),
 			operations: ({ command }) => ({
 				'inline.fail': command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: () => Effect.fail(notesErrors.create('NOT_FOUND', {})),

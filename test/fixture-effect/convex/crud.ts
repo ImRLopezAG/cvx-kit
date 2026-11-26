@@ -1,4 +1,4 @@
-import { createAuthFunctions } from 'cvx-kit/auth'
+import { createKAuthFunctions } from 'cvx-kit/auth'
 import { createTriggers, tenantOwnership } from 'cvx-kit/triggers'
 import {
 	action,
@@ -10,10 +10,10 @@ import {
 } from './_generated/server'
 import type { DataModel } from './_generated/dataModel'
 import { v } from 'convex/values'
-import { createEffectCrud, createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
-import { paginated, zid } from 'cvx-kit/zod-table'
+import { createEffectCrud, createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
+import { k } from 'cvx-kit/k'
+import { paginated } from 'cvx-kit/table'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import type { GenericDatabaseReader, GenericDatabaseWriter } from 'convex/server'
 import { crudNotes } from './schema'
 
@@ -23,7 +23,7 @@ triggers.register('crudNotes', async (ctx, change) => {
 	await ctx.innerDb.insert('crudHistory', { id: change.id, operation: change.operation })
 })
 
-const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
+const auth = createKAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	triggers,
 	query,
 	mutation,
@@ -113,15 +113,16 @@ const crud = createEffectCrud({
 				.paginate(options),
 	},
 })
-const securedMutation = effectZodApiBuilder(auth.authMutation, {
+const securedMutation = effectApiBuilder(auth.authMutation, {
 	services: (ctx) => Context.make(CrudWriter, ctx.db),
 })
-const securedQuery = effectZodApiBuilder(auth.authQuery, { services: () => Context.empty() })
+const securedQuery = effectApiBuilder(auth.authQuery, { services: () => Context.empty() })
 
-// String bindings exercise the domain executor's table check independently of native zid.
+// String bindings exercise the domain executor's table check independently of native k.id;
+// tools.*.parse only brands the string (k.id does not check table membership at parse time).
 export const createOther = securedMutation({
 	args: {},
-	returns: zid('crudOthers'),
+	returns: k.id('crudOthers'),
 	handler: (ctx) =>
 		ctx.db.insert('crudOthers', {
 			title: 'other-table',
@@ -131,19 +132,21 @@ export const createOther = securedMutation({
 		}),
 })
 export const getFromString = securedQuery({
-	args: { id: z.string() },
+	args: { id: k.string() },
 	returns: crudNotes.publicDto.nullable(),
-	handler: (ctx, args) => crud.queries.exec('crudNotes.get', args, ctx),
+	handler: (ctx, args) => crud.queries.exec('crudNotes.get', crudNotes.tools.id.parse(args), ctx),
 })
 export const updateFromString = securedMutation({
-	args: { id: z.string(), data: crudNotes.commandInput.partial().strict() },
-	returns: z.object({ ok: z.literal(true) }),
-	handler: (ctx, args) => crud.commands.exec('crudNotes.update', args, ctx),
+	args: { id: k.string(), data: crudNotes.commandInput.partial() },
+	returns: k.object({ ok: k.literal(true) }),
+	handler: (ctx, args) =>
+		crud.commands.exec('crudNotes.update', crudNotes.tools.update.parse(args), ctx),
 })
 export const archiveFromString = securedMutation({
-	args: { id: z.string() },
-	returns: z.object({ ok: z.literal(true) }),
-	handler: (ctx, args) => crud.commands.exec('crudNotes.archive', args, ctx),
+	args: { id: k.string() },
+	returns: k.object({ ok: k.literal(true) }),
+	handler: (ctx, args) =>
+		crud.commands.exec('crudNotes.archive', crudNotes.tools.id.parse(args), ctx),
 })
 export const otherState = internalQuery({
 	args: { id: v.id('crudOthers') },
@@ -170,8 +173,8 @@ export const otherState = internalQuery({
 })
 
 export const create = securedMutation({
-	args: { title: z.string(), failAudit: z.boolean().optional() },
-	returns: z.object({ id: zid('crudNotes') }),
+	args: { title: k.string(), failAudit: k.boolean().optional() },
+	returns: k.object({ id: k.id('crudNotes') }),
 	handler: (ctx, args) =>
 		crud.commands.exec(
 			'crudNotes.create',
@@ -181,11 +184,11 @@ export const create = securedMutation({
 })
 export const update = securedMutation({
 	args: {
-		id: zid('crudNotes'),
-		data: crudNotes.commandInput.partial().strict(),
-		failAudit: z.boolean().optional(),
+		id: k.id('crudNotes'),
+		data: crudNotes.commandInput.partial(),
+		failAudit: k.boolean().optional(),
 	},
-	returns: z.object({ ok: z.literal(true) }),
+	returns: k.object({ ok: k.literal(true) }),
 	handler: (ctx, args) =>
 		crud.commands.exec(
 			'crudNotes.update',
@@ -194,18 +197,18 @@ export const update = securedMutation({
 		),
 })
 export const archive = securedMutation({
-	args: { id: zid('crudNotes') },
-	returns: z.object({ ok: z.literal(true) }),
+	args: { id: k.id('crudNotes') },
+	returns: k.object({ ok: k.literal(true) }),
 	handler: (ctx, args) => crud.commands.exec('crudNotes.archive', args, ctx),
 })
 export const get = securedQuery({
-	args: { id: zid('crudNotes') },
+	args: { id: k.id('crudNotes') },
 	returns: crudNotes.publicDto.nullable(),
 	handler: (ctx, args) => crud.queries.exec('crudNotes.get', args, ctx),
 })
 const nativePagination = paginated(crudNotes.publicDto)
 export const list = securedQuery({
-	args: { numItems: z.number(), cursor: z.string().nullable() },
+	args: { numItems: k.number(), cursor: k.string().nullable() },
 	returns: nativePagination.result,
 	handler: (ctx, args) => crud.queries.exec('crudNotes.list', args, ctx),
 })
@@ -215,8 +218,8 @@ export const listPaginated = securedQuery({
 	handler: (ctx, args) => crud.queries.exec('crudNotes.list', args.paginationOpts, ctx),
 })
 export const invalidOutput = securedMutation({
-	args: { id: zid('crudNotes') },
-	returns: z.literal('saved'),
+	args: { id: k.id('crudNotes') },
+	returns: k.literal('saved'),
 	handler: (ctx, args) =>
 		crud.commands
 			.exec('crudNotes.update', { id: args.id, data: { title: 'must-roll-back' } }, ctx)

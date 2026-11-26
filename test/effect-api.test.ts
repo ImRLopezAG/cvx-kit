@@ -350,7 +350,7 @@ describe('Effect native API', () => {
 
 it('binds commands in a native helper once and exposes two-argument execution', async () => {
 	const { createEffectFoundation } = await import('../src/effect')
-	const { z } = await import('zod')
+	const { k } = await import('../src/k')
 	const foundation = createEffectFoundation({
 		observability: {
 			enabled: false,
@@ -362,8 +362,8 @@ it('binds commands in a native helper once and exposes two-argument execution', 
 		context: (value: number) => ({ value }),
 		operations: ({ command }) => ({
 			add: command({
-				input: z.number(),
-				result: z.number(),
+				input: k.number(),
+				result: k.number(),
 				classification: 'business',
 				audit: () => null,
 				handler: (input, ctx) => input + ctx.value,

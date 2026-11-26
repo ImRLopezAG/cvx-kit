@@ -9,7 +9,7 @@ import {
 import { ConvexError, v } from 'convex/values'
 import { Cause, Effect, Exit } from 'effect'
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { convexContract, defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation, projectErrorCause, effectApiBuilder } from '../src/effect'
@@ -25,7 +25,7 @@ for (const effect of [false, true]) {
 	for (const failure of ['audit', 'write', 'complete'] as const) {
 		it(`${effect ? 'Effect' : 'Promise'} rolls back native writes when root ${failure} fails`, async () => {
 			const domain = defineDomainContract({
-				commands: { save: { input: z.string(), result: z.string(), classification: 'business' } },
+				commands: { save: { input: k.string(), result: k.string(), classification: 'business' } },
 			})
 			const writeAudit = async (host: Host) => {
 				await host.db.insert('writes', { kind: 'audit' })
@@ -90,7 +90,7 @@ for (const effect of [false, true]) {
 		const native = v.object({ id: v.string() })
 		const domain = defineDomainContract({
 			commands: {
-				save: { input: convexContract(native), result: z.string(), classification: 'business' },
+				save: { input: convexContract(native), result: k.string(), classification: 'business' },
 			},
 		})
 		const options = { observability, writeAudit: () => undefined }
@@ -115,7 +115,7 @@ it('passes the original root error projector through the Effect boundary', async
 	const errors = defineErrorContract({ Missing: { message: 'Missing task', details: {} } })
 	const domain = defineDomainContract({
 		errors,
-		queries: { get: { input: z.string(), result: z.string() } },
+		queries: { get: { input: k.string(), result: k.string() } },
 	})
 	const { Query } = createEffectFoundation({ observability, writeAudit: () => undefined })
 	const queries = Query({
@@ -146,7 +146,7 @@ it('projects contracted failures through the actual native Effect API', async ()
 	const foreign = defineErrorContract({ Missing: { message: 'Missing task', details: {} } })
 	const domain = defineDomainContract({
 		errors,
-		queries: { get: { input: z.string(), result: z.string() } },
+		queries: { get: { input: k.string(), result: k.string() } },
 	})
 	for (const failure of ['declared', 'foreign', 'defect'] as const) {
 		const queries = createEffectFoundation({ observability, writeAudit: () => undefined }).Query({

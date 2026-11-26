@@ -14,21 +14,21 @@ import {
 	type GenericQueryCtx,
 } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { Context } from 'effect'
 import {
-	createAuthFunctions,
-	createAuthReaders,
+	createKAuthFunctions,
+	createKAuthReaders,
 	type AuthBundle,
 	type AuthReadersConfig,
 	type Include,
 } from 'cvx-kit/auth'
-import { createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
+import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
 
 const schema = defineSchema({ notes: defineTable({ title: v.string() }) })
 type Model = DataModelFromSchemaDefinition<typeof schema>
 type Role = 'owner' | 'viewer'
-const auth = createAuthFunctions<Model, Role>({
+const auth = createKAuthFunctions<Model, Role>({
 	query: queryGeneric,
 	mutation: mutationGeneric,
 	action: actionGeneric,
@@ -55,8 +55,8 @@ const commands = foundation.Command({
 	context: (ctx: GenericMutationCtx<Model> & AuthBundle<Role>) => ctx,
 	operations: ({ command }) => ({
 		write: command({
-			input: z.object({}),
-			result: z.null(),
+			input: k.object({}),
+			result: k.null(),
 			classification: 'business',
 			audit: () => null,
 			handler: () => null,
@@ -66,7 +66,7 @@ const commands = foundation.Command({
 const queries = foundation.Query({
 	context: (ctx: (GenericQueryCtx<Model> | GenericMutationCtx<Model>) & AuthBundle<Role>) => ctx,
 	operations: ({ query }) => ({
-		read: query({ input: z.object({}), result: z.null(), handler: () => null }),
+		read: query({ input: k.object({}), result: k.null(), handler: () => null }),
 	}),
 })
 function queryContext(ctx: GenericQueryCtx<Model>) {
@@ -167,7 +167,7 @@ void bundle
 auth.roleQuery('admin')
 
 // The Effect adapter must accept symbolic native interfaces without losing fields.
-effectZodApiBuilder(auth.authMutation, { services: () => Context.empty() })({
+effectApiBuilder(auth.authMutation, { services: () => Context.empty() })({
 	args: {},
 	handler: (ctx) => {
 		mutationContext(ctx)
@@ -179,7 +179,7 @@ effectZodApiBuilder(auth.authMutation, { services: () => Context.empty() })({
 })
 
 // Existing one-argument principal resolvers remain assignable.
-const legacyLookup: Parameters<typeof createAuthFunctions<Model, Role>>[0]['getAuthUser'] = async (
+const legacyLookup: Parameters<typeof createKAuthFunctions<Model, Role>>[0]['getAuthUser'] = async (
 	ctx,
 ) => ({ id: (await ctx.auth.getUserIdentity())?.subject ?? 'missing' })
 void legacyLookup
@@ -195,8 +195,8 @@ const readerBase = {
 	mapRole: (slug?: string): Role | null => (slug === 'owner' || slug === 'viewer' ? slug : null),
 	adminRoles: ['owner'],
 } satisfies AuthReadersConfig<Model, Role>
-const readers = createAuthReaders<Model, Role>(readerBase)
-createAuthFunctions<Model, Role>({
+const readers = createKAuthReaders<Model, Role>(readerBase)
+createKAuthFunctions<Model, Role>({
 	...readerBase,
 	mutation: mutationGeneric,
 	internalMutation: internalMutationGeneric,
@@ -217,6 +217,6 @@ void readers.authMutation
 // @ts-expect-error readers expose no mutation constructors
 void readers.systemMutation
 // @ts-expect-error readers take no trigger registry
-createAuthReaders<Model, Role>({ ...readerBase, triggers: undefined })
+createKAuthReaders<Model, Role>({ ...readerBase, triggers: undefined })
 // @ts-expect-error readers take no trigger wrapper
-createAuthReaders<Model, Role>({ ...readerBase, wrapDB: (ctx: GenericMutationCtx<Model>) => ctx })
+createKAuthReaders<Model, Role>({ ...readerBase, wrapDB: (ctx: GenericMutationCtx<Model>) => ctx })

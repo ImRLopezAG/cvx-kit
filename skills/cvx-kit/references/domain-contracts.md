@@ -17,7 +17,7 @@ and handler-first implementation helpers. Existing inline Effect definitions and
 older `new Foundation(...)` constructors continue to work.
 
 ```ts
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { createFoundation } from 'cvx-kit'
 import { defineDomainContract } from 'cvx-kit/contracts'
 import { defineErrorContract } from 'cvx-kit/errors'
@@ -26,17 +26,17 @@ const contract = defineDomainContract({
 	errors: defineErrorContract({ Missing: { message: 'Task missing', details: {} } }),
 	commands: {
 		'tasks.create': {
-			input: z.string().transform(Number),
-			result: z.number().transform((count) => ({ count })),
+			input: k.string().transform(Number),
+			result: k.number().transform((count) => ({ count })),
 			classification: 'business',
 		},
 		'tasks.close': {
-			input: z.object({ id: z.string() }),
-			result: z.boolean(),
+			input: k.object({ id: k.string() }),
+			result: k.boolean(),
 			classification: 'business',
 		},
 	},
-	queries: { 'tasks.get': { input: z.number(), result: z.number() } },
+	queries: { 'tasks.get': { input: k.number(), result: k.number() } },
 })
 const { Command, Query } = createFoundation({
 	observability: {

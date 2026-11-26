@@ -4,8 +4,9 @@ import { Context, Effect } from 'effect'
 import { CommitTsPlaceholder } from 'convex/values'
 import { bindEffectCommand } from '../src/modules/effect/command'
 import { Observability } from '../src/components/foundation/modules/observability/observability'
-import { z } from 'zod'
-import { zodContract } from '../src/contracts'
+import { k } from '../src/k'
+import { kContract } from '../src/contracts'
+
 import { decodeContract } from '../src/modules/contracts/contract'
 import {
 	canonicalConvexBytes,
@@ -38,8 +39,8 @@ function ledger() {
 	const events: string[] = []
 	let revoked = false
 	let decoded = 0
-	const replayResult = zodContract(
-		z.string().transform((wire) => {
+	const replayResult = kContract(
+		k.string().transform((wire) => {
 			decoded++
 			return Number(wire)
 		}),
@@ -228,7 +229,7 @@ it('rejects unsupported binding declarations before any ledger callback', () => 
 it('keeps Effect callbacks lazy and ordinary failures as defects', async () => {
 	const events: string[] = []
 	const adapter = effectTransactionalIdempotency({
-		final: { replayResult: zodContract(z.number()), encode: (n: number) => n },
+		final: { replayResult: kContract(k.number()), encode: (n: number) => n },
 		authorize: () => {
 			events.push('authorize')
 			return Effect.succeed(undefined)
@@ -300,8 +301,8 @@ it('lifecycle stores already transformed output after audit and replay validates
 	const decodedInputs: string[] = []
 	let transformCount = 0
 	let decodeCount = 0
-	const replayResult = zodContract(
-		z.string().transform((wire) => {
+	const replayResult = kContract(
+		k.string().transform((wire) => {
 			decodeCount++
 			return { label: wire }
 		}),
@@ -345,12 +346,12 @@ it('lifecycle stores already transformed output after audit and replay validates
 				input: effectContract<string, string, never, DecoderPrefix>((raw) =>
 					Effect.gen(function* () {
 						const prefix = yield* DecoderPrefix
-						const input = prefix + z.string().parse(raw).trim()
+						const input = prefix + k.string().parse(raw).trim()
 						decodedInputs.push(input)
 						return input
 					}),
 				),
-				result: z.string().transform((label) => {
+				result: k.string().transform((label) => {
 					transformCount++
 					return { label: label + '!' }
 				}),
@@ -403,7 +404,7 @@ it('Effect protocol failures are typed, explicit callback failures stay typed an
 	}
 	const adapter = (authorize: () => void | Promise<void> | Effect.Effect<void, Denied>) =>
 		effectTransactionalIdempotency({
-			final: { replayResult: zodContract(z.number()), encode: (n: number) => n },
+			final: { replayResult: kContract(k.number()), encode: (n: number) => n },
 			authorize,
 			lookup: () => [{ versions, fingerprint: 'other', state: 'completed', result: 1 }],
 			fingerprint: (bytes) => bytes,
@@ -440,7 +441,7 @@ it('propagates final encoding failure before writing a completed receipt', async
 	for (const [encode, expected] of policies) {
 		let completed = 0
 		const adapter = effectTransactionalIdempotency({
-			final: { replayResult: zodContract(z.number()), encode },
+			final: { replayResult: kContract(k.number()), encode },
 			authorize: () => undefined,
 			lookup: () => [],
 			fingerprint: (bytes) => bytes,

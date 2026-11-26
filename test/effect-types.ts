@@ -1,5 +1,5 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	effectOperationFactory,
 	type EffectOperationArgument,
@@ -11,8 +11,8 @@ import {
 
 const define = effectOperationFactory<{ actorId: string }>()
 const transformed = define.operation({
-	input: z.string().transform((value) => value.length),
-	result: z.number().transform((value) => String(value)),
+	input: k.string().transform((value) => value.length),
+	result: k.number().transform((value) => String(value)),
 	handler: (input, context) => {
 		input.toFixed()
 		context.actorId.toUpperCase()
@@ -48,15 +48,15 @@ const operations = {
 	plain: define.command({
 		classification: 'business',
 		audit: () => null,
-		input: z.string(),
-		result: z.number(),
+		input: k.string(),
+		result: k.number(),
 		handler: async (input) => input.length,
 	}),
 	generated: define.command({
 		classification: 'business',
 		audit: () => null,
-		input: z.number(),
-		result: z.number(),
+		input: k.number(),
+		result: k.number(),
 		guard: () =>
 			Effect.gen(function* () {
 				const policy = yield* Policy
@@ -76,8 +76,8 @@ const operations = {
 			}),
 	}),
 	named: define.query({
-		input: z.number(),
-		result: z.number(),
+		input: k.number(),
+		result: k.number(),
 		handler: Effect.fn('named')(function* (input: number, context: { actorId: string }) {
 			context.actorId.toUpperCase()
 			const repository = yield* Repository
@@ -106,8 +106,8 @@ const assertions: [PlainError, PlainServices, GeneratedErrors, GeneratedServices
 ]
 void assertions
 const middlewareOperation = define.command({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	classification: 'business',
 	audit: () =>
 		Effect.gen(function* () {
@@ -142,8 +142,8 @@ type MiddlewareServices = Assert<
 const middlewareAssertions: [MiddlewareErrors, MiddlewareServices] = [true, true]
 void middlewareAssertions
 const provided = define.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	handler: (input) =>
 		Effect.gen(function* () {
 			return (yield* Repository).load() + input
@@ -152,15 +152,15 @@ const provided = define.query({
 })
 type ProvidedRequirements = Assert<Equal<EffectOperationRequirements<typeof provided>, never>>
 const recovered = define.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	handler: () => Effect.fail(new HandlerFailure()),
 	middleware: ({ next }) => next().pipe(Effect.catchTag('HandlerFailure', () => Effect.succeed(1))),
 })
 type RecoveredErrors = Assert<Equal<EffectOperationError<typeof recovered>, never>>
 const annotated = define.command({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	classification: 'business',
 	audit: () => null,
 	prepare: (): EffectPreparation<number> => ({ kind: 'execute', complete: () => undefined }),
@@ -176,8 +176,8 @@ const recoveryAssertions: [
 ] = [true, true, true, true]
 void recoveryAssertions
 const typedCompletion = define.command({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	classification: 'business',
 	audit: () => null,
 	prepare: (): EffectPreparation<number, CompleteFailure, Policy> => ({
@@ -199,8 +199,8 @@ type TypedCompletionRequirements = Assert<
 const completionAssertions: [TypedCompletionError, TypedCompletionRequirements] = [true, true]
 void completionAssertions
 const recoveredGuard = define.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	guard: () => Effect.fail(new GuardFailure()),
 	handler: (input) => input,
 	middleware: ({ next }) => next().pipe(Effect.catchTag('GuardFailure', () => Effect.succeed(1))),
@@ -209,8 +209,8 @@ type RecoveredGuardError = Assert<Equal<EffectOperationError<typeof recoveredGua
 const guardAssertion: RecoveredGuardError = true
 void guardAssertion
 const shortCircuit = define.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	handler: () =>
 		Effect.gen(function* () {
 			yield* Repository
@@ -225,8 +225,8 @@ type ShortCircuitRequirements = Assert<
 const shortCircuitAssertions: [ShortCircuitError, ShortCircuitRequirements] = [true, true]
 void shortCircuitAssertions
 const optionalProvision = define.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	handler: (input) =>
 		Effect.gen(function* () {
 			return (yield* Repository).load() + input
@@ -240,8 +240,8 @@ type OptionalProvisionRequirements = Assert<
 	Equal<EffectOperationRequirements<typeof optionalProvision>, Repository>
 >
 const optionalRecovery = define.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	handler: () => Effect.fail(new HandlerFailure()),
 	middleware:
 		Math.random() > 0.5
@@ -261,7 +261,7 @@ declare const optionalExecution: Effect.Effect<
 // @ts-expect-error the absent wrapper branch still needs Repository
 void Effect.runPromise(optionalExecution)
 // @ts-expect-error command declarations require their audit/classification contract
-define.command({ input: z.string(), result: z.number(), handler: () => 1 })
+define.command({ input: k.string(), result: k.number(), handler: () => 1 })
 // @ts-expect-error transformed callers supply raw string input
 const wrongInput: EffectOperationArgument<typeof transformed> = 4
 // @ts-expect-error final output is transformed to string
@@ -269,14 +269,14 @@ const wrongOutput: EffectOperationResult<typeof transformed> = 4
 void wrongInput
 void wrongOutput
 define.operation({
-	input: z.string(),
-	result: z.number(),
+	input: k.string(),
+	result: k.number(),
 	// @ts-expect-error ordinary handler must produce schema's pre-transform input
 	handler: () => 'wrong',
 })
 define.operation({
-	input: z.string(),
-	result: z.number(),
+	input: k.string(),
+	result: k.number(),
 	// @ts-expect-error Effect success must produce schema's pre-transform input
 	handler: () => Effect.succeed('wrong'),
 })
@@ -284,16 +284,16 @@ const enriched = effectOperationFactory<{ actorId: string }, { traceId: string }
 enriched.command({
 	classification: 'business',
 	audit: () => null,
-	input: z.string(),
-	result: z.number(),
+	input: k.string(),
+	result: k.number(),
 	middleware: ({ next }) => next({ context: { traceId: 'trace' } }),
 	handler: (input, context) => input.length + context.traceId.length,
 })
 enriched.command({
 	classification: 'business',
 	audit: () => null,
-	input: z.string(),
-	result: z.number(),
+	input: k.string(),
+	result: k.number(),
 	middleware: ({ next }) => {
 		// @ts-expect-error declared enrichment is required
 		return next()
@@ -301,8 +301,8 @@ enriched.command({
 	handler: (input) => input.length,
 })
 define.query({
-	input: z.string(),
-	result: z.number(),
+	input: k.string(),
+	result: k.number(),
 	handler: (input, context) => {
 		// @ts-expect-error enrichment is local to the enriched definition helper
 		void context.traceId
@@ -317,8 +317,8 @@ const guardedDefine = effectOperationFactory<
 	Repository
 >()
 const recoveredDefaultGuard = guardedDefine.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	handler: (input) => input,
 	middleware: ({ next }) =>
 		next().pipe(
@@ -340,8 +340,8 @@ void defaultGuardAssertions
 
 // Fully annotated callbacks retain exact channels even when middleware is declared first.
 const middlewareFirstGuard = define.query({
-	input: z.number(),
-	result: z.number(),
+	input: k.number(),
+	result: k.number(),
 	middleware: ({ next }) =>
 		Effect.gen(function* () {
 			return yield* next()

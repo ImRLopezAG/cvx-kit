@@ -1,5 +1,5 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { createEffectFoundation } from '../src/effect'
 
 type Equal<Left, Right> =
@@ -27,8 +27,8 @@ const queries = foundation.Query({
 	context: (host: { actorId: string }) => host,
 	operations: ({ query }) => ({
 		read: query({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			permission: 'read',
 			handler: (input) => input.length,
 		}),
@@ -38,8 +38,8 @@ const commands = foundation.Command({
 	context: (host: { actorId: string }) => host,
 	operations: ({ command }) => ({
 		rename: command({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			classification: 'business',
 			permission: 'write',
 			handler: (_input, host) =>
@@ -62,6 +62,6 @@ foundation.Query({
 	// @ts-expect-error the shared permission policy requires trusted actor context
 	context: (host: { title: string }) => host,
 	operations: ({ query }) => ({
-		read: query({ input: z.string(), result: z.string(), handler: (input) => input }),
+		read: query({ input: k.string(), result: k.string(), handler: (input) => input }),
 	}),
 })

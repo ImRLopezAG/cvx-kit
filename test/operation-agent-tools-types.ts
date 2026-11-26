@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	bindOperationExecutor,
 	createOperationTools,
@@ -11,11 +11,11 @@ type Equal<A, B> =
 type Assert<T extends true> = T
 const owner = Symbol('documents')
 const otherOwner = Symbol('other')
-const input = z.object({ title: z.string().transform((text) => text.length) })
+const input = k.object({ title: k.string().transform((text) => text.length) })
 const selected = selectOperation(owner, 'mutation', 'rename', {
 	input,
-	result: z.number().transform(String),
-	wire: { schema: z.string().transform(Number) },
+	result: k.number().transform(String),
+	wire: { schema: k.string().transform(Number) },
 })
 const executor = bindOperationExecutor(selected, {
 	owner,
@@ -64,8 +64,8 @@ bindOperationExecutor(selected, {
 	execute: async (_raw: { title: number }) => 'wire',
 })
 const other = selectOperation(otherOwner, 'query', 'get', {
-	input: z.object({ id: z.string() }),
-	result: z.boolean(),
+	input: k.object({ id: k.string() }),
+	result: k.boolean(),
 })
 const otherExecutor = bindOperationExecutor(other, {
 	owner: otherOwner,
@@ -86,7 +86,7 @@ createOperationTools({
 		description: 'Bad',
 		converter: {
 			dialect: operationToolDialect,
-			convert: (_schema: z.ZodNumber) => ({ type: 'object' }),
+			convert: (_schema: ReturnType<typeof k.number>) => ({ type: 'object' }),
 		},
 	},
 })

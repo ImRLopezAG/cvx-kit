@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	defineDomainContract,
 	operationContract,
@@ -12,13 +12,13 @@ type Assert<T extends true> = T
 const domain = defineDomainContract({
 	commands: {
 		create: {
-			input: z.string().transform((text) => text.length),
-			result: z.number().transform((count) => ({ count })),
+			input: k.string().transform((text) => text.length),
+			result: k.number().transform((count) => ({ count })),
 			classification: 'business',
-			replayResult: z.object({ count: z.number() }),
+			replayResult: k.object({ count: k.number() }),
 		},
 	},
-	queries: { get: { input: z.number(), result: z.string() } },
+	queries: { get: { input: k.number(), result: k.string() } },
 })
 const assertions: [
 	Assert<Equal<keyof typeof domain.commands, 'create'>>,
@@ -29,40 +29,40 @@ void assertions
 defineDomainContract({
 	commands: {
 		// @ts-expect-error command classification is required
-		bad: { input: z.string(), result: z.string() },
+		bad: { input: k.string(), result: k.string() },
 	},
 })
 defineDomainContract({
 	queries: {
 		// @ts-expect-error queries cannot declare replay outputs
-		bad: { input: z.string(), result: z.string(), replayResult: z.string() },
+		bad: { input: k.string(), result: k.string(), replayResult: k.string() },
 	},
 })
 defineDomainContract({
 	commands: {
 		bad: {
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			classification: 'business',
 			// @ts-expect-error replay must decode the final result type
-			replayResult: z.string(),
+			replayResult: k.string(),
 		},
 	},
 })
 
 const wireEntry = operationContract({
-	input: z.string(),
-	result: z.number().transform((count) => ({ count })),
+	input: k.string(),
+	result: k.number().transform((count) => ({ count })),
 	classification: 'business',
-	replayResult: z.object({ count: z.number() }),
-	wire: { schema: z.string(), project: (value) => String(value.count) },
+	replayResult: k.object({ count: k.number() }),
+	wire: { schema: k.string(), project: (value) => String(value.count) },
 })
 const wire = defineDomainContract({ commands: { save: wireEntry } })
 void wire
 
 const lazyDomain = defineDomainContract(() => ({
-	commands: { create: { input: z.string(), result: z.number(), classification: 'business' } },
-	queries: { get: { input: z.number(), result: z.string() } },
+	commands: { create: { input: k.string(), result: k.number(), classification: 'business' } },
+	queries: { get: { input: k.number(), result: k.string() } },
 }))
 const lazyAssertions: [
 	Assert<Equal<keyof typeof lazyDomain.commands, 'create'>>,
@@ -72,28 +72,28 @@ const lazyAssertions: [
 void lazyAssertions
 // @ts-expect-error thunks retain forbidden implementation-field checks
 defineDomainContract(() => ({
-	queries: { bad: { input: z.string(), result: z.string(), handler: () => '' } },
+	queries: { bad: { input: k.string(), result: k.string(), handler: () => '' } },
 }))
 // @ts-expect-error thunks retain replay-result compatibility checks
 defineDomainContract(() => ({
 	commands: {
 		bad: {
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			classification: 'business',
-			replayResult: z.string(),
+			replayResult: k.string(),
 		},
 	},
 }))
 // @ts-expect-error thunk command classification is still required
-defineDomainContract(() => ({ commands: { bad: { input: z.string(), result: z.string() } } }))
+defineDomainContract(() => ({ commands: { bad: { input: k.string(), result: k.string() } } }))
 
 const getterDomain = defineDomainContract(() => ({
 	commands: {
 		get create() {
 			return {
-				input: z.string().transform((text) => text.length),
-				result: z.number(),
+				input: k.string().transform((text) => text.length),
+				result: k.number(),
 				classification: 'business',
 			}
 		},
@@ -101,9 +101,9 @@ const getterDomain = defineDomainContract(() => ({
 	queries: {
 		get: {
 			get input() {
-				return z.number()
+				return k.number()
 			},
-			result: z.string(),
+			result: k.string(),
 		},
 	},
 }))
@@ -118,7 +118,7 @@ defineDomainContract({
 	commands: {
 		// @ts-expect-error getter-declared commands still require a classification
 		get bad() {
-			return { input: z.string(), result: z.string() }
+			return { input: k.string(), result: k.string() }
 		},
 	},
 })
@@ -126,7 +126,7 @@ defineDomainContract({
 	queries: {
 		// @ts-expect-error getter-declared operations keep forbidden implementation-field checks
 		get bad() {
-			return { input: z.string(), result: z.string(), handler: () => '' }
+			return { input: k.string(), result: k.string(), handler: () => '' }
 		},
 	},
 })

@@ -8,7 +8,7 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { createEffectFoundation } from '../src/modules/effect/foundation'
 import type { RequestScope } from '../src/modules/effect/scope'
 
@@ -35,8 +35,8 @@ function setup(nestedAudit: 'fold' | 'separate' = 'fold') {
 		context: (host: Host) => ({ host }),
 		operations: ({ command }) => ({
 			'inner.touch': command({
-				input: z.string(),
-				result: z.string(),
+				input: k.string(),
+				result: k.string(),
 				classification: 'business',
 				audit: (_resolution, _context, scope) => {
 					auditCalls.push('inner.touch')
@@ -54,8 +54,8 @@ function setup(nestedAudit: 'fold' | 'separate' = 'fold') {
 		context: (host: Host) => ({ host, inner: inner.withContext(host) }),
 		operations: ({ command }) => ({
 			'outer.run': command({
-				input: z.string(),
-				result: z.string(),
+				input: k.string(),
+				result: k.string(),
 				classification: 'business',
 				audit: (_resolution, _context, scope) => {
 					auditCalls.push('outer.run')
@@ -65,8 +65,8 @@ function setup(nestedAudit: 'fold' | 'separate' = 'fold') {
 				handler: (input, ctx) => ctx.inner.exec('inner.touch', input),
 			}),
 			'outer.bridge': command({
-				input: z.string(),
-				result: z.string(),
+				input: k.string(),
+				result: k.string(),
 				classification: 'business',
 				audit: () => ({
 					operation: 'outer.bridge',
@@ -81,8 +81,8 @@ function setup(nestedAudit: 'fold' | 'separate' = 'fold') {
 		context: (host: Host) => ({ inner: inner.withContext(host) }),
 		operations: ({ query }) => ({
 			'query.wrap': query({
-				input: z.string(),
-				result: z.string(),
+				input: k.string(),
+				result: k.string(),
 				handler: (input, ctx) => ctx.inner.exec('inner.touch', input),
 			}),
 		}),
@@ -170,8 +170,8 @@ describe('request scope', () => {
 			},
 			operations: ({ command }) => ({
 				'leaf.ping': command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					handler: (n) => n,
 				}),
@@ -181,8 +181,8 @@ describe('request scope', () => {
 			context: () => ({ leaf: leaf.withContext(undefined) }),
 			operations: ({ command }) => ({
 				'root.call': command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: (n, ctx) => Effect.map(ctx.leaf.exec('leaf.ping', n), Number),

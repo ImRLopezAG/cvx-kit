@@ -49,10 +49,10 @@ it.each(['ordinary', 'variant'] as const)(
 
 it('builds thunk contracts on property read and preserves enumeration and schema identities', () => {
 	let builds = 0
-	const input = z.string()
+	const input = k.string()
 	const contract = defineDomainContract(() => {
 		builds++
-		return { queries: { get: { input, result: z.string() } } }
+		return { queries: { get: { input, result: k.string() } } }
 	})
 	expect(builds).toBe(0)
 	expect(contract.queries.get.input).toBe(input)
@@ -77,8 +77,8 @@ it('defers both foundation registries until execution, builds once, and keeps co
 			queryBuilds++
 			return {
 				get: query({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					handler: (input, context) => input + context,
 				}),
 			}
@@ -90,8 +90,8 @@ it('defers both foundation registries until execution, builds once, and keeps co
 			commandBuilds++
 			return {
 				save: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					handler: (input, context) => input + context,
 					audit: () => ({
@@ -210,7 +210,7 @@ it('force-checks contracted thunk registries once without resolving context or c
 	let calls = 0
 	const contract = defineDomainContract(() => {
 		builds++
-		return { queries: { get: { input: z.number(), result: z.number() } } }
+		return { queries: { get: { input: k.number(), result: k.number() } } }
 	})
 	const foundation = createEffectFoundation({
 		writeAudit: () => {},

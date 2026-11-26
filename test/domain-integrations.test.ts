@@ -1,7 +1,7 @@
 import { makeFunctionReference } from 'convex/server'
 import { Effect } from 'effect'
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation } from '../src/effect'
@@ -20,7 +20,7 @@ import {
 for (const effect of [false, true]) {
 	it(`${effect ? 'Effect' : 'Promise'} contracted operations compose with agent and workflow adapters`, async () => {
 		let transforms = 0
-		const raw = z.object({ value: z.string() }).strict()
+		const raw = k.object({ value: k.string() })
 		const contract = defineDomainContract({
 			commands: {
 				save: {
@@ -28,7 +28,7 @@ for (const effect of [false, true]) {
 						transforms++
 						return { value: Number(input.value) }
 					}),
-					result: z.number(),
+					result: k.number(),
 					classification: 'business',
 				},
 			},
@@ -58,7 +58,7 @@ for (const effect of [false, true]) {
 		})
 		const owner = Symbol('tasks')
 		const selected = effect ? optional.expose(owner, 'save') : normal.expose(owner, 'save')
-		const execute = (input: z.input<typeof raw>) =>
+		const execute = (input: k.input<typeof raw>) =>
 			effect
 				? Effect.runPromise(optional.exec('save', input, { actor: 'a' }))
 				: normal.exec('save', input, { actor: 'a' })
@@ -95,7 +95,7 @@ for (const effect of [false, true]) {
 			result: contract.commands.save.result,
 			reference: makeFunctionReference<
 				'mutation',
-				WorkflowStepArguments<z.input<typeof raw>>,
+				WorkflowStepArguments<k.input<typeof raw>>,
 				number
 			>('tasks:save'),
 		})

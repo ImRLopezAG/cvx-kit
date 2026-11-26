@@ -1,5 +1,4 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import { v } from 'convex/values'
 import {
 	queryGeneric,
@@ -8,15 +7,16 @@ import {
 	actionGeneric,
 	type ApiFromModules,
 } from 'convex/server'
-import { zCustomQuery, zCustomMutation, zCustomAction } from 'convex-helpers/server/zod4'
-import { effectZodApiBuilder } from '../src/effect'
+import { effectApiBuilder } from '../src/effect'
+import { k } from '../src/k'
+import { kCustomAction, kCustomMutation, kCustomQuery } from '../src/registration'
 
 class Actor extends Context.Service<Actor, { id: string }>()('ApiZodActor') {}
 class Missing extends Context.Service<Missing, { value: string }>()('ApiZodMissing') {}
 type Equal<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
-const custom = zCustomMutation(internalMutationGeneric, {
+const custom = kCustomMutation(internalMutationGeneric, {
 	args: { session: v.string() },
 	input: (_ctx, args, extra: { permission: 'read' | 'write' }) => ({
 		ctx: { actor: { id: args.session }, permission: extra.permission },
@@ -25,11 +25,11 @@ const custom = zCustomMutation(internalMutationGeneric, {
 })
 declare const optionalServices: (() => Context.Context<Actor>) | undefined
 // @ts-expect-error A potentially missing callback cannot guarantee services.
-effectZodApiBuilder(custom, { services: optionalServices })
+effectApiBuilder(custom, { services: optionalServices })
 declare const optionalContext: (() => { extra: number }) | undefined
 // @ts-expect-error A potentially missing callback cannot guarantee added fields.
-effectZodApiBuilder(custom, { context: optionalContext })
-const mutation = effectZodApiBuilder(custom, {
+effectApiBuilder(custom, { context: optionalContext })
+const mutation = effectApiBuilder(custom, {
 	services: (ctx) => {
 		ctx.actor.id.toUpperCase()
 		ctx.permission satisfies 'read' | 'write'
@@ -37,8 +37,8 @@ const mutation = effectZodApiBuilder(custom, {
 	},
 })
 const transformed = mutation({
-	args: z.object({ amount: z.string().transform((value) => value.length) }),
-	returns: z.number().transform((value) => String(value)),
+	args: k.object({ amount: k.string().transform((value) => value.length) }),
+	returns: k.number(),
 	permission: 'write',
 	skipConvexValidation: true,
 	handler: (ctx, args) => {
@@ -55,7 +55,7 @@ type Ref = ApiFromModules<{
 	functions: { transformed: typeof transformed }
 }>['functions']['transformed']
 type Raw = Assert<Equal<Ref['_args'], { amount: string; session: string }>>
-type Final = Assert<Equal<Ref['_returnType'], string>>
+type Final = Assert<Equal<Ref['_returnType'], number>>
 type Kind = Assert<Equal<Ref['_type'], 'mutation'>>
 type Visibility = Assert<Equal<Ref['_visibility'], 'internal'>>
 const checks: [Raw, Final, Kind, Visibility] = [true, true, true, true]
@@ -65,8 +65,8 @@ mutation({ args: {}, handler: () => 1 })
 mutation({
 	args: {},
 	permission: 'read',
-	returns: z.number().transform(String),
-	// @ts-expect-error result before transform must be number
+	returns: k.number(),
+	// @ts-expect-error result must be number
 	handler: () => Effect.succeed('bad'),
 })
 // @ts-expect-error missing services rejected even without a returns validator
@@ -75,21 +75,21 @@ mutation({ args: {}, permission: 'read', handler: () => Missing })
 mutation({
 	args: {},
 	permission: 'read',
-	returns: z.string(),
+	returns: k.string(),
 	handler: () => Missing.pipe(Effect.map((value) => value.value)),
 })
 // @ts-expect-error caller cannot pass a made arg or parsed number in raw transport input
 const invalidRaw: Ref['_args'] = { session: 'session', amount: 1, made: 42 }
 void invalidRaw
-const query = effectZodApiBuilder(
-	zCustomQuery(queryGeneric, {
+const query = effectApiBuilder(
+	kCustomQuery(queryGeneric, {
 		args: {},
 		input: () => ({ ctx: { actor: { id: 'trusted' } }, args: {} }),
 	}),
 	{ services: (ctx) => Context.make(Actor, ctx.actor) },
 )
 const plain = query({
-	args: { count: z.number() },
+	args: { count: k.number() },
 	handler: (ctx, args) => {
 		// @ts-expect-error native query context remains reader-only
 		void ctx.db.insert('table', {})
@@ -101,8 +101,8 @@ const plainCheck: Assert<Equal<PlainRef['_returnType'], number>> = true
 void plainCheck
 const bare = query((_ctx, args) => Effect.succeed(args.count))
 void bare
-const action = effectZodApiBuilder(
-	zCustomAction(actionGeneric, {
+const action = effectApiBuilder(
+	kCustomAction(actionGeneric, {
 		args: {},
 		input: () => ({ ctx: {}, args: {} }),
 	}),
@@ -110,14 +110,14 @@ const action = effectZodApiBuilder(
 )
 const actionFn = action({
 	args: {},
-	returns: { ok: z.boolean() },
+	returns: k.object({ ok: k.boolean() }),
 	handler: (ctx) => {
 		void ctx.runMutation
 		return Effect.succeed({ ok: true })
 	},
 })
-const publicMutation = effectZodApiBuilder(
-	zCustomMutation(mutationGeneric, {
+const publicMutation = effectApiBuilder(
+	kCustomMutation(mutationGeneric, {
 		args: {},
 		input: () => ({ ctx: {}, args: {} }),
 	}),
@@ -130,8 +130,8 @@ type PublicRef = ApiFromModules<{
 const publicCheck: Assert<Equal<PublicRef['_visibility'], 'public'>> = true
 void publicCheck
 void actionFn
-void effectZodApiBuilder(custom, {
-	// @ts-expect-error providers may require only adapter-owned Scope
+// @ts-expect-error providers may require only adapter-owned Scope
+void effectApiBuilder(custom, {
 	services: () => Missing.pipe(Effect.map(() => Context.empty())),
 })
 // @ts-expect-error Promise cannot hide an unprovided Effect requirement
@@ -141,8 +141,8 @@ mutation({
 	handler: async () => Missing.pipe(Effect.map((value) => value.value)),
 })
 const named = query({
-	args: { value: z.number() },
-	returns: z.number(),
+	args: { value: k.number() },
+	returns: k.number(),
 	handler: Effect.fn('custom-query')(function* (_ctx, args: { value: number }) {
 		yield* Actor
 		return args.value

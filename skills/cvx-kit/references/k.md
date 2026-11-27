@@ -38,35 +38,36 @@ export type Document = k.infer<typeof documentInput> // status required
 
 ## Factories
 
-| Factory                                  | Parses                                                                                                                                             | Native validator                                                    |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `k.string()`                             | string                                                                                                                                             | `v.string()`                                                        |
-| `k.email(message?)`                      | a string matching Zod 4's email pattern; `k.string().email()`                                                                                      | `v.string()`                                                        |
-| `k.url(options?)`                        | a string the WHATWG URL parser accepts; `{ protocol, hostname }` patterns narrow it; `k.string().url()`                                            | `v.string()`                                                        |
-| `k.number()`                             | any number, including `NaN` and `±Infinity` (as `v.number()`)                                                                                      | `v.number()`                                                        |
-| `k.int()`                                | a number for which `Number.isSafeInteger` holds                                                                                                    | `v.number()`                                                        |
-| `k.int64()`                              | bigint                                                                                                                                             | `v.int64()`                                                         |
-| `k.boolean()`                            | boolean                                                                                                                                            | `v.boolean()`                                                       |
-| `k.null()`                               | `null`                                                                                                                                             | `v.null()`                                                          |
-| `k.bytes()`                              | `ArrayBuffer`                                                                                                                                      | `v.bytes()`                                                         |
-| `k.any()`                                | any value except `undefined`                                                                                                                       | `v.any()`                                                           |
-| `k.custom<T>(guard?, message?)`          | any value, typed `T`; `guard` (when given) must return true, issue `custom`                                                                        | `v.any()`                                                           |
-| `k.json()`                               | a JSON-compatible value, checked throughout (finite numbers, plain objects)                                                                        | union of string, number, boolean, null, array of any, record of any |
-| `k.jsonObject()`                         | a plain object of JSON values with any keys Convex accepts in an object value (`_id` included); see [Open objects](#open-objects)                  | `v.any()`                                                           |
-| `k.literal(value)`                       | one string, number, bigint or boolean                                                                                                              | `v.literal(value)`                                                  |
-| `k.enum(values)`                         | one of a non-empty tuple of strings; `.options` returns the tuple, `.enum` a value-to-value record, `.exclude([...])`/`.extract([...])` a new enum | union of literals (a one-value enum is a one-member union)          |
-| `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                                                                                                  | `v.id('table')`                                                     |
-| `k.array(element)`                       | an array; `.element` returns the element schema                                                                                                    | `v.array(...)`                                                      |
-| `k.object(fields)`                       | these declared fields; application parse strips unknown keys                                                                                       | `v.object(...)`                                                     |
-| `k.strictObject(fields)`                 | `k.object(fields).strict()`: parse rejects unknown keys                                                                                            | `v.object(...)` (closed)                                            |
-| `k.looseObject(fields)`                  | `k.object(fields).loose()`: these fields, unknown keys kept; see [Open objects](#open-objects)                                                     | `v.object(...)` (closed)                                            |
-| `k.record(key, value)`                   | a plain object; `key` is a string or id schema, or a finite set of string literals; see [Records](#records)                                        | `v.record(...)`, or `v.object(...)` for literal keys                |
-| `k.partialRecord(key, value)`            | an object with one optional field per value of a literal key set; see [Records](#records)                                                          | `v.object(...)` with optional fields                                |
-| `k.union([a, b, ...])`                   | the first member that parses (two or more members)                                                                                                 | `v.union(...)`                                                      |
-| `k.discriminatedUnion(key, [a, b, ...])` | the option whose `key` field (a literal or enum) matches; values unique                                                                            | `v.union(...)` of the objects                                       |
-| `k.isoDate()`                            | `YYYY-MM-DD` naming a real calendar day                                                                                                            | `v.string()`                                                        |
-| `k.isoDateTime()`                        | ISO 8601 date-time with seconds and a `Z` or `±HH:MM` offset                                                                                       | `v.string()`                                                        |
-| `k.timestamp()`                          | integer milliseconds from 1970-01-01 through the end of 9999 (UTC)                                                                                 | `v.number()`                                                        |
+| Factory                                  | Parses                                                                                                                                 | Native validator                                                    |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `k.string()`                             | string                                                                                                                                 | `v.string()`                                                        |
+| `k.email(message?)`                      | a string matching Zod 4's email pattern; `k.string().email()`                                                                          | `v.string()`                                                        |
+| `k.url(options?)`                        | a string the WHATWG URL parser accepts; `{ protocol, hostname }` patterns narrow it; `k.string().url()`                                | `v.string()`                                                        |
+| `k.number()`                             | any number, including `NaN` and `±Infinity` (as `v.number()`)                                                                          | `v.number()`                                                        |
+| `k.int()`                                | a number for which `Number.isSafeInteger` holds                                                                                        | `v.number()`                                                        |
+| `k.int64()`                              | bigint                                                                                                                                 | `v.int64()`                                                         |
+| `k.boolean()`                            | boolean                                                                                                                                | `v.boolean()`                                                       |
+| `k.null()`                               | `null`                                                                                                                                 | `v.null()`                                                          |
+| `k.void()`                               | `undefined` or `null`; for `returns` only, see [Void returns](#void-returns)                                                           | `v.null()`                                                          |
+| `k.bytes()`                              | `ArrayBuffer`                                                                                                                          | `v.bytes()`                                                         |
+| `k.any()`                                | any value except `undefined`                                                                                                           | `v.any()`                                                           |
+| `k.custom<T>(guard?, message?)`          | any value except `undefined`, typed `T`; `guard` (when given) must return a truthy value, issue `custom`                               | `v.any()`                                                           |
+| `k.json()`                               | a JSON-compatible value, checked throughout (finite numbers, plain objects)                                                            | union of string, number, boolean, null, array of any, record of any |
+| `k.jsonObject()`                         | a plain object of JSON values with any keys Convex accepts in an object value (`_id` included); see [Open objects](#open-objects)      | `v.any()`                                                           |
+| `k.literal(value)`                       | one string, number, bigint or boolean                                                                                                  | `v.literal(value)`                                                  |
+| `k.enum(values)`                         | one of a non-empty array of strings, or of an object's string values; `.options`, `.enum`, `.exclude`, `.extract`: see [Enums](#enums) | union of literals (a one-value enum is a one-member union)          |
+| `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                                                                                      | `v.id('table')`                                                     |
+| `k.array(element)`                       | an array; `.element` returns the element schema                                                                                        | `v.array(...)`                                                      |
+| `k.object(fields)`                       | these declared fields; application parse strips unknown keys                                                                           | `v.object(...)`                                                     |
+| `k.strictObject(fields)`                 | `k.object(fields).strict()`: parse rejects unknown keys                                                                                | `v.object(...)` (closed)                                            |
+| `k.looseObject(fields)`                  | `k.object(fields).loose()`: these fields, unknown keys kept; see [Open objects](#open-objects)                                         | `v.object(...)` (closed)                                            |
+| `k.record(key, value)`                   | a plain object; `key` is a string or id schema, or a finite set of string literals; see [Records](#records)                            | `v.record(...)`, or `v.object(...)` for literal keys                |
+| `k.partialRecord(key, value)`            | an object with one optional field per value of a literal key set; see [Records](#records)                                              | `v.object(...)` with optional fields                                |
+| `k.union([a, b, ...])`                   | the first member that parses (two or more members)                                                                                     | `v.union(...)`                                                      |
+| `k.discriminatedUnion(key, [a, b, ...])` | the option whose `key` field (a literal or enum) matches; values unique                                                                | `v.union(...)` of the objects                                       |
+| `k.isoDate()`                            | `YYYY-MM-DD` naming a real calendar day                                                                                                | `v.string()`                                                        |
+| `k.isoDateTime()`                        | ISO 8601 date-time with seconds and a `Z` or `±HH:MM` offset                                                                           | `v.string()`                                                        |
+| `k.timestamp()`                          | integer milliseconds from 1970-01-01 through the end of 9999 (UTC)                                                                     | `v.number()`                                                        |
 
 Argument-less factories return one shared, immutable root, so `k.string()` allocates nothing.
 
@@ -94,6 +95,34 @@ After the key schema has run (including normalisers such as `trim`), each key of
 ### Discriminated unions
 
 Every option must be a `k.object` whose discriminator field is a literal, an enum, or a union of literals and enums (natively the same union as an enum; parse dispatches on each value). Each discriminator value must belong to one option. Declaring the union throws if an option breaks either rule, naming the key, the option index and what was found (for example `option 1 has 'string'`, or `'kind' value "a" (option 1 repeats it)`). The check reads only the options' field maps and builds no validator.
+
+### Enums
+
+`k.enum` takes a non-empty array of strings, or an object whose values are all strings (an `as const` object or a TypeScript string enum). Both forms build the same schema, and parse accepts the values, not the keys:
+
+```ts
+const Status = { Open: 'open', Done: 'done' } as const
+k.enum(Status) // the same schema as k.enum(['open', 'done'])
+k.enum(Status).parse('open') // 'open'; 'Open' fails
+```
+
+`.options` returns the value tuple, `.enum` a value-to-value record, and `.exclude([...])`/`.extract([...])` a new enum. A string, an empty array or object, a non-string value, `null`, or an object that is not a plain object (a `Date`, a class instance) throws a `TypeError` at definition. A numeric TypeScript enum is refused the same way, because its object also maps each number back to its name; use `k.union([k.literal(0), k.literal(1)])` for numeric values.
+
+### Void returns
+
+`k.void()` declares a function that returns nothing. Use it for `returns` only. Its native validator is `v.null()`, because Convex sends a missing result as `null`, so clients receive `null`. The handler may return nothing, `undefined` or `null`. Parse accepts `undefined` and `null`.
+
+```ts
+export const touch = authMutation({
+	args: k.object({ id: k.id('documents') }),
+	returns: k.void(),
+	handler: async (ctx, { id }) => {
+		await ctx.db.patch(id, { touchedAt: Date.now() })
+	},
+})
+```
+
+For a value that may be absent in args or an object field, use `.optional()`. `k.custom()` and `k.any()` still refuse `undefined`.
 
 ### Immutability
 
@@ -142,9 +171,9 @@ const role = k.string().refine(isRole) // Role
 const member = k.object({ roles: k.array(role), lead: role.optional() }) // { roles: Role[]; lead?: Role }
 ```
 
-`k.custom<T>()` is Zod's `z.custom<T>()`: natively `v.any()`, so only the guard validates the value, at parse and at function boundaries. Use it for values a schema cannot describe (a branded string, an SDK payload); its JSON Schema is `{}` and `toZod` does not carry the guard.
+`k.custom<T>()` is Zod's `z.custom<T>()`: natively `v.any()`, so only the guard validates the value, at parse and at function boundaries. As in Zod, the value passes when the guard returns any truthy value. A guard that returns a promise never passes, because checks are synchronous. Use it for values a schema cannot describe (a branded string, an SDK payload). Its JSON Schema is `{}`; `toZod` carries the guard. It refuses `undefined`, like `k.any()`; for a function that returns nothing, use [`k.void()`](#void-returns).
 
-On `k.int64()` the bounds take bigints (`k.int64().min(0n).max(MAX)`, `.positive()`), compare exactly at any magnitude and report `too_small`/`too_big`. JSON Schema states an int64 bound only when a JSON number holds it exactly.
+On `k.int64()` the bounds take bigints (`k.int64().min(0n).max(MAX)`, `.positive()`), compare exactly at any magnitude and report `too_small`/`too_big`. A bound given as a safe-integer number (`.min(0)` from untyped code) is converted to a bigint. Any other bound (`0.5`, `NaN`, `'0'`, a number beyond the safe range) throws a `TypeError` at definition. JSON Schema states an int64 bound only when a JSON number holds it exactly.
 
 Every check that takes a message (`min`, `max`, `length`, `regex`, `int`, `positive`, `negative`, `nonnegative`, `nonpositive`, `finite`, `safe`) also takes `{ message }`, and every options object also accepts Zod 4's `error: '…'` as a string alias of `message`; `message` wins when both are given. A function-valued `error` (Zod's error map) is a type error and throws at declaration, and an unknown option key is a type error.
 
@@ -172,6 +201,7 @@ Kit boundaries still reject unknown keys: function `args` and `returns`, table f
 | `.omit('a', 'b')`            | a new object without those fields                                                                                         |
 | `.extend({ c: k.string() })` | a new object with added or replaced fields                                                                                |
 | `.partial()`                 | every field optional; a defaulted field becomes plain optional, so an omitted field stays omitted                         |
+| `.partial('a', …)`           | only the named fields optional; the others keep their behaviour                                                           |
 | `.required('a', …)`          | the named fields (every field when none are named) lose their top `optional()`, the inverse of `partial()`; defaults stay |
 | `.keyof()`                   | a `k.enum` of the field names                                                                                             |
 
@@ -206,7 +236,9 @@ class NotFound extends Error {
 k.object({ _tag: k.string() }).parse(new NotFound()) // { _tag: 'NotFound' }
 ```
 
-`pick` and `omit` take string keys, not `{ a: true }` masks. `pick`, `omit`, `extend`, `partial` and `required` build a new object over the same field schemas, so retained fields keep their behaviour. A `refine`, `check` or `overwrite` declared on the object itself may read fields the new object lacks or makes optional, so on an object that has one these methods throw at declaration, naming the method and how many checks would be dropped. Say what you want with a last argument:
+`pick`, `omit`, `partial` and `required` take string keys: `pick('a', 'b')`. A Zod-style mask object (`pick({ a: true })`) throws a `TypeError` at definition that names the key-list form. One mask cannot be told apart from options: a trailing `{ dropChecks: true }` is always read as the options object, so on an object with a field named `dropChecks`, `{ dropChecks: true }` means a call with no keys: `pick` keeps no field, `omit` drops none, and `partial` and `required` apply to every field. Write `pick('dropChecks')`.
+
+`pick`, `omit`, `extend`, `partial` and `required` build a new object over the same field schemas, so retained fields keep their behaviour. A `refine`, `check` or `overwrite` declared on the object itself may read fields the new object lacks or makes optional, so on an object that has one these methods throw at declaration, naming the method and how many checks would be dropped. Say what you want with a last argument:
 
 - `{ dropChecks: true }` on any of the five drops them: `range.pick('from', { dropChecks: true })`, `range.partial({ dropChecks: true })`, `range.required('to', { dropChecks: true })`.
 - `{ keepChecks: true }`, on `extend` only, re-attaches them to the extended object in their declared order; they run against the extended value. Use it when the extension does not redefine a field the check reads.
@@ -413,16 +445,22 @@ const outputSchema = toJsonSchema(documentInput, { io: 'output' })
 
 ## Zod interop
 
-`cvx-kit/zod` converts a `k` schema to Zod 4 for libraries that only accept Zod. Install `zod` (an optional peer) to use it. The result is a `zod/mini` schema: it has `parse`, `safeParse` and `check`, works with any library that accepts a Zod 4 schema, and converts back through convex-helpers' `zodToConvex`. It does not have the classic chain methods (`.optional()`, `.extend()`); extend it with the `zod/mini` functions (`z.optional(schema)`, `z.extend(schema, shape)`).
+`cvx-kit/zod` converts a `k` schema to Zod 4 for libraries that only accept Zod. Install `zod` (an optional peer) to use it. By default the result is a `zod/mini` schema: it has `parse`, `safeParse` and `check`, works with any library that accepts a Zod 4 schema, and converts back through convex-helpers' `zodToConvex`. It does not have the classic chain methods (`.optional()`, `.extend()`); extend it with the `zod/mini` functions (`z.optional(schema)`, `z.extend(schema, shape)`).
+
+Pass the app's classic namespace as `zod` to get a classic Zod schema, with the chain methods:
 
 ```ts
+import * as z from 'zod'
 import { toZod } from 'cvx-kit/zod' // importing the entry also installs `.toZod()` on every schema
 
-const zodSchema = toZod(documentInput)
-const same = documentInput.toZod()
+const miniSchema = toZod(documentInput) // zod/mini
+const classicSchema = toZod(documentInput, { zod: z }) // classic Zod, built with the app's namespace
+const same = documentInput.toZod() // zod/mini
 ```
 
-Carried: structure, object policies (plain `k.object` and `strip()` objects convert to stripping `z.object`, `.strict()`/`k.strictObject` to `z.strictObject`, `loose()` objects convert to `z.looseObject`, `k.jsonObject()` to `z.record(z.string(), z.json())` with Convex's key rule on its top-level keys only; nested keys are not checked), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried (throws): `catch`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 73 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
+The kit never imports classic Zod itself; the classic form only reuses the namespace the app passes.
+
+Carried: structure, object policies (plain `k.object` and `strip()` objects convert to stripping `z.object`, `.strict()`/`k.strictObject` to `z.strictObject`, `loose()` objects convert to `z.looseObject`, `k.jsonObject()` to `z.record(z.string(), z.json())` with Convex's key rule on its top-level keys only; nested keys are not checked), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range), descriptions, and `refine`, `check`, `overwrite`, `transform` and `pipe`, nested ones included. A converted schema accepts, rejects and outputs what `k` `parse` does; a `k.custom` guard is a `refine`, so it is carried too. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. `k.void()` converts to a union of `null` and `undefined`. Not carried: `catch`, which throws (`.catch() is not carried`); convert the wrapped schema and add `z.catch` yourself. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (under 80 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
 
 ## Performance model
 

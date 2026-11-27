@@ -129,6 +129,8 @@ Failed declared checks throw a `ConvexError` with data
 `{ code: 'VALIDATION', issues: [{ path, code, message }] }`. `k` schemas
 implement Standard Schema v1; `toJsonSchema` (`cvx-kit/json-schema`) and
 `toZod` (`cvx-kit/zod`) convert them for agent tools and Zod-only libraries.
+`toZod` carries refinements, checks and transforms, and `toZod(schema, { zod: z })`
+returns classic Zod built with the app's `import * as z from 'zod'`.
 See the [`k` guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/k.md).
 
 ### `cvx-kit/table`

@@ -464,10 +464,11 @@ Effect command inputs remain strict at execution: unknown object keys fail valid
 
 Set `argumentFailure` on `createEffectFoundation` to control command and
 query `input` rejections. `'validation'` (the default) keeps the decoder's own
-failure: a `k` input fails with `KValidationError`, and the API adapter throws it
-to the client as `{ code: 'VALIDATION', issues }` even when an `errors`
-projection is configured. An Effect Schema or Standard Schema input keeps its
-typed failure. `'declared'` throws `INVALID_ARGUMENTS` and reports one entry
+failure: a `k` input, bare or through `kContract`, fails with
+`ContractValidationError` in the error channel, as a Standard Schema input does,
+and an Effect Schema input keeps its `SchemaError`. Through an API adapter with
+an `errors` projection, these reach the client as `UnknownFailure`; use
+`'declared'` or a hook to send the issues. `'declared'` throws `INVALID_ARGUMENTS` and reports one entry
 with `declared: true`. The default and custom policies report validation
 failures as `UNKNOWN_FAILURE`.
 Input and details redactors are skipped for these entries. See

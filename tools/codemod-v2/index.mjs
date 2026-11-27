@@ -17,7 +17,7 @@ import {
 import { dirname, join, matchesGlob, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildReport, formatSummary } from './report.mjs'
-import { createSourceResolver } from './resolve.mjs'
+import { createSourceResolver, KIT_OR_ZOD_MODULE } from './resolve.mjs'
 import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
 import { transformSource } from './transform.mjs'
 import { chainOf, parseSource, unwrap } from './transforms/ast.mjs'
@@ -184,6 +184,8 @@ export function run(argv, cwd = process.cwd()) {
 		files.map(({ file }) => packageFor(dirname(file))?.directory).filter(Boolean),
 	)
 	for (const directory of packages) {
+		// Only a package that lists the kit can be client-only, and the override skips the boundary.
+		if (options.includePackagesWithoutKit || !packageFor(directory)?.hasKit) continue
 		const imports = []
 		const sources = collectFiles(
 			{ paths: [directory], extensions: options.extensions, ignore: [] },
@@ -191,7 +193,9 @@ export function run(argv, cwd = process.cwd()) {
 		)
 		for (const file of sources) {
 			if (packageFor(dirname(file))?.directory !== directory) continue
-			const parsed = parseSource(file, readFileSync(file, 'utf8'))
+			const text = readFileSync(file, 'utf8')
+			if (!text.includes('cvx-kit')) continue
+			const parsed = parseSource(file, text)
 			for (const statement of parsed.program.body) {
 				const module = statement.source?.value
 				if (module === 'cvx-kit' || module?.startsWith('cvx-kit/')) imports.push(module)
@@ -235,7 +239,8 @@ export function run(argv, cwd = process.cwd()) {
 	let first = files.map(
 		({ path, source }) => excluded.get(path) ?? transformSource(path, source, transformOptions),
 	)
-	let knowledge = runKnowledge(files, first, cwd)
+	const lookup = { resolve: createSourceResolver(cwd), programs: new Map() }
+	let knowledge = runKnowledge(files, first, cwd, lookup)
 	for (let pass = 0; pass <= files.length; pass++) {
 		const next = files.map(
 			({ path, source }) =>
@@ -246,7 +251,7 @@ export function run(argv, cwd = process.cwd()) {
 			(outcome, index) => JSON.stringify(outcome.facts) === JSON.stringify(first[index].facts),
 		)
 		first = next
-		knowledge = runKnowledge(files, first, cwd)
+		knowledge = runKnowledge(files, first, cwd, lookup)
 		if (stable) break
 	}
 	const results = []
@@ -329,8 +334,16 @@ function restoreStrict(options, files, cwd) {
 }
 
 /** What the first pass learned about every file, as the questions `transformSource` asks. */
-function runKnowledge(files, outcomes, cwd) {
-	const resolve = createSourceResolver(cwd)
+function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
+	// Every pass asks about the same files, so each is read and parsed once per run.
+	const programOf = (target) => {
+		let program = programs.get(target)
+		if (!program) {
+			program = parseSource(target, readFileSync(join(cwd, target), 'utf8')).program
+			programs.set(target, program)
+		}
+		return program
+	}
 	const kExports = new Map()
 	const tableExports = new Map()
 	files.forEach(({ path }, index) => {
@@ -345,7 +358,7 @@ function runKnowledge(files, outcomes, cwd) {
 			const target = resolve(from, specifier)
 			if (!target || seen.has(`${target}:${name}`)) return false
 			seen.add(`${target}:${name}`)
-			const program = parseSource(target, readFileSync(join(cwd, target), 'utf8')).program
+			const program = programOf(target)
 			const imported = new Map()
 			for (const statement of program.body) {
 				if (statement.type !== 'ImportDeclaration') continue
@@ -374,13 +387,11 @@ function runKnowledge(files, outcomes, cwd) {
 		consumerOrigin(from, specifier, name, seen = new Set()) {
 			const target = resolve(from, specifier)
 			if (!target && (specifier.startsWith('.') || specifier.startsWith('/'))) return 'unproven'
-			if (!target)
-				return !/^(?:zod(?:\/|$)|cvx-kit(?:\/|$)|convex(?:-helpers)?(?:\/|$))/.test(specifier)
+			if (!target) return !KIT_OR_ZOD_MODULE.test(specifier)
 			const key = `${target}:${name}`
 			if (seen.has(key)) return false
 			seen.add(key)
-			const source = readFileSync(join(cwd, target), 'utf8')
-			const program = parseSource(target, source).program
+			const program = programOf(target)
 			const imports = new Map()
 			const initializers = new Map()
 			let localName = name

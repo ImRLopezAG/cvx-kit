@@ -26,6 +26,7 @@ import {
 	processBoundChain,
 	processZodChain,
 } from './transforms/schema.mjs'
+import { KIT_OR_ZOD_MODULE } from './resolve.mjs'
 import { getterEdits } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
 import { isCreateTable, processTableCall, tableKind } from './transforms/tables.mjs'
@@ -614,7 +615,7 @@ function consumerOrigin(ctx, expression, seen = new Set()) {
 	return (
 		!binding.source.startsWith('.') &&
 		!binding.source.startsWith('/') &&
-		!/^(?:zod(?:\/|$)|cvx-kit(?:\/|$)|convex(?:-helpers)?(?:\/|$))/.test(binding.source)
+		!KIT_OR_ZOD_MODULE.test(binding.source)
 	)
 }
 

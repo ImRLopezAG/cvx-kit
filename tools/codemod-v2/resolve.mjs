@@ -2,6 +2,9 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join, matchesGlob, relative, resolve, sep } from 'node:path'
 import { ResolverFactory } from 'oxc-resolver'
 
+/** Modules that are Zod, the kit or Convex itself: a call into them never hands a schema to another library. */
+export const KIT_OR_ZOD_MODULE = /^(?:zod(?:\/|$)|cvx-kit(?:\/|$)|convex(?:-helpers)?(?:\/|$))/
+
 /**
  * Resolve an import to the app's source, returning a cwd-relative path or null.
  * This also resolves files outside the scanned set: callers must separately check

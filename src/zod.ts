@@ -301,8 +301,9 @@ function applyCheck(base: Mini, record: KNode, z: Factory): Mini {
 	if (record.op === 'check')
 		return base.check(
 			z.check((payload) => {
-				if (isThenable(settled(callbackOf(record)(payload.value, checkContext(payload)))))
-					checkContext(payload).addIssue({ message: 'A check must be synchronous' })
+				const context = checkContext(payload)
+				if (isThenable(settled(callbackOf(record)(payload.value, context))))
+					context.addIssue({ message: 'A check must be synchronous' })
 			}),
 		)
 	const message = messageOf(record.message)

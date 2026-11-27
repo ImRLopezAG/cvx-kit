@@ -46,4 +46,11 @@ describe('object derivation keys', () => {
 		expect(base.partial().required('a').safeParse({ b: 'x' }).success).toBe(false)
 		expect(() => base.refine(() => true).pick('a')).toThrow('would drop')
 	})
+
+	it('rejects a mask that comes before a valid options object', () => {
+		const object = k.object({ a: k.string(), b: k.string() })
+		for (const method of ['pick', 'omit', 'partial', 'required'] as const)
+			// @ts-expect-error a mask is not a key
+			expect(() => object[method]({ a: true }, { dropChecks: true })).toThrow(TypeError)
+	})
 })

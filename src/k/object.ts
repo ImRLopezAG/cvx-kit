@@ -306,16 +306,19 @@ function maskKeys(
 	const last = args[args.length - 1]
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a mask call's trailing argument may be its options object.
 	const options = typeof last === 'object' ? last : undefined
+	const keys = options === undefined ? args : args.slice(0, -1)
 	if (
-		options !== undefined &&
-		(options === null || Object.keys(options).length !== 1 || options.dropChecks !== true)
+		(options !== undefined &&
+			(options === null || Object.keys(options).length !== 1 || options.dropChecks !== true)) ||
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- an untyped caller can pass a mask before the options object.
+		!keys.every((key) => typeof key === 'string')
 	)
 		throw new TypeError(
 			`k: ${method}() expects the key-list form, e.g. ${method}('a', 'b'), optionally followed by { dropChecks: true }`,
 		)
 	derivedChecks(node, method, options)
-	// SAFETY: every argument before the trailing options object is a key.
-	return (options === undefined ? args : args.slice(0, -1)) as string[]
+	// SAFETY: every argument before the trailing options object was checked to be a key.
+	return keys as string[]
 }
 
 // The receiver's object-level checks, oldest first; throws when they would be lost silently.

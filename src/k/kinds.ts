@@ -391,13 +391,20 @@ export function custom<T = unknown>(
 	guard?: (value: unknown) => unknown,
 	message?: string | KRefineOptions,
 ): KCustom<T> {
-	// Zod accepts any truthy result from a custom guard; a promise is never a pass.
+	// Zod accepts any truthy result from a custom guard. A promise-like result goes to the parser
+	// as it is: the parser fails it and contains its rejection.
 	const schema: KSchema<any, VAny> =
 		guard === undefined
 			? anyRoot
 			: anyRoot.refine((value) => {
 					const result = guard(value)
-					return !(result instanceof Promise) && Boolean(result)
+					if (!result) return false
+					// SAFETY: any truthy value can be asked for a `then` member.
+					const then = (result as { then?: unknown }).then
+					// oxlint-disable-next-line anti-slop/no-runtime-typeof -- an untyped caller's async guard returns a thenable, native or not.
+					if (typeof then !== 'function') return true
+					// SAFETY: the parser's refine check accepts only `true`, so a thenable is a failure there.
+					return result as boolean
 				}, message)
 	// SAFETY: KCustom declares the caller's type over the same v.any() records.
 	return schema as KCustom<T>

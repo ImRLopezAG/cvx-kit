@@ -85,6 +85,11 @@ describe('k.custom', () => {
 		expect(truthy.parse('ok')).toBe('ok')
 		expect(truthy.safeParse('').success).toBe(false)
 		expect(k.custom(() => Promise.resolve(true)).safeParse('x').success).toBe(false)
+		// A non-native thenable is not a pass either, and a rejecting guard leaves no unhandled rejection.
+		// oxlint-disable-next-line unicorn/no-thenable -- the guard under test returns a hand-made thenable.
+		const thenable = { then: () => undefined }
+		expect(k.custom(() => thenable).safeParse('x').success).toBe(false)
+		expect(k.custom(() => Promise.reject(new Error('guard'))).safeParse('x').success).toBe(false)
 	})
 
 	type Brand = string & { readonly __brand: 'sku' }

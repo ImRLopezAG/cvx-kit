@@ -86,11 +86,13 @@ export type KArgsOutput<A> = [A] extends [KObject<any>]
 			? ObjectType<Props<OutputFields<A>>>
 			: DefaultFunctionArgs
 
-type ReturnValueFor<R> = [R] extends [KType]
-	? ValidatorTypeToReturnType<R['_output']>
-	: [R] extends [GenericValidator]
-		? ValidatorTypeToReturnType<Infer<R>>
-		: any
+type ReturnValueFor<R> = [R] extends [{ readonly _void: true }]
+	? void | null | Promise<void | null>
+	: [R] extends [KType]
+		? ValidatorTypeToReturnType<R['_output']>
+		: [R] extends [GenericValidator]
+			? ValidatorTypeToReturnType<Infer<R>>
+			: any
 
 type Expand<T> = { [Key in keyof T]: T[Key] }
 type Overwrite<T, U> = keyof U extends never ? T : Omit<T, keyof U> & U

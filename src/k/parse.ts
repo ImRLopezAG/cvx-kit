@@ -659,6 +659,10 @@ function walkLeaf(root: KNode, value: unknown, context: WalkContext): unknown {
 			return typeof value === 'bigint' ? value : invalidType(context, 'bigint', value)
 		case 'boolean':
 			return typeof value === 'boolean' ? value : invalidType(context, 'boolean', value)
+		case 'void':
+			return value === null || value === undefined
+				? value
+				: invalidType(context, 'null or undefined', value)
 		case 'null':
 			return value === null ? value : invalidType(context, 'null', value)
 		case 'bytes':

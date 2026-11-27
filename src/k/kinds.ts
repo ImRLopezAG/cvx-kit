@@ -133,11 +133,11 @@ export class KNumber extends KSchema<number, VFloat64<number>> {
 
 export class KInt64 extends KSchema<bigint, VInt64<bigint>> {
 	min(value: bigint, message?: KCheckMessage): this {
-		return this.link('min', value, checkMessage(message, 'min'))
+		return this.link('min', int64Bound(value), checkMessage(message, 'min'))
 	}
 
 	max(value: bigint, message?: KCheckMessage): this {
-		return this.link('max', value, checkMessage(message, 'max'))
+		return this.link('max', int64Bound(value), checkMessage(message, 'max'))
 	}
 
 	/** `> 0n`; issue `too_small`. */
@@ -164,6 +164,11 @@ export class KInt64 extends KSchema<bigint, VInt64<bigint>> {
 export class KBoolean extends KSchema<boolean, VBoolean<boolean>> {}
 
 export class KNull extends KSchema<null, VNull<null>> {}
+
+/** Return declarations only: Convex serializes a missing handler result as null. */
+export class KVoid extends KSchema<null | undefined, VNull<null>> {
+	declare readonly _void: true
+}
 
 export class KBytes extends KSchema<ArrayBuffer, VBytes<ArrayBuffer>> {}
 
@@ -340,6 +345,7 @@ const intRoot = new KNumber(null, 'int', undefined, undefined)
 const int64Root = new KInt64(null, 'int64', undefined, undefined)
 const booleanRoot = new KBoolean(null, 'boolean', undefined, undefined)
 const nullRoot = new KNull(null, 'null', undefined, undefined)
+const voidRoot = new KVoid(null, 'void', undefined, undefined)
 const bytesRoot = new KBytes(null, 'bytes', undefined, undefined)
 const anyRoot = new KAny(null, 'any', undefined, undefined)
 const jsonRoot = new KJson(null, 'json', undefined, undefined)
@@ -351,6 +357,7 @@ intRoot.native = numberRoot.native
 int64Root.native = v.int64()
 booleanRoot.native = v.boolean()
 nullRoot.native = v.null()
+voidRoot.native = nullRoot.native
 bytesRoot.native = v.bytes()
 anyRoot.native = v.any()
 
@@ -381,10 +388,17 @@ export function url(options?: string | KUrlOptions): KString {
  */
 export function custom<T = unknown>(
 	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a custom guard receives the undecoded value.
-	guard?: (value: unknown) => boolean,
+	guard?: (value: unknown) => unknown,
 	message?: string | KRefineOptions,
 ): KCustom<T> {
-	const schema: KSchema<any, VAny> = guard === undefined ? anyRoot : anyRoot.refine(guard, message)
+	// Zod accepts any truthy result from a custom guard; a promise is never a pass.
+	const schema: KSchema<any, VAny> =
+		guard === undefined
+			? anyRoot
+			: anyRoot.refine((value) => {
+					const result = guard(value)
+					return !(result instanceof Promise) && Boolean(result)
+				}, message)
 	// SAFETY: KCustom declares the caller's type over the same v.any() records.
 	return schema as KCustom<T>
 }
@@ -413,6 +427,11 @@ export function nullValue(): KNull {
 	return nullRoot
 }
 
+/** For `returns` only; clients receive null when the handler returns nothing. */
+export function voidValue(): KVoid {
+	return voidRoot
+}
+
 export function bytes(): KBytes {
 	return bytesRoot
 }
@@ -429,9 +448,21 @@ export function literal<const V extends KLiteralValue>(value: V): KLiteral<V> {
 	return new KLiteral<V>(null, 'literal', value, undefined)
 }
 
-export function enumOf<const V extends readonly [string, ...string[]]>(values: V): KEnum<V> {
-	if (values.length === 0) throw new Error('k.enum() needs at least one value')
-	return new KEnum<V>(null, 'enum', Object.freeze(values), undefined)
+export function enumOf<
+	const V extends readonly [string, ...string[]] | Readonly<Record<string, string>>,
+>(
+	values: V,
+): KEnum<V extends readonly [string, ...string[]] ? V : KEnumValues<Extract<V[keyof V], string>>> {
+	const entries = Array.isArray(values)
+		? values
+		: values !== null &&
+			  (Object.getPrototypeOf(values) === Object.prototype ||
+					Object.getPrototypeOf(values) === null)
+			? Object.values(values)
+			: []
+	return enumValues<
+		V extends readonly [string, ...string[]] ? V : KEnumValues<Extract<V[keyof V], string>>
+	>(entries)
 }
 
 export function id<T extends string>(table: T): KId<T> {
@@ -477,6 +508,18 @@ function rootOf(node: KNode): KNode {
 }
 
 function enumValues<T extends readonly [string, ...string[]]>(values: readonly string[]): KEnum<T> {
-	// SAFETY: callers pass a subset of an enum's values, which T names (for extract, in this enum's order).
-	return enumOf(values as T)
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- enum definitions can come from untyped JavaScript callers.
+	if (values.length === 0 || !values.every((value) => typeof value === 'string'))
+		throw new TypeError(
+			'k.enum() needs at least one value: a string array or an object of string values',
+		)
+	return new KEnum<T>(null, 'enum', Object.freeze(values), undefined)
+}
+
+function int64Bound(value: bigint): bigint {
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- normalize safe numeric bounds from JavaScript callers at definition time.
+	if (typeof value === 'bigint') return value
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- BigInt must only receive a safe integer number here.
+	if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value)
+	throw new TypeError('k.int64() bounds must be bigints or safe integer numbers')
 }

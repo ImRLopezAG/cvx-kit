@@ -347,3 +347,15 @@ const transformIssueAssertions: [
 	Assert<Equal<typeof k.NEVER, never>>,
 ] = [true, true, true]
 void transformIssueAssertions
+
+const keyedPatch = k.object({ a: k.string(), b: k.string() }).partial('a')
+const keyedPatchType: Assert<Equal<k.output<typeof keyedPatch>, { a?: string; b: string }>> = true
+void keyedPatchType
+// @ts-expect-error only declared fields can be made optional.
+keyedPatch.partial('zzz')
+
+const objectEnum = k.enum({ A: 'a', B: 'b' })
+const objectEnumType: Assert<Equal<k.output<typeof objectEnum>, 'a' | 'b'>> = true
+void objectEnumType
+// @ts-expect-error int64 bounds remain bigint-only in TypeScript.
+k.int64().min(0)

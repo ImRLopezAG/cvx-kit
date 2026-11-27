@@ -313,6 +313,7 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 			case 'isoDate':
 			case 'isoDateTime':
 				return { type: 'string' }
+			case 'int':
 			case 'timestamp':
 				return { type: 'integer' }
 			default:
@@ -341,6 +342,7 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 			return { type: 'integer', minimum: 0, maximum: maxTimestamp }
 		case 'boolean':
 			return { type: 'boolean' }
+		case 'void':
 		case 'null':
 			return { type: 'null' }
 		case 'bytes':

@@ -160,6 +160,7 @@ function compileRoot(node: KNode): KRequiredValidator {
 			return v.int64()
 		case 'boolean':
 			return v.boolean()
+		case 'void':
 		case 'null':
 			return v.null()
 		case 'bytes':

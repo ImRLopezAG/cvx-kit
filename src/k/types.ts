@@ -9,6 +9,7 @@ export type KOp =
 	| 'int64'
 	| 'boolean'
 	| 'null'
+	| 'void'
 	| 'bytes'
 	| 'any'
 	| 'json'

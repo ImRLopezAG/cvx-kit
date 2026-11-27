@@ -21,6 +21,7 @@ export type {
 	KJson,
 	KLiteral,
 	KNull,
+	KVoid,
 	KNumber,
 	KRecord,
 	KRecordKey,

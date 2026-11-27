@@ -80,6 +80,13 @@ describe('formats at boundaries', () => {
 })
 
 describe('k.custom', () => {
+	it('passes on any truthy guard result, as Zod does, and never on a promise', () => {
+		const truthy = k.custom<string>((value) => value)
+		expect(truthy.parse('ok')).toBe('ok')
+		expect(truthy.safeParse('').success).toBe(false)
+		expect(k.custom(() => Promise.resolve(true)).safeParse('x').success).toBe(false)
+	})
+
 	type Brand = string & { readonly __brand: 'sku' }
 	const isSku = (value: unknown): value is Brand => /^SKU-/.test(String(value))
 

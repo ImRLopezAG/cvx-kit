@@ -146,6 +146,8 @@ function rootSchema(root: KNode, policy: 'strip' | 'strict' | 'loose'): Mini {
 			return z.bigint()
 		case 'boolean':
 			return z.boolean()
+		case 'void':
+			return z.union([z.null(), z.undefined()])
 		case 'null':
 			return z.null()
 		case 'bytes':

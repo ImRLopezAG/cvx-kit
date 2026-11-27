@@ -234,3 +234,17 @@ describe('review fixes', () => {
 		})
 	})
 })
+
+describe('output schema below .catch', () => {
+	it('does not bound an integer whose catch value is returned unchecked', () => {
+		const schema = k.int().catch(1e16)
+		expect(schema.parse('invalid')).toBe(1e16)
+		const output = toJsonSchema(schema, { io: 'output' })
+		expect(output).not.toHaveProperty('maximum')
+		expect(output).not.toHaveProperty('minimum')
+		expect(toJsonSchema(k.int(), { io: 'output' })).toHaveProperty(
+			'maximum',
+			Number.MAX_SAFE_INTEGER,
+		)
+	})
+})

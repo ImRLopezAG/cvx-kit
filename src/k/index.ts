@@ -17,6 +17,7 @@ import {
 	string,
 	union,
 	url,
+	voidValue,
 } from './kinds'
 import { isoDate, isoDateTime, timestamp } from './dates'
 import { NEVER } from './issues'
@@ -33,6 +34,7 @@ export const k = {
 	int64,
 	boolean,
 	null: nullValue,
+	void: voidValue,
 	bytes,
 	any,
 	custom,

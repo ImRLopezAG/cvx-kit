@@ -90,3 +90,29 @@ describe('k.int64 bounds', () => {
 		expect(zod.safeParse(2n ** 60n + 1n).success).toBe(false)
 	})
 })
+
+describe('int64 bound definitions', () => {
+	for (const method of ['min', 'max'] as const) {
+		it(`${method} normalizes safe integers before conversion and parsing`, () => {
+			// SAFETY: JavaScript callers may supply numbers; the TypeScript API remains bigint-only.
+			// oxlint-disable-next-line anti-slop/no-unknown-parameters -- deliberately exercise untyped bounds through the public method.
+			const bound = k.int64()[method] as (value: unknown) => ReturnType<typeof k.int64>
+			const schema = bound.call(k.int64(), 0)
+			const bigint = k.int64()[method](0n)
+			expect(schema.arg).toBe(0n)
+			expect(schema.parse(0n)).toBe(0n)
+			expect(schema.safeParse(method === 'min' ? -1n : 1n).success).toBe(false)
+			expect(toJsonSchema(schema)).toEqual(toJsonSchema(bigint))
+			for (const value of [-1n, 0n, 1n])
+				expect(toZod(schema).safeParse(value).success).toBe(toZod(bigint).safeParse(value).success)
+		})
+
+		it(`${method} refuses non-integer and unsafe bounds at definition`, () => {
+			// SAFETY: exercise invalid JavaScript calls.
+			// oxlint-disable-next-line anti-slop/no-unknown-parameters -- deliberately exercise untyped bounds through the public method.
+			const bound = k.int64()[method] as (value: unknown) => ReturnType<typeof k.int64>
+			for (const value of [1.5, NaN, '0', 2 ** 60])
+				expect(() => bound.call(k.int64(), value)).toThrow(TypeError)
+		})
+	}
+})

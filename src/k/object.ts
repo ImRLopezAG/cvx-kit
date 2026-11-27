@@ -86,12 +86,21 @@ export class KObject<F extends KFields> extends KSchema<
 	 * Every field optional, for patches: a field that had a default becomes plain optional, so an omitted
 	 * field stays omitted instead of overwriting a stored value. Other field behaviour is kept.
 	 */
-	partial(options?: KDeriveOptions): KObject<{ [K in keyof F]: KOptional<F[K]> }> {
-		derivedChecks(this, 'partial', options)
+	partial<K extends keyof F & string = keyof F & string>(...keys: K[]): KPartialObject<F, K>
+	partial(options?: KDeriveOptions): KPartialObject<F, keyof F & string>
+	partial<K extends keyof F & string>(...keys: KMaskArgs<K>): KPartialObject<F, K>
+	partial(...keys: (string | KDeriveOptions | undefined)[]): KType {
+		const names = maskKeys(
+			this,
+			'partial',
+			keys.filter((key) => key !== undefined),
+		)
 		const fields = fieldsOf(this)
+		const chosen = names.length === 0 ? null : new Set<string>(names)
 		const out: Record<string, KType> = {}
-		for (const key in fields) setOwn(out, key, optionalOf(fields[key]))
-		return withPolicy(this, object(retyped<{ [K in keyof F]: KOptional<F[K]> }>(out)))
+		for (const key in fields)
+			setOwn(out, key, chosen === null || chosen.has(key) ? optionalOf(fields[key]) : fields[key])
+		return withPolicy(this, object(out))
 	}
 
 	/**
@@ -138,6 +147,11 @@ export class KObject<F extends KFields> extends KSchema<
 		return this.link('loose', undefined, undefined)
 	}
 }
+
+/** The result of `partial(...keys)`. */
+export type KPartialObject<F extends KFields, K extends string> = KObject<{
+	[P in keyof F]: P extends K ? KOptional<F[P]> : F[P]
+}>
 
 /** The result of `required(...keys)`. */
 export type KRequiredObject<F extends KFields, K extends string> = KObject<{
@@ -295,6 +309,13 @@ function maskKeys(
 	const last = args[args.length - 1]
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a mask call's trailing argument may be its options object.
 	const options = typeof last === 'object' ? last : undefined
+	if (
+		options !== undefined &&
+		(options === null || Object.keys(options).length !== 1 || options.dropChecks !== true)
+	)
+		throw new TypeError(
+			`k: ${method}() expects the key-list form, e.g. ${method}('a', 'b'), optionally followed by { dropChecks: true }`,
+		)
 	derivedChecks(node, method, options)
 	// SAFETY: every argument before the trailing options object is a key.
 	return (options === undefined ? args : args.slice(0, -1)) as string[]

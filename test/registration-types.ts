@@ -256,3 +256,11 @@ const carried: [
 	Assert<Equal<typeof getterDeclared, typeof dataDeclared>>,
 ] = [true, true, true, true, true, true, true, true, true]
 void carried
+
+query({ returns: k.void(), handler: () => {} })
+query({ returns: k.void(), handler: async () => {} })
+query({
+	returns: k.void(),
+	// @ts-expect-error a void return declaration cannot return a string.
+	handler: () => 'value',
+})

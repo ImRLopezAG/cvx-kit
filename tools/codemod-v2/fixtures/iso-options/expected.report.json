@@ -1,0 +1,13 @@
+{
+  "status": "mixed",
+  "skipped": [
+    {
+      "line": 3,
+      "code": "iso-options"
+    },
+    {
+      "line": 4,
+      "code": "iso-options"
+    }
+  ]
+}

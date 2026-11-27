@@ -62,7 +62,7 @@ export function transformSource(path, source, options = {}) {
 	}
 	if (parsed.errors.length > 0) return failure(path, source, parsed.errors[0].message)
 	if (parsed.comments.some((comment) => KEEP_COMMENT.test(comment.value.trim()))) {
-		return result(path, source, 'kept')
+		return keptByMarker(path, source, parsed.program, options)
 	}
 	try {
 		return rewrite(path, source, parsed.program, {
@@ -169,11 +169,21 @@ function rewrite(path, source, program, options) {
 			if (name === 'k') ctx.kConflict ??= unit.declaration
 		}
 	}
-	if (ctx.zodNamespaces.size === 0 && ctx.zodNamed.size === 0 && ctx.kit.size === 0 && !ctx.hasK && ctx.v2Tables.size === 0) {
-		return result(path, source, 'untouched', { facts: factsOf(ctx, units, () => false) })
-	}
 	classifyBindings(ctx, units)
 	for (const unit of units) scanUnit(ctx, unit)
+	for (const unit of units) scanConsumers(ctx, unit)
+	walk(program, (node) => {
+		const value =
+			node.type === 'Literal'
+				? node.value
+				: node.type === 'TemplateLiteral' && node.expressions.length === 0
+					? node.quasis[0].value.cooked
+					: null
+		if (value !== 'cvx-kit/zod-table' && value !== 'zid' && !KIT_RENAMES.has(value)) return
+		if (ctx.parents.get(node)?.type === 'ImportDeclaration') return
+		const unit = units.find((item) => item.node.start <= node.start && node.end <= item.node.end)
+		if (unit) addManual(ctx, unit, node, 'v1-entry-string')
+	})
 	if (options.getters) for (const unit of units) unit.getterEdits = getterEdits(unit.node)
 	const left = decideComponents(ctx, units)
 	if (ctx.kConflict && units.some((unit) => unit.edits.length > 0)) {
@@ -183,6 +193,19 @@ function rewrite(path, source, program, options) {
 	const isLeft = (unit) => left.has(unit)
 	for (const unit of units) {
 		if (!isLeft(unit)) continue
+		walk(unit.node, (node) => {
+			if (
+				node.type !== 'CallExpression' ||
+				node.callee.type !== 'MemberExpression' ||
+				node.callee.property.name !== 'pipe'
+			)
+				return
+			const arg = node.arguments[0]
+			if (arg?.type !== 'Identifier') return
+			const binding = ctx.imported.get(arg.name)
+			if (binding && ctx.options.run?.isK(ctx.path, binding.source, binding.imported))
+				addManual(ctx, unit, node, 'held-pipe-to-k')
+		})
 		for (const node of unit.zidRefs) {
 			const binding = ctx.kit.get(node.name)
 			if (binding?.imported === 'zid' && binding.module === 'cvx-kit/zod-table')
@@ -191,7 +214,7 @@ function rewrite(path, source, program, options) {
 	}
 	const facts = factsOf(ctx, units, isLeft)
 	const editsOf = (unit) =>
-		isLeft(unit) ? unit.kitEdits : [...unit.edits, ...unit.getterEdits, ...unit.kitEdits]
+		isLeft(unit) ? [] : [...unit.edits, ...unit.getterEdits, ...unit.kitEdits]
 	const applied = units.filter((unit) => !isLeft(unit) && editsOf(unit).length > 0)
 	const needsK = applied.some((unit) => unit.edits.some((edit) => edit.usesK))
 	const imports = planImports(ctx, (index) => isLeft(units[index]), needsK)
@@ -241,7 +264,9 @@ function factsOf(ctx, units, isLeft) {
 		}
 	}
 	const kExports = [...exports].filter(([, local]) => kLocals.has(local)).map(([name]) => name)
-	const tableExports = [...exports].filter(([, local]) => kLocals.has(local) && ctx.tableBindings.has(local)).map(([name]) => name)
+	const tableExports = [...exports]
+		.filter(([, local]) => kLocals.has(local) && ctx.tableBindings.has(local))
+		.map(([name]) => name)
 	return { kExports, tableExports }
 }
 
@@ -286,8 +311,12 @@ function summarize(
 	}
 	skipped.sort((left, right) => left.line - right.line || left.column - right.column)
 	info.sort((left, right) => left.line - right.line || left.column - right.column)
-	const remainingZod = units.some((unit) => isLeft(unit) && unit.zodRefs > 0)
-	const noChangeStatus = remainingZod ? (ctx.hasK || ctx.v2Tables.size > 0 ? 'mixed' : 'kept') : 'untouched'
+	const remainingZod = units.some((unit) => isLeft(unit) && counted(unit))
+	const noChangeStatus = remainingZod
+		? ctx.hasK || ctx.v2Tables.size > 0
+			? 'mixed'
+			: 'kept'
+		: 'untouched'
 	return result(path, output, output === source ? noChangeStatus : status, {
 		rewritten,
 		skipped,
@@ -314,7 +343,15 @@ function isZodNumber(ctx, chain) {
 
 /** Top-level `const` bindings the codemod can prove are schemas, tables or table factories. */
 function classifyBindings(ctx, units) {
-	const bindings = [ctx.schemaBindings, ctx.tableBindings, ctx.tableFactories, ctx.refinedBindings, ctx.numberBindings, ctx.integerBindings, ctx.objectConsts]
+	const bindings = [
+		ctx.schemaBindings,
+		ctx.tableBindings,
+		ctx.tableFactories,
+		ctx.refinedBindings,
+		ctx.numberBindings,
+		ctx.integerBindings,
+		ctx.objectConsts,
+	]
 	const size = () => bindings.reduce((total, set) => total + set.size, 0)
 	for (let pass = 0; pass <= units.length; pass++) {
 		const before = size()
@@ -384,8 +421,18 @@ function scanUnit(ctx, unit) {
 		if (ctx.owners.has(name)) unit.refs.push(node)
 		const member = parent?.type === 'MemberExpression' && parent.object === node
 		if (!member) continue
-		if (ctx.schemaBindings.has(name)) processBoundChain(ctx, unit, node, false)
-		else if (ctx.tableBindings.has(name)) processBoundChain(ctx, unit, node, true)
+		const imported = ctx.imported.get(name)
+		const external = imported && !ctx.owners.get(name)?.some((owner) => !owner.isType)
+		if (
+			ctx.tableBindings.has(name) ||
+			(external && ctx.options.run?.isTable(ctx.path, imported.source, imported.imported))
+		)
+			processBoundChain(ctx, unit, node, true)
+		else if (
+			ctx.schemaBindings.has(name) ||
+			(external && ctx.options.run?.isK(ctx.path, imported.source, imported.imported))
+		)
+			processBoundChain(ctx, unit, node, false)
 	}
 	if (unit.safeResults.size === 0) return
 	walk(unit.node, (node) => {
@@ -405,17 +452,21 @@ function unprovenSchemaCall(ctx, unit, call) {
 	if (callee.type !== 'MemberExpression' || callee.computed) return
 	const name = callee.property.name
 	const mask =
-		(name === 'pick' || name === 'omit') &&
+		['pick', 'omit', 'partial', 'required'].includes(name) &&
 		call.arguments.length === 1 &&
-		call.arguments[0].type === 'ObjectExpression' &&
-		call.arguments[0].properties.some(
-			(property) => property.type === 'Property' && unwrap(property.value)?.value === true,
-		)
+		['ObjectExpression', 'Identifier', 'MemberExpression'].includes(unwrap(call.arguments[0]).type)
 	if (!mask) return
 	const { root } = chainOf(callee.object)
 	if (root.type === 'Identifier') {
 		if (ctx.zodNamespaces.has(root.name)) return
 		if (ctx.schemaBindings.has(root.name) || ctx.tableBindings.has(root.name)) return
+		const imported = ctx.imported.get(root.name)
+		if (
+			imported &&
+			(ctx.options.run?.isTable(ctx.path, imported.source, imported.imported) ||
+				ctx.options.run?.isK(ctx.path, imported.source, imported.imported))
+		)
+			return
 		if (root.name === 'k' && ctx.hasK) return
 	}
 	addManual(ctx, unit, { start: callee.property.start, end: call.end }, 'unproven-mask')
@@ -442,6 +493,30 @@ function kitReference(ctx, unit, node, parent) {
 	unit.kitRefs++
 	const called = parent?.type === 'CallExpression' && parent.callee === node
 	if (called && SCHEMA_ARGUMENT_FUNCTIONS.has(binding.imported)) unit.contexts.push(parent)
+	if (binding.imported === 'zodToConvex' || binding.imported === 'convexToZod') {
+		const argument = called ? parent.arguments[0] : null
+		if (
+			binding.imported === 'zodToConvex' &&
+			parent.arguments?.length === 1 &&
+			isSchemaExpression(ctx, argument)
+		) {
+			binding.converted ??= new Set()
+			binding.converted.add(unit.index)
+			unit.contexts.push(parent)
+			const simple = argument.type === 'Identifier' || argument.type === 'MemberExpression'
+			addEdit(unit, { start: parent.start, end: argument.start }, simple ? '' : '(')
+			addEdit(unit, { start: argument.end, end: parent.end }, simple ? '.validator' : ').validator')
+		} else {
+			binding.bridgeUnknown = true
+			addManual(
+				ctx,
+				unit,
+				called ? parent : node,
+				binding.imported === 'convexToZod' ? 'convex-to-zod' : 'zod-to-convex-unknown',
+			)
+		}
+		return
+	}
 	if (ZOD_INTEROP.has(binding.imported)) {
 		addSkip(ctx, unit, called ? parent : node, 'zod-interop')
 		return
@@ -510,4 +585,82 @@ function decideComponents(ctx, units) {
 		addSkip(ctx, unit, linkedBy.get(unit) ?? unit.node, 'mixed-reference')
 	}
 	return left
+}
+
+/** Root a builder chain through local const initializers and source imports. */
+function consumerOrigin(ctx, expression, seen = new Set()) {
+	const { root } = chainOf(unwrap(expression))
+	if (root.type !== 'Identifier' || seen.has(root)) return false
+	seen.add(root)
+	for (let scope = ctx.parents.get(root); scope; scope = ctx.parents.get(scope)) {
+		if (scope.type !== 'BlockStatement' && scope.type !== 'Program') continue
+		for (const statement of scope.body) {
+			const declaration = statement.declaration ?? statement
+			if (declaration.type !== 'VariableDeclaration') continue
+			const local = declaration.declarations.find(
+				(item) => item.id.type === 'Identifier' && item.id.name === root.name,
+			)
+			if (local)
+				return declaration.kind === 'const' && local.init
+					? consumerOrigin(ctx, local.init, seen)
+					: false
+		}
+	}
+	if (isShadowed(root, root.name, ctx.parents)) return false
+	const binding = ctx.imported.get(root.name)
+	if (!binding) return false
+	if (ctx.options.run?.consumerOrigin)
+		return ctx.options.run.consumerOrigin(ctx.path, binding.source, binding.imported)
+	return (
+		!binding.source.startsWith('.') &&
+		!binding.source.startsWith('/') &&
+		!/^(?:zod(?:\/|$)|cvx-kit(?:\/|$)|convex(?:-helpers)?(?:\/|$))/.test(binding.source)
+	)
+}
+
+function scanConsumers(ctx, unit) {
+	walk(unit.node, (call) => {
+		if (call.type !== 'CallExpression') return
+		const origin = consumerOrigin(ctx, call.callee)
+		if (!origin) return
+		for (const argument of call.arguments) {
+			let local = false
+			let imported = false
+			walk(argument, (node, parent) => {
+				if (
+					node.type !== 'Identifier' ||
+					!isReference(node, parent) ||
+					isShadowed(node, node.name, ctx.parents)
+				)
+					return
+				if (ctx.zodNamespaces.has(node.name) || ctx.schemaBindings.has(node.name)) local = true
+				const binding = ctx.imported.get(node.name)
+				if (binding && ctx.options.run?.isK(ctx.path, binding.source, binding.imported))
+					imported = true
+			})
+			if (origin === 'unproven') {
+				if (local || imported) addManual(ctx, unit, argument, 'zod-consumer-unproven')
+				continue
+			}
+			if (local) {
+				unit.contexts.push(argument)
+				addSkip(ctx, unit, argument, 'zod-consumer')
+			}
+			if (imported) addManual(ctx, unit, argument, 'zod-consumer-import')
+		}
+	})
+}
+
+/** A file marker only counts actual held Zod declarations, rather than type-only uses. */
+function keptByMarker(path, source, program, options) {
+	const ctx = createContext(path, source, program, options)
+	collectImports(ctx)
+	const units = program.body.filter((node) => node.type !== 'ImportDeclaration').map(createUnit)
+	classifyBindings(ctx, units)
+	for (const unit of units) scanUnit(ctx, unit)
+	const held = units.filter((unit) => counted(unit) && unit.zodRefs > 0)
+	return result(path, source, held.length > 0 ? 'kept' : 'untouched', {
+		declarations: { rewritten: 0, left: held.length },
+		skipped: held.map((unit) => ({ ...siteAt(ctx, unit.node), code: 'keep-zod-marker' })),
+	})
 }

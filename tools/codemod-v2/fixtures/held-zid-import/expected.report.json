@@ -1,0 +1,13 @@
+{
+  "status": "mixed",
+  "skipped": [
+    {
+      "line": 3,
+      "code": "zid-in-zod-statement"
+    },
+    {
+      "line": 3,
+      "code": "brand"
+    }
+  ]
+}

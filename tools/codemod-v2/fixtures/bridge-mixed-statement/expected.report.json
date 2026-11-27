@@ -1,0 +1,9 @@
+{
+  "status": "rewritten",
+  "skipped": [
+    {
+      "line": 4,
+      "code": "zod-to-convex-unknown"
+    }
+  ]
+}

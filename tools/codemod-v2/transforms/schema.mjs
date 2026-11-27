@@ -1,7 +1,7 @@
 // Factories and chain methods: rewrites `z.<factory>(…)` to `k.<factory>(…)` and
 // the chain methods applied to a proven schema, or records why a site stays Zod.
 import { chainOf, isShadowed, outerChain, unwrap, walk } from './ast.mjs'
-import { addEdit, addInfo, addSkip } from './sites.mjs'
+import { addEdit, addInfo, addManual, addSkip } from './sites.mjs'
 
 const FACTORIES = new Map([
 	['string', 'string'],
@@ -26,6 +26,8 @@ const FACTORIES = new Map([
 	['email', 'email'],
 	['url', 'url'],
 	['custom', 'custom'],
+	['void', 'void'],
+	['instanceof', 'bytes'],
 ])
 
 const ISO_FACTORIES = new Map([
@@ -105,7 +107,6 @@ function optionsMap(argument, allowed) {
 const REPORTED_FACTORIES = new Map([
 	['lazy', 'recursive'],
 	['tuple', 'tuple'],
-	['instanceof', 'custom'],
 	['coerce', 'coerce'],
 	['preprocess', 'coerce'],
 	['codec', 'coerce'],
@@ -186,6 +187,8 @@ export const SCHEMA_METHODS = new Set([
 	...METHOD_RENAMES.keys(),
 	'pick',
 	'omit',
+	'normalize',
+	'startsWith',
 ])
 
 /** Whether `expression` evaluates to a Zod schema the codemod can prove. */
@@ -301,6 +304,57 @@ export function processZodChain(ctx, unit, id) {
 	}
 	if (!target || steps[next]?.kind !== 'call') {
 		addSkip(ctx, unit, span(next), 'unknown-factory')
+		return
+	}
+	const call = steps[next].node
+	if (first.name === 'iso' && call.arguments.length > 0) {
+		const arg = unwrap(call.arguments[0])
+		const offset =
+			factory.name === 'datetime' &&
+			call.arguments.length === 1 &&
+			arg.type === 'ObjectExpression' &&
+			arg.properties.length === 1 &&
+			arg.properties[0].type === 'Property' &&
+			!arg.properties[0].computed &&
+			arg.properties[0].key.name === 'offset' &&
+			arg.properties[0].value.value === true
+		if (!offset) {
+			addSkip(ctx, unit, span(next), 'iso-options')
+			return
+		}
+		addEdit(unit, arg, '')
+	}
+	if (first.name === 'instanceof') {
+		const arg = call.arguments[0]
+		if (
+			call.arguments.length !== 1 ||
+			arg?.type !== 'Identifier' ||
+			arg.name !== 'ArrayBuffer' ||
+			ctx.owners.has('ArrayBuffer') ||
+			ctx.imported.has('ArrayBuffer') ||
+			isShadowed(arg, 'ArrayBuffer', ctx.parents)
+		) {
+			addSkip(ctx, unit, span(next), 'custom')
+			return
+		}
+		addEdit(unit, arg, '')
+		addInfo(ctx, unit, span(next), 'bytes-validator-narrowed')
+	}
+	if (first.name === 'void') {
+		let parent = ctx.parents.get(outer)
+		if (
+			parent?.type !== 'Property' ||
+			parent.value !== outer ||
+			parent.computed ||
+			(parent.key.name ?? parent.key.value) !== 'returns' ||
+			call.arguments.length !== 0
+		) {
+			addSkip(ctx, unit, span(next), 'void-position')
+			return
+		}
+	}
+	if (first.name === 'enum' && !stringEnumArgument(ctx, call.arguments[0])) {
+		addSkip(ctx, unit, span(next), 'enum-unproven')
 		return
 	}
 	if (first.name === 'custom' && !customArgumentsMap(steps[next].node)) {
@@ -513,7 +567,27 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 			checkOptions(ctx, unit, call.arguments[1])
 		} else if (METHOD_RENAMES.has(step.name) && call.arguments.length === 0) {
 			addEdit(unit, step.node.property, METHOD_RENAMES.get(step.name))
-		} else if (step.name === 'pick' || step.name === 'omit') {
+		} else if (step.name === 'normalize') {
+			const arg = call.arguments[0]
+			if (
+				call.arguments.length === 0 ||
+				(call.arguments.length === 1 &&
+					arg.type === 'Literal' &&
+					['NFC', 'NFD', 'NFKC', 'NFKD'].includes(arg.value))
+			) {
+				addEdit(
+					unit,
+					{ start: step.node.property.start, end: call.end },
+					`overwrite(value => value.normalize(${arg ? ctx.source.slice(arg.start, arg.end) : ''}))`,
+				)
+			} else addSkip(ctx, unit, site, 'normalize-options')
+		} else if (step.name === 'startsWith') {
+			addSkip(ctx, unit, site, 'string-prefix')
+		} else if (
+			step.name === 'pick' ||
+			step.name === 'omit' ||
+			((step.name === 'partial' || step.name === 'required') && call.arguments.length > 0)
+		) {
 			maskStep(ctx, unit, call, site)
 		} else if (step.name === 'catch' && readsZodCatchContext(call)) {
 			addSkip(ctx, unit, site, 'catch')
@@ -734,7 +808,7 @@ function maskStep(ctx, unit, call, site) {
 	const mask = args.length === 1 ? args[0] : null
 	const keys = mask?.type === 'ObjectExpression' ? maskKeys(mask) : null
 	if (!keys || keys.length === 0) {
-		addSkip(ctx, unit, site, 'mask-dynamic')
+		addManual(ctx, unit, site, 'mask-dynamic')
 		return
 	}
 	addEdit(unit, mask, keys.map((key) => `'${key.replace(/[\\']/g, '\\$&')}'`).join(', '))
@@ -778,4 +852,39 @@ function trackSafeParse(ctx, unit, steps, index, outer) {
 			addSkip(ctx, unit, property, 'zod-introspection')
 		}
 	}
+}
+
+/** Only enum values proven to be strings can use the kit's enum object form. */
+export function stringEnumArgument(ctx, argument) {
+	const node = unwrap(argument)
+	if (!node) return false
+	if (node.type === 'ArrayExpression') return true
+	if (node.type === 'ObjectExpression')
+		return node.properties.every(
+			(property) =>
+				property.type === 'Property' &&
+				!property.computed &&
+				property.value.type === 'Literal' &&
+				property.value.value === String(property.value.value),
+		)
+	if (node.type !== 'Identifier' || (ctx.parents && isShadowed(node, node.name, ctx.parents)))
+		return false
+	for (const statement of ctx.program.body) {
+		const declaration = statement.declaration ?? statement
+		if (declaration.type === 'TSEnumDeclaration' && declaration.id.name === node.name) {
+			return (declaration.body?.members ?? declaration.members).every(
+				(member) =>
+					member.initializer?.type === 'Literal' &&
+					member.initializer.value === String(member.initializer.value),
+			)
+		}
+		if (declaration.type !== 'VariableDeclaration' || declaration.kind !== 'const') continue
+		const found = declaration.declarations.find((item) => item.id.name === node.name)
+		if (found && unwrap(found.init)?.type === 'ObjectExpression')
+			return stringEnumArgument(ctx, found.init)
+	}
+	const imported = ctx.imported.get(node.name)
+	return imported
+		? ctx.options.run?.isStringEnum(ctx.path, imported.source, imported.imported) === true
+		: false
 }

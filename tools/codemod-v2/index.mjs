@@ -4,7 +4,7 @@
 // --no-getters keeps function args / returns as data properties.
 // --native-number-bounds omits .finite() on k.number(); integers stay safe.
 // Without --write this is a dry run, apart from an optional report.
-// Two passes resolve imported schema type helpers across the run.
+// Repeated knowledge passes resolve imported schemas and their held components across the run.
 import {
 	existsSync,
 	lstatSync,
@@ -20,6 +20,8 @@ import { buildReport, formatSummary } from './report.mjs'
 import { createSourceResolver } from './resolve.mjs'
 import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
 import { transformSource } from './transform.mjs'
+import { chainOf, parseSource, unwrap } from './transforms/ast.mjs'
+import { stringEnumArgument } from './transforms/schema.mjs'
 
 export const HELP = `Usage: cvx-kit-codemod-v2 <path…> [options]
 
@@ -42,7 +44,8 @@ outside the given paths is skipped and listed in the report (outsideRoots), so -
 edits a file outside them.
 
 Exit codes: 0 when every file parsed (skipped sites are listed, not failures); 1 when a file
-failed to parse (the report is still written; see its "error" files) or the arguments are invalid.
+failed to parse, a held Zod pipe targets a rewritten k schema, or the arguments are invalid.
+The report is still written for parse errors and held pipes.
 
 Number bounds: k.int() and .int() reject integers outside the safe range by default.
 The codemod emits integers without redundant .safe() calls. Zod's z.number() refuses NaN and
@@ -53,7 +56,7 @@ finite-number checks, never integer safety.
 --restore-strict <ref> is for apps migrated with the 2.0.0-beta.0 to beta.2 codemod, which wrote
 z.strictObject(...) and .strict() as a plain k.object(...). Since beta.3 that strips unknown keys
 under parse. This mode rewrites nothing else: it reads each file as it was at <ref> (the commit
-before the migration), pairs its Zod objects with the file's current ones by their field names and
+before the migration), pairs its Zod objects with the file's current ones by their bindings and field names and
 turns each k.object that was strict into k.strictObject. Sites it cannot pair are listed.
 `
 
@@ -175,12 +178,37 @@ export function run(argv, cwd = process.cwd()) {
 		source: readFileSync(file, 'utf8'),
 	}))
 	if (options.restoreStrict !== undefined) return restoreStrict(options, files, cwd)
-	const packageFor = packageLookup(cwd)
+	const packageFor = packageLookup()
+	const clientOnly = new Set()
+	const packages = new Set(
+		files.map(({ file }) => packageFor(dirname(file))?.directory).filter(Boolean),
+	)
+	for (const directory of packages) {
+		const imports = []
+		const sources = collectFiles(
+			{ paths: [directory], extensions: options.extensions, ignore: [] },
+			cwd,
+		)
+		for (const file of sources) {
+			if (packageFor(dirname(file))?.directory !== directory) continue
+			const parsed = parseSource(file, readFileSync(file, 'utf8'))
+			for (const statement of parsed.program.body) {
+				const module = statement.source?.value
+				if (module === 'cvx-kit' || module?.startsWith('cvx-kit/')) imports.push(module)
+			}
+		}
+		if (
+			imports.length > 0 &&
+			imports.every((entry) => /^cvx-kit\/(?:react|client)(?:\/|$)/.test(entry))
+		)
+			clientOnly.add(directory)
+	}
 	const packagesWithoutKit = new Set()
 	const excluded = new Map()
 	for (const { file, path, source } of files) {
 		const pkg = packageFor(dirname(file))
-		if (!pkg || pkg.hasKit || options.includePackagesWithoutKit) continue
+		if (!pkg || (pkg.hasKit && !clientOnly.has(pkg.directory)) || options.includePackagesWithoutKit)
+			continue
 		packagesWithoutKit.add(relative(cwd, pkg.directory) || '.')
 		excluded.set(path, {
 			path,
@@ -204,10 +232,23 @@ export function run(argv, cwd = process.cwd()) {
 		getters: options.getters,
 		nativeNumberBounds: options.nativeNumberBounds,
 	}
-	const first = files.map(
+	let first = files.map(
 		({ path, source }) => excluded.get(path) ?? transformSource(path, source, transformOptions),
 	)
-	const knowledge = runKnowledge(files, first, cwd)
+	let knowledge = runKnowledge(files, first, cwd)
+	for (let pass = 0; pass <= files.length; pass++) {
+		const next = files.map(
+			({ path, source }) =>
+				excluded.get(path) ??
+				transformSource(path, source, { ...transformOptions, run: knowledge }),
+		)
+		const stable = next.every(
+			(outcome, index) => JSON.stringify(outcome.facts) === JSON.stringify(first[index].facts),
+		)
+		first = next
+		knowledge = runKnowledge(files, first, cwd)
+		if (stable) break
+	}
 	const results = []
 	for (const { file, path, source } of files) {
 		const outcome =
@@ -215,8 +256,14 @@ export function run(argv, cwd = process.cwd()) {
 		if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
 		results.push(outcome)
 	}
+	const projectRoot = reportRoot(cwd)
 	const report = {
-		...buildReport(results),
+		...buildReport(
+			results.map((outcome) => ({
+				...outcome,
+				path: relative(projectRoot, resolve(cwd, outcome.path)),
+			})),
+		),
 		outsideRoots: outside,
 		packagesWithoutKit: [...packagesWithoutKit].sort(),
 	}
@@ -226,16 +273,18 @@ export function run(argv, cwd = process.cwd()) {
 	if (outside.length > 0)
 		summary += `\nskipped symlinks outside the given paths: ${outside.length}\n${outside.map((path) => `  ${path}`).join('\n')}`
 	// A file that failed to parse fails the run, after the report is written.
-	return { report, summary, exitCode: report.summary.error > 0 ? 1 : 0 }
+	return {
+		report,
+		summary,
+		exitCode: report.summary.error > 0 || report.totals['held-pipe-to-k'] > 0 ? 1 : 0,
+	}
 }
 
 /** Cache the nearest package result for every visited directory, including manifest-free parents. */
-function packageLookup(cwd) {
-	const root = resolve(cwd)
+function packageLookup() {
 	const cache = new Map()
 	const lookup = (directory) => {
 		if (cache.has(directory)) return cache.get(directory)
-		if (directory !== root && !directory.startsWith(root + sep)) return null
 		const manifest = join(directory, 'package.json')
 		let pkg
 		if (existsSync(manifest)) {
@@ -248,7 +297,7 @@ function packageLookup(cwd) {
 						(key) => Object.hasOwn(json[key] ?? {}, 'cvx-kit'),
 					),
 			}
-		} else pkg = directory === root ? null : lookup(dirname(directory))
+		} else pkg = dirname(directory) === directory ? null : lookup(dirname(directory))
 		cache.set(directory, pkg)
 		return pkg
 	}
@@ -292,6 +341,89 @@ function runKnowledge(files, outcomes, cwd) {
 	})
 	return {
 		resolveSource: resolve,
+		isStringEnum(from, specifier, name, seen = new Set()) {
+			const target = resolve(from, specifier)
+			if (!target || seen.has(`${target}:${name}`)) return false
+			seen.add(`${target}:${name}`)
+			const program = parseSource(target, readFileSync(join(cwd, target), 'utf8')).program
+			const imported = new Map()
+			for (const statement of program.body) {
+				if (statement.type !== 'ImportDeclaration') continue
+				for (const spec of statement.specifiers) {
+					if (spec.type === 'ImportSpecifier')
+						imported.set(spec.local.name, {
+							source: statement.source.value,
+							imported: spec.imported.name,
+						})
+				}
+			}
+			return stringEnumArgument(
+				{
+					program,
+					imported,
+					path: target,
+					options: {
+						run: {
+							isStringEnum: (from, source, name) => this.isStringEnum(from, source, name, seen),
+						},
+					},
+				},
+				{ type: 'Identifier', name },
+			)
+		},
+		consumerOrigin(from, specifier, name, seen = new Set()) {
+			const target = resolve(from, specifier)
+			if (!target && (specifier.startsWith('.') || specifier.startsWith('/'))) return 'unproven'
+			if (!target)
+				return !/^(?:zod(?:\/|$)|cvx-kit(?:\/|$)|convex(?:-helpers)?(?:\/|$))/.test(specifier)
+			const key = `${target}:${name}`
+			if (seen.has(key)) return false
+			seen.add(key)
+			const source = readFileSync(join(cwd, target), 'utf8')
+			const program = parseSource(target, source).program
+			const imports = new Map()
+			const initializers = new Map()
+			let localName = name
+			for (const statement of program.body) {
+				if (statement.type === 'ImportDeclaration') {
+					for (const spec of statement.specifiers)
+						imports.set(spec.local.name, {
+							source: statement.source.value,
+							name: spec.imported?.name ?? 'default',
+						})
+				}
+				const declaration = statement.declaration ?? statement
+				if (declaration.type === 'VariableDeclaration' && declaration.kind === 'const') {
+					for (const item of declaration.declarations)
+						if (item.id.type === 'Identifier' && item.init)
+							initializers.set(item.id.name, item.init)
+				}
+				if (statement.type !== 'ExportNamedDeclaration') continue
+				for (const spec of statement.specifiers) {
+					if ((spec.exported.name ?? spec.exported.value) !== name) continue
+					if (statement.source)
+						return this.consumerOrigin(
+							target,
+							statement.source.value,
+							spec.local.name ?? spec.local.value,
+							seen,
+						)
+					localName = spec.local.name
+				}
+			}
+			const locals = new Set()
+			while (!locals.has(localName)) {
+				locals.add(localName)
+				const binding = imports.get(localName)
+				if (binding) return this.consumerOrigin(target, binding.source, binding.name, seen)
+				const initializer = initializers.get(localName)
+				if (!initializer) break
+				const { root } = chainOf(unwrap(initializer))
+				if (root.type !== 'Identifier') break
+				localName = root.name
+			}
+			return false
+		},
 		isTable(fromPath, specifier, name) {
 			const target = resolve(fromPath, specifier)
 			return target !== null && tableExports.get(target)?.has(name) === true
@@ -329,5 +461,21 @@ function isMain() {
 		return import.meta.url === pathToFileURL(realpathSync(script)).href
 	} catch {
 		return false
+	}
+}
+
+/** Stable report paths use the nearest project manifest, or its workspace/repository root. */
+function reportRoot(cwd) {
+	let current = resolve(cwd)
+	let nearest = null
+	for (;;) {
+		const manifest = join(current, 'package.json')
+		if (existsSync(join(current, '.git'))) return current
+		if (existsSync(manifest)) {
+			nearest ??= current
+			if (JSON.parse(readFileSync(manifest, 'utf8')).workspaces) return current
+		}
+		if (dirname(current) === current) return nearest ?? resolve(cwd)
+		current = dirname(current)
 	}
 }

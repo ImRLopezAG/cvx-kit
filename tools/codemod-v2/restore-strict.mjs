@@ -6,14 +6,22 @@
 import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
-import { applyEdits, chainOf, lineIndex, parseSource, walk } from './transforms/ast.mjs'
+import {
+	applyEdits,
+	chainOf,
+	isShadowed,
+	lineIndex,
+	parentMap,
+	parseSource,
+	walk,
+} from './transforms/ast.mjs'
 
 const FACTORIES = new Set(['object', 'strictObject', 'looseObject'])
 const POLICIES = new Set(['strict', 'strip', 'loose', 'passthrough'])
 
 /**
  * The object factory calls of a file in source order: `<root>.object|strictObject|looseObject(...)`
- * where `<root>` is a namespace imported from Zod or the kit (or named `z` / `k`). Each site has
+ * where `<root>` is a namespace imported from Zod or the kit and not shadowed locally. Each site has
  * the property-name signature of its field literal and the policy calls chained on it, the last
  * one declared first (the walk reaches the outermost call first).
  */
@@ -21,6 +29,7 @@ export function objectSites(path, source) {
 	const parsed = parseSource(path, source)
 	if (parsed.errors.length > 0) throw new Error(parsed.errors[0].message)
 	const roots = schemaRoots(parsed.program)
+	const parents = parentMap(parsed.program)
 	const position = lineIndex(source)
 	const chained = new Map()
 	const sites = []
@@ -28,7 +37,7 @@ export function objectSites(path, source) {
 	walk(parsed.program, (node) => {
 		if (node.type !== 'CallExpression') return
 		const { root, steps } = chainOf(node)
-		if (root.type !== 'Identifier') return
+		if (root.type !== 'Identifier' || isShadowed(root, root.name, parents)) return
 		// Policies chained on a factory are recorded on the factory's own call node.
 		const last = steps.at(-2)
 		if (last?.kind !== 'member' || last.name === null) return
@@ -54,6 +63,7 @@ export function objectSites(path, source) {
 			factory: steps[0].name,
 			name: steps[0].node.property,
 			signature: signatureOf(node.arguments[0]),
+			bindingPath: bindingPath(node, parents),
 			line: position(node.start).line,
 		})
 	})
@@ -92,39 +102,50 @@ function signatureOf(argument) {
 }
 
 /**
- * Pairs of `[base, current]` sites. Equal counts with equal signatures pair by position; otherwise
- * the longest common subsequence of signatures pairs what it can, and an object that moved within the
- * file pairs with the one leftover that has its fields when that is unambiguous on both sides.
+ * Pair moved objects by their enclosing binding/property path first. A remaining field signature
+ * only pairs when unique on both sides; repeated anonymous signatures need manual review.
  */
 export function pairSites(base, current) {
-	if (base.length === current.length && base.every((site, index) => same(site, current[index])))
-		return base.map((site, index) => [site, current[index]])
-	const rows = base.length + 1
-	const columns = current.length + 1
-	const table = Array.from({ length: rows }, () => new Uint32Array(columns))
-	for (let row = base.length - 1; row >= 0; row--)
-		for (let column = current.length - 1; column >= 0; column--)
-			table[row][column] = same(base[row], current[column])
-				? table[row + 1][column + 1] + 1
-				: Math.max(table[row + 1][column], table[row][column + 1])
 	const pairs = []
-	let row = 0
-	let column = 0
-	while (row < base.length && column < current.length) {
-		if (same(base[row], current[column])) pairs.push([base[row++], current[column++]])
-		else if (table[row + 1][column] >= table[row][column + 1]) row++
-		else column++
+	const used = new Set()
+	for (const site of base) {
+		if (!site.bindingPath) continue
+		const siblings = base.filter(
+			(other) => other.bindingPath === site.bindingPath && same(site, other),
+		)
+		const targets = current.filter(
+			(other) => other.bindingPath === site.bindingPath && same(site, other),
+		)
+		if (siblings.length === 1 && targets.length === 1) {
+			pairs.push([site, targets[0]])
+			used.add(targets[0])
+		}
 	}
-	const pairedBase = new Set(pairs.map(([site]) => site))
-	const pairedCurrent = new Set(pairs.map(([, site]) => site))
-	const leftBase = groupBySignature(base.filter((site) => !pairedBase.has(site)))
-	const leftCurrent = groupBySignature(current.filter((site) => !pairedCurrent.has(site)))
+	const paired = new Set(pairs.map(([site]) => site))
+	const leftBase = groupBySignature(base.filter((site) => !paired.has(site)))
+	const leftCurrent = groupBySignature(current.filter((site) => !used.has(site)))
 	for (const [signature, sites] of leftBase) {
 		const targets = leftCurrent.get(signature)
 		if (signature !== '?' && sites.length === 1 && targets?.length === 1)
 			pairs.push([sites[0], targets[0]])
 	}
 	return pairs
+}
+
+/** A stable binding and nested property path identifies moved objects with equal fields. */
+function bindingPath(node, parents) {
+	const path = []
+	let bound = false
+	for (let parent = parents.get(node); parent; parent = parents.get(parent)) {
+		if (parent.type === 'Property' && !parent.computed)
+			path.unshift(parent.key.name ?? parent.key.value)
+		if (parent.type === 'VariableDeclarator' && parent.id.type === 'Identifier') {
+			path.unshift(parent.id.name)
+			bound = true
+		}
+		if (parent.type === 'FunctionDeclaration' && parent.id) path.unshift(parent.id.name)
+	}
+	return bound ? path.join('.') : null
 }
 
 function groupBySignature(sites) {
@@ -181,14 +202,18 @@ export function restoreStrictSource(path, source, baseSource) {
 	for (const site of strictBase) {
 		const target = paired.get(site)
 		if (target === undefined) {
-			const counterpart = likely.get(site)
+			const ambiguous =
+				(base.sites.filter((other) => same(other, site)).length > 1 ||
+					current.sites.filter((other) => same(other, site)).length > 1) &&
+				current.sites.some((other) => same(other, site))
+			const counterpart = ambiguous ? undefined : likely.get(site)
 			// Its fields changed or moved to a constant, but the object in its place is strict.
 			if (counterpart !== undefined && isStrict(counterpart)) {
 				outcome.already++
 				continue
 			}
 			const review = {
-				code: 'strict-unpaired',
+				code: ambiguous ? 'strict-ambiguous' : 'strict-unpaired',
 				baseLine: site.line,
 				message: `no object with fields {${site.signature}} was found for the strict object at base line ${site.line}`,
 			}
@@ -201,8 +226,8 @@ export function restoreStrictSource(path, source, baseSource) {
 		}
 		if (target.kind !== 'k') continue
 		const last = target.policies[0]
-		if (target.factory === 'strictObject' || last === 'strict') {
-			if (last === undefined || last === 'strict') outcome.already++
+		if ((target.factory === 'strictObject' && last === undefined) || last === 'strict') {
+			outcome.already++
 			continue
 		}
 		if (last !== undefined || target.factory !== 'object') {

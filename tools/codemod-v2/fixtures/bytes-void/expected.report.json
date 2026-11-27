@@ -1,0 +1,19 @@
+{
+  "status": "mixed",
+  "skipped": [
+    {
+      "line": 3,
+      "code": "custom"
+    },
+    {
+      "line": 5,
+      "code": "void-position"
+    }
+  ],
+  "info": [
+    {
+      "line": 2,
+      "code": "bytes-validator-narrowed"
+    }
+  ]
+}

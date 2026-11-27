@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import {
 	cpSync,
 	existsSync,
@@ -55,6 +55,8 @@ describe('codemod-v2 fixtures', () => {
 		expect(outcome.status).toBe(expected.status)
 		expect(outcome.skipped.map(({ line, code }) => ({ line, code }))).toEqual(expected.skipped)
 		if (expected.declarations) expect(outcome.declarations).toEqual(expected.declarations)
+		if (expected.info)
+			expect(outcome.info.map(({ line, code }) => ({ line, code }))).toEqual(expected.info)
 	})
 
 	it.each(cases)('%s is idempotent', (name) => {
@@ -240,9 +242,9 @@ describe('codemod-v2 CLI', () => {
 				error: 1,
 			})
 			expect(report.files.find((file) => file.path.endsWith('broken.ts')).status).toBe('error')
-			expect(report.totals).toEqual({ tuple: 1 })
-			expect(report.declarations).toEqual({ rewritten: 4, left: 1 })
-			expect(report.mechanicalShare).toBe(0.8)
+			expect(report.totals).toEqual({ 'keep-zod-marker': 1, tuple: 1 })
+			expect(report.declarations).toEqual({ rewritten: 4, left: 2 })
+			expect(report.mechanicalShare).toBe(0.6667)
 		})
 	})
 
@@ -261,7 +263,7 @@ describe('codemod-v2 CLI', () => {
 			const second = run(['src', '--write', '--ignore', 'src/broken.ts'], root).report
 			expect(second.summary.rewritten).toBe(0)
 			expect(second.files.find((file) => file.path.endsWith('mixed.ts')).status).toBe('mixed')
-			expect(second.declarations).toEqual({ rewritten: 0, left: 1 })
+			expect(second.declarations).toEqual({ rewritten: 0, left: 2 })
 			const secondCli = spawnSync(
 				'node',
 				[join(process.cwd(), CLI), 'src', '--ignore', 'src/broken.ts'],
@@ -269,7 +271,7 @@ describe('codemod-v2 CLI', () => {
 			)
 			expect(secondCli.status).toBe(0)
 			expect(secondCli.stdout).toContain('0 rewritten, 1 mixed')
-			expect(secondCli.stdout).toContain('declarations: 0 rewritten, 1 left as Zod')
+			expect(secondCli.stdout).toContain('declarations: 0 rewritten, 2 left as Zod')
 		})
 	})
 
@@ -410,13 +412,13 @@ ${['insertSchema', 'updateSchema', 'commandInput', 'publicDto', 'schema', 'doc']
 		})
 	})
 
-	it('does not search for package manifests above the working directory', () => {
+	it('respects package manifests above the working directory', () => {
 		withTempTree({}, (root) => {
 			writeFileSync(join(root, 'package.json'), '{}')
 			writeFileSync(join(root, 'src/schema.ts'), fixture('strict-object', 'input.ts'))
 			const { report } = run(['schema.ts'], join(root, 'src'))
-			expect(report.summary.rewritten).toBe(1)
-			expect(report.packagesWithoutKit).toEqual([])
+			expect(report.summary.rewritten).toBe(0)
+			expect(report.packagesWithoutKit).toEqual(['..'])
 		})
 	})
 })
@@ -473,6 +475,171 @@ describe('codemod-v2 cross-file knowledge', () => {
 			rmSync(root, { recursive: true, force: true })
 		}
 	}
+
+	it('follows exported builder initializers and reports unresolved relative builders', () => {
+		tree(
+			{
+				'builder.ts': "import { os } from '@orpc/server'\nexport const procedure = os.$context()\n",
+				'use.ts':
+					"import { z } from 'zod'\nimport { procedure } from './builder'\nconst A = z.string()\nprocedure.input(A)\n",
+				'unknown.ts':
+					"import { z } from 'zod'\nimport { procedure } from './missing'\nconst A = z.string()\nprocedure.input(A)\n",
+			},
+			(root) => {
+				const outcome = run(['.', '--write'], root)
+				expect(readFileSync(join(root, 'use.ts'), 'utf8')).toContain('z.string()')
+				expect(outcome.report.totals['zod-consumer-unproven']).toBe(1)
+			},
+		)
+	})
+
+	it('resolves imported all-string enums and workspace helper consumers', () => {
+		tree(
+			{
+				'package.json': JSON.stringify({ workspaces: ['packages/*'] }),
+				'packages/shared/package.json': JSON.stringify({
+					name: '@app/shared',
+					dependencies: { 'cvx-kit': '*' },
+				}),
+				'packages/shared/src/index.ts':
+					"export const Status = { A: 'a', B: 'b' } as const; export function helper(value: any) { return value }",
+				'packages/app/package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+				'packages/app/src/use.ts':
+					"import { z } from 'zod'\nimport { Status, helper } from '@app/shared'\nconst A = z.enum(Status)\nhelper(A)\n",
+			},
+			(root) => {
+				run(['packages', '--write'], root)
+				expect(readFileSync(join(root, 'packages/app/src/use.ts'), 'utf8')).toContain(
+					'k.enum(Status)',
+				)
+			},
+		)
+	})
+
+	it('reports cross-file Zod consumers and held pipes into rewritten schemas', () => {
+		tree(
+			{
+				'schema.ts': "import { z } from 'zod'\nexport const Schema = z.string()\n",
+				'use.ts':
+					"import { Schema } from './schema'\nimport { os } from '@orpc/server'\nos.input(Schema)\n",
+				'held.ts':
+					"import { z } from 'zod'\nimport { Schema } from './schema'\nconst A = z.string().brand<'A'>().pipe(Schema)\n",
+			},
+			(root) => {
+				const outcome = run(['.', '--write'], root)
+				expect(outcome.report.totals['zod-consumer-import']).toBe(1)
+				expect(outcome.report.totals['held-pipe-to-k']).toBe(1)
+				expect(outcome.exitCode).toBe(1)
+				expect(readFileSync(join(root, 'schema.ts'), 'utf8')).toContain('k.string()')
+				expect(run(['.', '--write'], root).report.summary.rewritten).toBe(0)
+			},
+		)
+	})
+
+	it('rewrites app helper consumers but follows relative builder re-exports', () => {
+		tree(
+			{
+				'tsconfig.json': '{ "compilerOptions": { "paths": { "@app/*": ["./*"] } } }',
+				'helper.ts': 'export function helper(value: any) { return value }',
+				'builder.ts': "export { os } from '@orpc/server'",
+				'alias.ts':
+					"import { z } from 'zod'\nimport { helper } from '@app/helper'\nconst A = z.string()\nhelper(A)\n",
+				'relative.ts':
+					"import { z } from 'zod'\nimport { helper } from './helper'\nconst A = z.string()\nhelper(A)\n",
+				'reexport.ts':
+					"import { z } from 'zod'\nimport { os } from './builder'\nconst A = z.string()\nos.input(A)\n",
+			},
+			(root) => {
+				const outcome = run(['.', '--write'], root)
+				expect(readFileSync(join(root, 'alias.ts'), 'utf8')).toContain('k.string()')
+				expect(readFileSync(join(root, 'relative.ts'), 'utf8')).toContain('k.string()')
+				expect(readFileSync(join(root, 'reexport.ts'), 'utf8')).toContain('z.string()')
+				expect(outcome.report.totals['zod-consumer']).toBe(1)
+			},
+		)
+	})
+
+	it('finds the package boundary above a subdirectory working directory', () => {
+		tree(
+			{
+				'packages/plain/package.json': '{}',
+				'packages/plain/src/a.ts': "import { z } from 'zod'\nconst A = z.string()\n",
+			},
+			(root) => {
+				const outcome = run(['.', '--write'], join(root, 'packages/plain/src'))
+				expect(outcome.report.info['package-without-cvx-kit']).toBe(1)
+				expect(readFileSync(join(root, 'packages/plain/src/a.ts'), 'utf8')).toContain('z.string()')
+			},
+		)
+	})
+
+	it('checks package imports outside the selected files before declaring it client-only', () => {
+		tree(
+			{
+				'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+				'server.ts': "import { kTable } from 'cvx-kit/table'\n",
+				'client.ts':
+					"import { useQuery } from 'cvx-kit/react'\nimport { z } from 'zod'\nconst A = z.string()\n",
+			},
+			(root) => {
+				expect(run(['client.ts'], root).report.summary.rewritten).toBe(1)
+			},
+		)
+	})
+
+	it('excludes client-only kit packages unless explicitly included', () => {
+		tree(
+			{
+				'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+				'client.ts':
+					"import { useQuery } from 'cvx-kit/react'\nimport { z } from 'zod'\nconst A = z.string()\n",
+			},
+			(root) => {
+				expect(run(['.'], root).report.info['package-without-cvx-kit']).toBe(1)
+				run(['.', '--include-packages-without-kit', '--write'], root)
+				expect(readFileSync(join(root, 'client.ts'), 'utf8')).toContain('k.string()')
+			},
+		)
+	})
+
+	it('rewrites imported schema bridges and keeps report paths stable below the root', () => {
+		tree(
+			{
+				'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+				'src/schema.ts': "import { z } from 'zod'\nexport const Schema = z.string()\n",
+				'src/use.ts':
+					"import { Schema } from './schema'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\nexport const A = zodToConvex(Schema)\n",
+			},
+			(root) => {
+				const before = run(['src'], root)
+				const below = run(['.'], join(root, 'src'))
+				expect(below.report.files.map((file) => file.path)).toEqual(
+					before.report.files.map((file) => file.path),
+				)
+				run(['src', '--write'], root)
+				expect(readFileSync(join(root, 'src/use.ts'), 'utf8')).toContain('A = Schema.validator')
+				expect(readFileSync(join(root, 'src/use.ts'), 'utf8')).not.toContain('zodToConvex')
+				expect(run(['src'], root).report.summary.rewritten).toBe(0)
+			},
+		)
+	})
+
+	it('rewrites imported table masks and reports unreadable masks', () => {
+		tree(
+			{
+				'tables.ts':
+					"import { z } from 'zod'\nimport { tenantTable } from 'cvx-kit/zod-table'\nexport const users = tenantTable('users', (id) => ({ name: z.string() }))\n",
+				'use.ts':
+					"import { users } from './tables'\nconst A = users.commandInput.pick({ name: true })\nconst B = users.commandInput.omit(mask)\n",
+			},
+			(root) => {
+				const first = run(['.', '--write'], root)
+				expect(readFileSync(join(root, 'use.ts'), 'utf8')).toContain("pick('name')")
+				expect(first.report.totals['mask-dynamic']).toBe(1)
+				expect(run(['.', '--write'], root).report.summary.rewritten).toBe(0)
+			},
+		)
+	})
 
 	it.each([
 		[

@@ -106,8 +106,15 @@ function collectKitImport(ctx, decl, module) {
 			V2_TABLE_FUNCTIONS.has(importedName(spec))
 		)
 			ctx.v2Tables.add(local)
-		if (spec.type === 'ImportSpecifier' && !ZOD_MODULES.has(module))
-			ctx.imported.set(local, { source: module, imported: importedName(spec) })
+		ctx.imported.set(local, {
+			source: module,
+			imported:
+				spec.type === 'ImportSpecifier'
+					? importedName(spec)
+					: spec.type === 'ImportDefaultSpecifier'
+						? 'default'
+						: '*',
+		})
 	}
 	if (decl.importKind !== 'type' && decl.specifiers.length > 0 && decl.specifiers.every(isNamed))
 		ctx.moduleDecls.set(module, ctx.moduleDecls.get(module) ?? decl)
@@ -119,7 +126,11 @@ function collectKitImport(ctx, decl, module) {
 		const imported = importedName(spec)
 		const wanted =
 			module === TABLE_MODULE ||
-			(ZID_MODULES.has(module) && (imported === 'zid' || CUSTOM_BUILDERS.has(imported))) ||
+			(ZID_MODULES.has(module) &&
+				(imported === 'zid' ||
+					CUSTOM_BUILDERS.has(imported) ||
+					imported === 'zodToConvex' ||
+					imported === 'convexToZod')) ||
 			names?.has(imported) === true
 		if (!wanted) continue
 		ctx.kit.set(spec.local.name, {
@@ -233,15 +244,32 @@ function planKitDecl(ctx, decl, bindings, isLeft, withK) {
 	for (const spec of decl.specifiers) {
 		const binding = tracked.get(spec)
 		const original = specOf(importedName(spec), spec.local.name, spec.importKind === 'type')
+		if (
+			binding?.imported === 'zodToConvex' &&
+			!binding.bridgeUnknown &&
+			!binding.refs.some((index) => !binding.converted?.has(index) || isLeft(index))
+		) {
+			changed = true
+			continue
+		}
 		if (!binding || ZOD_INTEROP.has(binding.imported)) {
 			if (binding) keepOld(original)
 			else kept.push(original)
 			continue
 		}
 		if (binding.imported === 'zid') {
-			if (binding.module !== TABLE_MODULE && binding.refs.some(isLeft)) keepOld(original)
-			else changed = true
+			if (binding.refs.some(isLeft)) {
+				if (binding.module === TABLE_MODULE) {
+					if (!moved.has('convex-helpers/server/zod4')) moved.set('convex-helpers/server/zod4', [])
+					moved.get('convex-helpers/server/zod4').push(original)
+					changed = true
+				} else keepOld(original)
+			} else changed = true
 			continue
+		}
+		if (KIT_RENAMES.has(binding.imported) && binding.refs.some(isLeft)) {
+			keepOld(original)
+			if (binding.refs.every(isLeft)) continue
 		}
 		const renamed = KIT_RENAMES.get(binding.imported)
 		const local = renamed && binding.local === binding.imported ? renamed : binding.local

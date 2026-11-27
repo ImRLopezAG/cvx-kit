@@ -39,6 +39,56 @@ export const Undone = k.object({ u: k.string() }).strip()
 `
 
 describe('restoreStrictSource', () => {
+	it('pairs repeated field signatures by binding when declarations move', () => {
+		const base =
+			"import { z } from 'zod'\nconst A = z.strictObject({ x: z.string() }); const B = z.object({ x: z.string() })"
+		const current =
+			"import { k } from 'cvx-kit'\nconst B = k.object({ x: k.string() }); const A = k.object({ x: k.string() })"
+		const outcome = restoreStrictSource('a.ts', current, base)
+		expect(outcome.output).toContain('B = k.object(')
+		expect(outcome.output).toContain('A = k.strictObject(')
+	})
+
+	it('reports repeated anonymous signatures as ambiguous instead of pairing by position', () => {
+		const base =
+			"import { z } from 'zod'\nuse(z.strictObject({ x: z.string() }), z.object({ x: z.string() }))"
+		const current =
+			"import { k } from 'cvx-kit'\nuse(k.object({ x: k.string() }), k.object({ x: k.string() }))"
+		const outcome = restoreStrictSource('a.ts', current, base)
+		expect(outcome.output).toBe(current)
+		expect(outcome.manual.map((site) => site.code)).toEqual(['strict-ambiguous'])
+	})
+
+	it('reports ambiguity when only the current revision repeats the signature', () => {
+		const base = "import { z } from 'zod'\nuse(z.strictObject({ x: z.string() }))"
+		const current =
+			"import { k } from 'cvx-kit'\nuse(k.object({ x: k.string() }), k.object({ x: k.string() }))"
+		const outcome = restoreStrictSource('a.ts', current, base)
+		expect(outcome.output).toBe(current)
+		expect(outcome.manual.map((site) => site.code)).toEqual(['strict-ambiguous'])
+	})
+
+	it('ignores namespace imports shadowed by parameters in both revisions', () => {
+		const base = "import { z } from 'zod'\nfunction f(z: any) { return z.strictObject({ x: 1 }) }"
+		const current = "import { k } from 'cvx-kit'\nfunction f(k: any) { return k.object({ x: 1 }) }"
+		expect(restoreStrictSource('a.ts', current, base)).toMatchObject({
+			output: current,
+			restored: 0,
+			manual: [],
+		})
+		const realBase = "import { z } from 'zod'\nfunction f() { return z.strictObject({ x: 1 }) }"
+		expect(restoreStrictSource('a.ts', current, realBase).output).toBe(current)
+	})
+
+	it('reports a strict factory whose later policy strips', () => {
+		const base = "import { z } from 'zod'\nconst A = z.strictObject({ x: z.string() })"
+		const current =
+			"import { k } from 'cvx-kit'\nconst A = k.strictObject({ x: k.string() }).strip()"
+		const outcome = restoreStrictSource('a.ts', current, base)
+		expect(outcome.manual.map((site) => site.code)).toEqual(['strict-now-other-policy'])
+		expect([outcome.restored, outcome.already]).toEqual([0, 0])
+	})
+
 	it('restores k.strictObject where the base Zod object was strict, and nothing else', () => {
 		const outcome = restoreStrictSource('a.ts', MIGRATED, BASE)
 		expect(outcome.output).toBe(RESTORED)

@@ -1,8 +1,13 @@
 {
-	"status": "kept",
-	"skipped": [
-		{ "line": 3, "code": "mixed-reference" },
-		{ "line": 6, "code": "mask-dynamic" },
-		{ "line": 7, "code": "mask-dynamic" }
-	]
+  "status": "rewritten",
+  "skipped": [
+    {
+      "line": 6,
+      "code": "mask-dynamic"
+    },
+    {
+      "line": 7,
+      "code": "mask-dynamic"
+    }
+  ]
 }

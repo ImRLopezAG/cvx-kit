@@ -22,10 +22,13 @@ import { KSchema } from './schema'
 import type {
 	KCheckMessage,
 	KDiscriminated,
+	KFormat,
 	KLiteralValue,
 	KNode,
 	KOutputRequired,
+	KRefineOptions,
 	KType,
+	KUrlOptions,
 } from './types'
 
 export class KString extends KSchema<string, VString<string>> {
@@ -43,6 +46,29 @@ export class KString extends KSchema<string, VString<string>> {
 
 	regex(pattern: RegExp, message?: KCheckMessage): this {
 		return this.link('regex', pattern, checkMessage(message, 'regex'))
+	}
+
+	/** An email address (Zod 4's pattern); issue `invalid_format`. */
+	email(message?: KCheckMessage): this {
+		return this.link('format', emailFormat, checkMessage(message, 'email'))
+	}
+
+	/**
+	 * A URL the WHATWG parser accepts; `protocol` and `hostname` patterns narrow it
+	 * (`k.url({ protocol: /^https$/ })`). Issue `invalid_format`.
+	 */
+	url(options?: string | KUrlOptions): this {
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a check takes either its message or an options object.
+		const patterns = options === undefined || typeof options === 'string' ? undefined : options
+		return this.link(
+			'format',
+			Object.freeze({
+				kind: 'url' as const,
+				protocol: patterns?.protocol,
+				hostname: patterns?.hostname,
+			}),
+			checkMessage(options, 'url'),
+		)
 	}
 
 	trim(): this {
@@ -105,7 +131,35 @@ export class KNumber extends KSchema<number, VFloat64<number>> {
 	}
 }
 
-export class KInt64 extends KSchema<bigint, VInt64<bigint>> {}
+export class KInt64 extends KSchema<bigint, VInt64<bigint>> {
+	min(value: bigint, message?: KCheckMessage): this {
+		return this.link('min', value, checkMessage(message, 'min'))
+	}
+
+	max(value: bigint, message?: KCheckMessage): this {
+		return this.link('max', value, checkMessage(message, 'max'))
+	}
+
+	/** `> 0n`; issue `too_small`. */
+	positive(message?: KCheckMessage): this {
+		return this.link('gt', 0n, checkMessage(message, 'positive'))
+	}
+
+	/** `>= 0n`, the same check as `.min(0n)`. */
+	nonnegative(message?: KCheckMessage): this {
+		return this.link('min', 0n, checkMessage(message, 'nonnegative'))
+	}
+
+	/** `< 0n`; issue `too_big`. */
+	negative(message?: KCheckMessage): this {
+		return this.link('lt', 0n, checkMessage(message, 'negative'))
+	}
+
+	/** `<= 0n`, the same check as `.max(0n)`. */
+	nonpositive(message?: KCheckMessage): this {
+		return this.link('max', 0n, checkMessage(message, 'nonpositive'))
+	}
+}
 
 export class KBoolean extends KSchema<boolean, VBoolean<boolean>> {}
 
@@ -300,6 +354,8 @@ nullRoot.native = v.null()
 bytesRoot.native = v.bytes()
 anyRoot.native = v.any()
 
+const emailFormat: KFormat = Object.freeze({ kind: 'email' })
+
 /**
  * Argument-less factories return one shared root: records are immutable, so sharing is safe. Factories
  * that take an array or map freeze it in place, so what a schema holds cannot change after declaration.
@@ -307,6 +363,34 @@ anyRoot.native = v.any()
 export function string(): KString {
 	return stringRoot
 }
+
+/** `k.string().email()`. */
+export function email(message?: KCheckMessage): KString {
+	return stringRoot.email(message)
+}
+
+/** `k.string().url(options)`. */
+export function url(options?: string | KUrlOptions): KString {
+	return stringRoot.url(options)
+}
+
+/**
+ * Zod's `z.custom<T>()`: any value, typed `T`, optionally checked by `guard` (issue `custom`).
+ * Natively `v.any()`, so nothing but the guard validates it: use it for values a schema cannot
+ * describe (branded strings, SDK payloads), not in place of a real shape.
+ */
+export function custom<T = unknown>(
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a custom guard receives the undecoded value.
+	guard?: (value: unknown) => boolean,
+	message?: string | KRefineOptions,
+): KCustom<T> {
+	const schema: KSchema<any, VAny> = guard === undefined ? anyRoot : anyRoot.refine(guard, message)
+	// SAFETY: KCustom declares the caller's type over the same v.any() records.
+	return schema as KCustom<T>
+}
+
+/** The schema of `k.custom<T>()`: a `v.any()` whose value is typed `T`. */
+export type KCustom<T> = KSchema<T, VAny<T>>
 
 export function number(): KNumber {
 	return numberRoot

@@ -239,7 +239,7 @@ function planKitDecl(ctx, decl, bindings, isLeft, withK) {
 			continue
 		}
 		if (binding.imported === 'zid') {
-			if (binding.refs.some(isLeft)) keepOld(original)
+			if (binding.module !== TABLE_MODULE && binding.refs.some(isLeft)) keepOld(original)
 			else changed = true
 			continue
 		}

@@ -32,6 +32,7 @@ export type KOp =
 	| 'safe'
 	| 'length'
 	| 'regex'
+	| 'format'
 	| 'refine'
 	| 'check'
 	| 'trim'
@@ -119,6 +120,15 @@ export type KArg =
 	| KFields
 	| KCallback
 	| KDiscriminated
+	| KFormat
+
+/** A string format check: `k.email()`, or `k.url()` with its optional protocol and hostname patterns. */
+export type KFormat =
+	| { readonly kind: 'email' }
+	| { readonly kind: 'url'; readonly protocol?: RegExp; readonly hostname?: RegExp }
+
+/** Options of `k.url()`: the message, and patterns the parsed URL's protocol (without `:`) and hostname must match. */
+export type KUrlOptions = KCheckOptions & { readonly protocol?: RegExp; readonly hostname?: RegExp }
 
 /** Input-side native Convex validator type of a `k` schema: a defaulted field is optional. */
 export type NativeOf<T extends KType> = T['validator']

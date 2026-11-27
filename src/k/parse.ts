@@ -1,7 +1,15 @@
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- This module is the decoding boundary: it receives undecoded values, narrows them by representation and hands them back as the schema's output, which the typed callers in schema.ts name. */
 import { membersOf } from './compile'
 import { isFieldName } from './names'
-import { KConversionFailure, isIsoDate, isIsoDateTime, isTimestamp, maxTimestamp } from './formats'
+import {
+	KConversionFailure,
+	isEmail,
+	isIsoDate,
+	isIsoDateTime,
+	isTimestamp,
+	isUrl,
+	maxTimestamp,
+} from './formats'
 import {
 	KValidationError,
 	NEVER,
@@ -14,6 +22,7 @@ import type { KCheckContext } from './schema'
 import type {
 	KDiscriminated,
 	KFields,
+	KFormat,
 	KLiteralValue,
 	KNode,
 	KPath,
@@ -457,26 +466,37 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 				)
 			return
 		}
+		case 'format': {
+			// SAFETY: .email and .url store their format as the record argument.
+			const format = record.arg as KFormat
+			const text = stringOf(value)
+			if (format.kind === 'email') {
+				if (!isEmail(text))
+					context.add('invalid_format', messageOf(record, 'Invalid email address'), undefined)
+			} else if (!isUrl(text, format.protocol, format.hostname))
+				context.add('invalid_format', messageOf(record, 'Invalid URL'), undefined)
+			return
+		}
 		case 'int':
 		case 'safe':
 			safeInteger(value, context, record)
 			return
 		case 'gt': {
 			const limit = numberArg(record)
-			if (!(Number(value) > limit))
+			if (!(sizeOf(value) > limit))
 				context.add(
 					'too_small',
-					messageOf(record, `Too small: expected number to be >${limit}`),
+					messageOf(record, `Too small: expected ${unitOf(value, limit, '>')}`),
 					undefined,
 				)
 			return
 		}
 		case 'lt': {
 			const limit = numberArg(record)
-			if (!(Number(value) < limit))
+			if (!(sizeOf(value) < limit))
 				context.add(
 					'too_big',
-					messageOf(record, `Too big: expected number to be <${limit}`),
+					messageOf(record, `Too big: expected ${unitOf(value, limit, '<')}`),
 					undefined,
 				)
 			return
@@ -976,15 +996,16 @@ function isJson(value: unknown): boolean {
 	return true
 }
 
-function sizeOf(value: unknown): number {
+/** What a bound compares: a length, a number, or an int64 kept as a bigint so no precision is lost. */
+function sizeOf(value: unknown): number | bigint {
 	if (typeof value === 'string' || Array.isArray(value)) return value.length
-	return Number(value)
+	return typeof value === 'bigint' ? value : Number(value)
 }
 
-function unitOf(value: unknown, limit: number, relation: string): string {
+function unitOf(value: unknown, limit: number | bigint, relation: string): string {
 	if (typeof value === 'string') return `string to have ${relation}${limit} characters`
 	if (Array.isArray(value)) return `array to have ${relation}${limit} items`
-	return `number to be ${relation}${limit}`
+	return `${typeof value === 'bigint' ? 'bigint' : 'number'} to be ${relation}${limit}`
 }
 
 function messageOf(record: KNode, fallback: string): string {
@@ -1008,6 +1029,7 @@ function isRunOp(record: KNode): boolean {
 		case 'max':
 		case 'length':
 		case 'regex':
+		case 'format':
 		case 'int':
 		case 'gt':
 		case 'lt':
@@ -1072,9 +1094,9 @@ function enumOf(root: KNode): readonly string[] {
 	return root.arg as readonly string[]
 }
 
-function numberArg(record: KNode): number {
-	// SAFETY: min, max and length store their numeric limit as the record argument.
-	return record.arg as number
+function numberArg(record: KNode): number | bigint {
+	// SAFETY: min, max, gt, lt and length store their limit (a bigint on k.int64) as the record argument.
+	return record.arg as number | bigint
 }
 
 function stringOf(value: unknown): string {

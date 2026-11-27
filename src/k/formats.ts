@@ -60,6 +60,44 @@ export function timestampToIsoDate(value: number): string | KConversionFailure {
 	return isTimestamp(value) ? new Date(value).toISOString().slice(0, 10) : outOfRange
 }
 
+/** Zod 4's email pattern: a practical address check, not RFC 5322. */
+export const emailPattern =
+	/^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\.)+[A-Za-z]{2,}$/
+
+export function isEmail(value: string): boolean {
+	return emailPattern.test(value)
+}
+
+/**
+ * Whether the WHATWG URL parser accepts the string (surrounding whitespace ignored, as Zod does), and
+ * its protocol (without the colon) and hostname match the given patterns.
+ */
+export function isUrl(
+	value: string,
+	protocol: RegExp | undefined,
+	hostname: RegExp | undefined,
+): boolean {
+	// Every Convex and browser runtime provides the WHATWG URL constructor; the kit compiles without DOM typings.
+	const scope: { readonly URL?: new (input: string) => ParsedUrl } = globalThis
+	const Url = scope.URL
+	if (Url === undefined) return false
+	let parsed: ParsedUrl
+	try {
+		parsed = new Url(value.trim())
+	} catch {
+		return false
+	}
+	if (protocol !== undefined) {
+		protocol.lastIndex = 0
+		if (!protocol.test(parsed.protocol.replace(/:$/, ''))) return false
+	}
+	if (hostname !== undefined) {
+		hostname.lastIndex = 0
+		if (!hostname.test(parsed.hostname)) return false
+	}
+	return true
+}
+
 function inRange(time: number): number | KConversionFailure {
 	return isTimestamp(time) ? time : outOfRange
 }
@@ -74,4 +112,9 @@ function isCalendarDay(year: string, month: string, day: string): boolean {
 function daysIn(year: number, month: number): number {
 	if (month === 2) return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28
 	return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31
+}
+
+interface ParsedUrl {
+	readonly protocol: string
+	readonly hostname: string
 }

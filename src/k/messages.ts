@@ -4,7 +4,10 @@ import type { KCheckMessage, KMessage, KRefineOptions } from './types'
  * The message of a check's options: `message`, or Zod 4's `error` string when `message` is absent.
  * A function-valued `error` (Zod's error map) is not supported and throws at declaration.
  */
-export function checkMessage(message: KCheckMessage | undefined, method: string): string | undefined {
+export function checkMessage(
+	message: KCheckMessage | undefined,
+	method: string,
+): string | undefined {
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a check takes either its message or an options object.
 	if (message === undefined || typeof message === 'string') return message
 	return optionsMessage(message, method)

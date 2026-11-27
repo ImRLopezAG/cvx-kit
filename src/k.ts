@@ -13,6 +13,7 @@ export type {
 	KArray,
 	KBoolean,
 	KBytes,
+	KCustom,
 	KDiscriminatedUnion,
 	KEnum,
 	KId,
@@ -49,6 +50,7 @@ export type {
 	KPath,
 	KRefineOptions,
 	KType,
+	KUrlOptions,
 	NativeOf,
 	OutputNativeOf,
 } from './k/types'

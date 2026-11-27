@@ -8,10 +8,18 @@
  */
 import * as z from 'zod/mini'
 import { membersOf } from './k/compile'
-import { maxTimestamp } from './k/formats'
+import { emailPattern, isUrl, maxTimestamp } from './k/formats'
 import { setOwn } from './k/names'
 import { KSchema } from './k/schema'
-import type { KDiscriminated, KFields, KLiteralValue, KMessage, KNode, KType } from './k/types'
+import type {
+	KDiscriminated,
+	KFields,
+	KFormat,
+	KLiteralValue,
+	KMessage,
+	KNode,
+	KType,
+} from './k/types'
 
 /** The Zod Mini schema `toZod` produces: the `k` schema's output and input, except that transforms are not carried. */
 export type KZod<S extends KType> = z.ZodMiniType<
@@ -215,10 +223,24 @@ function applyCheck(base: Mini, record: KNode): Mini {
 		const pattern = record.arg as RegExp
 		return kind === 'string' ? base.check(z.regex(pattern, message)) : base
 	}
+	if (record.op === 'format') {
+		if (kind !== 'string') return base
+		// SAFETY: .email and .url store their format as the record argument.
+		const format = record.arg as KFormat
+		if (format.kind === 'email')
+			return base.check(z.regex(emailPattern, message ?? 'Invalid email address'))
+		return base.check(
+			// SAFETY: the base is a string schema, so the refinement receives a string.
+			z.refine(
+				(value) => isUrl(value as string, format.protocol, format.hostname),
+				message ?? 'Invalid URL',
+			),
+		)
+	}
 	if (record.op === 'int') return kind === 'number' ? base.check(z.int(message)) : base
-	if (kind === 'number' && (record.op === 'gt' || record.op === 'lt')) {
-		// SAFETY: gt and lt store their numeric limit as the record argument.
-		const bound = record.arg as number
+	if ((kind === 'number' || kind === 'bigint') && (record.op === 'gt' || record.op === 'lt')) {
+		// SAFETY: gt and lt store their limit (a bigint on k.int64) as the record argument.
+		const bound = record.arg as number | bigint
 		return base.check(record.op === 'gt' ? z.gt(bound, message) : z.lt(bound, message))
 	}
 	if (kind === 'number' && record.op === 'safe')
@@ -236,9 +258,11 @@ function applyCheck(base: Mini, record: KNode): Mini {
 		if (record.op === 'max') return base.check(z.maxLength(limit, message))
 		return base.check(z.length(limit, message))
 	}
-	if (kind === 'number') {
-		if (record.op === 'min') return base.check(z.minimum(limit, message))
-		if (record.op === 'max') return base.check(z.maximum(limit, message))
+	if (kind === 'number' || kind === 'bigint') {
+		// SAFETY: on k.int64 the stored limit is a bigint, which Zod's numeric bounds accept.
+		const bound = record.arg as number | bigint
+		if (record.op === 'min') return base.check(z.minimum(bound, message))
+		if (record.op === 'max') return base.check(z.maximum(bound, message))
 	}
 	return base
 }
@@ -264,6 +288,7 @@ function isRunOp(record: KNode): boolean {
 		case 'max':
 		case 'length':
 		case 'regex':
+		case 'format':
 		case 'int':
 		case 'gt':
 		case 'lt':

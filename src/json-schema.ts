@@ -5,7 +5,7 @@ import { membersOf } from './k/compile'
 import { maxTimestamp } from './k/formats'
 import { setOwn } from './k/names'
 import { installJsonSchemaConverter } from './k/standard'
-import type { KDiscriminated, KFields, KLiteralValue, KNode, KType } from './k/types'
+import type { KDiscriminated, KFields, KFormat, KLiteralValue, KNode, KType } from './k/types'
 
 /** The JSON Schema (draft 2020-12) subset `toJsonSchema` emits. */
 export type JsonSchema = {
@@ -14,7 +14,7 @@ export type JsonSchema = {
 	$defs?: Record<string, JsonSchema>
 	definitions?: Record<string, JsonSchema>
 	type?: 'string' | 'number' | 'integer' | 'boolean' | 'null' | 'array' | 'object'
-	format?: 'date' | 'date-time'
+	format?: 'date' | 'date-time' | 'email' | 'uri'
 	contentEncoding?: 'base64'
 	description?: string
 	const?: JSONValue
@@ -261,6 +261,7 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 			case 'max':
 			case 'length':
 			case 'regex':
+			case 'format':
 			case 'int':
 			case 'gt':
 			case 'lt':
@@ -461,24 +462,41 @@ function applyCheck(out: JsonSchema, record: KNode): void {
 		out.maximum = strongest(out.maximum, Number.MAX_SAFE_INTEGER, Math.min)
 		return
 	}
-	if (record.op === 'gt' || record.op === 'lt') {
+	if (record.op === 'format') {
+		// SAFETY: .email and .url store their format as the record argument.
+		out.format = (record.arg as KFormat).kind === 'email' ? 'email' : 'uri'
+		return
+	}
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a bound is a number, or a bigint on k.int64.
+	if (typeof record.arg === 'bigint') {
+		// An int64 bound a JSON number cannot state exactly is left out.
+		const exact = Number(record.arg)
+		if (!Number.isSafeInteger(exact)) return
+		applyBound(out, record.op, exact)
+		return
+	}
+	applyBound(out, record.op, record.arg)
+}
+
+function applyBound(out: JsonSchema, op: KNode['op'], arg: KNode['arg']): void {
+	if (op === 'gt' || op === 'lt') {
 		// SAFETY: gt and lt store their numeric limit as the record argument.
-		const bound = record.arg as number
-		if (record.op === 'gt') out.exclusiveMinimum = strongest(out.exclusiveMinimum, bound, Math.max)
+		const bound = arg as number
+		if (op === 'gt') out.exclusiveMinimum = strongest(out.exclusiveMinimum, bound, Math.max)
 		else out.exclusiveMaximum = strongest(out.exclusiveMaximum, bound, Math.min)
 		return
 	}
-	if (record.op === 'regex') {
+	if (op === 'regex') {
 		// SAFETY: .regex stores its pattern as the record argument.
-		const pattern = (record.arg as RegExp).source
+		const pattern = (arg as RegExp).source
 		if (out.pattern === undefined) out.pattern = pattern
 		else (out.allOf ??= []).push({ pattern })
 		return
 	}
 	// SAFETY: min, max and length store their numeric limit as the record argument.
-	const limit = record.arg as number
-	const low = record.op === 'min' || record.op === 'length'
-	const high = record.op === 'max' || record.op === 'length'
+	const limit = arg as number
+	const low = op === 'min' || op === 'length'
+	const high = op === 'max' || op === 'length'
 	if (out.type === 'string') {
 		if (low) out.minLength = strongest(out.minLength, limit, Math.max)
 		if (high) out.maxLength = strongest(out.maxLength, limit, Math.min)

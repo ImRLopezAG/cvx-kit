@@ -259,7 +259,12 @@ describe('codemod-v2 CLI', () => {
 			)
 			const second = run(['src', '--write', '--ignore', 'src/broken.ts'], root).report
 			expect(second.summary.rewritten).toBe(0)
-			expect(second.files.find((file) => file.path.endsWith('mixed.ts')).status).toBe('untouched')
+			expect(second.files.find((file) => file.path.endsWith('mixed.ts')).status).toBe('mixed')
+			expect(second.declarations).toEqual({ rewritten: 0, left: 1 })
+			const secondCli = spawnSync('node', [join(process.cwd(), CLI), 'src', '--ignore', 'src/broken.ts'], { cwd: root, encoding: 'utf8' })
+			expect(secondCli.status).toBe(0)
+			expect(secondCli.stdout).toContain('0 rewritten, 1 mixed')
+			expect(secondCli.stdout).toContain('declarations: 0 rewritten, 1 left as Zod')
 		})
 	})
 
@@ -290,6 +295,106 @@ describe('codemod-v2 CLI', () => {
 		expect(transformSource('a.ts', prefixed).status).toBe('rewritten')
 		const reasoned = `// cvx-kit-codemod: keep-zod -- SDK\n${fixture('strict-object', 'input.ts')}`
 		expect(transformSource('a.ts', reasoned).status).toBe('kept')
+	})
+})
+
+describe('codemod-v2 migration trial regressions', () => {
+	it('ignores shadowed Zod bindings while rewriting type-only helpers', () => {
+		const source = `import type { z } from 'zod'
+import { k } from 'cvx-kit'
+const Schema = k.string()
+type Out = z.output<typeof Schema>
+async function test() { const z = await cashier.mutation(); return [z.totals, z.variance, z._id] }
+function parameter(z) { return z.totals }
+try {} catch (z) { consume(z.totals) }
+for (const z of rows) { consume(z.totals) }
+`
+		const outcome = transformSource('shadow.ts', source)
+		expect(outcome.skipped).toEqual([])
+		expect(outcome.output).toContain('type Out = k.output<typeof Schema>')
+		expect(outcome.output).toContain('return [z.totals, z.variance, z._id]')
+	})
+
+	it('accepts field references on every kit table form', () => {
+		const source = `import { kTable, kVariantTable, tenantTable } from 'cvx-kit/table'
+import { z } from 'zod'
+const a = kTable('a', fields)
+const b = kVariantTable('b', schemas.fields)
+const c = tenantTable('c', fields, opts)
+const Held = z.tuple([])
+`
+		const outcome = transformSource('tables.ts', source)
+		expect(outcome.skipped.map(({ code }) => code)).toEqual(['tuple'])
+		expect(outcome.output).toBe(source)
+		expect(outcome.declarations.rewritten).toBe(0)
+	})
+
+	it('removes obsolete zid imports and reports every held reference', () => {
+		const source = `import { z } from 'zod'
+import { zid, zodTable } from 'cvx-kit/zod-table'
+const Held = z.tuple([zid('a'), zid('b')])
+const Good = zodTable('good', () => ({ id: zid('a') }))
+`
+		const outcome = transformSource('ids.ts', source)
+		expect(outcome.output).not.toContain('cvx-kit/zod-table')
+		expect(outcome.output).toContain("import { kTable } from 'cvx-kit/table'")
+		expect(outcome.output).toContain("const Held = z.tuple([zid('a'), zid('b')])")
+		expect(outcome.skipped.filter(({ code }) => code === 'zid-in-zod-statement').map(({ line }) => line)).toEqual([3, 3])
+		expect(transformSource('ids.ts', outcome.output).status).not.toBe('error')
+		expect(transformSource('ids.ts', outcome.output).output).toBe(outcome.output)
+	})
+
+	it('recognizes derived k schemas and table schemas across files', () => {
+		withTempTree({}, (root) => {
+			writeFileSync(join(root, 'src/base.ts'), `import { k } from 'cvx-kit'
+import { kTable } from 'cvx-kit/table'
+export const recentItem = k.object({ a: k.string() })
+export const table = kTable('items', { a: k.string() })
+export const localDerived = recentItem.extend({}).partial().required()
+`)
+			writeFileSync(join(root, 'src/types.ts'), `import type { z } from 'zod'
+import { recentItem, table, localDerived } from './base'
+const Derived = recentItem.extend({}).pick('a').omit('a').partial().required().optional().nullable().strict().strip()
+type Out = z.output<typeof Derived>
+type Local = z.infer<typeof localDerived>
+${['insertSchema', 'updateSchema', 'commandInput', 'publicDto', 'schema', 'doc'].map((member) => `const ${member} = table.${member}\ntype T_${member} = z.input<typeof ${member}>`).join('\n')}
+`)
+			const { report } = run(['src/base.ts', 'src/types.ts', '--write'], root)
+			expect(report.totals).toEqual({})
+			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).not.toContain('z.input')
+			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toContain('k.output<typeof Derived>')
+			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toContain('k.infer<typeof localDerived>')
+		})
+	})
+
+	it('respects nearest package manifests and supports an explicit override', () => {
+		withTempTree({}, (root) => {
+			writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'cvx-kit' }))
+			for (const [name, manifest] of Object.entries({ ui: {}, app: { dependencies: { 'cvx-kit': '*' } }, dev: { devDependencies: { 'cvx-kit': '*' } }, peer: { peerDependencies: { 'cvx-kit': '*' } }, optional: { optionalDependencies: { 'cvx-kit': '*' } } })) {
+				mkdirSync(join(root, name, 'nested'), { recursive: true })
+				writeFileSync(join(root, name, 'package.json'), JSON.stringify(manifest))
+				writeFileSync(join(root, name, 'nested/schema.ts'), fixture('strict-object', 'input.ts'))
+			}
+			const { report, summary } = run(['ui', 'app', 'dev', 'peer', 'optional', '--write'], root)
+			expect(report.packagesWithoutKit).toEqual(['ui'])
+			expect(report.info['package-without-cvx-kit']).toBe(1)
+			expect(report.summary.untouched).toBe(1)
+			expect(report.summary.rewritten).toBe(4)
+			expect(summary).toContain('packages without cvx-kit: 1\n  ui')
+			expect(readFileSync(join(root, 'ui/nested/schema.ts'), 'utf8')).toBe(fixture('strict-object', 'input.ts'))
+			expect(run(['ui', '--include-packages-without-kit'], root).report.summary.rewritten).toBe(1)
+			expect(HELP).toContain('--include-packages-without-kit')
+		})
+	})
+
+	it('does not search for package manifests above the working directory', () => {
+		withTempTree({}, (root) => {
+			writeFileSync(join(root, 'package.json'), '{}')
+			writeFileSync(join(root, 'src/schema.ts'), fixture('strict-object', 'input.ts'))
+			const { report } = run(['schema.ts'], join(root, 'src'))
+			expect(report.summary.rewritten).toBe(1)
+			expect(report.packagesWithoutKit).toEqual([])
+		})
 	})
 })
 

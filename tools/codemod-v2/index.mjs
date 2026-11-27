@@ -30,6 +30,7 @@ Without --write it is a dry run and writes nothing but the optional report.
   --ext ts,tsx,mts        file extensions to scan
   --no-getters            keep function args / returns as data properties
   --native-number-bounds  omit .finite() on k.number() (see below)
+  --include-packages-without-kit  rewrite packages that do not depend on cvx-kit
   --ignore <glob…>        skip matching paths
   --restore-strict <ref>  only restore k.strictObject from the pre-migration git ref (see below)
   --help                  print this help
@@ -73,6 +74,7 @@ export function parseArguments(argv) {
 		ignore: [],
 		getters: true,
 		nativeNumberBounds: false,
+		includePackagesWithoutKit: false,
 	}
 	let list = options.paths
 	for (let index = 0; index < argv.length; index++) {
@@ -96,6 +98,9 @@ export function parseArguments(argv) {
 			list = options.paths
 		} else if (arg === '--native-number-bounds') {
 			options.nativeNumberBounds = true
+			list = options.paths
+		} else if (arg === '--include-packages-without-kit') {
+			options.includePackagesWithoutKit = true
 			list = options.paths
 		} else if (arg === '--restore-strict') {
 			options.restoreStrict = argv[++index]
@@ -169,19 +174,32 @@ export function run(argv, cwd = process.cwd()) {
 		source: readFileSync(file, 'utf8'),
 	}))
 	if (options.restoreStrict !== undefined) return restoreStrict(options, files, cwd)
+	const packageFor = packageLookup(cwd)
+	const packagesWithoutKit = new Set()
+	const excluded = new Map()
+	for (const { file, path, source } of files) {
+		const pkg = packageFor(dirname(file))
+		if (!pkg || pkg.hasKit || options.includePackagesWithoutKit) continue
+		packagesWithoutKit.add(relative(cwd, pkg.directory) || '.')
+		excluded.set(path, {
+			path, output: source, status: 'untouched', rewritten: 0, skipped: [],
+			info: [{ line: 1, column: 1, code: 'package-without-cvx-kit', text: relative(cwd, pkg.directory) || '.' }],
+			declarations: { rewritten: 0, left: 0 }, facts: null,
+		})
+	}
 	const transformOptions = {
 		getters: options.getters,
 		nativeNumberBounds: options.nativeNumberBounds,
 	}
-	const first = files.map(({ path, source }) => transformSource(path, source, transformOptions))
+	const first = files.map(({ path, source }) => excluded.get(path) ?? transformSource(path, source, transformOptions))
 	const knowledge = runKnowledge(files, first, cwd)
 	const results = []
 	for (const { file, path, source } of files) {
-		const outcome = transformSource(path, source, { ...transformOptions, run: knowledge })
+		const outcome = excluded.get(path) ?? transformSource(path, source, { ...transformOptions, run: knowledge })
 		if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
 		results.push(outcome)
 	}
-	const report = { ...buildReport(results), outsideRoots: outside }
+	const report = { ...buildReport(results), outsideRoots: outside, packagesWithoutKit: [...packagesWithoutKit].sort() }
 	if (options.report)
 		writeFileSync(resolve(cwd, options.report), `${JSON.stringify(report, null, '\t')}\n`)
 	let summary = formatSummary(report, options.write)
@@ -189,6 +207,26 @@ export function run(argv, cwd = process.cwd()) {
 		summary += `\nskipped symlinks outside the given paths: ${outside.length}\n${outside.map((path) => `  ${path}`).join('\n')}`
 	// A file that failed to parse fails the run, after the report is written.
 	return { report, summary, exitCode: report.summary.error > 0 ? 1 : 0 }
+}
+
+/** Cache the nearest package result for every visited directory, including manifest-free parents. */
+function packageLookup(cwd) {
+	const root = resolve(cwd)
+	const cache = new Map()
+	const lookup = (directory) => {
+		if (cache.has(directory)) return cache.get(directory)
+		if (directory !== root && !directory.startsWith(root + sep)) return null
+		const manifest = join(directory, 'package.json')
+		let pkg
+		if (existsSync(manifest)) {
+			const json = JSON.parse(readFileSync(manifest, 'utf8'))
+			pkg = { directory, hasKit: json.name === 'cvx-kit' ||
+				['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'].some((key) => Object.hasOwn(json[key] ?? {}, 'cvx-kit')) }
+		} else pkg = directory === root ? null : lookup(dirname(directory))
+		cache.set(directory, pkg)
+		return pkg
+	}
+	return lookup
 }
 
 /** The `--restore-strict` run: no other rewrite happens in it. */
@@ -243,12 +281,18 @@ function resolver(files, cwd) {
 function runKnowledge(files, outcomes, cwd) {
 	const resolve = resolver(files, cwd)
 	const kExports = new Map()
+	const tableExports = new Map()
 	files.forEach(({ path }, index) => {
 		const facts = outcomes[index].facts
 		if (!facts) return
 		kExports.set(path, new Set(facts.kExports))
+		tableExports.set(path, new Set(facts.tableExports))
 	})
 	return {
+		isTable(fromPath, specifier, name) {
+			const target = resolve(fromPath, specifier)
+			return target !== null && tableExports.get(target)?.has(name) === true
+		},
 		isK(fromPath, specifier, name) {
 			const target = resolve(fromPath, specifier)
 			return target !== null && kExports.get(target)?.has(name) === true

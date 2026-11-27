@@ -1,0 +1,21 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 6,
+			"code": "unknown-method"
+		},
+		{
+			"line": 7,
+			"code": "unknown-method"
+		},
+		{
+			"line": 8,
+			"code": "unknown-method"
+		}
+	],
+	"declarations": {
+		"rewritten": 4,
+		"left": 3
+	}
+}

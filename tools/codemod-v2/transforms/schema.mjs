@@ -23,6 +23,9 @@ const FACTORIES = new Map([
 	['discriminatedUnion', 'discriminatedUnion'],
 	['json', 'json'],
 	['unknown', 'any'],
+	['email', 'email'],
+	['url', 'url'],
+	['custom', 'custom'],
 ])
 
 const ISO_FACTORIES = new Map([
@@ -31,8 +34,6 @@ const ISO_FACTORIES = new Map([
 ])
 
 const STRING_FORMATS = new Set([
-	'email',
-	'url',
 	'httpUrl',
 	'uuid',
 	'uuidv4',
@@ -63,10 +64,47 @@ const STRING_FORMATS = new Set([
 	'file',
 ])
 
+// `k.email()` / `k.url()` take a message, or these option keys; any other option (Zod's `pattern`,
+// `normalize`, `abort`) has no `k` form.
+const FORMAT_OPTIONS = new Map([
+	['email', new Set(['message', 'error'])],
+	['url', new Set(['message', 'error', 'protocol', 'hostname'])],
+])
+
+/** `z.custom<T>(guard?, message?)`: at most a guard and a message string or `{ message, error, path }`. */
+function customArgumentsMap(call) {
+	if (call.arguments.length > 2) return false
+	if (call.arguments.length < 2) return true
+	return optionsMap(unwrap(call.arguments[1]), CUSTOM_OPTIONS)
+}
+
+const CUSTOM_OPTIONS = new Set(['message', 'error', 'path'])
+
+/** Whether an `email(...)` / `url(...)` call's argument is absent, a string, or an object of supported keys. */
+function formatOptionsMap(name, call) {
+	if (call.arguments.length === 0) return true
+	if (call.arguments.length > 1) return false
+	return optionsMap(unwrap(call.arguments[0]), FORMAT_OPTIONS.get(name))
+}
+
+function optionsMap(argument, allowed) {
+	if (argument.type === 'Literal') return argument.value === String(argument.value)
+	if (argument.type === 'TemplateLiteral') return true
+	if (argument.type !== 'ObjectExpression') return false
+	return argument.properties.every(
+		(property) =>
+			property.type === 'Property' &&
+			!property.computed &&
+			property.key.type === 'Identifier' &&
+			allowed.has(property.key.name) &&
+			// A function-valued `error` is Zod's error map, which k does not take.
+			!(property.key.name === 'error' && /Function/.test(property.value.type)),
+	)
+}
+
 const REPORTED_FACTORIES = new Map([
 	['lazy', 'recursive'],
 	['tuple', 'tuple'],
-	['custom', 'custom'],
 	['instanceof', 'custom'],
 	['coerce', 'coerce'],
 	['preprocess', 'coerce'],
@@ -108,6 +146,8 @@ const KEPT_METHODS = new Set([
 	'removeDefault',
 	'check',
 	'catch',
+	'email',
+	'url',
 	'loose',
 ])
 
@@ -118,7 +158,11 @@ const OBJECT_STEPS = new Set(['extend', 'pick', 'omit', 'partial', 'required'])
 const BOUND_ALIASES = new Map([['nonempty', ['min', '1']]])
 
 // Zod spellings rewritten to the k method with the same behaviour.
-const METHOD_RENAMES = new Map([['passthrough', 'loose']])
+const METHOD_RENAMES = new Map([
+	['passthrough', 'loose'],
+	['gte', 'min'],
+	['lte', 'max'],
+])
 
 const TERMINAL_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync'])
 
@@ -136,6 +180,8 @@ export const SCHEMA_METHODS = new Set([
 	...TERMINAL_METHODS,
 	...REPORTED_METHODS.keys(),
 	'nullish',
+	'gt',
+	'lt',
 	...BOUND_ALIASES.keys(),
 	...METHOD_RENAMES.keys(),
 	'pick',
@@ -159,12 +205,38 @@ export function isSchemaExpression(ctx, expression) {
 	}
 	if (ctx.schemaBindings.has(root.name)) return steps.length === 0 || steps[0].kind === 'member'
 	if (ctx.tableBindings.has(root.name)) return tableSchemaSteps(steps) > 0
+	const imported = ctx.imported.get(root.name)
+	if (imported && !ctx.owners.get(root.name)?.some((owner) => !owner.isType)) {
+		const run = ctx.options.run
+		if (run?.isTable(ctx.path, imported.source, imported.imported))
+			return tableSchemaSteps(steps) > 0
+		if (run?.isK(ctx.path, imported.source, imported.imported)) {
+			return steps.every(
+				(step, index) =>
+					step.kind === 'call' ||
+					(DERIVED_METHODS.has(step.name) && steps[index + 1]?.kind === 'call'),
+			)
+		}
+	}
 	return false
 }
+
+const DERIVED_METHODS = new Set([
+	'extend',
+	'pick',
+	'omit',
+	'partial',
+	'required',
+	'optional',
+	'nullable',
+	'strict',
+	'strip',
+])
 
 const TABLE_SCHEMA_MEMBERS = new Set([
 	'storage',
 	'schema',
+	'doc',
 	'insertSchema',
 	'updateSchema',
 	'commandInput',
@@ -229,6 +301,14 @@ export function processZodChain(ctx, unit, id) {
 	}
 	if (!target || steps[next]?.kind !== 'call') {
 		addSkip(ctx, unit, span(next), 'unknown-factory')
+		return
+	}
+	if (first.name === 'custom' && !customArgumentsMap(steps[next].node)) {
+		addSkip(ctx, unit, span(next), 'custom')
+		return
+	}
+	if (FORMAT_OPTIONS.has(first.name) && !formatOptionsMap(first.name, steps[next].node)) {
+		addSkip(ctx, unit, span(next), 'string-format')
 		return
 	}
 	if (isShadowed(id, 'k', ctx.parents)) {
@@ -408,12 +488,29 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 		}
 		if (step.name === 'nullish' && call.arguments.length === 0) {
 			addEdit(unit, step.node.property, 'nullable().optional')
+		} else if (
+			(step.name === 'gt' || step.name === 'lt') &&
+			call.arguments.length >= 1 &&
+			call.arguments.length <= 2 &&
+			isZero(call.arguments[0])
+		) {
+			addEdit(unit, step.node.property, step.name === 'gt' ? 'positive' : 'negative')
+			const bound = call.arguments[0]
+			addEdit(unit, { start: bound.start, end: call.arguments[1]?.start ?? bound.end }, '')
+			checkOptions(ctx, unit, call.arguments[1])
 		} else if (BOUND_ALIASES.has(step.name) && call.arguments.length <= 1) {
 			const [method, bound] = BOUND_ALIASES.get(step.name)
 			addEdit(unit, step.node.property, method)
 			const first = call.arguments[0]
 			const at = first ? first.start : call.end - 1
 			addEdit(unit, { start: at, end: at }, first ? `${bound}, ` : bound)
+		} else if (
+			(step.name === 'gte' || step.name === 'lte') &&
+			call.arguments.length >= 1 &&
+			call.arguments.length <= 2
+		) {
+			addEdit(unit, step.node.property, METHOD_RENAMES.get(step.name))
+			checkOptions(ctx, unit, call.arguments[1])
 		} else if (METHOD_RENAMES.has(step.name) && call.arguments.length === 0) {
 			addEdit(unit, step.node.property, METHOD_RENAMES.get(step.name))
 		} else if (step.name === 'pick' || step.name === 'omit') {
@@ -426,7 +523,10 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 			addSkip(ctx, unit, site, 'zod-check')
 		} else if (REPORTED_METHODS.has(step.name)) {
 			addSkip(ctx, unit, site, REPORTED_METHODS.get(step.name))
-		} else if (STRING_FORMATS.has(step.name)) {
+		} else if (
+			STRING_FORMATS.has(step.name) ||
+			(FORMAT_OPTIONS.has(step.name) && !formatOptionsMap(step.name, call))
+		) {
 			addSkip(ctx, unit, site, 'string-format')
 		} else if (!KEPT_METHODS.has(step.name)) {
 			addSkip(ctx, unit, site, 'unknown-method')
@@ -438,6 +538,11 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 
 		index += 2
 	}
+}
+
+function isZero(argument) {
+	const node = unwrap(argument)
+	return node.type === 'Literal' && (node.value === 0 || node.bigint === '0')
 }
 
 /** The argument index of a check's message or options object. */

@@ -58,5 +58,9 @@ export function formatSummary(report, write) {
 		lines.push('informational:')
 		for (const [code, count] of info) lines.push(`  ${code}: ${count}`)
 	}
+	if (report.packagesWithoutKit?.length > 0) {
+		lines.push(`packages without cvx-kit: ${report.packagesWithoutKit.length}`)
+		for (const directory of report.packagesWithoutKit) lines.push(`  ${directory}`)
+	}
 	return lines.join('\n')
 }

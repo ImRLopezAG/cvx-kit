@@ -25,13 +25,12 @@ export function isCreateTable(ctx, call) {
 	)
 }
 
-export function processTableCall(ctx, unit, call, kind) {
+export function processTableCall(ctx, unit, call) {
 	unit.tableCall = true
 	unit.contexts.push(call)
 	const fields = call.arguments[1]
-	if (!fields || fields.type === 'ObjectExpression') return
+	if (!fields || !isFunction(fields)) return
 	if (fields.type === 'ArrowFunctionExpression' && convertCallback(ctx, unit, fields)) return
-	if (kind === 'zodVariantTable' && !isFunction(fields)) return
 	addSkip(ctx, unit, fields, 'table-callback-complex')
 }
 

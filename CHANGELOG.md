@@ -10,11 +10,28 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [2.0.0-beta.6]
+
+### Added
+
+- `k.email(message?)` and `k.url({ protocol?, hostname?, message? })`, also as `k.string().email()` / `.url()`: `invalid_format` issues, `format: 'email'` / `'uri'` in JSON Schema, carried by `toZod`. The email pattern is Zod 4's; a URL is what the WHATWG `URL` parser accepts.
+- `k.custom<T>(guard?, message?)`, Zod's `z.custom<T>()`: natively `v.any()`, typed `T`, with the guard run at parse and at function boundaries.
+- `k.int64()` bounds: `.min(n)`, `.max(n)`, `.positive()`, `.nonnegative()`, `.negative()`, `.nonpositive()`, taking bigints and comparing exactly. Before, a bounded `z.bigint()` had no `k` form and the codemod's rewrite of it did not compile.
+
+### Fixed
+
+- Codemod: a bounded `z.bigint()` is rewritten to the new `k.int64()` bounds (it produced code that did not compile); `z.email()`, `z.url()` and `z.custom<T>()` are rewritten to `k.email()`, `k.url()` and `k.custom<T>()` instead of being reported.
+- Codemod: a local binding named `z` that shadows the Zod import is no longer treated as Zod.
+- Codemod: files of a workspace package that does not depend on `cvx-kit` are skipped and listed (`package-without-cvx-kit`); `--include-packages-without-kit` rewrites them anyway.
+- Codemod: a second run reports files that still hold Zod as `mixed` or `kept` and counts only what that run rewrote; a table whose fields are a plain reference is no longer reported as `table-callback-complex`.
+- Codemod: an import from `cvx-kit/zod-table` never survives; a `zid` still used by a statement left as Zod is reported as `zid-in-zod-statement`.
+- Codemod: `z.infer` / `z.output` / `z.input` of a derived `k` schema (`.extend(...)`, `table.insertSchema`, …) is rewritten instead of reported as `type-helper-unknown`.
+
 ## [2.0.0-beta.5]
 
 ### Fixed
 
-- `toJsonSchema` emits only the stronger of an inclusive and an exclusive bound on the same side, so `k.int().positive()` is `exclusiveMinimum: 0` without the default safe-range `minimum` beside it.
+- `toJsonSchema` emits only the stronger of an inclusive and an exclusive bound on the same side, so `k.int().positive()` is `exclusiveMinimum: 0` without the default safe-range `minimum` beside it. A chain that used to combine `.safe()` with `.positive()` or `.negative()` therefore loses the redundant bound it emitted up to beta.3 (`minimum: -9007199254740991` beside `exclusiveMinimum: 0`); the accepted values are the same, but a pinned JSON Schema snapshot of such a field changes.
 - `--restore-strict` pairs an object that moved within its file when exactly one leftover on each side has its field names, and no longer lists a strict object whose counterpart is already strict but declares its fields differently (in a constant, or renamed).
 
 ## [2.0.0-beta.4]

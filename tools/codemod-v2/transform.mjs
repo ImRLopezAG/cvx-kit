@@ -5,6 +5,7 @@ import {
 	applyEdits,
 	chainOf,
 	isReference,
+	isShadowed,
 	lineIndex,
 	parentMap,
 	parseSource,
@@ -135,6 +136,7 @@ function createUnit(node, index) {
 		info: [],
 		contexts: [],
 		refs: [],
+		zidRefs: [],
 		safeResults: new Set(),
 		kitEdits: [],
 		manual: [],
@@ -167,7 +169,7 @@ function rewrite(path, source, program, options) {
 			if (name === 'k') ctx.kConflict ??= unit.declaration
 		}
 	}
-	if (ctx.zodNamespaces.size === 0 && ctx.zodNamed.size === 0 && ctx.kit.size === 0) {
+	if (ctx.zodNamespaces.size === 0 && ctx.zodNamed.size === 0 && ctx.kit.size === 0 && !ctx.hasK && ctx.v2Tables.size === 0) {
 		return result(path, source, 'untouched', { facts: factsOf(ctx, units, () => false) })
 	}
 	classifyBindings(ctx, units)
@@ -179,6 +181,14 @@ function rewrite(path, source, program, options) {
 		return result(path, source, 'untouched', { skipped })
 	}
 	const isLeft = (unit) => left.has(unit)
+	for (const unit of units) {
+		if (!isLeft(unit)) continue
+		for (const node of unit.zidRefs) {
+			const binding = ctx.kit.get(node.name)
+			if (binding?.imported === 'zid' && binding.module === 'cvx-kit/zod-table')
+				addManual(ctx, unit, node, 'zid-in-zod-statement')
+		}
+	}
 	const facts = factsOf(ctx, units, isLeft)
 	const editsOf = (unit) =>
 		isLeft(unit) ? unit.kitEdits : [...unit.edits, ...unit.getterEdits, ...unit.kitEdits]
@@ -231,7 +241,8 @@ function factsOf(ctx, units, isLeft) {
 		}
 	}
 	const kExports = [...exports].filter(([, local]) => kLocals.has(local)).map(([name]) => name)
-	return { kExports }
+	const tableExports = [...exports].filter(([, local]) => kLocals.has(local) && ctx.tableBindings.has(local)).map(([name]) => name)
+	return { kExports, tableExports }
 }
 
 function siteAt(ctx, node) {
@@ -270,11 +281,14 @@ function summarize(
 		else info.push(...unit.info)
 		if (!counted(unit)) continue
 		if (isLeft(unit)) declarations.left++
-		else declarations.rewritten++
+		else if (unit.edits.length > 0 || unit.kitEdits.length > 0 || unit.getterEdits.length > 0)
+			declarations.rewritten++
 	}
 	skipped.sort((left, right) => left.line - right.line || left.column - right.column)
 	info.sort((left, right) => left.line - right.line || left.column - right.column)
-	return result(path, output, output === source ? 'untouched' : status, {
+	const remainingZod = units.some((unit) => isLeft(unit) && unit.zodRefs > 0)
+	const noChangeStatus = remainingZod ? (ctx.hasK || ctx.v2Tables.size > 0 ? 'mixed' : 'kept') : 'untouched'
+	return result(path, output, output === source ? noChangeStatus : status, {
 		rewritten,
 		skipped,
 		info,
@@ -300,7 +314,10 @@ function isZodNumber(ctx, chain) {
 
 /** Top-level `const` bindings the codemod can prove are schemas, tables or table factories. */
 function classifyBindings(ctx, units) {
-	for (let pass = 0; pass < 2; pass++) {
+	const bindings = [ctx.schemaBindings, ctx.tableBindings, ctx.tableFactories, ctx.refinedBindings, ctx.numberBindings, ctx.integerBindings, ctx.objectConsts]
+	const size = () => bindings.reduce((total, set) => total + set.size, 0)
+	for (let pass = 0; pass <= units.length; pass++) {
+		const before = size()
 		for (const unit of units) {
 			if (unit.declaration.type !== 'VariableDeclaration') continue
 			for (const declarator of unit.declaration.declarations) {
@@ -330,6 +347,7 @@ function classifyBindings(ctx, units) {
 				}
 			}
 		}
+		if (size() === before) break
 	}
 }
 
@@ -346,7 +364,7 @@ function scanUnit(ctx, unit) {
 	)
 	for (const call of calls) {
 		const kind = tableKind(ctx, call)
-		if (kind) processTableCall(ctx, unit, call, kind)
+		if (kind) processTableCall(ctx, unit, call)
 	}
 	for (const call of calls) unprovenSchemaCall(ctx, unit, call)
 	walk(unit.node, (node) => {
@@ -356,11 +374,13 @@ function scanUnit(ctx, unit) {
 	for (const [node, parent] of identifiers) {
 		if (!isReference(node, parent)) continue
 		const name = node.name
+		if (isShadowed(node, name, ctx.parents)) continue
 		if (ctx.zodNamespaces.has(name)) zodReference(ctx, unit, node, parent)
 		else if (ctx.zodNamed.has(name)) {
 			countZodRef(ctx, unit, name)
 			addSkip(ctx, unit, node, 'zod-type')
 		} else if (ctx.kit.has(name)) kitReference(ctx, unit, node, parent)
+		if (ctx.kit.get(name)?.imported === 'zid') unit.zidRefs.push(node)
 		if (ctx.owners.has(name)) unit.refs.push(node)
 		const member = parent?.type === 'MemberExpression' && parent.object === node
 		if (!member) continue

@@ -3,7 +3,9 @@ import {
 	array,
 	boolean,
 	bytes,
+	custom,
 	discriminatedUnion,
+	email,
 	enumOf,
 	id,
 	int,
@@ -14,6 +16,7 @@ import {
 	number,
 	string,
 	union,
+	url,
 } from './kinds'
 import { isoDate, isoDateTime, timestamp } from './dates'
 import { NEVER } from './issues'
@@ -23,6 +26,8 @@ import type { KType } from './types'
 
 export const k = {
 	string,
+	email,
+	url,
 	number,
 	int,
 	int64,
@@ -30,6 +35,7 @@ export const k = {
 	null: nullValue,
 	bytes,
 	any,
+	custom,
 	json,
 	jsonObject,
 	literal,

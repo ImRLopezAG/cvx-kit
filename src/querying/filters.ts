@@ -155,7 +155,7 @@ export type NativePagination = {
  * `paginationOptsValidator` plus `onEmptyBudget`.
  */
 export function nativePagination(): NativePaginationSchema {
-	return (nativeOptions ??= k.object({
+	return (nativeOptions ??= k.strictObject({
 		numItems: finiteNumber().int().refine(positive, POSITIVE).max(MAX_PAGE_SIZE),
 		cursor: k.string().nullable(),
 		endCursor: k.string().nullable().optional(),
@@ -329,14 +329,14 @@ export function parseFilterPlan<Schema extends KSchema<any, any, any, any, any>>
 	where?: FilterSpec<Schema>,
 	ordering?: string,
 ) {
-	const args: Schema['_output'] = schema.parse(input)
+	const args: Schema['_output'] = schema['~parseStrict'](input)
 	// SAFETY: pagination schemas validate filters before this internal AST adapter reads them.
 	const parsed = args as { filters?: FilterTree }
 	// SAFETY: server filters use the same validation boundary as client filters.
 	const server =
 		where === undefined
 			? undefined
-			: (schema.parse({ ...parsed, filters: where }) as { filters?: FilterTree })
+			: (schema['~parseStrict']({ ...parsed, filters: where }) as { filters?: FilterTree })
 	const compiled = planParsedFilters({
 		client: parsed.filters,
 		server: server?.filters,

@@ -8,18 +8,10 @@
 		{
 			"line": 9,
 			"code": "unknown-factory"
-		},
-		{
-			"line": 10,
-			"code": "mixed-reference"
-		},
-		{
-			"line": 11,
-			"code": "unproven-int"
 		}
 	],
 	"declarations": {
-		"rewritten": 5,
-		"left": 4
+		"rewritten": 7,
+		"left": 2
 	}
 }

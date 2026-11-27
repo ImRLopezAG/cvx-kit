@@ -1,9 +1,9 @@
 import { k } from 'cvx-kit'
 
-export const Everything = k.object({
+export const Everything = k.strictObject({
 	s: k.string().trim().toLowerCase().regex(/^a/).describe('s'),
 	n: k.number().finite(),
-	i: k.int().safe(),
+	i: k.int(),
 	big: k.int64(),
 	nil: k.null(),
 	lit: k.literal('x'),
@@ -16,8 +16,8 @@ export const Everything = k.object({
 	day: k.isoDate(),
 	at: k.isoDateTime(),
 	variant: k.discriminatedUnion('type', [
-		k.object({ type: k.literal('a') }),
-		k.object({ type: k.literal('b') }),
+		k.strictObject({ type: k.literal('a') }),
+		k.strictObject({ type: k.literal('b') }),
 	]),
 })
 

@@ -119,6 +119,12 @@ const renameArgs = k.object({
 type RenameArgs = k.input<typeof renameArgs>
 ```
 
+Application `parse`/`safeParse` strips unknown object keys by default. Add
+`.strict()` or use `k.strictObject` to reject them; `.loose()` keeps them.
+Function args and returns, table writes and other kit boundaries stay strict.
+`k.int()` and `.int()` accept only safe integers; `.safe()` is redundant on an
+integer. `k.number()` accepts NaN and infinities unless `.finite()` is added.
+
 Failed declared checks throw a `ConvexError` with data
 `{ code: 'VALIDATION', issues: [{ path, code, message }] }`. `k` schemas
 implement Standard Schema v1; `toJsonSchema` (`cvx-kit/json-schema`) and

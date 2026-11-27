@@ -16,7 +16,7 @@ const FACTORIES = new Map([
 	['partialRecord', 'partialRecord'],
 	['any', 'any'],
 	['object', 'object'],
-	['strictObject', 'object'],
+	['strictObject', 'strictObject'],
 	['looseObject', 'looseObject'],
 	['int', 'int'],
 	['bigint', 'int64'],
@@ -93,6 +93,7 @@ const KEPT_METHODS = new Set([
 	'extend',
 	'partial',
 	'strip',
+	'strict',
 	'unwrap',
 	'positive',
 	'negative',
@@ -110,7 +111,7 @@ const KEPT_METHODS = new Set([
 	'loose',
 ])
 
-/** Steps that build a new object from an object, whose strictness `.strip()` must restate. */
+/** Steps that build a new object from an object. */
 const OBJECT_STEPS = new Set(['extend', 'pick', 'omit', 'partial', 'required'])
 
 // Zod spellings of an inclusive bound, rewritten to the k method that expresses it.
@@ -135,7 +136,6 @@ export const SCHEMA_METHODS = new Set([
 	...TERMINAL_METHODS,
 	...REPORTED_METHODS.keys(),
 	'nullish',
-	'strict',
 	...BOUND_ALIASES.keys(),
 	...METHOD_RENAMES.keys(),
 	'pick',
@@ -248,15 +248,6 @@ export function processZodChain(ctx, unit, id) {
 	if (factory !== first) {
 		addEdit(unit, { start: first.node.property.start, end: factory.node.property.end }, target)
 	} else if (target !== first.name) addEdit(unit, first.node.property, target)
-	if (first.name === 'object' || first.name === 'strictObject') {
-		unit.objectSites.push({
-			site: span(next),
-			end: steps[next].node.end,
-			strict: first.name === 'strictObject' || setsStrictness(steps, next + 1),
-			derived: false,
-			policy: null,
-		})
-	}
 	if (first.name === 'number' || first.name === 'int') {
 		numberBounds(ctx, unit, steps, next, first, span(next))
 	}
@@ -288,49 +279,34 @@ function recordKeyKind(ctx, argument) {
 	return null
 }
 
-/**
- * Zod's `z.int()` (and `.int()`) stops at the safe-integer range and `z.number()` refuses `NaN` and
- * infinities; native `v.number()` does neither. By default the codemod keeps v1's refusals:
- * `k.int().safe()` and `k.number().finite()`. With `nativeNumberBounds` it emits the bare native
- * forms, which run no kit code per call, and reports what each site stopped refusing.
- */
+/** Keep Zod's finite numbers; integers are already safe by default in k. */
 function numberBounds(ctx, unit, steps, next, factory, site) {
-	const names = new Set()
-	let intStep = null
+	const numericSteps = []
 	for (let index = next + 1; index < steps.length; index += 2) {
 		const step = steps[index]
 		if (step.kind !== 'member' || steps[index + 1]?.kind !== 'call') break
-		names.add(step.name)
-		if (step.name === 'int' && intStep === null) intStep = step
+		if (step.name === 'transform' || step.name === 'pipe' || TERMINAL_METHODS.has(step.name)) break
+		numericSteps.push({ step, call: steps[index + 1].node })
 	}
-	const integer = factory.name === 'int' || intStep !== null
-	if (ctx.options.nativeNumberBounds) {
-		if (integer && !names.has('safe')) addInfo(ctx, unit, site, 'int-no-longer-safe')
-		else if (!integer && !names.has('finite') && !names.has('safe'))
-			addInfo(ctx, unit, site, 'number-now-accepts-nan')
-		return
-	}
-	if (integer) {
-		if (names.has('safe')) return
-		const intCall = intStep === null ? null : steps[steps.indexOf(intStep) + 1].node
-		if (intCall !== null && intCall.arguments.length > 0) {
-			// `z.number().int(options)` → `k.number().int(options).safe()`: the options keep their message.
-			addEdit(unit, { start: intCall.end, end: intCall.end }, '.safe()')
-		} else if (intStep !== null) {
-			// `z.number().int()` → `k.int().safe()`: the int factory, with `.int()` restated as `.safe()`.
-			addEdit(unit, factory.node.property, 'int')
-			addEdit(unit, intStep.node.property, 'safe')
-		} else {
-			const end = steps[next].node.end
-			addEdit(unit, { start: end, end }, '.safe()')
+	let integer = factory.name === 'int'
+	for (const { step, call } of numericSteps) {
+		if (step.name === 'int' || step.name === 'safe') {
+			if (step.name === 'safe' && integer) {
+				addEdit(unit, { start: step.node.object.end, end: call.end }, '')
+			} else if (!integer && call.arguments.length === 0) {
+				addEdit(unit, factory.node.property, 'int')
+				addEdit(unit, { start: step.node.object.end, end: call.end }, '')
+			} else if (step.name === 'safe') addEdit(unit, step.node.property, 'int')
+			integer = true
 		}
-		addInfo(ctx, unit, site, 'int-safe-preserved')
-		return
 	}
-	if (names.has('finite') || names.has('safe')) return
-	const end = steps[next].node.end
-	addEdit(unit, { start: end, end }, '.finite()')
-	addInfo(ctx, unit, site, 'number-finite-preserved')
+	if (integer || numericSteps.some(({ step }) => step.name === 'finite')) return
+	if (ctx.options.nativeNumberBounds) addInfo(ctx, unit, site, 'number-now-accepts-nan')
+	else {
+		const end = steps[next].node.end
+		addEdit(unit, { start: end, end }, '.finite()')
+		addInfo(ctx, unit, site, 'number-finite-preserved')
+	}
 }
 
 /**
@@ -350,7 +326,15 @@ export function processBoundChain(ctx, unit, id, table) {
 		return false
 	}
 	unit.boundSchema = true
-	processSteps(ctx, unit, steps, from, outer, table ? false : ctx.numberBindings.has(id.name))
+	processSteps(
+		ctx,
+		unit,
+		steps,
+		from,
+		outer,
+		table ? false : ctx.numberBindings.has(id.name),
+		ctx.integerBindings.has(id.name),
+	)
 	return true
 }
 
@@ -373,45 +357,10 @@ export function carriesObjectChecks(ctx, chain, end = chain.steps.length) {
 }
 
 /**
- * Zod's unknown-key policy of the object a chain builds before step `end`: `'strip'` (`z.object`),
- * `'strict'`, `'loose'`, `'k'` for a schema that is already `k` (its derivations keep its policy), or
- * null when it cannot be proven. Zod's `pick`, `omit`, `extend`, `partial` and `required` keep the
- * receiver's policy, as `k`'s do.
- */
-export function zodPolicy(ctx, chain, end = chain.steps.length) {
-	const { root, steps } = chain
-	for (let index = end - 1; index >= 0; index--) {
-		const step = steps[index]
-		if (step.kind !== 'member') continue
-		if (step.name === 'strict') return 'strict'
-		if (step.name === 'strip') return 'strip'
-		if (step.name === 'loose' || step.name === 'passthrough') return 'loose'
-	}
-	if (root.type !== 'Identifier') return null
-	if (ctx.zodNamespaces.has(root.name)) {
-		const factory = steps[0]?.kind === 'member' ? steps[0].name : null
-		if (factory === 'object') return 'strip'
-		if (factory === 'strictObject') return 'strict'
-		if (factory === 'looseObject') return 'loose'
-		return null
-	}
-	if (root.name === 'k' && ctx.hasK) return 'k'
-	if (ctx.tableBindings.has(root.name)) return 'k'
-	return ctx.bindingPolicies.get(root.name) ?? null
-}
-
-/** Whether a chain passes through a `.safe()` at or after step `from`. */
-function hasSafe(steps, from) {
-	for (let index = from; index < steps.length; index++)
-		if (steps[index].kind === 'member' && steps[index].name === 'safe') return true
-	return false
-}
-
-/**
  * `number` is null for a chain whose number bounds `numberBounds` already handled (a Zod factory
  * chain), else whether the chain's root binding is proven to be a Zod number.
  */
-function processSteps(ctx, unit, steps, from, outer, number) {
+function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 	const chain = chainOf(outer)
 	let index = from
 	while (index < steps.length) {
@@ -438,6 +387,21 @@ function processSteps(ctx, unit, steps, from, outer, number) {
 			)
 			return
 		}
+		// Numeric calls removed by numberBounds must not receive nested option edits.
+		if (
+			(step.name === 'safe' || step.name === 'int') &&
+			unit.edits.some(
+				(edit) => edit.text === '' && edit.start === step.node.object.end && edit.end === call.end,
+			)
+		) {
+			index += 2
+			continue
+		}
+		if (number && step.name === 'safe' && integer) {
+			addEdit(unit, { start: step.node.object.end, end: call.end }, '')
+			index += 2
+			continue
+		}
 		if (TERMINAL_METHODS.has(step.name)) {
 			if (step.name.startsWith('safeParse')) trackSafeParse(ctx, unit, steps, index, outer)
 			return
@@ -452,8 +416,6 @@ function processSteps(ctx, unit, steps, from, outer, number) {
 			addEdit(unit, { start: at, end: at }, first ? `${bound}, ` : bound)
 		} else if (METHOD_RENAMES.has(step.name) && call.arguments.length === 0) {
 			addEdit(unit, step.node.property, METHOD_RENAMES.get(step.name))
-		} else if (step.name === 'strict' && call.arguments.length === 0) {
-			addEdit(unit, { start: step.node.object.end, end: call.end }, '')
 		} else if (step.name === 'pick' || step.name === 'omit') {
 			maskStep(ctx, unit, call, site)
 		} else if (step.name === 'catch' && readsZodCatchContext(call)) {
@@ -471,23 +433,9 @@ function processSteps(ctx, unit, steps, from, outer, number) {
 		} else if (OPTIONS_ARGUMENT.has(step.name)) {
 			checkOptions(ctx, unit, call.arguments[OPTIONS_ARGUMENT.get(step.name)])
 		}
-		if (step.name === 'int' && number !== null && !hasSafe(steps, index + 2)) {
-			// Zod's `.int()` stops at the safe-integer range; `k`'s does not.
-			if (number && !ctx.options.nativeNumberBounds) {
-				addEdit(unit, { start: call.end, end: call.end }, '.safe()')
-				addInfo(ctx, unit, site, 'int-safe-preserved')
-			} else if (number) addInfo(ctx, unit, site, 'int-no-longer-safe')
-			else addSkip(ctx, unit, site, 'unproven-int')
-		}
-		if (OBJECT_STEPS.has(step.name)) {
-			unit.objectSites.push({
-				site,
-				end: call.end,
-				strict: setsStrictness(steps, index + 2),
-				derived: true,
-				policy: zodPolicy(ctx, chain, index),
-			})
-		}
+		if (number && step.name === 'safe') addEdit(unit, step.node.property, 'int')
+		if (step.name === 'int' || step.name === 'safe') integer = true
+
 		index += 2
 	}
 }
@@ -539,23 +487,6 @@ function checkOptions(ctx, unit, argument) {
 		if (property.shorthand) addEdit(unit, property, `message: error`)
 		else addEdit(unit, property.key, 'message')
 	}
-}
-
-/** Whether a later step states the object's unknown-key handling (`.strict()` or `.strip()`). */
-function setsStrictness(steps, from) {
-	for (let index = from; index < steps.length; index++) {
-		const step = steps[index]
-		if (step.kind !== 'member') continue
-		if (
-			step.name === 'strict' ||
-			step.name === 'strip' ||
-			step.name === 'loose' ||
-			step.name === 'passthrough'
-		)
-			return true
-		if (OBJECT_STEPS.has(step.name)) return false
-	}
-	return false
 }
 
 /**

@@ -19,13 +19,11 @@ import {
 	planImports,
 	ZOD_INTEROP,
 } from './transforms/imports.mjs'
-import { classifyObjects } from './transforms/objects.mjs'
 import {
 	carriesObjectChecks,
 	isSchemaExpression,
 	processBoundChain,
 	processZodChain,
-	zodPolicy,
 } from './transforms/schema.mjs'
 import { getterEdits } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
@@ -49,10 +47,8 @@ const TYPE_DECLARATIONS = new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclara
 /**
  * `options.getters` (default `true`): rewrite `args` / `returns` of function
  * definitions to getters, see `transforms/getters.mjs`.
- * `options.stripParsed` (default `true`): append `.strip()` to object schemas
- * that are parsed, so parse keeps v1's stripping (see `transforms/objects.mjs`).
- * `options.nativeNumberBounds` (default `false`): emit bare `k.int()` / `k.number()` instead of
- * `k.int().safe()` / `k.number().finite()`, and report what each site no longer refuses.
+ * `options.nativeNumberBounds` (default `false`): emit `k.number()` instead of
+ * `k.number().finite()`, and report each site that now accepts NaN and infinities.
  * `options.run`: what the CLI knows about the other files of the run, see
  * `index.mjs`; without it only this file is known.
  */
@@ -70,7 +66,6 @@ export function transformSource(path, source, options = {}) {
 	try {
 		return rewrite(path, source, parsed.program, {
 			getters: options.getters !== false,
-			stripParsed: options.stripParsed !== false,
 			nativeNumberBounds: options.nativeNumberBounds === true,
 			run: options.run ?? null,
 		})
@@ -117,11 +112,10 @@ function createContext(path, source, program, options) {
 		v2Tables: new Set(),
 		imported: new Map(),
 		moduleDecls: new Map(),
-		parsedNames: new Set(),
 		schemaBindings: new Set(),
 		refinedBindings: new Set(),
 		numberBindings: new Set(),
-		bindingPolicies: new Map(),
+		integerBindings: new Set(),
 		tableBindings: new Set(),
 		tableFactories: new Set(),
 		objectConsts: new Set(),
@@ -144,7 +138,6 @@ function createUnit(node, index) {
 		safeResults: new Set(),
 		kitEdits: [],
 		manual: [],
-		objectSites: [],
 		zodValue: false,
 		zodRefs: 0,
 		tableCall: false,
@@ -164,7 +157,6 @@ function declaredNames(declaration) {
 function rewrite(path, source, program, options) {
 	const ctx = createContext(path, source, program, options)
 	collectImports(ctx)
-	collectParsed(ctx)
 	const units = program.body
 		.filter((node) => node.type !== 'ImportDeclaration')
 		.map((node, index) => createUnit(node, index))
@@ -187,7 +179,6 @@ function rewrite(path, source, program, options) {
 		return result(path, source, 'untouched', { skipped })
 	}
 	const isLeft = (unit) => left.has(unit)
-	classifyObjects(ctx, units, isLeft)
 	const facts = factsOf(ctx, units, isLeft)
 	const editsOf = (unit) =>
 		isLeft(unit) ? unit.kitEdits : [...unit.edits, ...unit.getterEdits, ...unit.kitEdits]
@@ -216,8 +207,7 @@ function rewrite(path, source, program, options) {
 
 /**
  * What other files of a run need to know about this one: the exported names that
- * are `k` schemas or tables once it is written, the imports it reads, and the
- * imported names it parses. `index.mjs` resolves these across the run.
+ * are `k` schemas or tables once it is written. `index.mjs` resolves these across the run.
  */
 function factsOf(ctx, units, isLeft) {
 	const kLocals = new Set()
@@ -241,9 +231,7 @@ function factsOf(ctx, units, isLeft) {
 		}
 	}
 	const kExports = [...exports].filter(([, local]) => kLocals.has(local)).map(([name]) => name)
-	const imports = [...ctx.imported].map(([local, binding]) => ({ local, ...binding }))
-	const parsedImports = imports.filter(({ local }) => ctx.parsedNames.has(local))
-	return { kExports, imports, parsedImports }
+	return { kExports }
 }
 
 function siteAt(ctx, node) {
@@ -329,9 +317,16 @@ function classifyBindings(ctx, units) {
 					ctx.schemaBindings.add(name)
 					if (carriesObjectChecks(ctx, chainOf(init))) ctx.refinedBindings.add(name)
 					const chain = chainOf(init)
-					const policy = zodPolicy(ctx, chain)
-					if (policy !== null) ctx.bindingPolicies.set(name, policy)
-					if (isZodNumber(ctx, chain)) ctx.numberBindings.add(name)
+					if (isZodNumber(ctx, chain)) {
+						ctx.numberBindings.add(name)
+						if (
+							ctx.integerBindings.has(chain.root.name) ||
+							chain.steps.some(
+								(step) => step.kind === 'member' && (step.name === 'int' || step.name === 'safe'),
+							)
+						)
+							ctx.integerBindings.add(name)
+					}
 				}
 			}
 		}
@@ -380,21 +375,8 @@ function scanUnit(ctx, unit) {
 	})
 }
 
-const PARSE_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync'])
-
-/** Names whose chain ends in a parse call anywhere in the file (`x.parse(…)`, `x.strip().safeParse(…)`). */
-function collectParsed(ctx) {
-	walk(ctx.program, (node) => {
-		if (node.type !== 'CallExpression' || node.callee.type !== 'MemberExpression') return
-		const callee = node.callee
-		if (callee.computed || !PARSE_METHODS.has(callee.property.name)) return
-		const { root } = chainOf(callee.object)
-		if (root.type === 'Identifier') ctx.parsedNames.add(root.name)
-	})
-}
-
 /**
- * Zod-only spellings (`.strict()`, a `{ key: true }` mask on `pick`/`omit`) on a
+ * Zod-only spellings (a `{ key: true }` mask on `pick`/`omit`) on a
  * chain whose root the codemod cannot prove is a schema or a table: reported,
  * not rewritten, and the unit's other sites are unaffected.
  */
@@ -409,20 +391,14 @@ function unprovenSchemaCall(ctx, unit, call) {
 		call.arguments[0].properties.some(
 			(property) => property.type === 'Property' && unwrap(property.value)?.value === true,
 		)
-	const strict = name === 'strict' && call.arguments.length === 0
-	if (!mask && !strict) return
+	if (!mask) return
 	const { root } = chainOf(callee.object)
 	if (root.type === 'Identifier') {
 		if (ctx.zodNamespaces.has(root.name)) return
 		if (ctx.schemaBindings.has(root.name) || ctx.tableBindings.has(root.name)) return
 		if (root.name === 'k' && ctx.hasK) return
 	}
-	addManual(
-		ctx,
-		unit,
-		{ start: callee.property.start, end: call.end },
-		mask ? 'unproven-mask' : 'unproven-strict',
-	)
+	addManual(ctx, unit, { start: callee.property.start, end: call.end }, 'unproven-mask')
 }
 
 function countZodRef(ctx, unit, name) {

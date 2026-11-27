@@ -460,6 +460,8 @@ operations skip the same failure value. So a nested registry's own code
 survives, and a nested failure that a parent recovers from is still reported.
 Errors thrown by `emit` are ignored; the original failure is unchanged.
 
+Effect command inputs remain strict at execution: unknown object keys fail validation, including in nested `exec`. This differs from application `k.object(...).parse(...)`, which strips unknown keys by default.
+
 Set `argumentFailure` on `createEffectFoundation` to control command and
 query `input` rejections. `'validation'` (the default) keeps the decoder's own
 failure: a `k` input fails with `KValidationError`, and the API adapter throws it

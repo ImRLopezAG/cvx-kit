@@ -128,7 +128,8 @@ describe('declared containers', () => {
 		const profile = k.object({ text: k.string() })
 		expect(() => Object.assign(profile.shape, { secret: k.string() })).toThrow(TypeError)
 		expect(() => Reflect.set(profile.shape, 'text', k.number()) || badWrite()).toThrow(TypeError)
-		expect(profile.safeParse({ text: 'a', secret: 'b' }).success).toBe(false)
+		expect(profile.parse({ text: 'a', secret: 'b' })).toEqual({ text: 'a' })
+		expect(profile.strict().safeParse({ text: 'a', secret: 'b' }).success).toBe(false)
 		for (const derived of [
 			profile.pick('text'),
 			profile.omit('text'),
@@ -216,7 +217,7 @@ describe('class instances', () => {
 	})
 
 	it('a strict object, a record and a discriminated union still reject them with a plain-object message', () => {
-		const strict = k.object({ _tag: k.string() }).safeParse(new TaggedError())
+		const strict = k.strictObject({ _tag: k.string() }).safeParse(new TaggedError())
 		expect(strict).toMatchObject({
 			success: false,
 			issues: [
@@ -350,7 +351,7 @@ describe('derived objects keep the unknown-key policy, as Zod 4', () => {
 	const input = { a: 'a', b: 'b', extra: 1 }
 	const loose = k.looseObject({ a: k.string(), b: k.string() })
 	const strip = k.object({ a: k.string(), b: k.string() }).strip()
-	const strict = k.object({ a: k.string(), b: k.string() })
+	const strict = k.strictObject({ a: k.string(), b: k.string() })
 
 	it('loose stays loose', () => {
 		for (const derived of [

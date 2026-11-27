@@ -246,7 +246,10 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 				break
 			case 'strip':
 				// A stripping object accepts unknown keys, so its input side does not forbid them; its output has none.
-				if (!output) out = withoutAdditional(out)
+				out = output ? { ...out, additionalProperties: false } : withoutAdditional(out)
+				break
+			case 'strict':
+				out = { ...out, additionalProperties: false }
 				break
 			case 'nullable':
 				nullable = true

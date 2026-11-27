@@ -11,7 +11,7 @@ import {
 
 const dialect = 'https://json-schema.org/draft/2020-12/schema' as const
 const owner = Symbol('documents')
-const input = k.object({
+const input = k.strictObject({
 	id: k.string().regex(/^doc_/),
 	title: k.string().transform((s) => s.trim()),
 })

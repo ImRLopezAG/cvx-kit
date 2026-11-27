@@ -2,11 +2,11 @@ import { k } from 'cvx-kit'
 import { authQuery } from './auth'
 import { relations } from './relations'
 
-export const NoteArgs = k.object({ id: k.id('notes') })
+export const NoteArgs = k.strictObject({ id: k.id('notes') })
 
 export const get = authQuery({
 	args: NoteArgs,
-	get returns() { return k.object({ title: k.string() }) },
+	get returns() { return k.strictObject({ title: k.string() }) },
 	handler: async (_ctx, args) => args.id,
 })
 

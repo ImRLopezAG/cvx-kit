@@ -80,9 +80,15 @@ describe('k parse', () => {
 		])
 	})
 
-	it('fails unknown keys on a strict object and removes them on a strip object', () => {
+	it('removes unknown keys by default, fails them on a strict object and at a boundary', () => {
 		const schema = k.object({ a: k.string() })
-		expect(issuesOf(schema.safeParse({ a: 'x', b: 1, c: 2 }))).toEqual([
+		expect(schema.parse({ a: 'x', b: 1, c: 2 })).toEqual({ a: 'x' })
+		expect(issuesOf(schema['~safeParseStrict']({ a: 'x', b: 1 }))).toEqual([
+			{ path: ['b'], code: 'unrecognized_key', message: 'Unrecognized key: "b"' },
+		])
+		expect(k.strictObject({ a: k.string() }).strip().parse({ a: 'x', b: 1 })).toEqual({ a: 'x' })
+		expect(schema.strip().strict().safeParse({ a: 'x', b: 1 }).success).toBe(false)
+		expect(issuesOf(schema.strict().safeParse({ a: 'x', b: 1, c: 2 }))).toEqual([
 			{ path: ['b'], code: 'unrecognized_key', message: 'Unrecognized key: "b"' },
 			{ path: ['c'], code: 'unrecognized_key', message: 'Unrecognized key: "c"' },
 		])

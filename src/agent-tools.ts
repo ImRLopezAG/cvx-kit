@@ -116,5 +116,5 @@ let listArgs: AgentListArgs | undefined
 
 /** Built on the first `list` tool, so importing this module builds nothing. */
 function listArgsSchema(): AgentListArgs {
-	return (listArgs ??= k.object({ paginationOpts: convexPaginationOptions() }))
+	return (listArgs ??= k.strictObject({ paginationOpts: convexPaginationOptions() }))
 }

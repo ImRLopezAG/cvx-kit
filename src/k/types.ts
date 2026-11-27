@@ -44,6 +44,7 @@ export type KOp =
 	| 'nullable'
 	| 'default'
 	| 'strip'
+	| 'strict'
 	| 'loose'
 	| 'transform'
 	| 'pipe'

@@ -42,7 +42,7 @@ export type Document = k.infer<typeof documentInput> // status required
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `k.string()`                             | string                                                                                                                                             | `v.string()`                                                        |
 | `k.number()`                             | any number, including `NaN` and `±Infinity` (as `v.number()`)                                                                                      | `v.number()`                                                        |
-| `k.int()`                                | a number for which `Number.isInteger` holds                                                                                                        | `v.number()`                                                        |
+| `k.int()`                                | a number for which `Number.isSafeInteger` holds                                                                                                    | `v.number()`                                                        |
 | `k.int64()`                              | bigint                                                                                                                                             | `v.int64()`                                                         |
 | `k.boolean()`                            | boolean                                                                                                                                            | `v.boolean()`                                                       |
 | `k.null()`                               | `null`                                                                                                                                             | `v.null()`                                                          |
@@ -54,7 +54,8 @@ export type Document = k.infer<typeof documentInput> // status required
 | `k.enum(values)`                         | one of a non-empty tuple of strings; `.options` returns the tuple, `.enum` a value-to-value record, `.exclude([...])`/`.extract([...])` a new enum | union of literals (a one-value enum is a one-member union)          |
 | `k.id('table')`                          | a string; typed `Id<'table'>` on input and output                                                                                                  | `v.id('table')`                                                     |
 | `k.array(element)`                       | an array; `.element` returns the element schema                                                                                                    | `v.array(...)`                                                      |
-| `k.object(fields)`                       | a plain object with exactly these keys                                                                                                             | `v.object(...)`                                                     |
+| `k.object(fields)`                       | these declared fields; application parse strips unknown keys                                                                                       | `v.object(...)`                                                     |
+| `k.strictObject(fields)`                 | `k.object(fields).strict()`: parse rejects unknown keys                                                                                            | `v.object(...)` (closed)                                            |
 | `k.looseObject(fields)`                  | `k.object(fields).loose()`: these fields, unknown keys kept; see [Open objects](#open-objects)                                                     | `v.object(...)` (closed)                                            |
 | `k.record(key, value)`                   | a plain object; `key` is a string or id schema, or a finite set of string literals; see [Records](#records)                                        | `v.record(...)`, or `v.object(...)` for literal keys                |
 | `k.partialRecord(key, value)`            | an object with one optional field per value of a literal key set; see [Records](#records)                                                          | `v.object(...)` with optional fields                                |
@@ -66,7 +67,7 @@ export type Document = k.infer<typeof documentInput> // status required
 
 Argument-less factories return one shared, immutable root, so `k.string()` allocates nothing.
 
-`k.number()` accepts `NaN` and infinities because native `v.number()` does. `min`, `max` and `length` reject `NaN`, and `.int()` and `k.int()` reject both `NaN` and infinities. Add `.finite()` when an unbounded number must be finite:
+`k.number()` accepts `NaN` and infinities because native `v.number()` does. `min`, `max` and `length` reject `NaN`, and `.int()` and `k.int()` reject both `NaN` and infinities. Integers require `Number.isSafeInteger`: non-integers report `not_integer`, and integers outside the safe range report `too_small` or `too_big`. `.safe()` is redundant on an integer. Add `.finite()` when an unbounded number must be finite:
 
 ```ts
 const amount = k.number().finite()
@@ -74,7 +75,7 @@ const amount = k.number().finite()
 
 ### Records
 
-A string, id or ISO date key (or a union of those) builds a native `v.record`. Convex refuses a record whose keys are literals when the functions are pushed (`Records cannot have string literal keys`; convex-test accepts it), so a key that is a finite set of string literals (`k.enum([...])`, `k.literal('x')` or a union of string literals) builds a strict object with one required field per value, as v1's `z.record(z.enum([...]), value)` did. Its type is `Record<'a' | 'b', V>`, parse reports a missing key and an unknown key, and JSON Schema and `.toZod()` see an object. `k.partialRecord(k.enum([...]), value)` builds the same object with every field optional (`z.partialRecord`). Any other key kind (a number, a numeric literal, a union mixing literals with strings) is a type error and throws at declaration naming the kind, as does a literal key that is not a valid Convex field name.
+A string, id or ISO date key (or a union of those) builds a native `v.record`. Convex refuses a record whose keys are literals when the functions are pushed (`Records cannot have string literal keys`; convex-test accepts it), so a key that is a finite set of string literals (`k.enum([...])`, `k.literal('x')` or a union of string literals) builds an object with a closed native validator and one required field per value, as v1's `z.record(z.enum([...]), value)` did. Its type is `Record<'a' | 'b', V>`, parse reports missing required keys, and JSON Schema and `.toZod()` see an object. The object is `.strict()`: parse and kit boundaries both reject keys outside the set. `k.partialRecord(k.enum([...]), value)` builds the same object with every field optional (`z.partialRecord`). Any other key kind (a number, a numeric literal, a union mixing literals with strings) is a type error and throws at declaration naming the kind, as does a literal key that is not a valid Convex field name.
 
 ```ts
 const totals = k.object({
@@ -112,11 +113,11 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.min(n, message?)` / `.max(n, message?)`       | string, number, array       | inclusive length or value bound                                                                                                                                                                                                |
 | `.length(n, message?)`                          | string, array               | exact length                                                                                                                                                                                                                   |
 | `.regex(pattern, message?)`                     | string                      | the pattern must match                                                                                                                                                                                                         |
-| `.int(message?)`                                | number                      | `Number.isInteger` must hold                                                                                                                                                                                                   |
+| `.int(message?)`                                | number                      | `Number.isSafeInteger` must hold; `not_integer` for non-integers, `too_small`/`too_big` outside the safe range                                                                                                                 |
 | `.positive()` / `.negative()`                   | number                      | `> 0` (`too_small`) / `< 0` (`too_big`)                                                                                                                                                                                        |
 | `.nonnegative()` / `.nonpositive()`             | number                      | `.min(0)` / `.max(0)`                                                                                                                                                                                                          |
 | `.finite()`                                     | number                      | rejects `NaN` and `±Infinity` (`invalid_type`)                                                                                                                                                                                 |
-| `.safe()`                                       | number                      | a safe integer: `not_integer`, or `too_small`/`too_big` outside the range                                                                                                                                                      |
+| `.safe()`                                       | number                      | a safe integer; redundant on `k.int()` and after `.int()`                                                                                                                                                                      |
 | `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                      | type-preserving normalisers                                                                                                                                                                                                    |
 | `.overwrite(fn)`                                | all                         | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                                                                                   |
 | `.refine(fn, message?)`                         | all                         | `fn(value)` must return `true`; `message` is a string or `{ message, path }` (`error` is accepted as a string alias of `message`); a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
@@ -125,7 +126,8 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.pipe(schema)`                                 | all                         | parse this schema's output with `schema`; a transform kind                                                                                                                                                                     |
 | `.describe(text)`                               | all                         | a description for JSON Schema and tooling; `.description` reads it                                                                                                                                                             |
 | `.unwrap()`                                     | optional, nullable, default | the schema below the wrapper; `.removeDefault()` is the same on a default                                                                                                                                                      |
-| `.strip()`                                      | object                      | parse removes unknown keys instead of reporting them                                                                                                                                                                           |
+| `.strip()`                                      | object                      | explicit stripping, including in the kit's full parse; input JSON Schema omits `additionalProperties: false`                                                                                                                   |
+| `.strict()`                                     | object                      | application parse reports unknown keys as `unrecognized_key`; nested objects keep their own policy                                                                                                                             |
 
 Checks and normalisers run in declaration order after the structure is valid: normalisers first, then checks. Messages are optional; each check has a default message.
 
@@ -149,7 +151,11 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 
 ## Objects
 
-`k.object(fields)` is strict by default: parse reports each unknown key as an `unrecognized_key` issue, and the native validator is a closed `v.object`. Use `.strip()` when parse should drop unknown keys, `.loose()` when it should keep them (both keep the closed native validator), or a `k.record(...)` field for open-ended keys. There is no `catchall`.
+`k.object(fields)` strips unknown keys when application code calls `parse`, `safeParse` or Standard Schema `validate`. Use `.strict()` or `k.strictObject(fields)` to report unknown keys as `unrecognized_key`, or `.loose()` to keep them. The policy is per object; a strict parent does not make its children strict. The last policy declared on a chain wins (`.strip().strict()` is strict). There is no `catchall`.
+
+In a `k.union`, application parse first looks for a member that accepts every key of the value and only then for one that would strip some, so `k.union([k.object({ a }), k.object({ a, b })])` keeps `b` when it is present. Zod returns the first member that matches and drops `b`.
+
+Kit boundaries still reject unknown keys: function `args` and `returns`, table fields and writes, `kContract`, Effect command inputs, CRUD masks, filters and cursors. The native validator is always a closed `v.object`. Explicit `.strip()` additionally makes the kit's full parse strip (for example inside `.catch` or under `skipConvexValidation`) and omits `additionalProperties: false` from input-side JSON Schema. Plain `k.object` still emits `additionalProperties: false` to describe the boundary.
 
 | Operation                    | Result                                                                                                                    |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -161,7 +167,7 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 | `.required('a', …)`          | the named fields (every field when none are named) lose their top `optional()`, the inverse of `partial()`; defaults stay |
 | `.keyof()`                   | a `k.enum` of the field names                                                                                             |
 
-The derived objects keep the receiver's `.strip()` or `.loose()`, as in Zod 4.
+The derived objects keep the receiver's policy, including `.strict()`, `.strip()` and `.loose()`, as in Zod 4.
 
 ### Open objects
 
@@ -183,14 +189,13 @@ stepOutput.parse({ $ref: 1 }) // fails: Convex's '$' rule
 
 ### Class instances
 
-Parse accepts plain objects only (prototype `Object.prototype` or `null`), so a class instance, a `Date` or a `Map` fails with `Invalid input: expected a plain object, received an instance of TaggedError`. Function arguments and stored documents are always plain, so this only matters when you `parse` an in-memory value such as an Effect tagged error or an SDK error. A `.strip()` object accepts an instance: it reads the instance's own enumerable properties into a fresh plain object and drops the rest, so nothing is read through the prototype chain (a class getter or an inherited field counts as missing) and the output never keeps the instance's prototype.
+Application parse of `k.object` accepts class instances. It reads only own enumerable properties into a fresh plain object and strips unknown keys; inherited fields and prototype getters count as missing. The output never retains the instance's prototype. `.strip()` and `.loose()` also read instances through their own enumerable properties. `k.jsonObject()` still requires a plain object.
 
 ```ts
 class NotFound extends Error {
 	readonly _tag = 'NotFound'
 }
-k.object({ _tag: k.string() }).strip().parse(new NotFound()) // { _tag: 'NotFound' }
-k.object({ _tag: k.string() }).parse(new NotFound()) // throws: expected a plain object
+k.object({ _tag: k.string() }).parse(new NotFound()) // { _tag: 'NotFound' }
 ```
 
 `pick` and `omit` take string keys, not `{ a: true }` masks. `pick`, `omit`, `extend`, `partial` and `required` build a new object over the same field schemas, so retained fields keep their behaviour. A `refine`, `check` or `overwrite` declared on the object itself may read fields the new object lacks or makes optional, so on an object that has one these methods throw at declaration, naming the method and how many checks would be dropped. Say what you want with a last argument:
@@ -198,7 +203,7 @@ k.object({ _tag: k.string() }).parse(new NotFound()) // throws: expected a plain
 - `{ dropChecks: true }` on any of the five drops them: `range.pick('from', { dropChecks: true })`, `range.partial({ dropChecks: true })`, `range.required('to', { dropChecks: true })`.
 - `{ keepChecks: true }`, on `extend` only, re-attaches them to the extended object in their declared order; they run against the extended value. Use it when the extension does not redefine a field the check reads.
 
-`strip()`, `describe()`, `optional()` and `nullable()` derive no new shape and keep the checks. Checks on a field's own schema always travel with the field.
+`strict()`, `strip()`, `loose()`, `describe()`, `optional()` and `nullable()` derive no new shape and keep the checks. Checks on a field's own schema always travel with the field.
 
 ```ts
 const range = k.object({ from: k.int(), to: k.int() }).refine((r) => r.from <= r.to)
@@ -385,7 +390,7 @@ import 'cvx-kit/json-schema' // once, in the module that hands schemas to the AI
 
 ## JSON Schema
 
-`toJsonSchema(schema, { $schema?, io?, refs? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and objects have `additionalProperties: false`. Repeated bounds keep the strongest one (`.min(2).min(5)` emits `minLength: 5`), and several `regex` checks emit the first as `pattern` and the rest as `allOf` patterns. Timestamps carry `maximum: 253402300799999`. `.positive()`/`.negative()` emit `exclusiveMinimum`/`exclusiveMaximum`, and `.safe()` emits an integer with the safe range. Custom refinements are omitted.
+`toJsonSchema(schema, { $schema?, io?, refs? })` from `cvx-kit/json-schema` emits draft 2020-12 JSON Schema of the input side: optional and defaulted fields are not required (a JSON-compatible default is emitted), ids are strings, ISO dates carry `format: 'date'` or `'date-time'`, descriptions come from `.describe()`, transforms emit their input schema, and plain or strict objects have `additionalProperties: false` to describe their closed boundaries. Explicit `.strip()` and `.loose()` omit that restriction on the input side. Repeated bounds keep the strongest one (`.min(2).min(5)` emits `minLength: 5`), and several `regex` checks emit the first as `pattern` and the rest as `allOf` patterns. Timestamps carry `maximum: 253402300799999`. `.positive()`/`.negative()` emit `exclusiveMinimum`/`exclusiveMaximum`, and `k.int()`/`.int()` emit `type: 'integer'`; add `.safe()` to also emit the safe range as `minimum`/`maximum`. Custom refinements are omitted.
 
 `{ io: 'output' }` describes what parse returns instead, as Zod's `io` option: a defaulted field is required, a pipe emits its target's output, and a transform emits `{}` (any value), as `outputValidator` emits `v.any()`. The entry is separate, so function bundles that do not import it do not load it.
 
@@ -409,7 +414,7 @@ const zodSchema = toZod(documentInput)
 const same = documentInput.toZod()
 ```
 
-Carried: structure, strict objects (`strip()` objects strip, `loose()` objects convert to `z.looseObject`, `k.jsonObject()` to `z.record(z.string(), z.json())` with Convex's key rule on its top-level keys only; nested keys are not checked), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried (throws): `catch`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 73 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
+Carried: structure, object policies (plain `k.object` and `strip()` objects convert to stripping `z.object`, `.strict()`/`k.strictObject` to `z.strictObject`, `loose()` objects convert to `z.looseObject`, `k.jsonObject()` to `z.record(z.string(), z.json())` with Convex's key rule on its top-level keys only; nested keys are not checked), ids with their table typing (an id converts to `z.string()`, typed as the table's `Id`, with its table name recorded in the exported `kZodIds` registry: `kZodIds.get(schema)?.tableName`; convex-helpers' `zodToConvex` sees it as a plain string), `min`, `max`, `length`, `regex`, `int`, `trim`, case normalisers, defaults, ISO date formats, timestamps (with their range) and descriptions. A default converts to Zod's `prefault`, so it runs through the rest of the chain as in `k`, and a `partial()` field carries no default. Not carried (throws): `catch`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a transformed schema converts to its input schema. Conversion is one way: there is no Zod → `k` conversion. Importing `cvx-kit/zod` puts Zod's core into that bundle (about 73 KB unminified, against over 700 KB for classic Zod), so keep it out of Convex function modules that do not need it. Calling `.toZod()` without importing the entry throws an error that names the entry.
 
 ## Performance model
 

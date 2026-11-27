@@ -20,6 +20,8 @@ export type ValidationResult<Output> =
 export interface LegacyParser<Output = unknown> {
 	readonly parse: (value: unknown) => Output
 	readonly parseAsync?: (value: unknown) => Promise<Output>
+	/** A `k` schema's boundary parse: unknown keys are rejected rather than stripped. */
+	readonly '~parseStrict'?: (value: unknown) => Output
 }
 /** Decode execution is an opaque channel here; optional adapters give it concrete semantics. */
 export interface Decoder<Input = unknown, Output = unknown, Execution = unknown> {
@@ -63,7 +65,11 @@ export async function decodeContract<S extends NeutralSchema>(
 	let result: ValidationResult<unknown>
 	if ('kind' in schema) result = await schema.decode(value)
 	else if ('parse' in schema)
-		result = { value: await (schema.parseAsync ? schema.parseAsync(value) : schema.parse(value)) }
+		result = {
+			value: await (schema.parseAsync
+				? schema.parseAsync(value)
+				: (schema['~parseStrict'] ?? schema.parse).call(schema, value)),
+		}
 	else result = await schema['~standard'].validate(value)
 	// SAFETY: each branch returns the output associated with this exact schema.
 	return result as ValidationResult<ContractOutput<S>>

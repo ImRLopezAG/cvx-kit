@@ -93,10 +93,10 @@ export function createCrudCommands<
 	const commandSchema: Table['commandInput'] = config.table.commandInput
 	// k objects are strict: an update naming a field outside commandFields fails with VALIDATION.
 	const id = k.id(name)
-	const createResult = k.object({ id })
-	const okResult = k.object({ ok: k.literal(true) })
-	const updateInput = k.object({ id, data: commandObject(commandSchema).partial() })
-	const archiveInput = k.object({ id })
+	const createResult = k.strictObject({ id })
+	const okResult = k.strictObject({ ok: k.literal(true) })
+	const updateInput = k.strictObject({ id, data: commandObject(commandSchema).partial() })
+	const archiveInput = k.strictObject({ id })
 
 	const createName = `${name}.create` as const
 	const updateName = `${name}.update` as const

@@ -469,7 +469,7 @@ function declaredRun(declared: DeclaredArgs): ArgsRun | undefined {
 function fullRun(declared: DeclaredArgs): ArgsRun {
 	if (declared.schema) {
 		const schema = declared.schema
-		return (args) => asArgs(schema.parse(args))
+		return (args) => asArgs(schema['~parseStrict'](args))
 	}
 	if (declared.native) {
 		const native = declared.native
@@ -481,7 +481,7 @@ function fullRun(declared: DeclaredArgs): ArgsRun {
 	const fields = declared.fields ?? {}
 	const { kFields, mixed } = kFieldsOf(fields)
 	const schema = object(kFields)
-	if (!mixed) return (args) => asArgs(schema.parse(args))
+	if (!mixed) return (args) => asArgs(schema['~parseStrict'](args))
 	const kKeys = Object.keys(kFields)
 	return (args) => {
 		const kValues: DefaultFunctionArgs = {}
@@ -503,7 +503,7 @@ function fullRun(declared: DeclaredArgs): ArgsRun {
 			if (!validate(nativeOf(field), undefined))
 				issues.push(structuralIssue([key], nativeOf(field)))
 		}
-		const parsed = schema.safeParse(kValues)
+		const parsed = schema['~safeParseStrict'](kValues)
 		if (!parsed.success) issues.push(...parsed.issues)
 		if (issues.length > 0 || !parsed.success) throw new KValidationError(issues)
 		return merged(args, asArgs(parsed.data), kKeys)

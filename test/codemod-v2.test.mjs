@@ -79,13 +79,15 @@ describe('codemod-v2 fixtures', () => {
 		expect(outcome.error).toBeTruthy()
 	})
 
-	it('counts z.object sites as informational object-now-strict', () => {
-		const outcome = transformSource('strict.ts', fixture('strict-object', 'input.ts'))
-		expect(outcome.info.map((site) => site.code)).toEqual([
-			'int-safe-preserved',
-			'object-now-strict',
-		])
-		expect(outcome.status).toBe('rewritten')
+	it('preserves object parse policies without informational strictness reports', () => {
+		const input =
+			"import { z } from 'zod'\nconst A = z.object({ a: z.string() }); A.parse({ a: 'x', extra: 1 });\nconst B = z.strictObject({}); const C = z.object({}).strict();\n"
+		const outcome = transformSource('policies.ts', input)
+		expect(outcome.output).toContain('const A = k.object({ a: k.string() })')
+		expect(outcome.output).not.toContain('.strip()')
+		expect(outcome.output).toContain('const B = k.strictObject({})')
+		expect(outcome.output).toContain('const C = k.object({}).strict()')
+		expect(outcome.info).toEqual([])
 	})
 })
 
@@ -100,23 +102,23 @@ describe('codemod-v2 number bounds', () => {
 		'	floor: z.number().min(0),',
 		'	rate: z.number().finite(),',
 		'	safe: z.int().safe(),',
+		'	legacy: z.number().safe(),',
+		'	chained: z.number().int().safe(),',
 		'})',
 		'',
 	].join('\n')
 
 	it("keeps v1's refusals by default and reports them as informational", () => {
 		const outcome = transformSource('payment.ts', source)
-		expect(outcome.output).toContain('\tcents: k.int().safe().positive(),')
-		expect(outcome.output).toContain('\tunits: k.int().safe(),')
+		expect(outcome.output).toContain('\tcents: k.int().positive(),')
+		expect(outcome.output).toContain('\tunits: k.int(),')
 		expect(outcome.output).toContain('\tbefore: k.number().finite(),')
 		expect(outcome.output).toContain('\tfloor: k.number().finite().min(0),')
 		expect(outcome.output).toContain('\trate: k.number().finite(),')
-		expect(outcome.output).toContain('\tsafe: k.int().safe(),')
-		expect(
-			outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'),
-		).toEqual([
-			'int-safe-preserved',
-			'int-safe-preserved',
+		expect(outcome.output).toContain('\tsafe: k.int(),')
+		expect(outcome.output).toContain('\tlegacy: k.int(),')
+		expect(outcome.output).toContain('\tchained: k.int(),')
+		expect(outcome.info.map((site) => site.code)).toEqual([
 			'number-finite-preserved',
 			'number-finite-preserved',
 		])
@@ -124,20 +126,34 @@ describe('codemod-v2 number bounds', () => {
 		expect(transformSource('payment.ts', outcome.output).output).toBe(outcome.output)
 	})
 
-	it('emits the bare native forms with --native-number-bounds and reports each site', () => {
+	it('omits only finite-number checks with --native-number-bounds', () => {
 		const outcome = transformSource('payment.ts', source, { nativeNumberBounds: true })
 		expect(outcome.output).toContain('\tcents: k.int().positive(),')
-		expect(outcome.output).toContain('\tunits: k.number().int(),')
+		expect(outcome.output).toContain('\tunits: k.int(),')
 		expect(outcome.output).toContain('\tbefore: k.number(),')
 		expect(outcome.output).toContain('\tfloor: k.number().min(0),')
-		expect(
-			outcome.info.map((site) => site.code).filter((code) => code !== 'object-now-strict'),
-		).toEqual([
-			'int-no-longer-safe',
-			'int-no-longer-safe',
+		expect(outcome.output).toBe(
+			transformSource('payment.ts', source)
+				.output.replaceAll('k.number().finite().min(0)', 'k.number().min(0)')
+				.replace('before: k.number().finite()', 'before: k.number()'),
+		)
+		expect(outcome.info.map((site) => site.code)).toEqual([
 			'number-now-accepts-nan',
 			'number-now-accepts-nan',
 		])
+	})
+
+	it('normalizes safe integers on numeric aliases and preserves check options', () => {
+		const input =
+			"import { z } from 'zod'\nconst n = z.number(); const i = z.int();\nconst A = n.safe({ error: 'integer' }); const B = i.safe({ error: 'redundant' });\nconst C = z.int().safe({ error: 'redundant' }); const D = z.number().safe({ error: 'integer' });\n"
+		const outcome = transformSource('aliases.ts', input)
+		expect(outcome.status).toBe('rewritten')
+		expect(outcome.output).toContain("const A = n.int({ message: 'integer' })")
+		expect(outcome.output).toContain('const B = i;')
+		expect(outcome.output).toContain('const C = k.int();')
+		expect(outcome.output).toContain("const D = k.number().int({ message: 'integer' })")
+		expect(outcome.output).not.toContain('.safe(')
+		expect(transformSource('aliases.ts', outcome.output).output).toBe(outcome.output)
 	})
 
 	it('accepts the flag on the command line and documents it in --help', () => {
@@ -163,13 +179,13 @@ describe('codemod-v2 function getters', () => {
 
 	it('turns a non-reference args value into a getter and keeps cheap references', () => {
 		const { output } = transformSource('fn.ts', source)
-		expect(output).toContain('\tget args() { return k.object({ id: k.string() }) },')
+		expect(output).toContain('\tget args() { return k.strictObject({ id: k.string() }) },')
 		expect(output).toContain('\treturns: shared.result,')
 	})
 
 	it('keeps data properties with getters: false', () => {
 		const { output } = transformSource('fn.ts', source, { getters: false })
-		expect(output).toContain('\targs: k.object({ id: k.string() }),')
+		expect(output).toContain('\targs: k.strictObject({ id: k.string() }),')
 		expect(output).not.toContain('get args()')
 	})
 
@@ -232,12 +248,8 @@ describe('codemod-v2 CLI', () => {
 	it('--write rewrites in place and a second run changes nothing', () => {
 		withTempTree(tree, (root) => {
 			run(['src', '--write', '--ignore', 'src/broken.ts'], root)
-			// No file of the run imports `Plain`, so its consumers are unknown and it keeps stripping.
 			expect(readFileSync(join(root, 'src/strict.ts'), 'utf8')).toBe(
-				fixture('strict-object', 'expected.ts').replace(
-					'k.object({ c: k.boolean().nullable() })',
-					'k.object({ c: k.boolean().nullable() }).strip()',
-				),
+				fixture('strict-object', 'expected.ts'),
 			)
 			expect(readFileSync(join(root, 'src/mixed.ts'), 'utf8')).toBe(
 				fixture('mixed-file', 'expected.ts'),
@@ -281,28 +293,42 @@ describe('codemod-v2 CLI', () => {
 	})
 })
 
-describe('codemod-v2 object classification', () => {
-	const info = (outcome) => outcome.info.map(({ line, code }) => ({ line, code }))
-
-	it('reports parsed objects, boundary-only objects and table spreads', () => {
+describe('codemod-v2 object policies', () => {
+	it('keeps explicit strip and strict calls and reports only table spreads', () => {
 		const outcome = transformSource('p.ts', fixture('parsed-objects', 'input.ts'))
-		expect(info(outcome)).toEqual([
-			{ line: 4, code: 'object-parsed-stripped' },
-			{ line: 5, code: 'object-parsed-stripped' },
-			{ line: 6, code: 'object-parsed-stripped' },
-			{ line: 7, code: 'object-now-strict' },
+		expect(outcome.info.map(({ line, code }) => ({ line, code }))).toEqual([
 			{ line: 12, code: 'table-spread' },
 		])
+		expect(outcome.output.match(/\.strip\(\)/g)).toHaveLength(1)
+		expect(outcome.output).toContain('const Exact = k.strictObject({ id: k.string() })')
 	})
 
-	it('--no-strip-parsed leaves parsed objects strict and reports them', () => {
-		const outcome = transformSource('p.ts', fixture('parsed-objects', 'input.ts'), {
-			stripParsed: false,
+	it('accepts --no-strip-parsed as a deprecated no-op and warns once', () => {
+		withTempTree({ [join(FIXTURES, 'parsed-objects/input.ts')]: 'src/p.ts' }, (root) => {
+			const printed = spawnSync(
+				'node',
+				[join(process.cwd(), CLI), 'src/p.ts', '--write', '--no-strip-parsed', '--no-strip-parsed'],
+				{ cwd: root, encoding: 'utf8' },
+			)
+			expect(printed.status).toBe(0)
+			expect(printed.stderr.trim().split('\n')).toEqual([
+				'--no-strip-parsed is deprecated and no longer does anything.',
+			])
+			expect(readFileSync(join(root, 'src/p.ts'), 'utf8')).toBe(
+				fixture('parsed-objects', 'expected.ts'),
+			)
+			expect(HELP).not.toContain('--no-strip-parsed')
 		})
-		expect(outcome.output).not.toContain('}).strip()\nconst Customer')
-		expect(outcome.output).toContain('const Declared = k.object({ id: k.string() }).strip()')
-		expect(outcome.output.match(/\.strip\(\)/g)).toHaveLength(1)
-		expect(info(outcome).filter(({ code }) => code === 'object-parsed-now-strict')).toHaveLength(3)
+	})
+
+	it('leaves beta.2 k strip and safe calls unchanged even in a mixed file', () => {
+		const source =
+			"import { k } from 'cvx-kit'\nimport { z } from 'zod'\nconst Old = k.object({ count: k.int().safe() }).strip(); const Count = k.number().int().safe(); const Derived = Old.partial().strip(); const New = z.string()\n"
+		const output = transformSource('migrated.ts', source).output
+		expect(output).toContain('k.object({ count: k.int().safe() }).strip()')
+		expect(output).toContain('const Count = k.number().int().safe()')
+		expect(output).toContain('const Derived = Old.partial().strip()')
+		expect(transformSource('migrated.ts', output).output).toBe(output)
 	})
 })
 
@@ -339,7 +365,7 @@ describe('codemod-v2 cross-file knowledge', () => {
 		)
 	})
 
-	it('strips an exported object that another file of the run parses, not one only used as args', () => {
+	it('preserves plain objects whether imported for parsing or used as args', () => {
 		tree(
 			{
 				'src/schemas.ts':
@@ -352,9 +378,9 @@ describe('codemod-v2 cross-file knowledge', () => {
 			(root) => {
 				const { report } = run(['src', '--write'], root)
 				expect(readFileSync(join(root, 'src/schemas.ts'), 'utf8')).toBe(
-					"import { k } from 'cvx-kit'\nexport const Payload = k.object({ id: k.string() }).strip()\nexport const Args = k.object({ id: k.string() })\n",
+					"import { k } from 'cvx-kit'\nexport const Payload = k.object({ id: k.string() })\nexport const Args = k.object({ id: k.string() })\n",
 				)
-				expect(report.info).toEqual({ 'object-now-strict': 1, 'object-parsed-stripped': 1 })
+				expect(report.info).toEqual({})
 			},
 		)
 	})

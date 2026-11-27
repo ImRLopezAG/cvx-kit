@@ -208,7 +208,7 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				'Follow api → application/domain → shared; sibling modules expose only rules.ts and queries.ts.',
 		}),
 		create(context) {
-			const { domainPublicFiles } = consumerOptions.parse(context.options[0] ?? {})
+			const { domainPublicFiles } = consumerOptions['~parseStrict'](context.options[0] ?? {})
 			const file = appFile(context)
 			if (componentRoot(context, context.filename)) return {}
 			const resolver = createResolver()

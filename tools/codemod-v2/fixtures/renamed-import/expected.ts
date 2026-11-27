@@ -1,6 +1,6 @@
 import { k } from 'cvx-kit'
 
-export const Named = k.object({ a: k.string() })
+export const Named = k.strictObject({ a: k.string() })
 export type Named = k.infer<typeof Named>
 
 export function local(z: { object: (value: number) => number }) {

@@ -49,7 +49,7 @@ export function planSearch(
 	)
 		throw new SearchError('SEARCH_OPTIONS_UNSUPPORTED')
 	// Out-of-range or malformed options are validation failures in the KTD6 shape.
-	const parsed = { data: searchInput().parse(input) }
+	const parsed = { data: searchInput()['~parseStrict'](input) }
 	const metadata = planner.metadata.tables[table]?.searchIndexes.find(
 		(candidate) => candidate.name === index && !candidate.staged,
 	)
@@ -152,7 +152,7 @@ export async function executeSearch(
 			search.equalities,
 			options,
 		)
-		if (!nativePage().safeParse(result).success)
+		if (!nativePage()['~safeParseStrict'](result).success)
 			throw new SearchError('SEARCH_PROTOCOL_UNSUPPORTED')
 		if (!result.isDone && result.continueCursor === start.nativeCursor)
 			throw new SearchError('SEARCH_PROTOCOL_UNSUPPORTED')
@@ -189,7 +189,7 @@ function once<T>(build: () => T): () => T {
 
 /** Built on the first search, never at import. */
 const searchInput = once(() =>
-	k.object({
+	k.strictObject({
 		numItems: k.int().min(1).max(Number.MAX_SAFE_INTEGER),
 		cursor: k.string().nullable(),
 		id: k.number().refine(Number.isFinite, 'Invalid input: expected a finite number').optional(),
@@ -200,7 +200,7 @@ const searchInput = once(() =>
 )
 
 const searchCursor = once(() =>
-	k.object({
+	k.strictObject({
 		v: k.literal(1),
 		mode: k.literal('search'),
 		nativeCursor: k.string().nullable(),

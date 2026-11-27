@@ -156,7 +156,7 @@ export function defineFilterContract<const F extends Record<string, GenericValid
 		try {
 			// SAFETY: the input boundary inspects descriptors before parsing or serializing.
 			if (!withinUrlSize(value as FilterTree)) throw new Error('URL size exceeded')
-			const parsed = schema.parse(value)
+			const parsed = schema['~parseStrict'](value)
 			// SAFETY: bounded schema output contains only Convex values.
 			const encoded = JSON.stringify({ v: 1, filters: canonical(convexToJson(parsed as Value)) })
 			if (encoded.length > 32768) throw new Error('URL size exceeded')
@@ -172,7 +172,7 @@ export function defineFilterContract<const F extends Record<string, GenericValid
 			if (!envelope || envelope.v !== 1 || Object.keys(envelope).sort().join(',') !== 'filters,v')
 				throw new Error('Unsupported URL version')
 			guardJson(envelope.filters)
-			const parsed = schema.parse(jsonToConvex(envelope.filters))
+			const parsed = schema['~parseStrict'](jsonToConvex(envelope.filters))
 			return { success: true as const, value: parsed }
 		} catch {
 			return { success: false as const, error: 'Invalid filter URL' }
@@ -190,7 +190,11 @@ export function defineFilterContract<const F extends Record<string, GenericValid
 			document: Record<string, Value | undefined>,
 			accessible?: ReadonlySet<string>,
 		) =>
-			evaluateFilter(normalizeFilters(schema.parse(filters) as FilterTree), document, accessible),
+			evaluateFilter(
+				normalizeFilters(schema['~parseStrict'](filters) as FilterTree),
+				document,
+				accessible,
+			),
 		searchParam: Object.freeze({ encode, decode }),
 	})
 }

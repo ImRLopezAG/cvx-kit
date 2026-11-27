@@ -38,7 +38,7 @@ declare global {
 
 /**
  * Convert a `k` schema to a Zod 4 (`zod/mini`) schema, node by node. Ids keep their table typing in
- * {@link KZod} and record their table name in {@link kZodIds}. Carried: structure, strict objects (`strip()` objects strip), `min`, `max`,
+ * {@link KZod} and record their table name in {@link kZodIds}. Carried: structure, objects (stripping as `parse` does; `strict()` and `loose()` carried), `min`, `max`,
  * `length`, `regex`, `int`, `trim`, case normalisers, defaults (as `prefault`, so a default runs through the chain like in `k`; a
  * `partial()` field drops its default), ISO date and date-time formats,
  * timestamps and `describe`. Not carried: `refine`, `check`, `overwrite`, `transform` and `pipe`; a
@@ -69,7 +69,7 @@ function convert(node: KNode): Mini {
 		records.push(current)
 	// SAFETY: a chain always ends at a root record.
 	const root = records.pop() as KNode
-	let out = rootSchema(root, records.some(isStrip), records.some(isLoose))
+	let out = rootSchema(root, policyOf(records))
 	const partialAt = records.findIndex(isPartial)
 	let transformed = false
 	let description: string | undefined
@@ -117,7 +117,7 @@ function convert(node: KNode): Mini {
 /** Convex's field-name rule (`isFieldName`): 1 to 1024 printable ASCII characters, the first not `$`. */
 const fieldName = /^[ -#%-~][ -~]{0,1023}$/
 
-function rootSchema(root: KNode, strip: boolean, loose: boolean): Mini {
+function rootSchema(root: KNode, policy: 'strip' | 'strict' | 'loose'): Mini {
 	switch (root.op) {
 		case 'string':
 			return z.string()
@@ -163,8 +163,8 @@ function rootSchema(root: KNode, strip: boolean, loose: boolean): Mini {
 			const fields = root.arg as KFields
 			const converted: Record<string, Mini> = {}
 			for (const key in fields) setOwn(converted, key, convert(fields[key]))
-			if (loose) return z.looseObject(converted)
-			return strip ? z.object(converted) : z.strictObject(converted)
+			if (policy === 'loose') return z.looseObject(converted)
+			return policy === 'strict' ? z.strictObject(converted) : z.object(converted)
 		}
 		case 'record': {
 			// SAFETY: k.record stores its key and value schemas as the root argument.
@@ -290,12 +290,11 @@ function isPartial(record: KNode): boolean {
 	return record.op === 'partial'
 }
 
-function isStrip(record: KNode): boolean {
-	return record.op === 'strip'
-}
-
-function isLoose(record: KNode): boolean {
-	return record.op === 'loose'
+/** The unknown-key policy of a chain given outermost record first: the last one declared, or strip. */
+function policyOf(records: readonly KNode[]): 'strip' | 'strict' | 'loose' {
+	for (const record of records)
+		if (record.op === 'strip' || record.op === 'strict' || record.op === 'loose') return record.op
+	return 'strip'
 }
 
 function textOf(record: KNode): string {

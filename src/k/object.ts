@@ -23,8 +23,9 @@ import type {
 } from './types'
 
 /**
- * A strict object. `pick`, `omit`, `extend`, `partial` and `required` build a new object root over the
- * same field schema instances, keeping the receiver's unknown-key policy (`strip()`, `loose()`) as
+ * An object. The native validator is closed and the kit's boundaries reject unknown keys; `parse` in
+ * application code strips them unless the object is `.strict()` (or keeps them with `.loose()`). `pick`, `omit`, `extend`, `partial` and `required` build a new object root over the
+ * same field schema instances, keeping the receiver's unknown-key policy (`strict()`, `strip()`, `loose()`) as
  * Zod 4 does; with object-level checks they throw unless told to drop or keep them.
  */
 export class KObject<F extends KFields> extends KSchema<
@@ -118,9 +119,18 @@ export class KObject<F extends KFields> extends KSchema<
 		return enumOf(Object.keys(fieldsOf(this)) as KEnumValues<keyof F & string>)
 	}
 
-	/** Parse removes unknown keys instead of reporting them. The native validator stays strict. */
+	/**
+	 * Unknown keys are removed everywhere this object is parsed, including where the kit parses it in
+	 * full at a boundary (inside `.catch`, under `skipConvexValidation`). `parse` in application code
+	 * already strips; the native validator stays closed.
+	 */
 	strip(): this {
 		return this.link('strip', undefined, undefined)
+	}
+
+	/** `parse` reports unknown keys (`unrecognized_key`) instead of removing them. */
+	strict(): this {
+		return this.link('strict', undefined, undefined)
 	}
 
 	/** Keep unknown keys on parse. */
@@ -164,6 +174,11 @@ export function object<F extends KFields>(fields: F): KObject<F> {
 	return new KObject<F>(null, 'object', fields, undefined)
 }
 
+/** An object whose `parse` reports unknown keys; `k.object(fields).strict()`. */
+export function strictObject<F extends KFields>(fields: F): KObject<F> {
+	return object(fields).strict()
+}
+
 export function looseObject<F extends KFields>(fields: F): KObject<F> {
 	return object(fields).loose()
 }
@@ -178,7 +193,7 @@ export type KPartialRecord<K extends KType, V extends KType> = KObject<{
 
 /**
  * A record. A string or id key builds a native record. A key that is a finite set of string literals
- * (`k.enum`, `k.literal`, a union of literals) builds a strict object with one required field per
+ * (`k.enum`, `k.literal`, a union of literals) builds a `strict()` object with one required field per
  * value, as v1's `z.record(z.enum(…), v)` did: Convex refuses literal record keys at push.
  */
 export function record<K extends KRecordKey, V extends KType>(
@@ -190,7 +205,7 @@ export function record(key: KRecordKey, value: KType): KType {
 	if (literals === null) return nativeRecord(key, value)
 	const fields: Record<string, KType> = {}
 	for (const literal of literals) setOwn(fields, literal, value)
-	return object(fields)
+	return object(fields).strict()
 }
 
 /** `z.partialRecord`: an object with one optional field per value of a finite literal key set. */
@@ -205,7 +220,7 @@ export function partialRecord(key: KType, value: KType): KType {
 	const optional = optionalOf(value)
 	const fields: Record<string, KType> = {}
 	for (const literal of literals) setOwn(fields, literal, optional)
-	return object(fields)
+	return object(fields).strict()
 }
 
 /**
@@ -317,10 +332,11 @@ function requiredOf(field: KType): KType {
 	return current
 }
 
-/** The derived object with the receiver's unknown-key policy: the nearest `strip` or `loose` record. */
+/** The derived object with the receiver's unknown-key policy: the nearest `strip`, `strict` or `loose` record. */
 function withPolicy<O extends KObject<any>>(receiver: KNode, derived: O): O {
 	for (let current: KNode | null = receiver; current !== null; current = current.prev) {
 		if (current.op === 'strip') return derived.strip()
+		if (current.op === 'strict') return derived.strict()
 		if (current.op === 'loose') return derived.loose()
 	}
 	return derived

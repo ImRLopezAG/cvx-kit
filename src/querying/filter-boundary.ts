@@ -128,7 +128,7 @@ export function compactArgumentBoundary(
 			result = {
 				validator: projected,
 				guard: (value, path) => {
-					const parsed = metadata.semantic.safeParse(value)
+					const parsed = metadata.semantic['~safeParseStrict'](value)
 					if (!parsed.success)
 						throw new KValidationError(
 							parsed.issues.map((issue) => ({ ...issue, path: [...path, ...issue.path] })),
@@ -223,7 +223,7 @@ function layoutError(path: KPath): never {
 function objectFields(schema: KType): Readonly<Record<string, KType>> | undefined {
 	let current: KType = schema
 	while (current.prev !== null) {
-		if (!['describe', 'refine', 'check', 'strip'].includes(current.op)) return undefined
+		if (!['describe', 'refine', 'check', 'strip', 'strict'].includes(current.op)) return undefined
 		current = schemaOf(current.prev)
 	}
 	if (current.op !== 'object') return undefined

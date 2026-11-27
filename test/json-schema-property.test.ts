@@ -88,7 +88,10 @@ function isObject(value: unknown): value is { readonly [key: string]: unknown } 
 
 interface Case {
 	readonly name: string
-	readonly schema: KType & { safeParse(input: unknown): { success: boolean; data?: unknown } }
+	readonly schema: KType & {
+		safeParse(input: unknown): { success: boolean; data?: unknown }
+		'~safeParseStrict'(input: unknown): { success: boolean }
+	}
 	readonly samples: readonly unknown[]
 }
 
@@ -224,12 +227,13 @@ const cases: readonly Case[] = [
 
 describe('toJsonSchema agrees with parse', () => {
 	it.each(cases)(
-		'$name: values parse accepts validate against the input schema',
+		'$name: values the boundary parse accepts validate against the input schema',
 		({ schema, samples }) => {
 			for (const refs of [false, true]) {
 				const json = toJsonSchema(schema, { refs })
 				for (const sample of samples)
-					if (schema.safeParse(sample).success)
+					// A plain object's schema is closed, as the kit's boundaries are; `parse` would strip the key.
+					if (schema['~safeParseStrict'](sample).success)
 						expect([sample, valid(json, sample)]).toEqual([sample, true])
 			}
 		},

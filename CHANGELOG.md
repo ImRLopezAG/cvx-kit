@@ -10,6 +10,23 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [2.0.0-beta.3]
+
+### Breaking since beta.2
+
+- `k.int()` and `.int()` reject integers outside the safe range with `too_small` or `too_big`; non-integers report `not_integer`. `.safe()` remains available and is redundant on integers. `k.number()` is unchanged; use `.finite()` to reject NaN and infinities.
+- Application `parse`, `safeParse` and Standard Schema `validate` strip unknown object keys instead of failing. Code that relied on `unrecognized_key` must add `.strict()` or use `k.strictObject`. Existing `.strip()` calls keep working and can be removed where they only restored Zod's parse behaviour. Plain objects accept class instances through their own enumerable properties. Function args and returns, table fields and writes, contracts, Effect command inputs, CRUD masks, filters and cursors keep rejecting unknown keys.
+- The v2 codemod no longer adds `.strip()` to parsed objects or `.safe()` to integers. `z.strictObject` becomes `k.strictObject`, and `.strict()` stays. `--native-number-bounds` only controls the added `.finite()` on numbers. `--no-strip-parsed` is a deprecated no-op with a stderr notice. Already-migrated `k` code is left unchanged.
+- Unchanged: the schemas a table derives (`insertSchema`, `updateSchema`, `commandInput`, `publicDto`, `dto()`, `tools`), `k.record`/`k.partialRecord` with literal keys and the kit's own published schemas (pagination options, CRUD inputs, approvals validators) are now `.strict()` objects, so a direct `parse` of them still rejects unknown keys. JSON Schema output is unchanged: a plain object still emits `additionalProperties: false`.
+- The last unknown-key policy declared on a chain wins; in beta.2 `.strip().loose()` stripped.
+- `k.int().safe('message')` no longer customises the range message, because `k.int()` reports the range itself; use `k.number().int('message')` or `k.number().safe('message')`.
+- `toZod` converts a plain `k.object` to a stripping `z.object`; `.strict()` converts to `z.strictObject`.
+
+### Added
+
+- `.strict()` on objects and `k.strictObject(fields)`.
+- In a `k.union`, application parse prefers a member that accepts every key of the value over an earlier member that would strip some.
+
 ## [Unreleased]
 
 These changes are planned as 2.0.0, a breaking release that removes Zod from the kit. Follow the [2.0 migration guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration-v2.md); the codemod in `tools/codemod-v2/` rewrites the mechanical call sites and reports the rest.
@@ -20,13 +37,13 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - `cvx-kit/zod-table` is removed. `zodTable` is `kTable`, `zodVariantTable` is `kVariantTable`, and the table builders and types move to `cvx-kit/table` (also exported from `cvx-kit`). Fields are a plain object, not a callback, and ids are `k.id('table')`. `zid`, `jsonSafeZid`, `zodToConvex` and `convexToZod` are removed.
 - `zodContract` is `kContract` (synchronous decoding) and `effectZodApiBuilder` is `effectApiBuilder`, one builder for `k` schemas and native validators.
 - Validation failures raised by the kit are a `ConvexError` with data `{ code: 'VALIDATION', issues: [{ path, code, message }] }` (`KValidationError`), replacing `ConvexError({ ZodError })`. Structural arg failures raised by Convex keep Convex's error. `safeParse` returns `{ success, issues }` on failure, with no `.error`.
-- `k.object` is strict by default: parse rejects unknown keys where `z.object` stripped them. `.strip()` restores stripping. `catchall`, recursive schemas, tuples, `custom`/`instanceof`, `coerce`/`preprocess` and `meta` are not supported in 2.0.
+- `k.object` strips unknown keys during application parse, like `z.object`; `.strict()` rejects them. Kit boundaries remain strict. `catchall`, recursive schemas, tuples, `custom`/`instanceof`, `coerce`/`preprocess` and `meta` are not supported in 2.0.
 - The kit no longer parses return values. Convex validates them against the output-side validator, so a handler that returns more fields than `returns` declares now fails; return `toPublicDto(row)`. A transforming `returns` schema is rejected, return refinements do not run, and `returns` must be a schema, not a plain field object.
-- `k.record` with an enum, string literal or union-of-literals key builds a strict object with one required field per value (v1's shape for `z.record(z.enum(...), v)`); a native record with literal keys is refused by Convex at push. `k.partialRecord` builds the optional-keys form. Other key kinds are a type error and throw at declaration. Object field names Convex refuses (leading `$`, empty, non-ASCII, over 1024 characters) throw when the validator is first built.
+- `k.record` with an enum, string literal or union-of-literals key builds an object with a closed native validator and one required field per value (v1's shape for `z.record(z.enum(...), v)`); a native record with literal keys is refused by Convex at push. `k.partialRecord` builds the optional-keys form. Other key kinds are a type error and throw at declaration. Object field names Convex refuses (leading `$`, empty, non-ASCII, over 1024 characters) throw when the validator is first built.
 - `transform` and `pipe` are rejected on table fields and return shapes; `trim`, `toLowerCase`, `toUpperCase` and `overwrite` stay allowed everywhere. Refinements and checks are synchronous; `superRefine` becomes `check`.
 - `insert`, `update`, `pick` and `omit` take string keys instead of `{ key: true }` masks. Table boundaries are accessors built on first read; an object spread copies them (building each), so `{ ...table, table: other }` replaces one member. Use `withFieldGroups` for field groups.
 - Ids are branded on input: `k.input` keeps `Id<'table'>`.
-- `k.number()` accepts `NaN` and infinities, as native `v.number()` does, and `int()` no longer caps at the safe-integer range.
+- `k.number()` accepts `NaN` and infinities, as native `v.number()` does, and `int()` accepts only safe integers.
 - Out-of-range search options fail with `VALIDATION` instead of `SearchError('SEARCH_OPTIONS_UNSUPPORTED')`.
 - `AgentToolRecord.args` is a `k` schema; `approvalCallbackInput` is a `k` object and `approvalCallbackArgs` its native validator.
 - `k.record` keys must satisfy Convex's record-key rule after normalisation (non-empty, at most 1024 characters, printable ASCII, not starting with `$` or `_`); others fail with `invalid_format` at that key.
@@ -35,7 +52,7 @@ These changes are planned as 2.0.0, a breaking release that removes Zod from the
 - A `k.discriminatedUnion` whose options share a discriminator value throws when first used.
 - `k.input` of `k.object({})` is `{ readonly [key: string]: never }`, so an empty input rejects extra properties at the type level.
 - `pick`, `omit`, `extend` (including `extend({})`), `partial` and `required` on an object with object-level `refine`/`check`/`overwrite` throw at declaration instead of silently dropping them. Pass `{ dropChecks: true }` as the last argument to drop them, or `extend(fields, { keepChecks: true })` to keep them. The codemod reports such sites as `derive-drops-checks`.
-- `k.object` parses plain objects only. A class instance fails with `expected a plain object, received an instance of …`; a `.strip()` object parses one from its own enumerable properties.
+- `k.object` parses class instances from their own enumerable properties into a plain object.
 
 - `argumentFailure` (added in 0.2.0) no longer has a `'legacy'` policy. The default is `'validation'`, which throws `KValidationError` (`ConvexError({ code: 'VALIDATION', issues })`); `'declared'` and a function hook work as in 0.2.0. `zCustomFunctions` is `kCustomFunctions` in `cvx-kit/registration`.
 

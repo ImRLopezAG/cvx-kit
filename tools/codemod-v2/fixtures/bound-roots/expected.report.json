@@ -2,10 +2,6 @@
 	"status": "rewritten",
 	"skipped": [
 		{
-			"line": 11,
-			"code": "unproven-strict"
-		},
-		{
 			"line": 12,
 			"code": "unproven-mask"
 		},

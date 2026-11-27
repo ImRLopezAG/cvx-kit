@@ -248,7 +248,7 @@ export function scalarPredicateFromSchema(scalar: KType, range: boolean, optiona
 	return unionOf([
 		value,
 		k
-			.object(operators)
+			.strictObject(operators)
 			.refine(
 				(entries) => Object.values(entries).some((entry) => entry !== undefined),
 				'At least one operator is required',
@@ -319,7 +319,9 @@ function boundedFilter(
 			context.addIssue({ code: 'custom', message: BUDGET_MESSAGE })
 			return
 		}
-		const parsed = schemaOf(used && resolve ? resolve(used) : structure()).safeParse(value)
+		const parsed = schemaOf(used && resolve ? resolve(used) : structure())['~safeParseStrict'](
+			value,
+		)
 		if (!parsed.success) for (const issue of parsed.issues) context.addIssue(issue)
 	})
 	filterGrammars.set(record, grammar)
@@ -345,14 +347,14 @@ function filterNodeSchema(
 		const predicate = schemaOf(
 			relation.cardinality === 'one'
 				? target.nullable()
-				: unionOf([k.object({ some: target }), k.object({ none: target })]),
+				: unionOf([k.strictObject({ some: target }), k.strictObject({ none: target })]),
 		).optional()
 		relations[name] = predicate
 		relationPredicates.set(predicate, relation)
 	}
 	if (grammar.variants && depth < MAX_FILTER_DEPTH) {
 		const options = Object.entries(grammar.variants.options).map(([tag, branch]) =>
-			k.object({ tag: k.literal(tag), filters: filterNodeSchema(branch, depth + 1, cache) }),
+			k.strictObject({ tag: k.literal(tag), filters: filterNodeSchema(branch, depth + 1, cache) }),
 		)
 		if (options.length) {
 			const variant = schemaOf(unionOf(options)).optional()
@@ -360,10 +362,10 @@ function filterNodeSchema(
 			variantPredicates.set(variant, grammar.variants)
 		}
 	}
-	const node = k.object({
+	const node = k.strictObject({
 		...direct,
 		...relations,
-		fields: k.object(predicates).optional(),
+		fields: k.strictObject(predicates).optional(),
 	})
 	const child =
 		depth === MAX_FILTER_DEPTH ? undefined : schemaOf(filterNodeSchema(grammar, depth + 1, cache))
@@ -532,7 +534,8 @@ function boundaryRecord(schema: KType): KType | undefined {
 function objectFields(schema: KType): Readonly<Record<string, KType>> | undefined {
 	let current: KType = schema
 	while (current.prev !== null) {
-		if (!TRANSPARENT_OPS.has(current.op) && current.op !== 'strip') return undefined
+		if (!TRANSPARENT_OPS.has(current.op) && current.op !== 'strip' && current.op !== 'strict')
+			return undefined
 		current = previous(current) ?? current
 	}
 	if (current.op !== 'object') return undefined

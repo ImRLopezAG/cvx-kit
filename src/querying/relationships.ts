@@ -808,5 +808,5 @@ function navigation(): ReturnType<typeof buildNavigation> {
 }
 
 function buildNavigation() {
-	return k.object({ cursor: k.string(), ancestors: k.array(k.string()).max(3) })
+	return k.strictObject({ cursor: k.string(), ancestors: k.array(k.string()).max(3) })
 }

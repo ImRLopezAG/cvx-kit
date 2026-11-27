@@ -35,7 +35,7 @@ export const ownershipRules = {
 			structure: '{{file}}: {{message}}',
 		}),
 		create(context) {
-			const settings = consumerOptions.parse(context.options[0] ?? {})
+			const settings = consumerOptions['~parseStrict'](context.options[0] ?? {})
 			const root = resolve(context.cwd, settings.convexDir)
 			if (
 				(existsSync(context.filename)

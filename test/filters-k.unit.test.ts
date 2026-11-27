@@ -491,7 +491,7 @@ describe('laziness (R22)', () => {
 		vi.resetModules()
 		const { k: fresh } = await import('../src/k')
 		const { v: values } = await import('convex/values')
-		const objects = vi.spyOn(fresh, 'object')
+		const objects = vi.spyOn(fresh, 'strictObject')
 		const natives = vi.spyOn(values, 'object')
 		const filters = await import('../src/querying/filters')
 		await import('../src/filters')

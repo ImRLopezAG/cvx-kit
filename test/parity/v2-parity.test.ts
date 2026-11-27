@@ -56,13 +56,6 @@ const ACCEPTED_BEHAVIOUR_DIFFERENCES = new Map<string, AcceptedBehaviour>([
 		},
 	],
 	[
-		'scalars storage.parse intChecked 2^53',
-		{
-			reason: 'k.int() checks Number.isInteger; Zod 4 int() also capped at the safe-integer range',
-			v2: { ok: true, value: 2 ** 53 },
-		},
-	],
-	[
 		'defaults updateSchema.parse {}',
 		{
 			reason:
@@ -78,32 +71,17 @@ const ACCEPTED_BEHAVIOUR_DIFFERENCES = new Map<string, AcceptedBehaviour>([
 		},
 	],
 	[
-		'strictness plain parse unknown string key',
-		{
-			reason: 'k.object rejects unknown keys; z.object stripped them',
-			v2: { ok: false, error: [{ code: 'unrecognized_keys', path: [] }] },
-		},
-	],
-	[
-		'strictness loose parse unknown string key',
-		{
-			reason:
-				'k.object rejects unknown keys; z.looseObject kept them (Convex then rejected the write)',
-			v2: { ok: false, error: [{ code: 'unrecognized_keys', path: [] }] },
-		},
-	],
-	[
 		'strictness catchall parse unknown string key',
 		{
-			reason: 'k.object has no catchall; the unknown key is rejected as unknown, not as mistyped',
-			v2: { ok: false, error: [{ code: 'unrecognized_keys', path: [] }] },
+			reason: 'k.object has no catchall; parse strips the unknown key instead of checking it',
+			v2: { ok: true, value: { a: 'a' } },
 		},
 	],
 	[
 		'strictness catchall parse unknown number key',
 		{
-			reason: 'k.object has no catchall; Convex already rejected the kept key on write',
-			v2: { ok: false, error: [{ code: 'unrecognized_keys', path: [] }] },
+			reason: 'k.object has no catchall; parse strips the key Convex rejected on write',
+			v2: { ok: true, value: { a: 'a' } },
 		},
 	],
 	[
@@ -118,20 +96,6 @@ const ACCEPTED_BEHAVIOUR_DIFFERENCES = new Map<string, AcceptedBehaviour>([
 					{ code: 'unrecognized_keys', path: ['catchall'] },
 				],
 			},
-		},
-	],
-	[
-		'variantLegacyUnion storage.parse default and loose key',
-		{
-			reason: 'k.object rejects unknown keys; z.looseObject kept them',
-			v2: { ok: false, error: [{ code: 'invalid_union', path: [] }] },
-		},
-	],
-	[
-		'variantLegacyUnion storage.parse plain object strips key',
-		{
-			reason: 'k.object rejects unknown keys; z.object stripped them',
-			v2: { ok: false, error: [{ code: 'invalid_union', path: [] }] },
 		},
 	],
 ])

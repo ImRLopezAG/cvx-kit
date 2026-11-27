@@ -11,7 +11,8 @@ describe("Zod 4's error key in check options", () => {
 			.refine((value) => value.a !== undefined, { error: 'needed', path: ['a'] })
 		const result = schema.safeParse({})
 		expect(result.success).toBe(false)
-		if (!result.success) expect(result.issues).toEqual([{ path: ['a'], code: 'custom', message: 'needed' }])
+		if (!result.success)
+			expect(result.issues).toEqual([{ path: ['a'], code: 'custom', message: 'needed' }])
 	})
 
 	it('loses to message when both are given', () => {
@@ -24,8 +25,17 @@ describe("Zod 4's error key in check options", () => {
 		expect(messages(k.string().max(1, { message: 'long' }).safeParse('ab'))).toEqual(['long'])
 		expect(messages(k.string().regex(/x/, { error: 'no x' }).safeParse('a'))).toEqual(['no x'])
 		expect(messages(k.number().int({ error: 'whole' }).safeParse(1.5))).toEqual(['whole'])
-		expect(messages(k.number().finite({ error: 'finite' }).safeParse(Number.NaN))).toEqual(['finite'])
-		expect(messages(k.int().safe({ error: 'unsafe' }).safeParse(2 ** 60))).toEqual(['unsafe'])
+		expect(messages(k.number().finite({ error: 'finite' }).safeParse(Number.NaN))).toEqual([
+			'finite',
+		])
+		expect(
+			messages(
+				k
+					.number()
+					.safe({ error: 'unsafe' })
+					.safeParse(2 ** 60),
+			),
+		).toEqual(['unsafe'])
 		expect(messages(k.number().positive({ error: 'pos' }).safeParse(0))).toEqual(['pos'])
 		expect(messages(k.array(k.string()).length(1, { error: 'one' }).safeParse([]))).toEqual(['one'])
 	})

@@ -1,6 +1,6 @@
 import { k } from 'cvx-kit'
 
-export const User = k.object({ name: k.string() })
+export const User = k.strictObject({ name: k.string() })
 
 export type User = k.infer<typeof User>
 export type UserInput = k.input<typeof User>

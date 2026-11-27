@@ -550,27 +550,26 @@ export type RelationFilters<
 								Side,
 								Tail<Level>
 							> | null
-						:
-								| {
-										some: RelationFilters<
-											Tables,
-											D,
-											Extract<Target, keyof Tables>,
-											S[K],
-											Side,
-											Tail<Level>
-										>
-								  }
-								| {
-										none: RelationFilters<
-											Tables,
-											D,
-											Extract<Target, keyof Tables>,
-											S[K],
-											Side,
-											Tail<Level>
-										>
-								  }
+						: | {
+									some: RelationFilters<
+										Tables,
+										D,
+										Extract<Target, keyof Tables>,
+										S[K],
+										Side,
+										Tail<Level>
+									>
+							  }
+							| {
+									none: RelationFilters<
+										Tables,
+										D,
+										Extract<Target, keyof Tables>,
+										S[K],
+										Side,
+										Tail<Level>
+									>
+							  }
 					: never
 			} & {
 				and?: readonly RelationFilters<Tables, D, T, S, Side, Tail<Level>>[]
@@ -1367,7 +1366,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 			cached = { validator: kFromNative(v.object(branch.fields)), fieldKeys }
 			branchValidators.set(branch, cached)
 		}
-		schemaOf(cached.validator).parse(values)
+		schemaOf(cached.validator)['~parseStrict'](values)
 	}
 	return Object.freeze({
 		streamSchema: owned.streamSchema,
@@ -1512,7 +1511,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 			}
 			// The strict DTO remains the authority. Pick its fields before parsing,
 			// matching table projection without spreading any storage-only fields.
-			return dto.parse(
+			return dto['~parseStrict'](
 				Object.fromEntries(
 					keys.filter((key) => Object.hasOwn(row, key)).map((key) => [key, row[key]]),
 				),
@@ -1579,7 +1578,7 @@ function exportStored(nativeTable: TableDefinition): NativeTableExport {
 function captureIndexes(
 	exported: NativeTableExport,
 ): Pick<StoredTier, 'capturedIndexes' | 'searchIndexList'> {
-	const captured = indexExport().parse(exported)
+	const captured = indexExport()['~parseStrict'](exported)
 	return {
 		searchIndexList: [
 			...captured.searchIndexes.map((index) => ({ ...index, staged: false })),
@@ -1849,7 +1848,7 @@ function assertGroups(
 ): GroupSelection {
 	assertGroupData(input)
 	function visit(table: string, input: GroupSelection, depth: number): GroupSelection {
-		const parsed = groupSelection().parse(input)
+		const parsed = groupSelection()['~parseStrict'](input)
 		const data = registry.metadata[table]
 		if (!data) throw new Error('Unknown query table')
 		for (const name of Object.keys(parsed.fieldGroups ?? {}))
@@ -2507,11 +2506,11 @@ function declaredGroups(table: RelationTable): Readonly<Record<string, string[]>
 		throw new Error('Invalid field groups')
 	const declared: unknown = descriptor?.value ?? {}
 	assertGroupData(declared)
-	return groupDefinitions().parse(declared)
+	return groupDefinitions()['~parseStrict'](declared)
 }
 
 const groupSelection = once(() =>
-	k.object({
+	k.strictObject({
 		fieldGroups: k.record(k.string(), k.enum(['required', 'if-permitted'])).optional(),
 		relations: k.record(k.string(), k.any()).optional(),
 	}),
@@ -2628,7 +2627,7 @@ function requiredFromNative(validator: GenericValidator): KType {
 function kObjectFromNative(fields: Readonly<Record<string, GenericValidator>>): KObject<any> {
 	const out: Record<string, KType> = {}
 	for (const [key, validator] of Object.entries(fields)) out[key] = kFromNative(validator)
-	return k.object(out)
+	return k.strictObject(out)
 }
 
 type KObjectKey = Parameters<typeof k.record>[0]

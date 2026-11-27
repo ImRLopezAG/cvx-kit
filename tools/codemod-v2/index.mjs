@@ -1,23 +1,10 @@
 #!/usr/bin/env node
 // cvx-kit v2 codemod: rewrites the mechanical majority of Zod schema and kit
 // table call sites to `k` and reports every site it left for manual work.
-// Usage: cvx-kit-codemod-v2 <path…> [--write] [--report out.json]
-//          [--ext ts,tsx,mts] [--no-getters] [--no-strip-parsed] [--native-number-bounds]
-//          [--ignore glob…]
-// --no-getters keeps function `args` / `returns` as data properties.
-// --no-strip-parsed leaves parsed object schemas strict instead of adding `.strip()`.
-// By default `z.int()` / `.int()` become `k.int().safe()` and `z.number()` becomes
-// `k.number().finite()`, keeping v1's refusal of unsafe integers, NaN and infinities
-// (reported as `int-safe-preserved` / `number-finite-preserved`). That check is kit code run on
-// every call. --native-number-bounds emits bare `k.int()` / `k.number()` instead, which
-// Convex validates with no kit code, and reports each site as `int-no-longer-safe` /
-// `number-now-accepts-nan`.
-// Without --write it is a dry run and writes nothing but the optional report.
-//
-// The run reads every file twice: the first pass records what each file exports
-// as `k`, imports and parses; the second rewrites with that knowledge, so a
-// type helper on an imported schema and a schema parsed in another file are
-// judged by the whole run, not one file.
+// --no-getters keeps function args / returns as data properties.
+// --native-number-bounds omits .finite() on k.number(); integers stay safe.
+// Without --write this is a dry run, apart from an optional report.
+// Two passes resolve imported schema type helpers across the run.
 import {
 	existsSync,
 	lstatSync,
@@ -41,8 +28,7 @@ Without --write it is a dry run and writes nothing but the optional report.
   --report <file>         write the JSON report
   --ext ts,tsx,mts        file extensions to scan
   --no-getters            keep function args / returns as data properties
-  --no-strip-parsed       leave parsed object schemas strict instead of adding .strip()
-  --native-number-bounds  emit bare k.int() / k.number() (see below)
+  --native-number-bounds  omit .finite() on k.number() (see below)
   --ignore <glob…>        skip matching paths
   --help                  print this help
 
@@ -54,13 +40,11 @@ edits a file outside them.
 Exit codes: 0 when every file parsed (skipped sites are listed, not failures); 1 when a file
 failed to parse (the report is still written; see its "error" files) or the arguments are invalid.
 
-Number bounds: Zod's z.int() and .int() refuse integers outside the safe range and z.number()
-refuses NaN and infinities; native Convex v.number() accepts them. By default the codemod keeps
-v1's refusals: k.int().safe() and k.number().finite(), reported as int-safe-preserved and
-number-finite-preserved. Those checks are kit code that runs on every call. With
---native-number-bounds it emits k.int() and k.number(), which Convex validates with no kit code,
-and reports each site as int-no-longer-safe or number-now-accepts-nan: review money, counts and
-time bounds before choosing it.
+Number bounds: k.int() and .int() reject integers outside the safe range by default.
+The codemod emits integers without redundant .safe() calls. Zod's z.number() refuses NaN and
+infinities, so by default it becomes k.number().finite() (number-finite-preserved).
+--native-number-bounds emits k.number() instead (number-now-accepts-nan); it only affects
+finite-number checks, never integer safety.
 `
 
 const SKIPPED_DIRECTORIES = new Set([
@@ -80,7 +64,6 @@ export function parseArguments(argv) {
 		extensions: ['ts', 'tsx', 'mts'],
 		ignore: [],
 		getters: true,
-		stripParsed: true,
 		nativeNumberBounds: false,
 	}
 	let list = options.paths
@@ -101,7 +84,7 @@ export function parseArguments(argv) {
 			options.getters = false
 			list = options.paths
 		} else if (arg === '--no-strip-parsed') {
-			options.stripParsed = false
+			options.deprecatedNoStripParsed = true
 			list = options.paths
 		} else if (arg === '--native-number-bounds') {
 			options.nativeNumberBounds = true
@@ -164,6 +147,8 @@ export function collectFiles(options, cwd = process.cwd(), outside = []) {
 
 export function run(argv, cwd = process.cwd()) {
 	const options = parseArguments(argv)
+	if (options.deprecatedNoStripParsed)
+		console.error('--no-strip-parsed is deprecated and no longer does anything.')
 	const outside = []
 	const files = collectFiles(options, cwd, outside).map((file) => ({
 		file,
@@ -172,7 +157,6 @@ export function run(argv, cwd = process.cwd()) {
 	}))
 	const transformOptions = {
 		getters: options.getters,
-		stripParsed: options.stripParsed,
 		nativeNumberBounds: options.nativeNumberBounds,
 	}
 	const first = files.map(({ path, source }) => transformSource(path, source, transformOptions))
@@ -221,28 +205,16 @@ function resolver(files, cwd) {
 function runKnowledge(files, outcomes, cwd) {
 	const resolve = resolver(files, cwd)
 	const kExports = new Map()
-	const imported = new Set()
-	const parsed = new Set()
 	files.forEach(({ path }, index) => {
 		const facts = outcomes[index].facts
 		if (!facts) return
 		kExports.set(path, new Set(facts.kExports))
-		for (const binding of facts.imports) {
-			const target = resolve(path, binding.source)
-			if (target) imported.add(`${target}#${binding.imported}`)
-		}
-		for (const binding of facts.parsedImports) {
-			const target = resolve(path, binding.source)
-			if (target) parsed.add(`${target}#${binding.imported}`)
-		}
 	})
 	return {
 		isK(fromPath, specifier, name) {
 			const target = resolve(fromPath, specifier)
 			return target !== null && kExports.get(target)?.has(name) === true
 		},
-		isImported: (path, name) => imported.has(`${path}#${name}`),
-		isParsed: (path, name) => parsed.has(`${path}#${name}`),
 	}
 }
 
@@ -250,8 +222,11 @@ function runKnowledge(files, outcomes, cwd) {
 if (isMain()) {
 	try {
 		const argv = process.argv.slice(2)
-		if (argv.includes('--help') || argv.includes('-h')) console.log(HELP)
-		else {
+		if (argv.includes('--help') || argv.includes('-h')) {
+			if (argv.includes('--no-strip-parsed'))
+				console.error('--no-strip-parsed is deprecated and no longer does anything.')
+			console.log(HELP)
+		} else {
 			const outcome = run(argv)
 			console.log(outcome.summary)
 			process.exitCode = outcome.exitCode

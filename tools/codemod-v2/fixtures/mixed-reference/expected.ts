@@ -9,7 +9,7 @@ const Top = z.strictObject({ middle: Middle.optional() })
 
 export type Top = z.infer<typeof Top>
 
-export const Independent = k.object({ id: k.string() })
+export const Independent = k.strictObject({ id: k.string() })
 
 export function check(value: string) {
 	return Top.parse(value)

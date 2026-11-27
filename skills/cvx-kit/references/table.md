@@ -76,7 +76,7 @@ Both tables contain `ref` and `nextActivity` ahead of their own fields, plus the
 | `tools.insert` / `tools.update` / `tools.id` | agent tool input schemas: `commandInput`, `{ data, id }`, `{ id }` | agent tool definitions        |
 | `tableName`                                  | the literal table name                                             | indexes, trigger registration |
 
-Every schema-valued boundary is a strict `k` object. `insert` and `update` take field names as strings: `documents.insert('secretNote')`, not `insert({ secretNote: true })`.
+Every schema-valued boundary uses a closed native object validator and rejects unknown keys at kit boundaries. The schemas a table derives (`insertSchema`, `updateSchema`, `commandInput`, `publicDto`, `dto()`, `tools`, the variant unions) are `.strict()` objects, so calling their `parse`/`safeParse` directly rejects unknown keys too, as v1's did. An object you declare as a field keeps its own policy: a plain `k.object` field strips unknown keys under a direct `parse` and rejects them on a write. `insert` and `update` take field names as strings: `documents.insert('secretNote')`, not `insert({ secretNote: true })`.
 
 Each boundary is built when it is first read and then reused. `table`, `storage`, `schema`, `insertSchema`, `updateSchema`, `commandInput`, `publicDto` and `tools` are enumerable accessors on the boundary object (on `kTable`, `createTable`, `tenantTable` and both `kVariantTable` forms), so a boundary that is never spread builds only what is read.
 
@@ -185,7 +185,7 @@ The options are three independent allowlists over the same fields:
 - `commandFields`: a command may carry these. `commandInput` is exactly this pick.
 - `publicFields`: a client may see these. `publicDto` is exactly this pick; it may include timestamps.
 
-Every derived object is strict: unknown keys are rejected.
+Every derived object is `.strict()`: it rejects unknown keys at kit boundaries and under a direct `parse`/`safeParse`.
 
 ## `tenantTable` — tenant-owned rows
 
@@ -367,7 +367,10 @@ Chain indexes where the table is declared, so every module that imports the tabl
 
 ```ts
 // convex/tables/documents.ts
-export const documents = kTable('documents', { ownerId: k.id('users'), archivedAt: k.number().optional() })
+export const documents = kTable('documents', {
+	ownerId: k.id('users'),
+	archivedAt: k.number().optional(),
+})
 documents.table.index('by_owner', ['ownerId']).index('by_owner_archived', ['ownerId', 'archivedAt'])
 
 // convex/schema.ts

@@ -5,6 +5,8 @@ import { ConvexError } from 'convex/values'
 /** Explicit synchronous validators for the final public detail representation. */
 export type ErrorDetailParser<Output = unknown> = Readonly<{
 	parse: (value: unknown) => Output
+	/** A `k` schema's boundary parse: unknown keys are rejected rather than stripped. */
+	'~parseStrict'?: (value: unknown) => Output
 }>
 
 export type ErrorDefinitions = Readonly<
@@ -397,7 +399,8 @@ function parseDetails<const Definition extends ErrorDefinitions[string]>(
 	return Object.fromEntries(
 		fields.map((field) => {
 			if (!Object.hasOwn(value, field)) throw Error('Missing detail')
-			return [field, copyJson(definition.details[field].parse(value[field]))]
+			const parser = definition.details[field]
+			return [field, copyJson((parser['~parseStrict'] ?? parser.parse).call(parser, value[field]))]
 		}),
 	) as Details<Definition>
 }

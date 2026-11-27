@@ -2,11 +2,11 @@ import { z } from 'zod'
 import { k } from 'cvx-kit'
 
 export const Amount = k.object({
-	cents: k.int().safe().positive(),
+	cents: k.int().positive(),
 	balance: k.number().finite().nonnegative(),
 	debt: k.number().finite().negative().nonpositive(),
 	rate: k.number().finite(),
-	big: k.number().safe(),
+	big: k.int(),
 })
 
 export const Range = k.object({ from: k.number().finite(), to: k.number().finite() }).check((value, ctx) => {

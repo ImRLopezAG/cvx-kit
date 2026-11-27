@@ -52,7 +52,7 @@ export const approvalMetadata = k
 		`Metadata may contain at most ${MAX_APPROVAL_METADATA_ENTRIES} entries`,
 	)
 
-const approvalCallbackEvidence = k.object({
+const approvalCallbackEvidence = k.strictObject({
 	stepKey: approvalName,
 	actorRef: approvalReference,
 	decision: approvalDecision,
@@ -62,14 +62,14 @@ const approvalCallbackEvidence = k.object({
 
 const approvalCallbackTerminalEvidence = approvalCallbackEvidence.omit('stepKey')
 
-export const approvalCallbackInput = k.object({
+export const approvalCallbackInput = k.strictObject({
 	runId: approvalReference,
 	scopeRef: approvalReference,
 	resourceType: approvalName,
 	resourceRef: approvalReference,
 	metadata: approvalMetadata.optional(),
 	decision: k
-		.object({
+		.strictObject({
 			stepKey: approvalName,
 			outcome: k.union([approvalDecision, k.literal('expired')]),
 			evidence: k.array(approvalCallbackEvidence),
@@ -81,19 +81,19 @@ export const approvalCallbackInput = k.object({
 /** Convex argument validator for approval mutation, action, and notify callbacks. */
 export const approvalCallbackArgs = approvalCallbackInput.validator
 
-export const approvalActor = k.object({
+export const approvalActor = k.strictObject({
 	actorRef: approvalReference,
 	capabilities: k.array(approvalName).max(MAX_APPROVAL_CAPABILITIES),
 	metadata: approvalMetadata.optional(),
 })
 
-export const approvalMutationCallback = k.object({
+export const approvalMutationCallback = k.strictObject({
 	kind: k.literal('mutation'),
 	handle: approvalReference,
 	retry: k.boolean(),
 })
 
-export const approvalActionCallback = k.object({
+export const approvalActionCallback = k.strictObject({
 	kind: k.literal('action'),
 	handle: approvalReference,
 	retry: k.boolean(),
@@ -104,31 +104,31 @@ export const approvalCallback = k.discriminatedUnion('kind', [
 	approvalActionCallback,
 ])
 
-export const approvalQuorum = k.object({
+export const approvalQuorum = k.strictObject({
 	kind: approvalQuorumKind,
 	approvals: k.int().min(1).max(MAX_APPROVAL_DECISIONS_PER_STEP),
 })
 
 export const approvalCallbackStep = k.discriminatedUnion('kind', [
-	k.object({
+	k.strictObject({
 		kind: k.literal('mutation'),
 		key: approvalName,
 		callback: approvalMutationCallback,
 	}),
-	k.object({
+	k.strictObject({
 		kind: k.literal('action'),
 		key: approvalName,
 		callback: approvalActionCallback,
 	}),
 ])
 
-export const approvalNotifyStep = k.object({
+export const approvalNotifyStep = k.strictObject({
 	kind: k.literal('notify'),
 	key: approvalName,
 	callback: approvalActionCallback,
 })
 
-export const approvalDecisionStep = k.object({
+export const approvalDecisionStep = k.strictObject({
 	kind: k.literal('decision'),
 	key: approvalName,
 	decisions: k.array(approvalDecision).min(1).max(MAX_APPROVAL_DECISIONS_PER_STEP),
@@ -138,7 +138,7 @@ export const approvalDecisionStep = k.object({
 	expiresAfterMs: k.int().min(1).refine(Number.isSafeInteger, 'Expected a safe integer').optional(),
 })
 
-export const approvalBranchStep = k.object({
+export const approvalBranchStep = k.strictObject({
 	kind: k.literal('branch'),
 	key: approvalName,
 	approvedStepKey: approvalName,
@@ -157,7 +157,7 @@ export const approvalWorkflowStep = k.union([
 ])
 
 export const approvalWorkflowDescriptor = k
-	.object({
+	.strictObject({
 		schemaVersion: k.literal(APPROVAL_DESCRIPTOR_SCHEMA_VERSION),
 		compatibilityKey: approvalName,
 		name: approvalName,
@@ -221,7 +221,7 @@ export const approvalWorkflowDescriptor = k
 		}
 	})
 
-export const approvalRunDocument = k.object({
+export const approvalRunDocument = k.strictObject({
 	scopeRef: approvalReference,
 	resourceType: approvalName,
 	resourceRef: approvalReference,
@@ -238,7 +238,7 @@ export const approvalRunDocument = k.object({
 	terminalAt: approvalNumber.optional(),
 })
 
-export const approvalDecisionDocument = k.object({
+export const approvalDecisionDocument = k.strictObject({
 	runId: k.id('approvalRuns'),
 	stepKey: approvalName,
 	actor: approvalActor,

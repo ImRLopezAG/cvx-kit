@@ -38,16 +38,16 @@ export function kContract<const S extends KType>(
 	readonly kind: 'contract'
 	readonly schema: S
 } {
-	// SAFETY: every KType at runtime is a KSchema record, which carries safeParse.
+	// SAFETY: every KType at runtime is a KSchema record, which carries the boundary parse.
 	const parser = schema as S & {
 		// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Contracts decode undecoded transport input.
-		safeParse: (value: unknown) => KSafeParseResult<S['_output']>
+		'~safeParseStrict': (value: unknown) => KSafeParseResult<S['_output']>
 	}
 	return {
 		kind: 'contract',
 		schema,
 		decode: (value) => {
-			const result = parser.safeParse(value)
+			const result = parser['~safeParseStrict'](value)
 			return result.success ? { value: result.data } : { issues: result.issues }
 		},
 	}

@@ -53,16 +53,24 @@ export class KPlan {
 	}
 }
 
-export function parseSchema(schema: KNode, input: unknown): unknown {
-	const context = new WalkContext()
-	const output = walk(schema, input, context, true, false)
+/**
+ * `keys` is the unknown-key policy of every object that declares none: `true` (strip) for `parse` in
+ * application code, `false` (reject) at kit boundaries. `.strict()`, `.strip()` and `.loose()` override it.
+ */
+export function parseSchema(schema: KNode, input: unknown, keys: boolean = true): unknown {
+	const context = new WalkContext(keys)
+	const output = walk(schema, input, context, true, undefined)
 	if (context.issues.length > 0) throw new KValidationError(context.issues)
 	return output
 }
 
-export function safeParseSchema(schema: KNode, input: unknown): KSafeParseResult<unknown> {
-	const context = new WalkContext()
-	const output = walk(schema, input, context, true, false)
+export function safeParseSchema(
+	schema: KNode,
+	input: unknown,
+	keys: boolean = true,
+): KSafeParseResult<unknown> {
+	const context = new WalkContext(keys)
+	const output = walk(schema, input, context, true, undefined)
 	if (context.issues.length > 0) return { success: false, issues: context.issues }
 	return { success: true, data: output }
 }
@@ -73,8 +81,8 @@ export function safeParseSchema(schema: KNode, input: unknown): KSafeParseResult
  */
 export function runDeclared(schema: KNode, value: unknown): unknown {
 	if (!planOf(schema).declared) return value
-	const context = new WalkContext()
-	const output = walk(schema, value, context, false, false)
+	const context = new WalkContext(false)
+	const output = walk(schema, value, context, false, undefined)
 	if (context.issues.length > 0) throw new KValidationError(context.issues)
 	return output
 }
@@ -167,7 +175,7 @@ function idBelow(schema: KNode): string | undefined {
 	}
 }
 
-/** Unknown-key handling of the object being walked: strict (`false`), `.strip()` or `.loose()`. */
+/** Unknown-key handling of the object being walked: reject (`false`), strip (`true`) or `.loose()`. */
 type Keys = boolean | 'loose'
 
 const FAIL: unique symbol = Symbol('k.fail')
@@ -179,6 +187,16 @@ const transformPlan = new KPlan(true, true, null, noRecords, noRecords, null)
 class WalkContext {
 	issues: KIssue[] = []
 	readonly path: KPath = []
+	/** The policy of an object that declares none: strip (`true`) or reject (`false`). */
+	keys: boolean
+	/** Whether a union is probing for a member that accepts every key (`keys` forced to reject). */
+	probing = false
+	/** Set when a `.catch` fell back during a probe: that member is not an exact match. */
+	caught = false
+
+	constructor(keys: boolean) {
+		this.keys = keys
+	}
 
 	add(code: KIssueCode, message: string, below: KPath | undefined): void {
 		const path = below === undefined ? [...this.path] : [...this.path, ...below]
@@ -209,6 +227,7 @@ function compilePlan(node: KNode): KPlan {
 		case 'partial':
 		case 'nullable':
 		case 'strip':
+		case 'strict':
 		case 'loose':
 		case 'describe':
 			return planOf(node.prev)
@@ -303,7 +322,7 @@ function walk(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: Keys,
+	strip: Keys | undefined,
 ): unknown {
 	if (!full && !planOf(node).declared) return value
 	if (node.prev === null) return walkRoot(node, value, context, full, strip)
@@ -321,17 +340,20 @@ function walk(
 			if (value !== undefined) return walk(node.prev, value, context, full, strip)
 			if (planOf(node.prev).transform) return node.arg
 			return walk(node.prev, node.arg, context, full, strip)
+		// The last policy declared on a chain wins, so an outer record is not overridden by an inner one.
 		case 'strip':
-			return walk(node.prev, value, context, full, true)
+			return walk(node.prev, value, context, full, strip ?? true)
+		case 'strict':
+			return walk(node.prev, value, context, full, strip ?? false)
 		case 'loose':
-			return walk(node.prev, value, context, full, 'loose')
+			return walk(node.prev, value, context, full, strip ?? 'loose')
 		case 'transform': {
 			const input = walk(node.prev, value, context, full, strip)
 			return input === FAIL ? FAIL : transformed(node, input, context)
 		}
 		case 'pipe': {
 			const input = walk(node.prev, value, context, full, strip)
-			return input === FAIL ? FAIL : walk(argSchema(node), input, context, true, false)
+			return input === FAIL ? FAIL : walk(argSchema(node), input, context, true, undefined)
 		}
 		case 'catch': {
 			// Convex validated only `v.any()`, so the wrapped schema runs in full.
@@ -341,6 +363,7 @@ function walk(
 			const caught = context.issues
 			context.issues = issues
 			if (output !== FAIL && caught.length === 0) return output
+			if (context.probing) context.caught = true
 			if (typeof node.arg !== 'function') return node.arg
 			return callbackResult(callbackOf(node)({ issues: caught, input: value }), context, 'catch')
 		}
@@ -354,7 +377,7 @@ function walkRun(
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: Keys,
+	strip: Keys | undefined,
 ): unknown {
 	const plan = planOf(node)
 	// SAFETY: runPlan always records the base below a run.
@@ -435,8 +458,8 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 			return
 		}
 		case 'int':
-			if (!Number.isInteger(value))
-				context.add('not_integer', messageOf(record, 'Expected an integer'), undefined)
+		case 'safe':
+			safeInteger(value, context, record)
 			return
 		case 'gt': {
 			const limit = numberArg(record)
@@ -466,24 +489,6 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 					undefined,
 				)
 			return
-		case 'safe': {
-			const number = Number(value)
-			if (!Number.isInteger(number))
-				context.add('not_integer', messageOf(record, 'Expected an integer'), undefined)
-			else if (number < Number.MIN_SAFE_INTEGER)
-				context.add(
-					'too_small',
-					messageOf(record, `Too small: expected number to be >=${Number.MIN_SAFE_INTEGER}`),
-					undefined,
-				)
-			else if (number > Number.MAX_SAFE_INTEGER)
-				context.add(
-					'too_big',
-					messageOf(record, `Too big: expected number to be <=${Number.MAX_SAFE_INTEGER}`),
-					undefined,
-				)
-			return
-		}
 		case 'refine':
 			if (settled(callbackOf(record)(value)) !== true) {
 				const options = optionsOf(record)
@@ -501,26 +506,53 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 	}
 }
 
+/** `k.int()`, `.int()` and `.safe()`: an integer a double holds exactly (`Number.isSafeInteger`). */
+function safeInteger(value: unknown, context: WalkContext, record: KNode | null): boolean {
+	if (Number.isSafeInteger(value)) return true
+	const number = Number(value)
+	if (!Number.isInteger(number))
+		context.add('not_integer', messageOr(record, 'Expected an integer'), undefined)
+	else if (number < 0)
+		context.add(
+			'too_small',
+			messageOr(record, `Too small: expected number to be >=${Number.MIN_SAFE_INTEGER}`),
+			undefined,
+		)
+	else
+		context.add(
+			'too_big',
+			messageOr(record, `Too big: expected number to be <=${Number.MAX_SAFE_INTEGER}`),
+			undefined,
+		)
+	return false
+}
+
+function messageOr(record: KNode | null, fallback: string): string {
+	return record === null ? fallback : messageOf(record, fallback)
+}
+
 function walkRoot(
 	root: KNode,
 	value: unknown,
 	context: WalkContext,
 	full: boolean,
-	strip: Keys,
+	strip: Keys | undefined,
 ): unknown {
 	switch (root.op) {
 		case 'array':
 			if (full && !Array.isArray(value)) return invalidType(context, 'array', value)
 			// SAFETY: checked above, or already validated natively at a function boundary.
 			return walkArray(root, value as unknown[], context, full)
-		case 'object':
+		case 'object': {
+			const keys = strip ?? context.keys
 			if (full && !isPlainObject(value)) {
-				if (strip && isInstance(value))
-					return walkObject(root, ownSnapshot(value), context, full, strip)
+				if (keys && isInstance(value))
+					return walkObject(root, ownSnapshot(value), context, full, keys)
 				return invalidType(context, 'object', value)
 			}
 			// SAFETY: checked above, or already validated natively at a function boundary.
-			return walkObject(root, value as Record<string, unknown>, context, full, strip)
+			return walkObject(root, value as Record<string, unknown>, context, full, keys)
+		}
 		case 'record':
 			if (full && !isPlainObject(value)) return invalidType(context, 'record', value)
 			// SAFETY: checked above, or already validated natively at a function boundary.
@@ -533,9 +565,7 @@ function walkRoot(
 			return walkDiscriminated(root, value, context, full)
 		case 'int':
 			if (full && typeof value !== 'number') return invalidType(context, 'number', value)
-			if (Number.isInteger(value)) return value
-			context.add('not_integer', 'Expected an integer', undefined)
-			return FAIL
+			return safeInteger(value, context, null) ? value : FAIL
 		case 'isoDate':
 			if (full && typeof value !== 'string') return invalidType(context, 'string', value)
 			if (isIsoDate(stringOf(value))) return value
@@ -647,7 +677,7 @@ function walkArray(root: KNode, value: unknown[], context: WalkContext, full: bo
 	for (let index = 0; index < value.length; index++) {
 		const input = value[index]
 		context.path.push(index)
-		const output = walk(element, input, context, full, false)
+		const output = walk(element, input, context, full, undefined)
 		context.path.pop()
 		if (output === FAIL) failed = true
 		else {
@@ -672,7 +702,7 @@ function walkObject(
 	for (const key in fields) {
 		const input = Object.hasOwn(value, key) ? value[key] : undefined
 		context.path.push(key)
-		const output = walk(asSchema(fields[key]), input, context, full, false)
+		const output = walk(asSchema(fields[key]), input, context, full, undefined)
 		context.path.pop()
 		if (output === FAIL) {
 			failed = true
@@ -733,12 +763,12 @@ function walkRecord(
 		const key = keys[index]
 		const input = value[key]
 		context.path.push(key)
-		let outputKey = walk(keySchema, key, context, full, false)
+		let outputKey = walk(keySchema, key, context, full, undefined)
 		if (outputKey !== FAIL && (full || outputKey !== key) && !isRecordKey(stringOf(outputKey))) {
 			context.add('invalid_format', recordKeyMessage, undefined)
 			outputKey = FAIL
 		}
-		const output = walk(valueSchema, input, context, full, false)
+		const output = walk(valueSchema, input, context, full, undefined)
 		context.path.pop()
 		if (outputKey === FAIL || output === FAIL) {
 			failed = true
@@ -754,16 +784,38 @@ function walkRecord(
 	return out ?? value
 }
 
+/**
+ * The first member that accepts the value. When objects strip by default, a member that accepts every
+ * key of the value wins over an earlier one that would drop some: the members are tried rejecting
+ * unknown keys first, and stripping only when none matched.
+ */
 function walkUnion(root: KNode, value: unknown, context: WalkContext): unknown {
 	const issues = context.issues
-	for (const member of membersOf(root)) {
-		context.issues = []
-		const output = walk(member, value, context, true, false)
-		if (output !== FAIL) {
-			context.issues = issues
-			return output
+	const keys = context.keys
+	const members = membersOf(root)
+	const probing = context.probing
+	const caught = context.caught
+	for (let pass = keys ? 0 : 1; pass < 2; pass++) {
+		const probe = pass === 0
+		context.keys = !probe && keys
+		context.probing = probe || probing
+		for (const member of members) {
+			context.issues = []
+			context.caught = false
+			const output = walk(member, value, context, true, undefined)
+			// A fallback taken while probing may only be the probe's own rejection: not an exact match.
+			if (output !== FAIL && !(probe && context.caught)) {
+				context.issues = issues
+				context.keys = keys
+				context.probing = probing
+				context.caught ||= caught
+				return output
+			}
 		}
 	}
+	context.keys = keys
+	context.probing = probing
+	context.caught = caught
 	context.issues = issues
 	context.add('invalid_union', 'Invalid input: no union member matched', undefined)
 	return FAIL
@@ -785,7 +837,7 @@ function walkDiscriminated(
 		context.add('invalid_union', `Invalid discriminator value at ${JSON.stringify(key)}`, [key])
 		return FAIL
 	}
-	return walk(option, value, context, full, false)
+	return walk(option, value, context, full, undefined)
 }
 
 /**

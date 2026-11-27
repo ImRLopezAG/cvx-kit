@@ -1,7 +1,7 @@
 import { k } from 'cvx-kit'
 import { Effect, pipe } from 'effect'
 
-export const Payload = k.object({ id: k.string() })
+export const Payload = k.strictObject({ id: k.string() })
 
 export async function load(request: Promise<Response>) {
 	const body = await request.then((response) => response.json()).catch(() => null)

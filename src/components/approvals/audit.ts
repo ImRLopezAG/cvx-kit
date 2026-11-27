@@ -122,9 +122,9 @@ function boundedInteger(value: number, minimum: number, maximum: number, name: s
 function auditProjection(
 	event: Awaited<ReturnType<typeof approvalAudit.queryByResource>>[number],
 ): ApprovalAuditProjection | null {
-	const parsed = approvalAuditEventProjection.safeParse(event)
+	const parsed = approvalAuditEventProjection['~safeParseStrict'](event)
 	if (!parsed.success) return null
 	const { action, actorId, metadata } = parsed.data
-	const actorRef = approvalOptionalString.safeParse(actorId)
+	const actorRef = approvalOptionalString['~safeParseStrict'](actorId)
 	return { action, actorRef: actorRef.success ? actorRef.data : undefined, ...metadata }
 }

@@ -18,7 +18,7 @@ export const consumerOptions = k
 export function appFile(context: Context, filename = context.filename) {
 	const requestedRoot = resolve(
 		context.cwd,
-		consumerOptions.parse(context.options[0] ?? {}).convexDir,
+		consumerOptions['~parseStrict'](context.options[0] ?? {}).convexDir,
 	)
 	const root = existsSync(requestedRoot) ? realpathSync(requestedRoot) : requestedRoot
 	const file = relative(root, existsSync(filename) ? realpathSync(filename) : filename)
@@ -348,13 +348,13 @@ export function componentRoot(context: Context, filename: string) {
 	if (cache.has(filename)) return cache.get(filename) ?? null
 	const requestedRoot = resolve(
 		context.cwd,
-		consumerOptions.parse(context.options[0] ?? {}).convexDir,
+		consumerOptions['~parseStrict'](context.options[0] ?? {}).convexDir,
 	)
 	const root = existsSync(requestedRoot) ? realpathSync(requestedRoot) : requestedRoot
 	const file = existsSync(filename) ? realpathSync(filename) : resolve(filename)
-	const roots = consumerOptions
-		.parse(context.options[0] ?? {})
-		.componentDirs.map((path) => resolve(root, path))
+	const roots = consumerOptions['~parseStrict'](context.options[0] ?? {}).componentDirs.map(
+		(path) => resolve(root, path),
+	)
 	const owner = findComponentRoot(file, roots) ?? conventionalComponentRoot(file, root)
 	cache.set(filename, owner)
 	return owner

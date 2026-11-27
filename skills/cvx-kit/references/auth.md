@@ -340,6 +340,9 @@ field object, a `k.object` or a native `v.object`, and `returns` takes a `k`
 schema or a native validator. They compose with `kTable` masks. Convex
 validates the structure; the kit runs only the checks, defaults, normalisers
 and transforms the args declare, and does not parse or strip return values.
+Unknown keys in args and returns are rejected at these boundaries. Application
+`k.object(...).parse(...)` strips them by default; use `.strict()` for a standalone
+parse that must reject them.
 
 ## What handlers receive on `ctx`
 

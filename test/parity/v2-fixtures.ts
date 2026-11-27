@@ -1,6 +1,6 @@
 // v2 (`k`) translations of the v1 parity fixtures the snapshot was recorded from (see README.md), one
-// per table and in the same order. `z.object`, `z.strictObject`, `z.looseObject` and `.catchall(...)` all become `k.object`,
-// because v1 stored all four as the same closed object; `z.bigint` becomes `k.int64`; `z.unknown`
+// per table and in the same order. `z.object` and `.catchall(...)` become `k.object`, `z.strictObject` `k.strictObject` and
+// `z.looseObject` `k.looseObject` (all four store the same closed object); `z.bigint` becomes `k.int64`; `z.unknown`
 // becomes `k.any`; `nullish` becomes `.nullable().optional()`; `z.email` and `z.url` become string
 // checks (checks never reach the stored validator). The v1 `transforms` fixture has no v2 table:
 // v2 rejects transform and pipe fields at definition, which v2-parity.test.ts asserts instead.
@@ -95,8 +95,8 @@ const strictness = kTable(
 	'p_strictness',
 	{
 		plain: k.object({ a: k.string() }),
-		strict: k.object({ a: k.string() }),
-		loose: k.object({ a: k.string() }),
+		strict: k.strictObject({ a: k.string() }),
+		loose: k.looseObject({ a: k.string() }),
 		catchall: k.object({ a: k.string() }),
 	},
 	{
@@ -191,7 +191,7 @@ const variantLegacyUnion = kVariantTable(
 	'p_variant_legacy_union',
 	k.union([
 		k.object({ kind: k.literal('x'), x: k.number() }),
-		k.object({ kind: k.literal('y'), y: k.string().default('y') }),
+		k.looseObject({ kind: k.literal('y'), y: k.string().default('y') }),
 	]),
 )
 

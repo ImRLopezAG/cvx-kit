@@ -215,7 +215,7 @@ export function createScopedCursorCodec<S extends KCursorSchema>(
 	return scopedCursorCodec<S['validator']['type'], S['_output']>(transport, scope, {
 		domain: options.domain,
 		bind: options.bind,
-		parse: (value): S['_output'] => synchronous(schema.parse(value)),
+		parse: (value): S['_output'] => synchronous(schema['~parseStrict'](value)),
 	})
 }
 

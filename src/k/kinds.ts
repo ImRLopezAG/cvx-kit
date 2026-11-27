@@ -96,7 +96,10 @@ export class KNumber extends KSchema<number, VFloat64<number>> {
 		return this.link('finite', undefined, checkMessage(message, 'finite'))
 	}
 
-	/** A safe integer (`Number.isSafeInteger`): `not_integer`, or `too_small`/`too_big` outside the range. */
+	/**
+	 * A safe integer (`Number.isSafeInteger`): `not_integer`, or `too_small`/`too_big` outside the range.
+	 * `k.int()` and `.int()` already check this, so on an integer it only attaches a message.
+	 */
 	safe(message?: KCheckMessage): this {
 		return this.link('safe', undefined, checkMessage(message, 'safe'))
 	}

@@ -591,11 +591,11 @@ class TableRecord {
 	}
 
 	get storage(): RuntimeObject {
-		return (this.#storage ??= k.object(this.#columns))
+		return (this.#storage ??= k.strictObject(this.#columns))
 	}
 
 	get schema(): RuntimeObject {
-		return (this.#schema ??= k.object({
+		return (this.#schema ??= k.strictObject({
 			...this.#columns,
 			_id: this.#idField(),
 			_creationTime: k.number(),
@@ -603,7 +603,7 @@ class TableRecord {
 	}
 
 	get insertSchema(): RuntimeObject {
-		return (this.#insert ??= k.object(pickFields(this.#columns, this.#writeKeys)))
+		return (this.#insert ??= k.strictObject(pickFields(this.#columns, this.#writeKeys)))
 	}
 
 	get updateSchema(): RuntimeObject {
@@ -611,21 +611,21 @@ class TableRecord {
 	}
 
 	get commandInput(): RuntimeObject {
-		return (this.#command ??= k.object(pickFields(this.#columns, this.#commandKeys)))
+		return (this.#command ??= k.strictObject(pickFields(this.#columns, this.#commandKeys)))
 	}
 
 	get publicDto(): RuntimeObject {
-		return (this.#public ??= k.object(pickFields(this.#columns, this.#publicKeys)))
+		return (this.#public ??= k.strictObject(pickFields(this.#columns, this.#publicKeys)))
 	}
 
 	get tools(): TableTools {
 		return (this.#tools ??= {
 			insert: this.commandInput,
-			update: k.object({
-				data: k.object(pickFields(this.#columns, this.#commandKeys)).partial(),
+			update: k.strictObject({
+				data: k.strictObject(pickFields(this.#columns, this.#commandKeys)).partial(),
 				id: this.#idField(),
 			}),
-			id: k.object({ id: this.#idField() }),
+			id: k.strictObject({ id: this.#idField() }),
 		})
 	}
 
@@ -642,7 +642,7 @@ class TableRecord {
 		if (!extended && !includeId) return this.publicDto
 		if (!extended) return (this.#publicWithId ??= this.publicDto.extend({ _id: this.#idField() }))
 		const fields = { ...this.publicDto.shape, ...extension }
-		return k.object(includeId ? { ...fields, _id: this.#idField() } : fields)
+		return k.strictObject(includeId ? { ...fields, _id: this.#idField() } : fields)
 	}
 
 	readonly paginationOpts = (
@@ -662,7 +662,7 @@ class TableRecord {
 		const projected = projectRow(this.publicDto.shape, row, includeId, this.#idField(), true)
 		if (extension === noExtension && values === undefined) return projected
 		// SAFETY: a parsed k object of Convex-value fields is a Convex object.
-		const extra = k.object(extension).parse(values ?? {}) as ProjectedRow
+		const extra = k.object(extension)['~parseStrict'](values ?? {}) as ProjectedRow
 		return Object.assign(projected, extra)
 	}
 
@@ -755,26 +755,26 @@ class VariantBranch {
 		const tag = { [this.#discriminator]: columns[this.#discriminator] }
 		switch (mode) {
 			case 'storage':
-				return k.object(columns)
+				return k.strictObject(columns)
 			case 'document':
-				return k.object({
+				return k.strictObject({
 					...columns,
 					_id: k.id(this.#tableName),
 					_creationTime: k.number(),
 				})
 			case 'insert':
-				return k.object(pickFields(columns, this.#insertKeys))
+				return k.strictObject(pickFields(columns, this.#insertKeys))
 			case 'update':
-				return k.object(pickFields(columns, this.#insertKeys)).partial().extend(tag)
+				return k.strictObject(pickFields(columns, this.#insertKeys)).partial().extend(tag)
 			case 'command':
-				return k.object(pickFields(columns, [this.#discriminator, ...this.#commandKeys]))
+				return k.strictObject(pickFields(columns, [this.#discriminator, ...this.#commandKeys]))
 			case 'commandUpdate':
 				return k
-					.object(pickFields(columns, [this.#discriminator, ...this.#commandKeys]))
+					.strictObject(pickFields(columns, [this.#discriminator, ...this.#commandKeys]))
 					.partial()
 					.extend(tag)
 			case 'public':
-				return k.object(pickFields(columns, this.#publicKeys))
+				return k.strictObject(pickFields(columns, this.#publicKeys))
 		}
 	}
 }
@@ -878,9 +878,9 @@ class VariantBoundaryRecord {
 
 	get tools(): VariantTools {
 		return (this.#tools ??= {
-			id: k.object({ id: this.#idField() }),
+			id: k.strictObject({ id: this.#idField() }),
 			insert: this.commandInput,
-			update: k.object({ id: this.#idField(), data: this.#union('commandUpdate') }),
+			update: k.strictObject({ id: this.#idField(), data: this.#union('commandUpdate') }),
 		})
 	}
 
@@ -1120,7 +1120,8 @@ function project(
 	issues: KIssue[],
 ): Value | undefined | typeof FAIL {
 	let value = input
-	let strip = false
+	// The last policy declared wins, as in parse; the walk runs from the outermost record inwards.
+	let strip: boolean | undefined
 	let current = schema
 	while (current.prev !== null) {
 		switch (current.op) {
@@ -1140,7 +1141,10 @@ function project(
 				}
 				break
 			case 'strip':
-				strip = true
+				strip ??= true
+				break
+			case 'strict':
+				strip ??= false
 				break
 			case 'transform':
 			case 'pipe':
@@ -1152,7 +1156,7 @@ function project(
 		}
 		current = schemaOf(current.prev)
 	}
-	return projectRoot(current, value, path, issues, strip)
+	return projectRoot(current, value, path, issues, strip ?? false)
 }
 
 function projectRoot(

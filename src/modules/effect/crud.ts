@@ -276,9 +276,9 @@ export function createEffectCrud<
 	const idInput = crudSchema<Table['tools']['id']>(table.tools.id)
 	const publicDto: Table['publicDto'] = table.publicDto
 	const createResult: StandardSchema<{ id: Id<Table> }, { id: Id<Table> }> &
-		LegacyParser<{ id: Id<Table> }> = k.object({ id: k.id(name) })
-	const okResult = k.object({ ok: k.literal(true) })
-	const pagination = k.object({
+		LegacyParser<{ id: Id<Table> }> = k.strictObject({ id: k.id(name) })
+	const okResult = k.strictObject({ ok: k.literal(true) })
+	const pagination = k.strictObject({
 		numItems: k.int().min(1).max(config.read.maxPageSize),
 		cursor: k.string().nullable(),
 		endCursor: k.string().nullable().optional(),

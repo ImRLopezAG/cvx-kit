@@ -155,6 +155,23 @@ export abstract class KSchema<
 		return safeParseSchema(this, input) as KSafeParseResult<Out>
 	}
 
+	/**
+	 * `parse` as the kit's boundaries run it: an object that declares no unknown-key policy rejects
+	 * unknown keys at every depth, as Convex's own validator does, where `parse` strips them.
+	 */
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- the boundary parse decodes undecoded input.
+	'~parseStrict'(input: unknown): Out {
+		// SAFETY: a successful walk of this schema produces its declared output.
+		return parseSchema(this, input, false) as Out
+	}
+
+	/** `safeParse` as the kit's boundaries run it; see `~parseStrict`. */
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- the boundary parse decodes undecoded input.
+	'~safeParseStrict'(input: unknown): KSafeParseResult<Out> {
+		// SAFETY: a successful walk of this schema produces its declared output.
+		return safeParseSchema(this, input, false) as KSafeParseResult<Out>
+	}
+
 	/** A description for JSON Schema and tooling; it changes neither the validators nor parsing. */
 	describe(text: string): this {
 		return this.link('describe', text, undefined)

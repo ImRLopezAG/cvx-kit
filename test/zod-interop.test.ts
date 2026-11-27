@@ -128,6 +128,79 @@ describe('toZod', () => {
 			expect(toZod(after, options).parse(undefined)).toBe(after.parse(undefined))
 		})
 
+		it('skips overwrite when a wrapped inner run failed', () => {
+			const schema = k
+				.string()
+				.refine(() => false, 'inner failure')
+				.optional()
+				.overwrite(() => {
+					throw new Error('must not execute')
+				})
+			const expected = schema.safeParse('x')
+			const actual = toZod(schema, options).safeParse('x')
+			expect(actual.success).toBe(expected.success)
+			if (!actual.success && !expected.success)
+				expect(actual.error.issues).toMatchObject(expected.issues)
+		})
+
+		it('skips outer checks after a failed base but accumulates checks within a run', () => {
+			const inner = k.string().refine(() => false, 'inner failure')
+			for (const [schema, value] of [
+				[inner.optional(), 'x'],
+				[inner.nullable(), 'x'],
+				[inner.default('x'), undefined],
+				[k.object({ a: inner }), { a: 'x' }],
+			] as const) {
+				const checked = schema.check((_, context) => {
+					context.addIssue({ message: 'outer failure' })
+				})
+				const expected = checked.safeParse(value)
+				const actual = toZod(checked, options).safeParse(value)
+				expect(actual.success).toBe(expected.success)
+				if (!actual.success && !expected.success)
+					expect(actual.error.issues.map(({ message }) => message)).toEqual(
+						expected.issues.map(({ message }) => message),
+					)
+			}
+			const sameRun = inner.describe('transparent').check((_, context) => {
+				context.addIssue({ message: 'same run failure' })
+			})
+			const expected = sameRun.safeParse('x')
+			const actual = toZod(sameRun, options).safeParse('x')
+			if (!actual.success && !expected.success)
+				expect(actual.error.issues).toMatchObject(expected.issues)
+			expect(actual.success).toBe(expected.success)
+		})
+
+		it('uses parsed defaults above nested transforms', () => {
+			const schema = k
+				.object({ a: k.string().transform((value) => value.length) })
+				.default({ a: 3 })
+			expect(toZod(schema, options).safeParse(undefined)).toEqual(schema.safeParse(undefined))
+		})
+
+		it('optional skips defaults hidden behind a transform or pipe', () => {
+			for (const schema of [
+				k
+					.string()
+					.default('a')
+					.transform((value) => value.length)
+					.optional(),
+				k.string().default('a').pipe(k.string()).optional(),
+			]) {
+				expect(toZod(schema, options).safeParse(undefined)).toEqual(schema.safeParse(undefined))
+				expect(toZod(schema, options).safeParse('abc')).toEqual(schema.safeParse('abc'))
+				const object = k.object({ value: schema })
+				expect(toZod(object, options).safeParse({})).toEqual(object.safeParse({}))
+			}
+			const visible = k
+				.string()
+				.transform((value) => value.length)
+				.default(3)
+				.optional()
+			expect(toZod(visible, options).safeParse(undefined)).toEqual(visible.safeParse(undefined))
+		})
+
 		it('preserves callback failure sentinels and synchronous-only transforms', () => {
 			for (const schema of [
 				k.string().transform(() => k.NEVER),

@@ -12,6 +12,7 @@ import { membersOf } from './k/compile'
 import { emailPattern, isUrl, KConversionFailure, maxTimestamp } from './k/formats'
 import { NEVER } from './k/issues'
 import { setOwn } from './k/names'
+import { containsTransform } from './k/parse'
 import { KSchema, type KCheckContext } from './k/schema'
 import type {
 	KDiscriminated,
@@ -136,7 +137,7 @@ function convert(node: KNode, z: Factory): Mini {
 	const root = records.pop() as KNode
 	let out = rootSchema(root, policyOf(records), z)
 	const partialAt = records.findIndex(isPartial)
-	let transformed = false
+	let transformed = containsTransform(root)
 	let description: string | undefined
 	let run: KNode[] = []
 	for (let index = records.length - 1; index >= 0; index--) {
@@ -167,6 +168,9 @@ function convert(node: KNode, z: Factory): Mini {
 				transformed = true
 				break
 			case 'optional':
+				// An output-side undefined default prevents Zod from reaching a hidden inner default.
+				out = z.optional(defaultsBelow(record.prev) ? out : z._default(out, undefined))
+				break
 			case 'partial':
 				out = z.optional(out)
 				break
@@ -266,12 +270,14 @@ function rootSchema(root: KNode, policy: 'strip' | 'strict' | 'loose', z: Factor
 	}
 }
 
-/** Apply one run of chained conveniences: normalisers first, then checks, as `k` parses them. */
+/** A pipe skips this run when its base failed; checks within the run still accumulate issues. */
 function applyRun(base: Mini, run: readonly KNode[], z: Factory): Mini {
-	let out = base
-	for (const record of run) if (isNormaliser(record)) out = applyNormaliser(out, record, z)
-	for (const record of run) if (!isNormaliser(record)) out = applyCheck(out, record, z)
-	return out
+	if (run.length === 0) return base
+	const kind = kindOf(base)
+	let out: Mini = base._zod.optout === 'optional' ? z.optional(z.any()) : z.any()
+	for (const record of run) if (isNormaliser(record)) out = applyNormaliser(out, record, kind, z)
+	for (const record of run) if (!isNormaliser(record)) out = applyCheck(out, record, kind, z)
+	return z.pipe(base, out)
 }
 
 /** The Zod definition kind: a string format is a `string`, a number format a `number`. */
@@ -279,21 +285,21 @@ function kindOf(schema: Mini): string {
 	return schema._zod.def.type
 }
 
-function applyNormaliser(base: Mini, record: KNode, z: Factory): Mini {
+function applyNormaliser(base: Mini, record: KNode, kind: string, z: Factory): Mini {
 	if (record.op === 'overwrite')
 		return base.check(
 			z.check((payload) => {
 				payload.value = callbackResult(callbackOf(record)(payload.value), payload, 'overwrite')
 			}),
 		)
-	if (kindOf(base) !== 'string') return base
+	if (kind !== 'string') return base
 	if (record.op === 'trim') return base.check(z.trim())
 	if (record.op === 'lower') return base.check(z.toLowerCase())
 	if (record.op === 'upper') return base.check(z.toUpperCase())
 	return base
 }
 
-function applyCheck(base: Mini, record: KNode, z: Factory): Mini {
+function applyCheck(base: Mini, record: KNode, kind: string, z: Factory): Mini {
 	if (record.op === 'refine') {
 		const options = { message: messageOf(record.message), path: pathOf(record.message) }
 		return base.check(z.refine((value) => settled(callbackOf(record)(value)) === true, options))
@@ -307,7 +313,6 @@ function applyCheck(base: Mini, record: KNode, z: Factory): Mini {
 			}),
 		)
 	const message = messageOf(record.message)
-	const kind = kindOf(base)
 	if (record.op === 'regex') {
 		// SAFETY: .regex stores its pattern as the record argument.
 		const pattern = record.arg as RegExp
@@ -407,6 +412,15 @@ function isNormaliser(record: KNode): boolean {
 /** A `partial()` field is optional and never receives the default declared below it. */
 function isPartial(record: KNode): boolean {
 	return record.op === 'partial'
+}
+
+/** Optional sees defaults only until a transform or pipe changes the wrapped output. */
+function defaultsBelow(node: KNode | null): boolean {
+	for (let current = node; current !== null; current = current.prev) {
+		if (current.op === 'default') return true
+		if (current.op === 'transform' || current.op === 'pipe') return false
+	}
+	return false
 }
 
 /** The unknown-key policy of a chain given outermost record first: the last one declared, or strip. */

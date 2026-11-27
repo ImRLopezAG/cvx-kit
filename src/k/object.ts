@@ -11,7 +11,7 @@ import {
 import { isFieldName, setOwn } from './names'
 import { KOptional, KSchema } from './schema'
 import type {
-	Flat,
+	KExtendedFields,
 	KAnyDiffers,
 	KAnyTransform,
 	KFields,
@@ -68,14 +68,11 @@ export class KObject<F extends KFields> extends KSchema<
 	}
 
 	/** Add or replace fields; a key present in both takes the new schema. */
-	extend<E extends KFields>(
-		fields: E,
-		options?: KExtendOptions,
-	): KObject<Flat<Omit<F, keyof E> & E>> {
+	extend<E extends KFields>(fields: E, options?: KExtendOptions): KObject<KExtendedFields<F, E>> {
 		const kept = derivedChecks(this, 'extend', options)
-		let out: KObject<Flat<Omit<F, keyof E> & E>> = withPolicy(
+		let out: KObject<KExtendedFields<F, E>> = withPolicy(
 			this,
-			object(retyped<Flat<Omit<F, keyof E> & E>>({ ...fieldsOf(this), ...fields })),
+			object(retyped<KExtendedFields<F, E>>({ ...fieldsOf(this), ...fields })),
 		)
 		if (options !== undefined && 'keepChecks' in options)
 			for (const record of kept) out = out.link(record.op, record.arg, record.message)

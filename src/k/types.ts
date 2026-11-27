@@ -179,3 +179,8 @@ export type KOptionalOutput<S extends KType> = 0 extends 1 & S['_output']
 		: false
 
 export type Flat<T> = { [K in keyof T]: T[K] }
+
+/** Merge field maps without stacking Omit and intersection instantiations. */
+export type KExtendedFields<F extends KFields, E extends KFields> = {
+	[K in keyof F]: K extends keyof E ? E[K] : F[K]
+} & E

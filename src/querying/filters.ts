@@ -43,12 +43,15 @@ export const MAX_PAGE_SIZE = 100
 
 type NativeField<Schema extends KType> = Schema['validator']
 type ScalarKind = 'id' | 'string' | 'float64' | 'int64' | 'boolean' | 'null' | 'literal'
+// An unresolved union's members are every validator, itself included: stop instead of descending forever.
 type SupportedNative<Validator extends GenericValidator> = Validator extends { kind: ScalarKind }
 	? true
 	: Validator extends { kind: 'union'; members: infer Members extends GenericValidator[] }
-		? false extends SupportedNative<Members[number]>
+		? GenericValidator extends Members[number]
 			? false
-			: true
+			: false extends SupportedNative<Members[number]>
+				? false
+				: true
 		: false
 
 export type ScalarSelection<Fields extends FieldSchemas> = {
@@ -75,9 +78,11 @@ type OrderedNative<Validator extends GenericValidator> = Validator extends { kin
 		? true
 		: false
 	: Validator extends { kind: 'union'; members: infer Members extends GenericValidator[] }
-		? false extends OrderedNative<Members[number]>
+		? GenericValidator extends Members[number]
 			? false
-			: true
+			: false extends OrderedNative<Members[number]>
+				? false
+				: true
 		: false
 type OrderedValue<Schema extends KType> =
 	OrderedNative<NativeField<Schema>> extends true ? NativeValue<Schema> : never

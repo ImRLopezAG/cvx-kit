@@ -48,7 +48,8 @@ Closes the defects the Accord and one-office trials found on beta.6, and the fin
 
 ### Known limits
 
-- Nested inline `.extend` reaches `TS2590` at 16 levels of self-nesting; hoist the extended object to a constant.
+- An object that embeds itself through `.extend` reaches `TS2590` at 16 levels; give one intermediate level an explicit type. A large inline `.extend` inside a union or array can reach it sooner; hoist it to a constant.
+- `toZod` keeps three Zod behaviours: its number rejects `NaN` and `Infinity`, its `any` accepts `undefined`, and its union takes the first matching member.
 - `toZod` does not support `.catch`.
 - A field that shares the name and value type of an option of `pick` / `omit` / `partial` / `required` (for example a boolean field named `dropChecks`) reads as options, not as a mask.
 

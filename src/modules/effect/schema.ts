@@ -44,11 +44,13 @@ export function effectStandardSchema<const S extends Schema.ConstraintDecoder<un
 export type ContractDecoderError<S> =
 	S extends EffectDecoder<unknown, unknown, infer Error, unknown>
 		? Error
-		: S extends LegacyParser
-			? never
-			: S extends ContractSchema
-				? ContractValidationError
-				: never
+		: S extends { readonly '~safeParseStrict': unknown }
+			? ContractValidationError
+			: S extends LegacyParser
+				? never
+				: S extends ContractSchema
+					? ContractValidationError
+					: never
 export type ContractDecoderRequirements<S> =
 	S extends EffectDecoder<unknown, unknown, unknown, infer Requirements> ? Requirements : never
 
@@ -68,7 +70,9 @@ export function decodeEffectContract<S extends ContractSchema>(
 				if (!result.issues) return Effect.succeed(result.value)
 				const error = new ContractValidationError(result.issues)
 				// Legacy parsers have always exposed validation throws as defects.
-				return 'parse' in schema ? Effect.die(error) : Effect.fail(error)
+				return 'parse' in schema && !schema['~safeParseStrict']
+					? Effect.die(error)
+					: Effect.fail(error)
 			}),
 		)
 	})

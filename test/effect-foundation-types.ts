@@ -1,3 +1,4 @@
+import type { ContractValidationError } from '../src/modules/effect/schema'
 import { Context, Effect } from 'effect'
 import { k } from '../src/k'
 import { createEffectFoundation } from '../src/effect'
@@ -50,7 +51,9 @@ const commands = foundation.Command({
 })
 const execution = commands.exec('rename', 'input', { actorId: 'actor' })
 type Success = Assert<Equal<Effect.Success<typeof execution>, number>>
-type ErrorChannel = Assert<Equal<Effect.Error<typeof execution>, PermissionFailure | DomainFailure>>
+type ErrorChannel = Assert<
+	Equal<Effect.Error<typeof execution>, PermissionFailure | DomainFailure | ContractValidationError>
+>
 type Requirements = Assert<Equal<Effect.Services<typeof execution>, AuditStore>>
 const assertions: [Success, ErrorChannel, Requirements] = [true, true, true]
 void assertions

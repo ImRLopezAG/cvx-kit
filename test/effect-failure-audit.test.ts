@@ -30,12 +30,11 @@ import {
 import type { StandardSchema } from '../src/modules/contracts/contract'
 import { defineDomainContract } from '../src/modules/contracts/domain'
 import { kContract } from '../src/modules/contracts/standard'
-import { KValidationError } from '../src/k/issues'
 import { createEffectAuthFunctions } from '../src/modules/effect/auth'
 import { effectApiBuilder } from '../src/modules/effect/api'
 import { projectErrorCause } from '../src/modules/effect/errors'
 import { createEffectFoundation } from '../src/modules/effect/foundation'
-import { effectContract, effectSchema } from '../src/modules/effect/schema'
+import { ContractValidationError, effectContract, effectSchema } from '../src/modules/effect/schema'
 import type { FailureAuditEntry, FailureAuditOptions } from '../src/modules/effect/failure-audit'
 
 const schema = defineSchema({ writes: defineTable({ kind: v.string() }) })
@@ -437,7 +436,7 @@ describe('Effect operation argument failures', () => {
 		const { command, query } = argumentHarness()
 		await expect(
 			Effect.runPromise(command.exec('save', invalidInput as never, undefined)),
-		).rejects.toBeInstanceOf(KValidationError)
+		).rejects.toBeInstanceOf(ContractValidationError)
 		await expect(
 			Effect.runPromise(query.exec('read', invalidInput as never, undefined)),
 		).rejects.toBeInstanceOf(Schema.SchemaError)
@@ -452,7 +451,7 @@ describe('Effect operation argument failures', () => {
 	})
 
 	it.each([undefined, 'validation'] as const)(
-		'throws the kit validation error for a k input past an error projection (%s)',
+		'projects a bare k typed failure like other contract validation failures (%s)',
 		async (policy) => {
 			const { mutation, read, t } = argumentHarness(policy)
 			const saveError = await t
@@ -460,8 +459,8 @@ describe('Effect operation argument failures', () => {
 				.catch((error: unknown) => error)
 			expect(saveError).toBeInstanceOf(ConvexError)
 			expect((saveError as ConvexError<Value>).data).toEqual({
-				code: 'VALIDATION',
-				issues: [expect.objectContaining({ path: ['secret'], code: 'invalid_type' })],
+				_tag: 'UnknownFailure',
+				version: 1,
 			})
 			expect(JSON.stringify((saveError as ConvexError<Value>).data)).not.toContain(
 				invalidInput.secret,
@@ -582,6 +581,6 @@ describe('Effect operation argument failures', () => {
 		expect(projectErrorCause(notesErrors, exit.cause)).toMatchObject({ code: 'NOT_FOUND' })
 		await expect(
 			Effect.runPromise(query.exec('invalidResult', {}, undefined)),
-		).rejects.toBeInstanceOf(KValidationError)
+		).rejects.toBeInstanceOf(ContractValidationError)
 	})
 })

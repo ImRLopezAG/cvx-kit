@@ -138,7 +138,11 @@ const inline = Command({
 		}),
 	}),
 })
-const inlineResult: Effect.Effect<number, never, Service> = inline.exec('save', '2', { actor: 'a' })
+const inlineResult: Effect.Effect<number, ContractValidationError, Service> = inline.exec(
+	'save',
+	'2',
+	{ actor: 'a' },
+)
 void inlineResult
 class AuditService extends Context.Service<AuditService, { value: boolean }>()('AuditService') {}
 class AuditFailure {
@@ -162,11 +166,14 @@ const optional = Command({
 })
 const conditional: Effect.Effect<
 	{ n: number },
-	AuditFailure | RootFailure,
+	AuditFailure | RootFailure | ContractValidationError,
 	Service | AuditService
 > = optional.exec('save', '2', { actor: 'a' })
 void conditional
 // @ts-expect-error an optional override cannot erase default or override services
-const missingServices: Effect.Effect<{ n: number }, AuditFailure | RootFailure, never> =
-	optional.exec('save', '2', { actor: 'a' })
+const missingServices: Effect.Effect<
+	{ n: number },
+	AuditFailure | RootFailure | ContractValidationError,
+	never
+> = optional.exec('save', '2', { actor: 'a' })
 void missingServices

@@ -1,3 +1,4 @@
+import type { ContractValidationError } from '../src/modules/effect/schema'
 import { Context, Effect } from 'effect'
 import { k } from '../src/k'
 import type { StandardSchema } from '../src/contracts'
@@ -48,9 +49,9 @@ const commands = foundation.Command({
 const read = queries.exec('read', 1, { actorId: 'actor' })
 const save = commands.exec('save', 1, { actorId: 'actor' })
 const assertions: [
-	Assert<Equal<Effect.Error<typeof read>, DefaultFailure>>,
+	Assert<Equal<Effect.Error<typeof read>, DefaultFailure | ContractValidationError>>,
 	Assert<Equal<Effect.Services<typeof read>, DefaultService>>,
-	Assert<Equal<Effect.Error<typeof save>, DefaultFailure>>,
+	Assert<Equal<Effect.Error<typeof save>, DefaultFailure | ContractValidationError>>,
 	Assert<Equal<Effect.Services<typeof save>, DefaultService>>,
 ] = [true, true, true, true]
 void assertions

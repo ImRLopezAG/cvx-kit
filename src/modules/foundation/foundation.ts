@@ -1,5 +1,6 @@
 /* oxlint-disable anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- Private heterogeneous executor storage; public overloads restore schema-owned values and callbacks before dispatch. */
 import type { AuditEntryInput } from '../../components/foundation/client'
+import { KValidationError, type KIssue } from '../../k/issues'
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Host registries share the deployed component's Effect-free interpreter.
 import {
 	executeCommandLifecycle,
@@ -388,6 +389,10 @@ async function decode(schema: NeutralSchema, value: unknown) {
 	if ('kind' in schema && schema.kind !== 'contract')
 		throw Error('Effect contracts require the Effect registry')
 	const decoded = await decodeContract(schema, value)
+	if (decoded.issues && 'parse' in schema && schema['~safeParseStrict']) {
+		// SAFETY: the strict k parser returns KIssue records unchanged through decodeContract.
+		throw new KValidationError(decoded.issues as KIssue[])
+	}
 	if (decoded.issues) throw Error(decoded.issues.map((issue) => issue.message).join('; '))
 	return decoded.value
 }

@@ -3,7 +3,7 @@ import { kContract } from '../src/contracts'
 import { toJsonSchema } from '../src/json-schema'
 import { k } from '../src/k'
 import { runDeclared } from '../src/k/parse'
-import { kTable } from '../src/table'
+import { kTable, kVariantTable } from '../src/table'
 import { toZod } from '../src/zod'
 
 const codes = (result: { success: boolean; issues?: readonly { code: string }[] }) =>
@@ -135,6 +135,29 @@ describe('unknown keys: parse strips, boundaries reject', () => {
 		expect(() => project(meta)).toThrow()
 	})
 
+	it('a variant table accepts strict branches', () => {
+		const events = kVariantTable(
+			'events',
+			k.discriminatedUnion('type', [
+				k.strictObject({ type: k.literal('a'), x: k.string() }),
+				k
+					.object({ type: k.literal('b') })
+					.strict()
+					.describe('b'),
+			]),
+			{ discriminator: 'type', variants: { a: {}, b: {} } },
+		)
+		expect(events.insertSchema.safeParse({ type: 'a', x: 'x' }).success).toBe(true)
+		expect(events.insertSchema.safeParse({ type: 'a', x: 'x', extra: 1 }).success).toBe(false)
+		expect(() =>
+			kVariantTable(
+				'events',
+				k.discriminatedUnion('type', [k.object({ type: k.literal('a') }).strip()]),
+				{ discriminator: 'type', variants: { a: {} } },
+			),
+		).toThrow('object-level refinements')
+	})
+
 	it('a discriminated union strips in parse and rejects at the boundary', () => {
 		const event = k.discriminatedUnion('kind', [
 			k.object({ kind: k.literal('a'), n: k.number() }),
@@ -203,6 +226,18 @@ describe('integers are safe by default', () => {
 		expect(() => runDeclared(args, { count: 2 ** 53 })).toThrow()
 		expect(() => runDeclared(args, { count: 1, size: 2 ** 60 })).toThrow()
 		expect(runDeclared(args, { count: 1, size: 2 })).toEqual({ count: 1, size: 2 })
+	})
+
+	it('JSON Schema states the range with or without .safe()', () => {
+		const range = {
+			type: 'integer',
+			minimum: Number.MIN_SAFE_INTEGER,
+			maximum: Number.MAX_SAFE_INTEGER,
+		}
+		for (const schema of [k.int(), k.int().safe(), k.number().int(), k.number().safe()])
+			expect(toJsonSchema(schema)).toMatchObject(range)
+		expect(toJsonSchema(k.int().min(1).max(10))).toMatchObject({ minimum: 1, maximum: 10 })
+		expect(toJsonSchema(k.number())).not.toHaveProperty('minimum')
 	})
 
 	it('.int() keeps its message for both failures; k.number() is unchanged', () => {

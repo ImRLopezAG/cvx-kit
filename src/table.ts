@@ -1019,12 +1019,15 @@ function dtoOptionsOf(options: boolean | RuntimeDtoOptions | undefined) {
 	}
 }
 
-/** The chain's root record, and whether any record above it other than a description refines it. */
+/**
+ * The chain's root record, and whether any record above it refines it. A description and `.strict()`
+ * do not: a table boundary rejects unknown keys anyway.
+ */
 function rootOf(schema: KType): RootInfo {
 	let current = schema
 	let refined = false
 	while (current.prev !== null) {
-		if (current.op !== 'describe') refined = true
+		if (current.op !== 'describe' && current.op !== 'strict') refined = true
 		current = schemaOf(current.prev)
 	}
 	return { root: current, refined }

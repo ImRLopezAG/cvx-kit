@@ -216,7 +216,14 @@ Strictness is per object: a strict parent does not change a nested object's poli
 
 Table-derived schemas (`insertSchema`, `updateSchema`, `commandInput`, `dto()`, `tools`) and literal-key records are `.strict()` objects, so a direct `parse` of them rejects unknown keys as v1's did. In a `k.union`, parse prefers a member that accepts every key over an earlier one that would strip some; Zod takes the first match.
 
-**If you migrated with the beta.0, beta.1 or beta.2 codemod:** it rewrote every `z.strictObject(...)` and `.strict()` to a plain `k.object(...)`, which was strict then. On beta.3 each of those strips unknown keys under an application `parse`, with no type error, and the source no longer says which ones were strict. Kit boundaries still reject, so only objects parsed directly are affected: validators of server functions, webhooks and other untrusted input outside the kit. Compare against your pre-migration branch and restore `k.strictObject` where the Zod source was strict.
+**If you migrated with the beta.0, beta.1 or beta.2 codemod:** it rewrote every `z.strictObject(...)` and `.strict()` to a plain `k.object(...)`, which was strict then. On beta.3 each of those strips unknown keys under an application `parse`, with no type error, and the source no longer says which ones were strict. Kit boundaries still reject, so only objects parsed directly are affected: validators of server functions, webhooks and other untrusted input outside the kit. The codemod can restore them from the commit before the migration:
+
+```sh
+npx cvx-kit-codemod-v2 apps packages --restore-strict <pre-migration-ref>          # dry run
+npx cvx-kit-codemod-v2 apps packages --restore-strict <pre-migration-ref> --write
+```
+
+In this mode it rewrites nothing else. It reads each file as it was at the ref, pairs its Zod object factories with the file's current ones by their field names (by position when the two lists match, otherwise by the longest common sequence), and turns each `k.object` whose Zod original was `z.strictObject` or ended in `.strict()` into `k.strictObject`. It lists what it could not do, with line numbers in the file at the ref: `strict-on-reference` (`Base.strict()` on a variable: add `.strict()` to the `k` schema by hand), `strict-unpaired` (the object's fields changed or it moved to another file) and `strict-now-other-policy` (the object now says `.strip()` or `.loose()`). Files that did not exist at the ref are left alone, and a second run changes nothing.
 
 Since beta.3, code that depended on `unrecognized_key` from application `parse`/`safeParse` must add `.strict()` or use `k.strictObject`. Existing `.strip()` calls still work and can be removed where their only purpose was to restore Zod's parse behaviour.
 

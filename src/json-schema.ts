@@ -326,6 +326,12 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 		case 'number':
 			return { type: 'number' }
 		case 'int':
+			// The range `k.int()` enforces, as Zod emits for `z.int()`.
+			return {
+				type: 'integer',
+				minimum: Number.MIN_SAFE_INTEGER,
+				maximum: Number.MAX_SAFE_INTEGER,
+			}
 		case 'int64':
 			return { type: 'integer' }
 		case 'timestamp':
@@ -435,11 +441,7 @@ function defaultBelow(node: KNode | null): boolean {
 }
 
 function applyCheck(out: JsonSchema, record: KNode): void {
-	if (record.op === 'int') {
-		out.type = 'integer'
-		return
-	}
-	if (record.op === 'safe') {
+	if (record.op === 'int' || record.op === 'safe') {
 		out.type = 'integer'
 		out.minimum = strongest(out.minimum, Number.MIN_SAFE_INTEGER, Math.max)
 		out.maximum = strongest(out.maximum, Number.MAX_SAFE_INTEGER, Math.min)

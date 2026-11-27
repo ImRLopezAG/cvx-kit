@@ -17,6 +17,7 @@ import {
 import { dirname, join, matchesGlob, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildReport, formatSummary } from './report.mjs'
+import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
 import { transformSource } from './transform.mjs'
 
 export const HELP = `Usage: cvx-kit-codemod-v2 <path…> [options]
@@ -30,6 +31,7 @@ Without --write it is a dry run and writes nothing but the optional report.
   --no-getters            keep function args / returns as data properties
   --native-number-bounds  omit .finite() on k.number() (see below)
   --ignore <glob…>        skip matching paths
+  --restore-strict <ref>  only restore k.strictObject from the pre-migration git ref (see below)
   --help                  print this help
 
 Paths must be files or directories; the codemod does not expand globs (let the shell expand an
@@ -45,6 +47,12 @@ The codemod emits integers without redundant .safe() calls. Zod's z.number() ref
 infinities, so by default it becomes k.number().finite() (number-finite-preserved).
 --native-number-bounds emits k.number() instead (number-now-accepts-nan); it only affects
 finite-number checks, never integer safety.
+
+--restore-strict <ref> is for apps migrated with the 2.0.0-beta.0 to beta.2 codemod, which wrote
+z.strictObject(...) and .strict() as a plain k.object(...). Since beta.3 that strips unknown keys
+under parse. This mode rewrites nothing else: it reads each file as it was at <ref> (the commit
+before the migration), pairs its Zod objects with the file's current ones by their field names and
+turns each k.object that was strict into k.strictObject. Sites it cannot pair are listed.
 `
 
 const SKIPPED_DIRECTORIES = new Set([
@@ -88,6 +96,11 @@ export function parseArguments(argv) {
 			list = options.paths
 		} else if (arg === '--native-number-bounds') {
 			options.nativeNumberBounds = true
+			list = options.paths
+		} else if (arg === '--restore-strict') {
+			options.restoreStrict = argv[++index]
+			if (!options.restoreStrict || options.restoreStrict.startsWith('--'))
+				throw new Error('--restore-strict needs a git ref')
 			list = options.paths
 		} else if (arg === '--ignore') {
 			list = options.ignore
@@ -155,6 +168,7 @@ export function run(argv, cwd = process.cwd()) {
 		path: relative(cwd, file),
 		source: readFileSync(file, 'utf8'),
 	}))
+	if (options.restoreStrict !== undefined) return restoreStrict(options, files, cwd)
 	const transformOptions = {
 		getters: options.getters,
 		nativeNumberBounds: options.nativeNumberBounds,
@@ -175,6 +189,30 @@ export function run(argv, cwd = process.cwd()) {
 		summary += `\nskipped symlinks outside the given paths: ${outside.length}\n${outside.map((path) => `  ${path}`).join('\n')}`
 	// A file that failed to parse fails the run, after the report is written.
 	return { report, summary, exitCode: report.summary.error > 0 ? 1 : 0 }
+}
+
+/** The `--restore-strict` run: no other rewrite happens in it. */
+function restoreStrict(options, files, cwd) {
+	const read = gitReader(options.restoreStrict, cwd)
+	const results = files.map(({ file, path, source }) => {
+		const base = read(file)
+		try {
+			const outcome = restoreStrictSource(path, source, base)
+			if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
+			const { output: _output, ...rest } = outcome
+			return { ...rest, noBase: base === null }
+		} catch (error) {
+			return { path, restored: 0, already: 0, manual: [], noBase: false, error: error.message }
+		}
+	})
+	const report = { restoreStrict: options.restoreStrict, files: results }
+	if (options.report)
+		writeFileSync(resolve(cwd, options.report), `${JSON.stringify(report, null, '\t')}\n`)
+	return {
+		report,
+		summary: formatRestoreSummary(results, options.restoreStrict, options.write),
+		exitCode: results.some((result) => result.error) ? 1 : 0,
+	}
 }
 
 const RESOLVED_EXTENSIONS = ['', '.ts', '.tsx', '.mts', '/index.ts', '/index.tsx', '/index.mts']

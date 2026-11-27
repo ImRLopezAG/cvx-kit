@@ -10,6 +10,17 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [2.0.0-beta.4]
+
+### Added
+
+- `cvx-kit-codemod-v2 <paths> --restore-strict <git-ref>`: for apps migrated with an earlier beta's codemod, restores `k.strictObject` wherever the Zod source at the pre-migration ref was `z.strictObject` or `.strict()`. Dry run without `--write`; sites it cannot pair are listed.
+
+### Fixed
+
+- `toJsonSchema` of `k.int()` and `.int()` emits the safe range (`minimum`/`maximum`) that parse enforces since beta.3, as Zod does for `z.int()`; before, only `.safe()` emitted it, so removing a redundant `.safe()` changed the schema.
+- `kVariantTable` rejected a `k.strictObject` branch as an object-level refinement, so a variant table migrated by the beta.3 codemod from `z.strictObject` branches threw at module load.
+
 ## [2.0.0-beta.3]
 
 ### Breaking since beta.2

@@ -10,6 +10,13 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [2.0.0-beta.5]
+
+### Fixed
+
+- `toJsonSchema` emits only the stronger of an inclusive and an exclusive bound on the same side, so `k.int().positive()` is `exclusiveMinimum: 0` without the default safe-range `minimum` beside it.
+- `--restore-strict` pairs an object that moved within its file when exactly one leftover on each side has its field names, and no longer lists a strict object whose counterpart is already strict but declares its fields differently (in a constant, or renamed).
+
 ## [2.0.0-beta.4]
 
 ### Added

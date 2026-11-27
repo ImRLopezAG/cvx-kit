@@ -97,6 +97,38 @@ export const Plain = k.object({ a: k.string() })
 		})
 	})
 
+	it('pairs an object that moved within the file, and accepts a strict counterpart whose fields moved', () => {
+		const base = `import { z } from 'zod'
+export const A = z.strictObject({ a: z.string() })
+export const B = z.object({ b: z.string() })
+export const C = z.strictObject({ c: z.string() })
+export const D = z.strictObject({ d: z.string(), e: z.string() })
+`
+		// A moved below C and into an array; D's fields moved to a constant and it is already strict.
+		const current = `import { k } from 'cvx-kit'
+const fields = { d: k.string(), e: k.string() }
+export const B = k.object({ b: k.string() })
+export const C = k.object({ c: k.string() })
+export const A = k.array(k.object({ a: k.string() }))
+export const D = k.strictObject(fields)
+`
+		const outcome = restoreStrictSource('a.ts', current, base)
+		expect(outcome.output).toBe(
+			current
+				.replace('C = k.object', 'C = k.strictObject')
+				.replace('k.array(k.object', 'k.array(k.strictObject'),
+		)
+		expect([outcome.restored, outcome.already, outcome.manual]).toEqual([2, 1, []])
+		// A plain counterpart is not rewritten on a guess; it is reported with the likely line.
+		const plain = restoreStrictSource(
+			'a.ts',
+			current.replace('k.strictObject(fields)', 'k.object(fields)'),
+			base,
+		)
+		expect(plain.output).not.toContain('k.strictObject(fields)')
+		expect(plain.manual).toMatchObject([{ code: 'strict-unpaired', baseLine: 5, line: 6 }])
+	})
+
 	it('follows renamed namespaces and the last policy of the base chain', () => {
 		const base =
 			"import * as zod from 'zod'\nexport const A = zod.object({ a: zod.string() }).strict().strip()\nexport const B = zod.object({ b: zod.string() }).strip().strict()\n"

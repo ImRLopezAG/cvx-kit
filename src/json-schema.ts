@@ -265,8 +265,10 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 			case 'gt':
 			case 'lt':
 			case 'safe':
-				if (!transformed && unchecked === 0 && rawHolds(record, output ? 'none' : normalised))
+				if (!transformed && unchecked === 0 && rawHolds(record, output ? 'none' : normalised)) {
 					applyCheck(out, record)
+					dropWeakerBounds(out)
+				}
 				break
 			case 'trim':
 				if (normalised === 'none') normalised = 'trim'
@@ -438,6 +440,18 @@ function defaultBelow(node: KNode | null): boolean {
 		if (current.op === 'transform' || current.op === 'pipe') return false
 	}
 	return false
+}
+
+/** Of an inclusive and an exclusive bound on the same side, keep the one that excludes more. */
+function dropWeakerBounds(out: JsonSchema): void {
+	if (out.minimum !== undefined && out.exclusiveMinimum !== undefined) {
+		if (out.exclusiveMinimum >= out.minimum) delete out.minimum
+		else delete out.exclusiveMinimum
+	}
+	if (out.maximum !== undefined && out.exclusiveMaximum !== undefined) {
+		if (out.exclusiveMaximum <= out.maximum) delete out.maximum
+		else delete out.exclusiveMaximum
+	}
 }
 
 function applyCheck(out: JsonSchema, record: KNode): void {

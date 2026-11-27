@@ -238,6 +238,18 @@ describe('integers are safe by default', () => {
 			expect(toJsonSchema(schema)).toMatchObject(range)
 		expect(toJsonSchema(k.int().min(1).max(10))).toMatchObject({ minimum: 1, maximum: 10 })
 		expect(toJsonSchema(k.number())).not.toHaveProperty('minimum')
+		// Of an inclusive and an exclusive bound on one side, only the stronger is emitted.
+		expect(toJsonSchema(k.int().positive().max(500))).toMatchObject({
+			type: 'integer',
+			exclusiveMinimum: 0,
+			maximum: 500,
+		})
+		expect(toJsonSchema(k.int().positive().max(500))).not.toHaveProperty('minimum')
+		expect(toJsonSchema(k.int().negative())).toMatchObject({ exclusiveMaximum: 0 })
+		expect(toJsonSchema(k.int().negative())).not.toHaveProperty('maximum')
+		expect(toJsonSchema(k.number().min(1).positive())).toMatchObject({ minimum: 1 })
+		expect(toJsonSchema(k.number().min(1).positive())).not.toHaveProperty('exclusiveMinimum')
+		expect(toJsonSchema(k.number().min(0).positive())).not.toHaveProperty('minimum')
 	})
 
 	it('.int() keeps its message for both failures; k.number() is unchanged', () => {

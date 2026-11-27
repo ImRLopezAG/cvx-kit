@@ -91,15 +91,10 @@ function signatureOf(argument) {
 		.join(',')
 }
 
-function wasStrict(site) {
-	const last = site.policies[0]
-	if (last === undefined) return site.factory === 'strictObject'
-	return last === 'strict'
-}
-
 /**
  * Pairs of `[base, current]` sites. Equal counts with equal signatures pair by position; otherwise
- * the longest common subsequence of signatures pairs what it can and the rest stay unpaired.
+ * the longest common subsequence of signatures pairs what it can, and an object that moved within the
+ * file pairs with the one leftover that has its fields when that is unambiguous on both sides.
  */
 export function pairSites(base, current) {
 	if (base.length === current.length && base.every((site, index) => same(site, current[index])))
@@ -120,7 +115,43 @@ export function pairSites(base, current) {
 		else if (table[row + 1][column] >= table[row][column + 1]) row++
 		else column++
 	}
+	const pairedBase = new Set(pairs.map(([site]) => site))
+	const pairedCurrent = new Set(pairs.map(([, site]) => site))
+	const leftBase = groupBySignature(base.filter((site) => !pairedBase.has(site)))
+	const leftCurrent = groupBySignature(current.filter((site) => !pairedCurrent.has(site)))
+	for (const [signature, sites] of leftBase) {
+		const targets = leftCurrent.get(signature)
+		if (signature !== '?' && sites.length === 1 && targets?.length === 1)
+			pairs.push([sites[0], targets[0]])
+	}
 	return pairs
+}
+
+function groupBySignature(sites) {
+	const groups = new Map()
+	for (const site of sites) {
+		const group = groups.get(site.signature) ?? []
+		group.push(site)
+		groups.set(site.signature, group)
+	}
+	return groups
+}
+
+/**
+ * Leftover sites paired by order, when both sides have the same number left. Field names differ, so
+ * these only tell whether the likely counterpart is already strict; they are never rewritten.
+ */
+function likelyCounterparts(base, current, paired) {
+	const taken = new Set(paired.values())
+	const leftBase = base.filter((site) => !paired.has(site))
+	const leftCurrent = current.filter((site) => !taken.has(site))
+	if (leftBase.length !== leftCurrent.length) return new Map()
+	return new Map(leftBase.map((site, index) => [site, leftCurrent[index]]))
+}
+
+function isStrict(site) {
+	const last = site.policies[0]
+	return last === undefined ? site.factory === 'strictObject' : last === 'strict'
 }
 
 function same(left, right) {
@@ -136,7 +167,7 @@ export function restoreStrictSource(path, source, baseSource) {
 	if (baseSource === null) return outcome
 	const current = objectSites(path, source)
 	const base = objectSites(path, baseSource)
-	const strictBase = base.sites.filter(wasStrict)
+	const strictBase = base.sites.filter(isStrict)
 	for (const site of base.aliasStrict)
 		outcome.manual.push({
 			code: 'strict-on-reference',
@@ -145,15 +176,27 @@ export function restoreStrictSource(path, source, baseSource) {
 		})
 	if (strictBase.length === 0) return outcome
 	const paired = new Map(pairSites(base.sites, current.sites))
+	const likely = likelyCounterparts(base.sites, current.sites, paired)
 	const edits = []
 	for (const site of strictBase) {
 		const target = paired.get(site)
 		if (target === undefined) {
-			outcome.manual.push({
+			const counterpart = likely.get(site)
+			// Its fields changed or moved to a constant, but the object in its place is strict.
+			if (counterpart !== undefined && isStrict(counterpart)) {
+				outcome.already++
+				continue
+			}
+			const review = {
 				code: 'strict-unpaired',
 				baseLine: site.line,
 				message: `no object with fields {${site.signature}} was found for the strict object at base line ${site.line}`,
-			})
+			}
+			if (counterpart !== undefined) {
+				review.line = counterpart.line
+				review.message += `; the object at line ${counterpart.line} of the current file may be it`
+			}
+			outcome.manual.push(review)
 			continue
 		}
 		if (target.kind !== 'k') continue

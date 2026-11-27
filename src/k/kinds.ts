@@ -387,7 +387,7 @@ export function url(options?: string | KUrlOptions): KString {
  * describe (branded strings, SDK payloads), not in place of a real shape.
  */
 export function custom<T = unknown>(
-	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- a custom guard receives the undecoded value.
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- a custom guard receives the undecoded value and, as in Zod, passes on any truthy result.
 	guard?: (value: unknown) => unknown,
 	message?: string | KRefineOptions,
 ): KCustom<T> {

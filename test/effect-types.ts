@@ -1,4 +1,3 @@
-import type { ContractValidationError } from '../src/modules/effect/schema'
 import { Context, Effect } from 'effect'
 import { k } from '../src/k'
 import {
@@ -86,14 +85,12 @@ const operations = {
 		}),
 	}),
 }
-type PlainError = Assert<
-	Equal<EffectOperationError<typeof operations.plain>, ContractValidationError>
->
+type PlainError = Assert<Equal<EffectOperationError<typeof operations.plain>, never>>
 type PlainServices = Assert<Equal<EffectOperationRequirements<typeof operations.plain>, never>>
 type GeneratedErrors = Assert<
 	Equal<
 		EffectOperationError<typeof operations.generated>,
-		HandlerFailure | GuardFailure | CompleteFailure | ContractValidationError
+		HandlerFailure | GuardFailure | CompleteFailure
 	>
 >
 type GeneratedServices = Assert<
@@ -136,7 +133,7 @@ const middlewareOperation = define.command({
 type MiddlewareErrors = Assert<
 	Equal<
 		EffectOperationError<typeof middlewareOperation>,
-		MiddlewareFailure | HandlerFailure | AuditFailure | ContractValidationError
+		MiddlewareFailure | HandlerFailure | AuditFailure
 	>
 >
 type MiddlewareServices = Assert<
@@ -160,9 +157,7 @@ const recovered = define.query({
 	handler: () => Effect.fail(new HandlerFailure()),
 	middleware: ({ next }) => next().pipe(Effect.catchTag('HandlerFailure', () => Effect.succeed(1))),
 })
-type RecoveredErrors = Assert<
-	Equal<EffectOperationError<typeof recovered>, ContractValidationError>
->
+type RecoveredErrors = Assert<Equal<EffectOperationError<typeof recovered>, never>>
 const annotated = define.command({
 	input: k.number(),
 	result: k.number(),
@@ -171,9 +166,7 @@ const annotated = define.command({
 	prepare: (): EffectPreparation<number> => ({ kind: 'execute', complete: () => undefined }),
 	handler: (input) => input,
 })
-type AnnotatedErrors = Assert<
-	Equal<EffectOperationError<typeof annotated>, ContractValidationError>
->
+type AnnotatedErrors = Assert<Equal<EffectOperationError<typeof annotated>, never>>
 type AnnotatedRequirements = Assert<Equal<EffectOperationRequirements<typeof annotated>, never>>
 const recoveryAssertions: [
 	ProvidedRequirements,
@@ -198,7 +191,7 @@ const typedCompletion = define.command({
 	handler: (input) => input,
 })
 type TypedCompletionError = Assert<
-	Equal<EffectOperationError<typeof typedCompletion>, CompleteFailure | ContractValidationError>
+	Equal<EffectOperationError<typeof typedCompletion>, CompleteFailure>
 >
 type TypedCompletionRequirements = Assert<
 	Equal<EffectOperationRequirements<typeof typedCompletion>, Policy>
@@ -212,9 +205,7 @@ const recoveredGuard = define.query({
 	handler: (input) => input,
 	middleware: ({ next }) => next().pipe(Effect.catchTag('GuardFailure', () => Effect.succeed(1))),
 })
-type RecoveredGuardError = Assert<
-	Equal<EffectOperationError<typeof recoveredGuard>, ContractValidationError>
->
+type RecoveredGuardError = Assert<Equal<EffectOperationError<typeof recoveredGuard>, never>>
 const guardAssertion: RecoveredGuardError = true
 void guardAssertion
 const shortCircuit = define.query({
@@ -227,9 +218,7 @@ const shortCircuit = define.query({
 		}),
 	middleware: () => 1,
 })
-type ShortCircuitError = Assert<
-	Equal<EffectOperationError<typeof shortCircuit>, ContractValidationError>
->
+type ShortCircuitError = Assert<Equal<EffectOperationError<typeof shortCircuit>, never>>
 type ShortCircuitRequirements = Assert<
 	Equal<EffectOperationRequirements<typeof shortCircuit>, never>
 >
@@ -260,7 +249,7 @@ const optionalRecovery = define.query({
 			: undefined,
 })
 type OptionalRecoveryErrors = Assert<
-	Equal<EffectOperationError<typeof optionalRecovery>, HandlerFailure | ContractValidationError>
+	Equal<EffectOperationError<typeof optionalRecovery>, HandlerFailure>
 >
 const optionalAssertions: [OptionalProvisionRequirements, OptionalRecoveryErrors] = [true, true]
 void optionalAssertions
@@ -338,7 +327,7 @@ const recoveredDefaultGuard = guardedDefine.query({
 		),
 })
 type RecoveredDefaultGuardError = Assert<
-	Equal<EffectOperationError<typeof recoveredDefaultGuard>, ContractValidationError>
+	Equal<EffectOperationError<typeof recoveredDefaultGuard>, never>
 >
 type RecoveredDefaultGuardRequirements = Assert<
 	Equal<EffectOperationRequirements<typeof recoveredDefaultGuard>, never>
@@ -379,10 +368,7 @@ type MiddlewareFirstRequirements = Assert<
 	Equal<EffectOperationRequirements<typeof middlewareFirstGuard>, Policy | Repository>
 >
 type MiddlewareFirstErrors = Assert<
-	Equal<
-		EffectOperationError<typeof middlewareFirstGuard>,
-		GuardFailure | HandlerFailure | ContractValidationError
-	>
+	Equal<EffectOperationError<typeof middlewareFirstGuard>, GuardFailure | HandlerFailure>
 >
 const middlewareFirstAssertions: [MiddlewareFirstRequirements, MiddlewareFirstErrors] = [true, true]
 void middlewareFirstAssertions

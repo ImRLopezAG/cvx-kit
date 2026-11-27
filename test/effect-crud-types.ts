@@ -1,4 +1,3 @@
-import type { ContractValidationError } from '../src/modules/effect/schema'
 import { Context, Effect } from 'effect'
 import { createEffectFoundation } from '../src/effect'
 import { createEffectCrud, type EffectCrudPagination } from '../src/modules/effect/crud'
@@ -119,9 +118,7 @@ type CreateErrors = Assert<
 	Equal<Effect.Error<typeof created>, CreateError | EnrichError | GuardError>
 >
 type CreateServices = Assert<Equal<Effect.Services<typeof created>, Repository | Audit>>
-type UpdateErrors = Assert<
-	Equal<Effect.Error<typeof updated>, PatchError | ContractValidationError>
->
+type UpdateErrors = Assert<Equal<Effect.Error<typeof updated>, PatchError>>
 type UpdateServices = Assert<Equal<Effect.Services<typeof updated>, Audit>>
 type GetSuccess = Assert<Equal<Effect.Success<typeof got>, { text: string } | null>>
 type GetErrors = Assert<Equal<Effect.Error<typeof got>, GetError>>
@@ -169,9 +166,7 @@ const archived = overridden.commands.exec(
 	{ id: noteId },
 	{ actor: 'actor', tenant: 'tenant' },
 )
-type ArchiveErrors = Assert<
-	Equal<Effect.Error<typeof archived>, ArchiveError | ContractValidationError>
->
+type ArchiveErrors = Assert<Equal<Effect.Error<typeof archived>, ArchiveError>>
 const archiveAssertion: ArchiveErrors = true
 void archiveAssertion
 createEffectCrud({
@@ -239,7 +234,7 @@ const optionalArchive = optionalOverride.commands.exec(
 	{ actor: 'actor', tenant: 'tenant' },
 )
 type OptionalOverrideErrors = Assert<
-	Equal<Effect.Error<typeof optionalArchive>, ArchiveError | PatchError | ContractValidationError>
+	Equal<Effect.Error<typeof optionalArchive>, ArchiveError | PatchError>
 >
 const optionalAssertion: OptionalOverrideErrors = true
 void optionalAssertion
@@ -530,17 +525,13 @@ const checkedList = checked.queries.exec(
 const checkerAssertions: [
 	Assert<Equal<Effect.Error<typeof checkedGet>, GetError | IdCheckError>>,
 	Assert<Equal<Effect.Services<typeof checkedGet>, IdCheck>>,
-	Assert<
-		Equal<Effect.Error<typeof checkedUpdate>, PatchError | IdCheckError | ContractValidationError>
-	>,
+	Assert<Equal<Effect.Error<typeof checkedUpdate>, PatchError | IdCheckError>>,
 	Assert<Equal<Effect.Services<typeof checkedUpdate>, Audit | IdCheck>>,
-	Assert<
-		Equal<Effect.Error<typeof checkedArchive>, PatchError | IdCheckError | ContractValidationError>
-	>,
+	Assert<Equal<Effect.Error<typeof checkedArchive>, PatchError | IdCheckError>>,
 	Assert<Equal<Effect.Services<typeof checkedArchive>, Audit | IdCheck>>,
 	Assert<Equal<Effect.Error<typeof checkedCreate>, Effect.Error<typeof created>>>,
 	Assert<Equal<Effect.Services<typeof checkedCreate>, Effect.Services<typeof created>>>,
-	Assert<Equal<Effect.Error<typeof checkedList>, ContractValidationError>>,
+	Assert<Equal<Effect.Error<typeof checkedList>, never>>,
 	Assert<Equal<Effect.Services<typeof checkedList>, never>>,
 ] = [true, true, true, true, true, true, true, true, true, true]
 void checkerAssertions
@@ -607,15 +598,10 @@ const optionalCheckedAssertions: [
 	>,
 	Assert<Equal<Effect.Services<typeof optionalCheckedCreate>, Repository | Audit>>,
 	Assert<
-		Equal<
-			Effect.Error<typeof optionalCheckedUpdate>,
-			PatchError | ArchiveError | IdCheckError | ContractValidationError
-		>
+		Equal<Effect.Error<typeof optionalCheckedUpdate>, PatchError | ArchiveError | IdCheckError>
 	>,
 	Assert<Equal<Effect.Services<typeof optionalCheckedUpdate>, Audit | IdCheck>>,
-	Assert<
-		Equal<Effect.Error<typeof optionalCheckedArchive>, IdCheckError | ContractValidationError>
-	>,
+	Assert<Equal<Effect.Error<typeof optionalCheckedArchive>, IdCheckError>>,
 	Assert<Equal<Effect.Services<typeof optionalCheckedArchive>, Audit | IdCheck>>,
 	Assert<Equal<Effect.Error<typeof optionalCheckedGet>, GetError | IdCheckError>>,
 	Assert<Equal<Effect.Services<typeof optionalCheckedGet>, IdCheck>>,
@@ -669,7 +655,7 @@ const effectMappedGet = effectMapped.queries.exec(
 const effectMappedAssertions: [
 	Assert<Equal<Effect.Error<typeof effectMappedCreate>, ArchiveError>>,
 	Assert<Equal<Effect.Services<typeof effectMappedCreate>, Audit>>,
-	Assert<Equal<Effect.Error<typeof effectMappedUpdate>, IdCheckError | ContractValidationError>>,
+	Assert<Equal<Effect.Error<typeof effectMappedUpdate>, IdCheckError>>,
 	Assert<Equal<Effect.Services<typeof effectMappedUpdate>, Audit | IdCheck>>,
 	Assert<Equal<Effect.Success<typeof effectMappedGet>, { text: number } | null>>,
 ] = [true, true, true, true, true]
@@ -697,7 +683,7 @@ const checkedMappedUpdate = checkedMapped.commands.exec(
 const checkedMappedAssertions: [
 	Assert<Equal<Effect.Error<typeof checkedMappedCreate>, never>>,
 	Assert<Equal<Effect.Services<typeof checkedMappedCreate>, Audit>>,
-	Assert<Equal<Effect.Error<typeof checkedMappedUpdate>, IdCheckError | ContractValidationError>>,
+	Assert<Equal<Effect.Error<typeof checkedMappedUpdate>, IdCheckError>>,
 	Assert<Equal<Effect.Services<typeof checkedMappedUpdate>, Audit | IdCheck>>,
 ] = [true, true, true, true]
 void checkedMappedAssertions
@@ -761,7 +747,7 @@ paginationCrud.queries.exec(
 	{ actor: 'actor', tenant: 'tenant' },
 )
 const paginationAssertions: [
-	Assert<Equal<Effect.Error<typeof paginationList>, PaginationReadError | ContractValidationError>>,
+	Assert<Equal<Effect.Error<typeof paginationList>, PaginationReadError>>,
 	Assert<Equal<Effect.Services<typeof paginationList>, PaginationReader>>,
 	Assert<
 		Equal<

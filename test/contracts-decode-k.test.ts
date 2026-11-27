@@ -68,23 +68,26 @@ it('preserves structured validation errors and issue paths in workflow contracts
 	})
 })
 
-it('fails bare k Effect decoding through the same typed channel as kContract', async () => {
+it('keeps a bare k failure in Effect a defect that carries the VALIDATION error', async () => {
 	const schema = k.object({ a: k.string() })
-	const decoded: Effect.Effect<{ a: string }, ContractValidationError> = decodeEffectContract(
-		schema,
-		{ a: 1 },
-	)
-	const bare = await Effect.runPromiseExit(decoded)
-	const adapted = await Effect.runPromiseExit(decodeEffectContract(kContract(schema), { a: 1 }))
+	const bare = await Effect.runPromiseExit(decodeEffectContract(schema, { a: 1 }))
 	expect(bare._tag).toBe('Failure')
-	expect(adapted._tag).toBe('Failure')
-	if (bare._tag !== 'Failure' || adapted._tag !== 'Failure') throw Error('expected failures')
+	if (bare._tag !== 'Failure') throw Error('expected failure')
 	const reason = bare.cause.reasons[0]
-	expect(reason?._tag).toBe('Fail')
-	if (reason?._tag !== 'Fail') throw Error('expected typed validation failure')
-	expect(reason.error).toBeInstanceOf(ContractValidationError)
-	expect(reason).toEqual(adapted.cause.reasons[0])
-	expect(reason.error.issues).toMatchObject([{ path: ['a'], code: 'invalid_type' }])
+	expect(reason?._tag).toBe('Die')
+	if (reason?._tag !== 'Die') throw Error('expected a defect')
+	// The client of an Effect registry receives this ConvexError, with its code and issue paths.
+	expect(reason.defect).toBeInstanceOf(ConvexError)
+	expect(reason.defect).toMatchObject({
+		data: { code: 'VALIDATION', issues: [{ path: ['a'], code: 'invalid_type' }] },
+	})
+	// The explicit adapter is the typed channel.
+	const adapted = await Effect.runPromiseExit(decodeEffectContract(kContract(schema), { a: 1 }))
+	if (adapted._tag !== 'Failure') throw Error('expected failure')
+	const typed = adapted.cause.reasons[0]
+	expect(typed?._tag).toBe('Fail')
+	if (typed?._tag !== 'Fail') throw Error('expected typed validation failure')
+	expect(typed.error).toBeInstanceOf(ContractValidationError)
 	await expect(Effect.runPromise(decodeEffectContract(schema, { a: 'ok' }))).resolves.toEqual({
 		a: 'ok',
 	})

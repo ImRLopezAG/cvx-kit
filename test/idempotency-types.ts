@@ -1,4 +1,3 @@
-import type { ContractValidationError } from '../src/modules/effect/schema'
 import { Context, Effect, Schema, SchemaGetter } from 'effect'
 import { k } from '../src/k'
 import { kContract } from '../src/contracts'
@@ -135,7 +134,6 @@ type ExecutionErrors = Assert<
 		| FingerprintFailure
 		| Schema.SchemaError
 		| WriteFailure
-		| ContractValidationError
 	>
 >
 type ExecutionServices = Assert<

@@ -1,4 +1,3 @@
-import type { ContractValidationError } from '../src/modules/effect/schema'
 import { Context, Effect } from 'effect'
 import { k } from '../src/k'
 import { bindEffectCommand } from '../src/modules/effect/command'
@@ -83,20 +82,12 @@ const commands = create({
 const plain = commands.exec('plain', 'title', { actorId: 'actor' })
 const typed = commands.exec('typed', 1, { actorId: 'actor' })
 type PlainErrors = Assert<
-	Equal<
-		ErrorOf<typeof plain>,
-		ResolverFailure | PolicyFailure | WriterFailure | ContractValidationError
-	>
+	Equal<ErrorOf<typeof plain>, ResolverFailure | PolicyFailure | WriterFailure>
 >
 type TypedErrors = Assert<
 	Equal<
 		ErrorOf<typeof typed>,
-		| ResolverFailure
-		| HandlerFailure
-		| CompleteFailure
-		| PolicyFailure
-		| WriterFailure
-		| ContractValidationError
+		ResolverFailure | HandlerFailure | CompleteFailure | PolicyFailure | WriterFailure
 	>
 >
 type PlainServices = Assert<Equal<ServicesOf<typeof plain>, Policy | Writer>>

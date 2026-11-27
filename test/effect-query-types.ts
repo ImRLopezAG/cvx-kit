@@ -1,4 +1,3 @@
-import type { ContractValidationError } from '../src/modules/effect/schema'
 import { Context, Effect } from 'effect'
 import { k } from '../src/k'
 import { createEffectQuery, bindEffectQuery } from '../src/modules/effect/query'
@@ -79,18 +78,13 @@ const queries = createEffectQuery({
 const read = queries.exec('read', 'raw', { invocation: 'one' })
 type ReadResult = Assert<Equal<Effect.Success<typeof read>, string>>
 type ReadErrors = Assert<
-	Equal<
-		Effect.Error<typeof read>,
-		ReadFailure | RequestFailure | PolicyFailure | DefaultFailure | ContractValidationError
-	>
+	Equal<Effect.Error<typeof read>, ReadFailure | RequestFailure | PolicyFailure | DefaultFailure>
 >
 type ReadRequirements = Assert<
 	Equal<Effect.Services<typeof read>, Reader | Request | Policy | DefaultPolicy>
 >
 const provided = queries.exec('provided', 1, { invocation: 'one' })
-type ProvidedErrors = Assert<
-	Equal<Effect.Error<typeof provided>, RequestFailure | PolicyFailure | ContractValidationError>
->
+type ProvidedErrors = Assert<Equal<Effect.Error<typeof provided>, RequestFailure | PolicyFailure>>
 type ProvidedRequirements = Assert<Equal<Effect.Services<typeof provided>, Request | Policy>>
 const assertions: [ReadResult, ReadErrors, ReadRequirements, ProvidedErrors, ProvidedRequirements] =
 	[true, true, true, true, true]
@@ -130,7 +124,7 @@ const ordinary = createEffectQuery({
 	}),
 })
 const ordinaryExecution = ordinary.exec('ordinary', 'abc', { actorId: 'actor' })
-type OrdinaryError = Assert<Equal<Effect.Error<typeof ordinaryExecution>, ContractValidationError>>
+type OrdinaryError = Assert<Equal<Effect.Error<typeof ordinaryExecution>, never>>
 type OrdinaryRequirements = Assert<Equal<Effect.Services<typeof ordinaryExecution>, never>>
 const ordinaryAssertions: [OrdinaryError, OrdinaryRequirements] = [true, true]
 void ordinaryAssertions
@@ -195,9 +189,7 @@ const boundQuery = bound({
 	}),
 })
 const boundExecution = boundQuery.exec('read', 'abc', { trusted: true, actorId: 'actor' })
-type BoundError = Assert<
-	Equal<Effect.Error<typeof boundExecution>, PolicyFailure | ContractValidationError>
->
+type BoundError = Assert<Equal<Effect.Error<typeof boundExecution>, PolicyFailure>>
 type BoundRequirements = Assert<Equal<Effect.Services<typeof boundExecution>, Policy>>
 const boundAssertions: [BoundError, BoundRequirements] = [true, true]
 void boundAssertions

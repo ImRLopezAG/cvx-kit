@@ -1,7 +1,5 @@
 import { Context, Effect, Schema } from 'effect'
-import { k } from '../src/k'
 import {
-	type ContractValidationError,
 	effectContract,
 	effectSchema,
 	effectStandardSchema,
@@ -26,7 +24,6 @@ class DecodeFailure {
 declare const serviceSchema: Schema.Codec<string, number, DecoderService, EncoderService>
 const codec = effectSchema(serviceSchema)
 const decoded = decodeEffectContract(codec, 2)
-const bare = k.object({ a: k.string() })
 const encoded = codec.encode('title')
 const custom = effectContract<number, string, DecodeFailure, DecoderService>(() =>
 	DecoderService.pipe(Effect.andThen(Effect.fail(new DecodeFailure()))),
@@ -42,10 +39,7 @@ const assertions: [
 	Assert<Equal<ContractDecoderRequirements<typeof custom>, DecoderService>>,
 	Assert<Equal<EffectOperationError<typeof read>, DecodeFailure | Schema.SchemaError>>,
 	Assert<Equal<EffectOperationRequirements<typeof read>, DecoderService>>,
-	Assert<Equal<ContractDecoderError<typeof bare>, ContractValidationError>>,
-	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Legacy parsers receive undecoded values at the contract boundary.
-	Assert<Equal<ContractDecoderError<{ parse: (value: unknown) => string }>, never>>,
-] = [true, true, true, true, true, true, true, true, true, true]
+] = [true, true, true, true, true, true, true, true]
 void assertions
 // @ts-expect-error service-bearing schema cannot enter the service-free Standard bridge
 effectStandardSchema(serviceSchema)

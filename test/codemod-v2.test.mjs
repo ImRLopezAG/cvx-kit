@@ -516,10 +516,9 @@ describe('codemod-v2 cross-file knowledge', () => {
 
 	it.each([
 		"import { k } from 'cvx-kit'; export const S = k.object({ returns: z.void() })",
-		"import { queryGeneric as query } from 'convex/server'; export function build(query: any) { return query({ returns: z.void(), handler: () => {} }) }",
 		"import { kContract } from 'cvx-kit/contracts'; export const S = kContract.other({ returns: z.void() })",
 		"import { kContract } from 'cvx-kit/contracts'; const factory = kContract; export const S = factory.other({ returns: z.void() })",
-	])('rejects a returns field without a resolved registration callee: %s', (declaration) => {
+	])('rejects a returns field outside a function definition or contract: %s', (declaration) => {
 		const result = transformSource('schema.ts', `import { z } from 'zod'; ${declaration}`)
 		expect(result.output).toContain('returns: z.void()')
 		expect(result.skipped.map((site) => site.code)).toContain('void-position')
@@ -529,7 +528,9 @@ describe('codemod-v2 cross-file knowledge', () => {
 		"import { query } from './_generated/server'; export const S = query({ returns: z.void(), handler: () => {} })",
 		"import { kCustomQuery } from 'cvx-kit/registration'; const query = kCustomQuery(base, options); export const S = query({ returns: z.void(), handler: () => {} })",
 		"import { kContract } from 'cvx-kit/contracts'; export const S = kContract({ returns: z.void() })",
-	])('migrates void in a resolved registration or contract: %s', (declaration) => {
+		"import { queryGeneric as query } from 'convex/server'; export function build(query: any) { return query({ returns: z.void(), handler: () => {} }) }",
+		"import { authQuery } from './auth'; export const S = authQuery({ returns: z.void(), handler: () => {} })",
+	])('migrates void in a function definition or resolved contract: %s', (declaration) => {
 		const result = transformSource('schema.ts', `import { z } from 'zod'; ${declaration}`)
 		expect(result.output).toContain('k.void()')
 		expect(result.skipped.map((site) => site.code)).not.toContain('void-position')

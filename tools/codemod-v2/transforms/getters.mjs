@@ -43,7 +43,7 @@ function mentionsUnsafe(node) {
 	return found
 }
 
-function isFunctionDefinition(node, parent) {
+export function isFunctionDefinition(node, parent) {
 	if (node.type !== 'ObjectExpression' || parent?.type !== 'CallExpression') return false
 	if (!parent.arguments.includes(node)) return false
 	return node.properties.some(

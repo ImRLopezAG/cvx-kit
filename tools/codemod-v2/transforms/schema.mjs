@@ -3,6 +3,7 @@
 import { chainOf, isShadowed, outerChain, resolveBinding, unwrap, walk } from './ast.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './sites.mjs'
 import { isRegistrationCallee } from './consumer.mjs'
+import { isFunctionDefinition } from './getters.mjs'
 
 const FACTORIES = new Map([
 	['string', 'string'],
@@ -363,6 +364,10 @@ export function processZodChain(ctx, unit, id) {
 			addSkip(ctx, unit, span(next), 'void-position')
 			return
 		}
+	}
+	if (first.name === 'enum' && call.arguments.length > 1) {
+		addSkip(ctx, unit, span(next), 'enum-options')
+		return
 	}
 	if (first.name === 'enum' && !stringEnumArgument(ctx, call.arguments[0])) {
 		addSkip(ctx, unit, span(next), 'enum-unproven')
@@ -900,7 +905,7 @@ export function stringEnumArgument(ctx, argument) {
 		: false
 }
 
-/** A returns field belongs to a resolved registration or contract factory call. */
+/** A returns field belongs to a function definition or resolved contract factory call. */
 function isReturnsDefinition(ctx, property) {
 	const object = ctx.parents.get(property)
 	const call = ctx.parents.get(object)
@@ -910,5 +915,5 @@ function isReturnsDefinition(ctx, property) {
 		!call.arguments.includes(object)
 	)
 		return false
-	return isRegistrationCallee(ctx, call.callee)
+	return isFunctionDefinition(object, call) || isRegistrationCallee(ctx, call.callee)
 }

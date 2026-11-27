@@ -1,5 +1,5 @@
 import { k } from 'cvx-kit'
-import { queryGeneric as authQuery } from 'convex/server'
+import { authQuery } from './auth'
 import { relations } from './relations'
 
 export const NoteArgs = k.strictObject({ id: k.id('notes') })
@@ -23,3 +23,8 @@ export const shared = authQuery({
 })
 
 export const notAFunction = configure({ args: { id: k.id('notes') } })
+
+export const voidResult = authQuery({
+	get returns() { return k.void() },
+	handler: async () => {},
+})

@@ -4,6 +4,7 @@
 // `cvx-kit/zod-table` names move to `cvx-kit/table`, convex-helpers' Zod
 // function builders move to `cvx-kit/registration`, renamed kit helpers take
 // their v2 name, and a moved name joins an existing import of its new module.
+import { walk } from './ast.mjs'
 
 export const ZOD_MODULES = new Set(['zod', 'zod/v4', 'zod/v3'])
 const TABLE_MODULE = 'cvx-kit/zod-table'
@@ -152,6 +153,10 @@ function isNamed(spec) {
 /** Import edits for the file once `isLeft(unitIndex)` is final. */
 export function planImports(ctx, isLeft, needsK) {
 	const edits = []
+	const usedNames = new Set()
+	walk(ctx.program, (node) => {
+		if (node.type === 'Identifier') usedNames.add(node.name)
+	})
 	let anchor = null
 	let zodRemains = false
 	let oldKitRemains = false
@@ -192,7 +197,7 @@ export function planImports(ctx, isLeft, needsK) {
 	const movedBy = new Map()
 	for (const [decl, bindings] of byDecl) {
 		const withK = addK && decl === ctx.kitRootDecl
-		const plan = planKitDecl(ctx, decl, bindings, isLeft, withK)
+		const plan = planKitDecl(ctx, decl, bindings, isLeft, withK, usedNames, edits)
 		if (!plan) continue
 		if (withK) addK = false
 		oldKitRemains ||= plan.oldRemains
@@ -231,7 +236,7 @@ export function planImports(ctx, isLeft, needsK) {
 	return { edits, zodRemains, oldKitRemains }
 }
 
-function planKitDecl(ctx, decl, bindings, isLeft, withK) {
+function planKitDecl(ctx, decl, bindings, isLeft, withK, usedNames, edits) {
 	const tracked = new Map(bindings.map((binding) => [binding.spec, binding]))
 	const moved = new Map()
 	const kept = []
@@ -267,12 +272,25 @@ function planKitDecl(ctx, decl, bindings, isLeft, withK) {
 			} else changed = true
 			continue
 		}
-		if (KIT_RENAMES.has(binding.imported) && binding.refs.some(isLeft)) {
+		const keptForHeld =
+			(KIT_RENAMES.has(binding.imported) || binding.module === TABLE_MODULE) &&
+			binding.refs.some(isLeft)
+		if (keptForHeld) {
 			keepOld(original)
 			if (binding.refs.every(isLeft)) continue
 		}
 		const renamed = KIT_RENAMES.get(binding.imported)
-		const local = renamed && binding.local === binding.imported ? renamed : binding.local
+		let local = renamed && binding.local === binding.imported ? renamed : binding.local
+		if (local === binding.local && keptForHeld) {
+			const base = `${renamed ?? binding.imported}V2`
+			local = base
+			for (let suffix = 2; usedNames.has(local); suffix++) local = `${base}${suffix}`
+			usedNames.add(local)
+			for (const reference of binding.references ?? []) {
+				if (!isLeft(reference.unit))
+					edits.push({ start: reference.node.start, end: reference.node.end, text: local })
+			}
+		}
 		const next = specOf(renamed ?? binding.imported, local, binding.isType)
 		const module = movedModule(binding)
 		if (module) {

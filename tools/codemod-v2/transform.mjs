@@ -28,7 +28,7 @@ import {
 	processZodChain,
 } from './transforms/schema.mjs'
 import { consumerOrigin, isRegistrationCallee } from './transforms/consumer.mjs'
-import { getterEdits } from './transforms/getters.mjs'
+import { getterEdits, isFunctionDefinition } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
 import { isCreateTable, processTableCall, tableKind } from './transforms/tables.mjs'
 import { processZodType } from './transforms/types.mjs'
@@ -500,6 +500,8 @@ function zodReference(ctx, unit, node, parent) {
 function kitReference(ctx, unit, node, parent) {
 	const binding = ctx.kit.get(node.name)
 	binding.refs.push(unit.index)
+	binding.references ??= []
+	binding.references.push({ node, unit: unit.index })
 	unit.kitRefs++
 	const called = parent?.type === 'CallExpression' && parent.callee === node
 	if (called && SCHEMA_ARGUMENT_FUNCTIONS.has(binding.imported)) unit.contexts.push(parent)
@@ -603,6 +605,7 @@ function scanConsumers(ctx, unit) {
 		const origin = consumerOrigin(ctx, call.callee)
 		if (!origin) return
 		for (const argument of call.arguments) {
+			if (isFunctionDefinition(argument, call)) continue
 			let local = false
 			let imported = false
 			walk(argument, (node, parent) => {

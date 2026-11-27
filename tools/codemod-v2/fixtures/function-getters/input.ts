@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { zid } from 'convex-helpers/server/zod4'
-import { queryGeneric as authQuery } from 'convex/server'
+import { authQuery } from './auth'
 import { relations } from './relations'
 
 export const NoteArgs = z.strictObject({ id: zid('notes') })
@@ -24,3 +24,8 @@ export const shared = authQuery({
 })
 
 export const notAFunction = configure({ args: { id: zid('notes') } })
+
+export const voidResult = authQuery({
+	returns: z.void(),
+	handler: async () => {},
+})

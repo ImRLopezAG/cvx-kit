@@ -1,0 +1,13 @@
+{
+  "status": "kept",
+  "skipped": [
+    {
+      "line": 2,
+      "code": "enum-options"
+    },
+    {
+      "line": 3,
+      "code": "enum-options"
+    }
+  ]
+}

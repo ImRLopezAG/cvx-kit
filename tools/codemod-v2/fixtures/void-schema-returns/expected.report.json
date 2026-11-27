@@ -1,0 +1,9 @@
+{
+  "status": "kept",
+  "skipped": [
+    {
+      "line": 2,
+      "code": "void-position"
+    }
+  ]
+}

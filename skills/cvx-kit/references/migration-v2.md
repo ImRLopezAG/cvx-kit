@@ -216,6 +216,8 @@ Strictness is per object: a strict parent does not change a nested object's poli
 
 Table-derived schemas (`insertSchema`, `updateSchema`, `commandInput`, `dto()`, `tools`) and literal-key records are `.strict()` objects, so a direct `parse` of them rejects unknown keys as v1's did. In a `k.union`, parse prefers a member that accepts every key over an earlier one that would strip some; Zod takes the first match.
 
+**If you migrated with the beta.0, beta.1 or beta.2 codemod:** it rewrote every `z.strictObject(...)` and `.strict()` to a plain `k.object(...)`, which was strict then. On beta.3 each of those strips unknown keys under an application `parse`, with no type error, and the source no longer says which ones were strict. Kit boundaries still reject, so only objects parsed directly are affected: validators of server functions, webhooks and other untrusted input outside the kit. Compare against your pre-migration branch and restore `k.strictObject` where the Zod source was strict.
+
 Since beta.3, code that depended on `unrecognized_key` from application `parse`/`safeParse` must add `.strict()` or use `k.strictObject`. Existing `.strip()` calls still work and can be removed where their only purpose was to restore Zod's parse behaviour.
 
 ### Parse returns the input when nothing is normalised

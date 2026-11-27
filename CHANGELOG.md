@@ -14,6 +14,8 @@ are this file's matching section.
 
 ### Breaking since beta.2
 
+- **If you migrated with the beta.0, beta.1 or beta.2 codemod:** it rewrote every `z.strictObject(...)` and `.strict()` to a plain `k.object(...)`, which was strict then. On beta.3 each of those strips unknown keys under an application `parse`, with no type error, and the source no longer says which ones were strict. Kit boundaries still reject, so only objects parsed directly are affected: validators of server functions, webhooks and other untrusted input outside the kit. Compare against your pre-migration branch and restore `k.strictObject` where the Zod source was strict.
+
 - `k.int()` and `.int()` reject integers outside the safe range with `too_small` or `too_big`; non-integers report `not_integer`. `.safe()` remains available and is redundant on integers. `k.number()` is unchanged; use `.finite()` to reject NaN and infinities.
 - Application `parse`, `safeParse` and Standard Schema `validate` strip unknown object keys instead of failing. Code that relied on `unrecognized_key` must add `.strict()` or use `k.strictObject`. Existing `.strip()` calls keep working and can be removed where they only restored Zod's parse behaviour. Plain objects accept class instances through their own enumerable properties. Function args and returns, table fields and writes, contracts, Effect command inputs, CRUD masks, filters and cursors keep rejecting unknown keys.
 - The v2 codemod no longer adds `.strip()` to parsed objects or `.safe()` to integers. `z.strictObject` becomes `k.strictObject`, and `.strict()` stays. `--native-number-bounds` only controls the added `.finite()` on numbers. `--no-strip-parsed` is a deprecated no-op with a stderr notice. Already-migrated `k` code is left unchanged.

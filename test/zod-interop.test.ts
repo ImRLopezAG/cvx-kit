@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { zodToConvex } from 'convex-helpers/server/zod4'
 import type { GenericValidator, JSONValue } from 'convex/values'
-import { z } from 'zod'
+import * as z from 'zod'
 import * as mini from 'zod/mini'
 import { k } from '../src/k'
 import { kZodIds, toZod } from '../src/zod'
@@ -63,19 +63,143 @@ describe('toZod', () => {
 		expect(z.globalRegistry.get(toZod(k.string().describe('d')))?.description).toBe('d')
 	})
 
-	it('does not carry refine or transform, and still validates structure', () => {
-		const refined = toZod(k.number().refine((value) => value > 10))
-		expect(refined.parse(1)).toBe(1)
-		expect(refined.safeParse('x').success).toBe(false)
-		const transformed = toZod(
-			k
+	describe.each(['mini', 'classic'] as const)('%s output', (output) => {
+		const options = output === 'classic' ? { zod: z } : undefined
+
+		it('carries refine messages and relative paths', () => {
+			const schema = k.object({ name: k.string() }).refine((value) => value.name === 'yes', {
+				message: 'use yes',
+				path: ['name'],
+			})
+			const result = toZod(schema, options).safeParse({ name: 'no' })
+			expect(result.success).toBe(false)
+			if (!result.success)
+				expect(result.error.issues).toMatchObject([
+					{ code: 'custom', message: 'use yes', path: ['name'] },
+				])
+			expect(toZod(schema, options).parse({ name: 'yes' })).toEqual(schema.parse({ name: 'yes' }))
+		})
+
+		it('carries every issue added by check', () => {
+			const schema = k.string().check((value, context) => {
+				if (value !== 'ok') {
+					context.addIssue({ message: 'first', path: ['a'] })
+					context.addIssue({ code: 'invalid_value', message: 'second', path: ['b'] })
+				}
+			})
+			const result = toZod(schema, options).safeParse('bad')
+			expect(result.success).toBe(false)
+			if (!result.success)
+				expect(result.error.issues).toMatchObject([
+					{ message: 'first', path: ['a'] },
+					{ code: 'invalid_value', message: 'second', path: ['b'] },
+				])
+			expect(toZod(schema, options).parse('ok')).toBe('ok')
+		})
+
+		it('runs overwrite before checks and carries transform and pipe', () => {
+			const trimmed = k
 				.string()
-				.min(1)
-				.transform((value) => value.length),
-		)
-		expect(transformed.parse('abc')).toBe('abc')
-		expect(transformed.safeParse('').success).toBe(false)
-		expect(transformed.safeParse(1).success).toBe(false)
+				.min(2)
+				.overwrite((value) => value.trim())
+			expect(toZod(trimmed, options).parse(' ab ')).toBe(trimmed.parse(' ab '))
+			expect(toZod(trimmed, options).safeParse(' a ').success).toBe(false)
+			const schema = trimmed
+				.transform((value) => value.length)
+				.pipe(k.number().min(3))
+				.refine((value) => value < 5, 'too long')
+			expect(toZod(schema, options).parse(' abc ')).toBe(schema.parse(' abc '))
+			for (const value of ['ab', 'abcde', 123])
+				expect(toZod(schema, options).safeParse(value).success).toBe(
+					schema.safeParse(value).success,
+				)
+		})
+
+		it('preserves defaults around transforms', () => {
+			const before = k
+				.string()
+				.default('abc')
+				.transform((value) => value.length)
+			const after = k
+				.string()
+				.transform((value) => value.length)
+				.default(7)
+			expect(toZod(before, options).parse(undefined)).toBe(before.parse(undefined))
+			expect(toZod(after, options).parse(undefined)).toBe(after.parse(undefined))
+		})
+
+		it('preserves callback failure sentinels and synchronous-only transforms', () => {
+			for (const schema of [
+				k.string().transform(() => k.NEVER),
+				k.string().overwrite(() => k.NEVER),
+				k.string().transform(async (value) => value.length),
+				k.string().check(async () => {}),
+			]) {
+				const expected = schema.safeParse('value')
+				const actual = toZod(schema, options).safeParse('value')
+				expect(actual.success).toBe(expected.success)
+				if (!actual.success && !expected.success)
+					expect(actual.error.issues).toMatchObject(expected.issues)
+			}
+		})
+
+		it('carries callback issues from transforms', () => {
+			const schema = k.string().transform((value, context) => {
+				if (value === 'bad') {
+					context.addIssue({ message: 'bad value' })
+					return k.NEVER
+				}
+				return value.length
+			})
+			const result = toZod(schema, options).safeParse('bad')
+			expect(result.success).toBe(false)
+			if (!result.success)
+				expect(result.error.issues).toMatchObject([
+					{ code: 'custom', message: 'bad value', path: [] },
+				])
+		})
+
+		it('carries operations in fields, elements and union branches', () => {
+			const value = k
+				.string()
+				.overwrite((input) => input.trim())
+				.refine((input) => input !== '', 'required')
+				.check((input, context) => {
+					if (input === 'bad') context.addIssue({ message: 'bad' })
+				})
+				.transform((input) => input.length)
+				.pipe(k.number().min(2))
+			const schema = k.object({
+				field: value,
+				elements: k.array(value),
+				branch: k.union([value, k.boolean()]),
+			})
+			const converted = toZod(schema, options)
+			const good = { field: ' hi ', elements: [' hey '], branch: ' yes ' }
+			expect(converted.parse(good)).toEqual(schema.parse(good))
+			for (const input of ['', 'bad', 'x']) {
+				for (const invalid of [
+					{ ...good, field: input },
+					{ ...good, elements: [input] },
+					{ ...good, branch: input },
+				])
+					expect(converted.safeParse(invalid).success).toBe(schema.safeParse(invalid).success)
+			}
+		})
+
+		it('keeps catch explicitly unsupported', () => {
+			expect(() => toZod(k.string().catch('fallback'), options)).toThrow(
+				'toZod: .catch() is not carried',
+			)
+		})
+	})
+
+	it('uses the injected classic namespace for the entire schema', () => {
+		const converted = toZod(task, { zod: z })
+		expect(converted).toBeInstanceOf(z.ZodType)
+		expect(converted.optional().parse(undefined)).toBeUndefined()
+		expect(converted.parse(valid)).toEqual(task.parse(valid))
+		expect(converted.safeParse({ ...valid, count: -1 }).success).toBe(false)
 	})
 
 	it('converts records, unions, discriminated unions and strip objects', () => {

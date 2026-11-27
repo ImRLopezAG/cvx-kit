@@ -10,6 +10,48 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [2.0.0-beta.7]
+
+Closes the defects the Accord and one-office trials found on beta.6, and the findings of an independent review of beta.4–beta.6.
+
+### Breaking for an app on beta.6
+
+- `pick`, `omit`, `partial` and `required` throw a `TypeError` at definition when given a Zod-style mask object (`{ a: true }`). Before, the mask was read as options: `pick` returned an empty object, `omit` omitted nothing, and `partial` / `required` changed every field. Pass keys: `.pick('a')`.
+- `k.int64()` bounds throw at definition unless they are a bigint or a safe integer (`.min(1.5)`, `.min(NaN)` and `.min('0')` were accepted).
+- `k.enum` throws at definition for a string, an empty list or a non-string value. `k.enum('abc')` used to build an enum of the three characters.
+- `decodeContract` given a bare `k` schema resolves with issues instead of rejecting, as `kContract` does. Foundation commands and workflow contracts still throw the `VALIDATION` `ConvexError` with its issue paths. In Effect, a bare `k` contract now fails with `ContractValidationError` in the error channel where it died as a defect, so the error type of such operations gains that member.
+- `toZod` carries `refine`, `check`, `overwrite`, `transform` and `pipe`. A converted schema that accepted input the `k` schema rejects now rejects it too.
+- Codemod: the `kept` file status means the file holds at least one Zod declaration left on purpose and listed. A file with only type references to external Zod is no longer `kept`. A held Zod chain that pipes into a rewritten schema fails the run (`held-pipe-to-k`).
+
+### Added
+
+- `partial('a', 'b')` makes only the named keys optional.
+- `k.enum({ A: 'a', B: 'b' })`: an object of string values, the same schema as `k.enum(['a', 'b'])`.
+- `k.void()` for the `returns` of a handler that returns nothing. It is `v.null()` on the wire and clients receive `null`.
+- `k.int64()` bounds accept a safe-integer number and store it as a bigint.
+- `toZod(schema, { zod })` builds a classic Zod schema with the namespace the caller passes. The kit still imports only `zod/mini`.
+- Codemod: cross-file knowledge follows tsconfig path aliases and workspace packages, so tables and schemas imported through `@app/*` are recognised.
+- Codemod: `zodToConvex(X)` on a rewritten schema becomes `X.validator`; `z.iso.datetime({ offset: true })`, `z.instanceof(ArrayBuffer)`, `z.void()` in a `returns` position, `z.enum(object)` with proven string values and `.normalize()` are rewritten; literal masks on imported tables and on `partial` / `required` become key lists.
+
+### Fixed
+
+- `TS2589` / `TS5114` where a query-engine handle was passed around or returned from a context function: the filter types recursed forever on an unresolved union validator. It did not depend on registry size.
+- `TS2589` on long `.extend` chains: 40 chained calls check where about 33 failed.
+- `k.custom(guard)` passes on any truthy guard result, as Zod does; it required exactly `true`.
+- `toJsonSchema` output below `.catch` no longer bounds an integer whose catch value is returned unchecked.
+- Codemod: a Zod schema that the same file passes to a third-party library (an oRPC builder, including a derived local builder and inline arguments) stays in Zod and is reported (`zod-consumer`). When the schema is rewritten in another file, the consumer site is reported with the `toZod` fix (`zod-consumer-import`). A package that imports only client entries of the kit is outside the migration.
+- Codemod: `z.iso.datetime` / `z.iso.date` with other arguments, `z.void()` outside `returns`, `z.enum` of values not proven to be strings and `.startsWith()` are held and reported instead of producing code that does not compile or validates differently.
+- Codemod: a file that still calls `zid` keeps a working import (moved to `convex-helpers/server/zod4`); `convexToZod` and unreadable masks are reported; v1 entry names in string literals are reported, also in files with no Zod or kit import.
+- Codemod: a held table keeps its v1 form instead of being half renamed; report paths no longer depend on the directory the run starts in; the package boundary is found from the file, not from the working directory.
+- `--restore-strict` pairs objects by their binding, reports repeated field signatures it cannot pair (`strict-ambiguous`) instead of making the wrong object strict, ignores a parameter that shadows the namespace, and reports `k.strictObject(...).strip()`.
+- The packed-components smoke waits for the approval callback on a deadline and stops early when the workflow fails.
+
+### Known limits
+
+- Nested inline `.extend` reaches `TS2590` at 16 levels of self-nesting; hoist the extended object to a constant.
+- `toZod` does not support `.catch`.
+- A field that shares the name and value type of an option of `pick` / `omit` / `partial` / `required` (for example a boolean field named `dropChecks`) reads as options, not as a mask.
+
 ## [2.0.0-beta.6]
 
 ### Added

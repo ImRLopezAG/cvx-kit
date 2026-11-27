@@ -17,6 +17,7 @@ import {
 import { dirname, join, matchesGlob, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildReport, formatSummary } from './report.mjs'
+import { createSourceResolver } from './resolve.mjs'
 import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
 import { transformSource } from './transform.mjs'
 
@@ -182,24 +183,43 @@ export function run(argv, cwd = process.cwd()) {
 		if (!pkg || pkg.hasKit || options.includePackagesWithoutKit) continue
 		packagesWithoutKit.add(relative(cwd, pkg.directory) || '.')
 		excluded.set(path, {
-			path, output: source, status: 'untouched', rewritten: 0, skipped: [],
-			info: [{ line: 1, column: 1, code: 'package-without-cvx-kit', text: relative(cwd, pkg.directory) || '.' }],
-			declarations: { rewritten: 0, left: 0 }, facts: null,
+			path,
+			output: source,
+			status: 'untouched',
+			rewritten: 0,
+			skipped: [],
+			info: [
+				{
+					line: 1,
+					column: 1,
+					code: 'package-without-cvx-kit',
+					text: relative(cwd, pkg.directory) || '.',
+				},
+			],
+			declarations: { rewritten: 0, left: 0 },
+			facts: null,
 		})
 	}
 	const transformOptions = {
 		getters: options.getters,
 		nativeNumberBounds: options.nativeNumberBounds,
 	}
-	const first = files.map(({ path, source }) => excluded.get(path) ?? transformSource(path, source, transformOptions))
+	const first = files.map(
+		({ path, source }) => excluded.get(path) ?? transformSource(path, source, transformOptions),
+	)
 	const knowledge = runKnowledge(files, first, cwd)
 	const results = []
 	for (const { file, path, source } of files) {
-		const outcome = excluded.get(path) ?? transformSource(path, source, { ...transformOptions, run: knowledge })
+		const outcome =
+			excluded.get(path) ?? transformSource(path, source, { ...transformOptions, run: knowledge })
 		if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
 		results.push(outcome)
 	}
-	const report = { ...buildReport(results), outsideRoots: outside, packagesWithoutKit: [...packagesWithoutKit].sort() }
+	const report = {
+		...buildReport(results),
+		outsideRoots: outside,
+		packagesWithoutKit: [...packagesWithoutKit].sort(),
+	}
 	if (options.report)
 		writeFileSync(resolve(cwd, options.report), `${JSON.stringify(report, null, '\t')}\n`)
 	let summary = formatSummary(report, options.write)
@@ -220,8 +240,14 @@ function packageLookup(cwd) {
 		let pkg
 		if (existsSync(manifest)) {
 			const json = JSON.parse(readFileSync(manifest, 'utf8'))
-			pkg = { directory, hasKit: json.name === 'cvx-kit' ||
-				['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'].some((key) => Object.hasOwn(json[key] ?? {}, 'cvx-kit')) }
+			pkg = {
+				directory,
+				hasKit:
+					json.name === 'cvx-kit' ||
+					['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'].some(
+						(key) => Object.hasOwn(json[key] ?? {}, 'cvx-kit'),
+					),
+			}
 		} else pkg = directory === root ? null : lookup(dirname(directory))
 		cache.set(directory, pkg)
 		return pkg
@@ -253,33 +279,9 @@ function restoreStrict(options, files, cwd) {
 	}
 }
 
-const RESOLVED_EXTENSIONS = ['', '.ts', '.tsx', '.mts', '/index.ts', '/index.tsx', '/index.mts']
-
-/** Resolve a relative import specifier to a file of the run, by its run-relative path. */
-function resolver(files, cwd) {
-	const known = new Set(files.map(({ path }) => path))
-	const cache = new Map()
-	return (fromPath, specifier) => {
-		if (!specifier.startsWith('.')) return null
-		const key = `${fromPath}\0${specifier}`
-		if (cache.has(key)) return cache.get(key)
-		const base = resolve(cwd, dirname(fromPath), specifier.replace(/\.(?:m?js|jsx)$/, ''))
-		let found = null
-		for (const extension of RESOLVED_EXTENSIONS) {
-			const candidate = relative(cwd, base + extension)
-			if (known.has(candidate)) {
-				found = candidate
-				break
-			}
-		}
-		cache.set(key, found)
-		return found
-	}
-}
-
 /** What the first pass learned about every file, as the questions `transformSource` asks. */
 function runKnowledge(files, outcomes, cwd) {
-	const resolve = resolver(files, cwd)
+	const resolve = createSourceResolver(cwd)
 	const kExports = new Map()
 	const tableExports = new Map()
 	files.forEach(({ path }, index) => {
@@ -289,6 +291,7 @@ function runKnowledge(files, outcomes, cwd) {
 		tableExports.set(path, new Set(facts.tableExports))
 	})
 	return {
+		resolveSource: resolve,
 		isTable(fromPath, specifier, name) {
 			const target = resolve(fromPath, specifier)
 			return target !== null && tableExports.get(target)?.has(name) === true

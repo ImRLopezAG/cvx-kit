@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vite-plus/test'
 import { HELP, parseArguments, run } from '../tools/codemod-v2/index.mjs'
+import { createSourceResolver } from '../tools/codemod-v2/resolve.mjs'
 import { transformSource } from '../tools/codemod-v2/transform.mjs'
 
 const FIXTURES = 'tools/codemod-v2/fixtures'
@@ -261,7 +262,11 @@ describe('codemod-v2 CLI', () => {
 			expect(second.summary.rewritten).toBe(0)
 			expect(second.files.find((file) => file.path.endsWith('mixed.ts')).status).toBe('mixed')
 			expect(second.declarations).toEqual({ rewritten: 0, left: 1 })
-			const secondCli = spawnSync('node', [join(process.cwd(), CLI), 'src', '--ignore', 'src/broken.ts'], { cwd: root, encoding: 'utf8' })
+			const secondCli = spawnSync(
+				'node',
+				[join(process.cwd(), CLI), 'src', '--ignore', 'src/broken.ts'],
+				{ cwd: root, encoding: 'utf8' },
+			)
 			expect(secondCli.status).toBe(0)
 			expect(secondCli.stdout).toContain('0 rewritten, 1 mixed')
 			expect(secondCli.stdout).toContain('declarations: 0 rewritten, 1 left as Zod')
@@ -339,38 +344,54 @@ const Good = zodTable('good', () => ({ id: zid('a') }))
 		expect(outcome.output).not.toContain('cvx-kit/zod-table')
 		expect(outcome.output).toContain("import { kTable } from 'cvx-kit/table'")
 		expect(outcome.output).toContain("const Held = z.tuple([zid('a'), zid('b')])")
-		expect(outcome.skipped.filter(({ code }) => code === 'zid-in-zod-statement').map(({ line }) => line)).toEqual([3, 3])
+		expect(
+			outcome.skipped.filter(({ code }) => code === 'zid-in-zod-statement').map(({ line }) => line),
+		).toEqual([3, 3])
 		expect(transformSource('ids.ts', outcome.output).status).not.toBe('error')
 		expect(transformSource('ids.ts', outcome.output).output).toBe(outcome.output)
 	})
 
 	it('recognizes derived k schemas and table schemas across files', () => {
 		withTempTree({}, (root) => {
-			writeFileSync(join(root, 'src/base.ts'), `import { k } from 'cvx-kit'
+			writeFileSync(
+				join(root, 'src/base.ts'),
+				`import { k } from 'cvx-kit'
 import { kTable } from 'cvx-kit/table'
 export const recentItem = k.object({ a: k.string() })
 export const table = kTable('items', { a: k.string() })
 export const localDerived = recentItem.extend({}).partial().required()
-`)
-			writeFileSync(join(root, 'src/types.ts'), `import type { z } from 'zod'
+`,
+			)
+			writeFileSync(
+				join(root, 'src/types.ts'),
+				`import type { z } from 'zod'
 import { recentItem, table, localDerived } from './base'
 const Derived = recentItem.extend({}).pick('a').omit('a').partial().required().optional().nullable().strict().strip()
 type Out = z.output<typeof Derived>
 type Local = z.infer<typeof localDerived>
 ${['insertSchema', 'updateSchema', 'commandInput', 'publicDto', 'schema', 'doc'].map((member) => `const ${member} = table.${member}\ntype T_${member} = z.input<typeof ${member}>`).join('\n')}
-`)
+`,
+			)
 			const { report } = run(['src/base.ts', 'src/types.ts', '--write'], root)
 			expect(report.totals).toEqual({})
 			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).not.toContain('z.input')
 			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toContain('k.output<typeof Derived>')
-			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toContain('k.infer<typeof localDerived>')
+			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toContain(
+				'k.infer<typeof localDerived>',
+			)
 		})
 	})
 
 	it('respects nearest package manifests and supports an explicit override', () => {
 		withTempTree({}, (root) => {
 			writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'cvx-kit' }))
-			for (const [name, manifest] of Object.entries({ ui: {}, app: { dependencies: { 'cvx-kit': '*' } }, dev: { devDependencies: { 'cvx-kit': '*' } }, peer: { peerDependencies: { 'cvx-kit': '*' } }, optional: { optionalDependencies: { 'cvx-kit': '*' } } })) {
+			for (const [name, manifest] of Object.entries({
+				ui: {},
+				app: { dependencies: { 'cvx-kit': '*' } },
+				dev: { devDependencies: { 'cvx-kit': '*' } },
+				peer: { peerDependencies: { 'cvx-kit': '*' } },
+				optional: { optionalDependencies: { 'cvx-kit': '*' } },
+			})) {
 				mkdirSync(join(root, name, 'nested'), { recursive: true })
 				writeFileSync(join(root, name, 'package.json'), JSON.stringify(manifest))
 				writeFileSync(join(root, name, 'nested/schema.ts'), fixture('strict-object', 'input.ts'))
@@ -381,7 +402,9 @@ ${['insertSchema', 'updateSchema', 'commandInput', 'publicDto', 'schema', 'doc']
 			expect(report.summary.untouched).toBe(1)
 			expect(report.summary.rewritten).toBe(4)
 			expect(summary).toContain('packages without cvx-kit: 1\n  ui')
-			expect(readFileSync(join(root, 'ui/nested/schema.ts'), 'utf8')).toBe(fixture('strict-object', 'input.ts'))
+			expect(readFileSync(join(root, 'ui/nested/schema.ts'), 'utf8')).toBe(
+				fixture('strict-object', 'input.ts'),
+			)
 			expect(run(['ui', '--include-packages-without-kit'], root).report.summary.rewritten).toBe(1)
 			expect(HELP).toContain('--include-packages-without-kit')
 		})
@@ -450,6 +473,112 @@ describe('codemod-v2 cross-file knowledge', () => {
 			rmSync(root, { recursive: true, force: true })
 		}
 	}
+
+	it.each([
+		[
+			'paths alias',
+			{ 'tsconfig.json': '{ "compilerOptions": { "paths": { "@backend/*": ["./src/*"] } } }' },
+			'@backend/tables',
+		],
+		[
+			'inherited paths and baseUrl',
+			{
+				'config/base.json':
+					'{ // inherited relative to this file\n "compilerOptions": { "baseUrl": "..", "paths": { "@backend/*": ["src/*"], }, }, }',
+				'tsconfig.json': '{ "extends": "./config/base.json" }',
+			},
+			'@backend/tables',
+		],
+		[
+			'first existing wildcard candidate',
+			{
+				'tsconfig.json': JSON.stringify({
+					compilerOptions: { paths: { '@backend/*': ['./missing/*', './src/*', './other/*'] } },
+				}),
+				'other/tables.ts': 'export const table = {}',
+			},
+			'@backend/tables',
+		],
+		[
+			'nearest tsconfig',
+			{
+				'tsconfig.json': '{ "compilerOptions": { "paths": { "@backend/*": ["./wrong/*"] } } }',
+				'src/tsconfig.json': '{ "compilerOptions": { "paths": { "@backend/*": ["./*"] } } }',
+			},
+			'@backend/tables',
+		],
+	])('learns imported tables through %s', (_label, config, specifier) => {
+		tree(
+			{
+				...config,
+				'src/tables.ts':
+					"import { k } from 'cvx-kit'\nimport { kTable } from 'cvx-kit/table'\nexport const table = kTable('items', { a: k.string() })\n",
+				'src/types.ts': `import type { z } from 'zod'\nimport { table } from '${specifier}'\ntype Out = z.infer<typeof table.schema>\n`,
+			},
+			(root) => {
+				const { report } = run(['src', '--write'], root)
+				expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toContain(
+					'k.infer<typeof table.schema>',
+				)
+				expect(report.totals).toEqual({})
+			},
+		)
+	})
+
+	it.each([
+		['exports', { exports: { '.': { types: './src/index.ts', import: './dist/index.js' } } }],
+		['main', { main: './src/index.js' }],
+		['src entry', {}],
+	])('learns schemas from a workspace package through its %s', (_label, entry) => {
+		tree(
+			{
+				'package.json': JSON.stringify({ workspaces: ['packages/*'] }),
+				'packages/shared/package.json': JSON.stringify({ name: '@app/shared', ...entry }),
+				'packages/shared/src/index.ts':
+					"import { z } from 'zod'\nexport const Schema = z.string()\n",
+				'packages/app/package.json': '{}',
+				'packages/app/src/types.ts':
+					"import type { z } from 'zod'\nimport { Schema } from '@app/shared'\ntype Out = z.infer<typeof Schema>\n",
+			},
+			(root) => {
+				run(['packages', '--include-packages-without-kit', '--write'], root)
+				expect(readFileSync(join(root, 'packages/app/src/types.ts'), 'utf8')).toContain(
+					'k.infer<typeof Schema>',
+				)
+			},
+		)
+	})
+
+	it('keeps an unmatched bare import unknown', () => {
+		const source =
+			"import type { z } from 'zod'\nimport { Schema } from '@external/shared'\ntype Out = z.infer<typeof Schema>\n"
+		tree({ 'src/types.ts': source }, (root) => {
+			const { report } = run(['src', '--write'], root)
+			expect(readFileSync(join(root, 'src/types.ts'), 'utf8')).toBe(source)
+			expect(report.totals['type-helper-unknown']).toBe(1)
+		})
+	})
+
+	it('resolves app source independently of scanned facts using pnpm workspace subpaths', () => {
+		tree(
+			{
+				'pnpm-workspace.yaml': "packages:\n  - 'packages/*'\n",
+				'packages/shared/package.json': JSON.stringify({
+					name: '@app/shared',
+					exports: { './*': './src/*.ts' },
+				}),
+				'packages/shared/src/helper.ts': 'export const helper = (value) => value',
+				'packages/app/src/consumer.ts': '',
+			},
+			(root) => {
+				const resolveSource = createSourceResolver(root)
+				expect(resolveSource('packages/app/src/consumer.ts', '@app/shared/helper')).toBe(
+					'packages/shared/src/helper.ts',
+				)
+				expect(resolveSource('packages/app/src/consumer.ts', '@external/shared')).toBeNull()
+			},
+		)
+	})
 
 	it('rewrites a type helper on a schema imported from a file the run rewrites, and reports one that stays Zod', () => {
 		tree(

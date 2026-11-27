@@ -131,39 +131,114 @@ export function patternNames(pattern, names = []) {
 
 const FUNCTIONS = new Set(['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'])
 
-/** Whether a local binding named `name` is visible at `node` below the module scope. */
-export function isShadowed(node, name, parents) {
-	let current = parents.get(node)
-	while (current && current.type !== 'Program') {
-		if (FUNCTIONS.has(current.type)) {
-			if (current.params.some((param) => patternNames(param).includes(name))) return true
-			if (current.id?.name === name && current.type === 'FunctionExpression') return true
+/** Resolve a value name at its use site, stopping at the nearest lexical binding. */
+export function resolveBinding(node, parents, name = node.name) {
+	for (let scope = parents.get(node); scope; scope = parents.get(scope)) {
+		if (FUNCTIONS.has(scope.type)) {
+			const parameter = scope.params.find((param) => patternNames(param).includes(name))
+			if (parameter) return { kind: 'parameter', node: parameter, scope }
+			if (scope.id?.name === name) return { kind: 'function', node: scope, scope }
+			const variable = hoistedVar(scope.body, name)
+			if (variable) return { kind: 'var', node: variable, scope, init: variable.init }
 		}
-		if (current.type === 'BlockStatement' || current.type === 'StaticBlock') {
-			if (current.body.some((statement) => declares(statement, name))) return true
-		}
-		if (current.type === 'CatchClause' && patternNames(current.param).includes(name)) return true
+		if (scope.type === 'CatchClause' && patternNames(scope.param).includes(name))
+			return { kind: 'parameter', node: scope.param, scope }
 		const head =
-			current.type === 'ForStatement'
-				? current.init
-				: current.type === 'ForOfStatement' || current.type === 'ForInStatement'
-					? current.left
+			scope.type === 'ForStatement'
+				? scope.init
+				: ['ForOfStatement', 'ForInStatement'].includes(scope.type)
+					? scope.left
 					: null
-		if (head && declares(head, name)) return true
-		current = parents.get(current)
+		const statements = ['Program', 'BlockStatement', 'StaticBlock'].includes(scope.type)
+			? scope.body
+			: scope.type === 'SwitchStatement'
+				? scope.cases.flatMap((item) => item.consequent)
+				: head
+					? [head]
+					: []
+		for (const statement of statements) {
+			const declaration = statement.declaration ?? statement
+			if (declaration.type === 'ImportDeclaration') {
+				const spec = declaration.specifiers.find((item) => item.local.name === name)
+				if (spec)
+					return {
+						kind: 'import',
+						node: spec,
+						scope,
+						source: declaration.source.value,
+						imported:
+							spec.type === 'ImportNamespaceSpecifier'
+								? '*'
+								: spec.type === 'ImportDefaultSpecifier'
+									? 'default'
+									: (spec.imported.name ?? spec.imported.value),
+					}
+			}
+			if (declaration.type === 'VariableDeclaration') {
+				if (declaration.kind === 'var' && scope.type !== 'Program') continue
+				const item = declaration.declarations.find((entry) => patternNames(entry.id).includes(name))
+				if (item)
+					return {
+						kind: declaration.kind,
+						node: item,
+						scope,
+						init: item.init,
+						path: bindingPath(item.id, name),
+					}
+			}
+			if (
+				['FunctionDeclaration', 'ClassDeclaration'].includes(declaration.type) &&
+				declaration.id?.name === name
+			)
+				return {
+					kind: declaration.type === 'FunctionDeclaration' ? 'function' : 'class',
+					node: declaration,
+					scope,
+				}
+		}
+		if (scope.type === 'Program') {
+			const variable = hoistedVar(scope, name)
+			if (variable) return { kind: 'var', node: variable, scope, init: variable.init }
+		}
 	}
-	return false
+	return null
 }
 
-function declares(statement, name) {
-	if (!statement) return false
-	if (statement.type === 'VariableDeclaration') {
-		return statement.declarations.some((declarator) => patternNames(declarator.id).includes(name))
+function hoistedVar(node, name) {
+	if (
+		!node ||
+		FUNCTIONS.has(node.type) ||
+		['ClassDeclaration', 'ClassExpression'].includes(node.type)
+	)
+		return null
+	if (node.type === 'VariableDeclaration' && node.kind === 'var')
+		return node.declarations.find((item) => patternNames(item.id).includes(name)) ?? null
+	for (const key of visitorKeys[node.type] ?? []) {
+		const value = node[key]
+		for (const child of Array.isArray(value) ? value : [value]) {
+			const found = hoistedVar(child, name)
+			if (found) return found
+		}
 	}
-	if (statement.type === 'FunctionDeclaration' || statement.type === 'ClassDeclaration') {
-		return statement.id?.name === name
+	return null
+}
+
+function bindingPath(pattern, name) {
+	if (pattern.type === 'Identifier') return pattern.name === name ? [] : null
+	if (pattern.type === 'ObjectPattern') {
+		for (const property of pattern.properties) {
+			if (property.type !== 'Property' || property.computed) continue
+			const rest = bindingPath(property.value, name)
+			if (rest) return [property.key.name ?? property.key.value, ...rest]
+		}
 	}
-	return false
+	return null
+}
+
+/** Whether a local binding named `name` is visible at `node` below the module scope. */
+export function isShadowed(node, name, parents) {
+	const binding = resolveBinding(node, parents, name)
+	return binding !== null && binding.scope.type !== 'Program'
 }
 
 export function lineIndex(source) {

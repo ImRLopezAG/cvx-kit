@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from 'zod'; import { queryGeneric as query } from 'convex/server'
 export const Bytes = z.instanceof(ArrayBuffer)
 export const Other = z.instanceof(Date)
 export const fn = query({ returns: z.void(), handler: () => {} })

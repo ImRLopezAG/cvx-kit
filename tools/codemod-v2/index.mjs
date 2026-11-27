@@ -20,7 +20,8 @@ import { buildReport, formatSummary } from './report.mjs'
 import { createSourceResolver, KIT_OR_ZOD_MODULE } from './resolve.mjs'
 import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
 import { transformSource } from './transform.mjs'
-import { chainOf, parseSource, unwrap } from './transforms/ast.mjs'
+import { parentMap, parseSource } from './transforms/ast.mjs'
+import { consumerOrigin as expressionConsumerOrigin } from './transforms/consumer.mjs'
 import { stringEnumArgument } from './transforms/schema.mjs'
 
 export const HELP = `Usage: cvx-kit-codemod-v2 <path…> [options]
@@ -384,31 +385,27 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 				{ type: 'Identifier', name },
 			)
 		},
-		consumerOrigin(from, specifier, name, seen = new Set()) {
+		consumerOrigin(from, specifier, name, path = [], seen = new Set()) {
 			const target = resolve(from, specifier)
 			if (!target && (specifier.startsWith('.') || specifier.startsWith('/'))) return 'unproven'
 			if (!target) return !KIT_OR_ZOD_MODULE.test(specifier)
-			const key = `${target}:${name}`
-			if (seen.has(key)) return false
+			const key = `${target}:${name}:${path.join('.')}`
+			if (seen.has(key)) return 'unproven'
 			seen.add(key)
 			const program = programOf(target)
-			const imports = new Map()
-			const initializers = new Map()
-			let localName = name
+			const context = {
+				path: target,
+				parents: parentMap(program),
+				options: {
+					run: {
+						consumerOrigin: (from, source, name, members) =>
+							this.consumerOrigin(from, source, name, members, seen),
+					},
+				},
+			}
 			for (const statement of program.body) {
-				if (statement.type === 'ImportDeclaration') {
-					for (const spec of statement.specifiers)
-						imports.set(spec.local.name, {
-							source: statement.source.value,
-							name: spec.imported?.name ?? 'default',
-						})
-				}
-				const declaration = statement.declaration ?? statement
-				if (declaration.type === 'VariableDeclaration' && declaration.kind === 'const') {
-					for (const item of declaration.declarations)
-						if (item.id.type === 'Identifier' && item.init)
-							initializers.set(item.id.name, item.init)
-				}
+				if (statement.type === 'ExportDefaultDeclaration' && name === 'default')
+					return expressionConsumerOrigin(context, statement.declaration, path)
 				if (statement.type !== 'ExportNamedDeclaration') continue
 				for (const spec of statement.specifiers) {
 					if ((spec.exported.name ?? spec.exported.value) !== name) continue
@@ -417,23 +414,21 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 							target,
 							statement.source.value,
 							spec.local.name ?? spec.local.value,
+							path,
 							seen,
 						)
-					localName = spec.local.name
+					return expressionConsumerOrigin(context, spec.local, path)
+				}
+				const declaration = statement.declaration
+				if (declaration?.type === 'FunctionDeclaration' && declaration.id?.name === name)
+					return false
+				if (declaration?.type !== 'VariableDeclaration') continue
+				for (const item of declaration.declarations) {
+					if (item.id.type === 'Identifier' && item.id.name === name && item.init)
+						return expressionConsumerOrigin(context, item.init, path)
 				}
 			}
-			const locals = new Set()
-			while (!locals.has(localName)) {
-				locals.add(localName)
-				const binding = imports.get(localName)
-				if (binding) return this.consumerOrigin(target, binding.source, binding.name, seen)
-				const initializer = initializers.get(localName)
-				if (!initializer) break
-				const { root } = chainOf(unwrap(initializer))
-				if (root.type !== 'Identifier') break
-				localName = root.name
-			}
-			return false
+			return 'unproven'
 		},
 		isTable(fromPath, specifier, name) {
 			const target = resolve(fromPath, specifier)

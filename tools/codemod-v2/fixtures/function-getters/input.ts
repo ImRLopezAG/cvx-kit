@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { zid } from 'convex-helpers/server/zod4'
-import { authQuery } from './auth'
+import { queryGeneric as authQuery } from 'convex/server'
 import { relations } from './relations'
 
 export const NoteArgs = z.strictObject({ id: zid('notes') })

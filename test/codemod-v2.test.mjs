@@ -170,7 +170,7 @@ describe('codemod-v2 number bounds', () => {
 describe('codemod-v2 function getters', () => {
 	const source = [
 		"import { z } from 'zod'",
-		"import { authQuery } from './auth'",
+		"import { queryGeneric as authQuery } from 'convex/server'",
 		'',
 		'export const get = authQuery({',
 		'\targs: z.strictObject({ id: z.string() }),',
@@ -195,6 +195,8 @@ describe('codemod-v2 function getters', () => {
 	it('leaves values that read this, await or yield, and objects without a handler', () => {
 		const input = [
 			"import { z } from 'zod'",
+			"import { queryGeneric as authQuery } from 'convex/server'",
+			'function configure(value) { return value }',
 			'',
 			'export const a = authQuery({ args: this.args(), handler: () => null })',
 			'export const b = authQuery({ args: await load(), handler: () => null })',
@@ -463,6 +465,164 @@ describe('codemod-v2 object policies', () => {
 })
 
 describe('codemod-v2 cross-file knowledge', () => {
+	it.each([
+		[
+			'function-local schema',
+			'export function build() { const S = z.string(); return os.input(S) }',
+		],
+		[
+			'object property builder',
+			'const builders = { procedure: os.$context() }; const S = z.string(); export const r = builders.procedure.input(S)',
+		],
+		[
+			'destructured builder',
+			'const { input } = os; const S = z.string(); export const r = input(S)',
+		],
+		[
+			'class field builder',
+			'class Builder { procedure = os; build() { const S = z.string(); return this.procedure.input(S) } }',
+		],
+		[
+			'nested router schema',
+			'const S = z.string(); export const r = os.router({ nested: { procedure: S } })',
+		],
+		[
+			'spread-wrapped schema',
+			'const S = z.string(); export const r = os.router({ ...{ procedure: S } })',
+		],
+	])('holds a %s consumed by a third-party builder', (_name, declaration) => {
+		const source = `import { z } from 'zod'\nimport { os } from '@orpc/server'\n${declaration}\n`
+		const result = transformSource('consumer.ts', source)
+		expect(result.output).toContain('S = z.string()')
+		expect(result.skipped.map((site) => site.code)).toContain('zod-consumer')
+		expect(transformSource('consumer.ts', result.output).output).toBe(result.output)
+	})
+
+	it('holds and reports a schema when a member callee cannot be traced', () => {
+		const source =
+			"import { z } from 'zod'\nconst builders = unknownFactory(); const S = z.string(); builders.procedure.input(S)\n"
+		const result = transformSource('consumer.ts', source)
+		expect(result.output).toContain('S = z.string()')
+		expect(result.skipped.map((site) => site.code)).toContain('zod-consumer-unproven')
+	})
+
+	it('holds the outer dependencies of a function-local consumed schema', () => {
+		const source =
+			"import { z } from 'zod'; import { os } from '@orpc/server'; const Base = z.string(); export function build() { const S = z.object({ base: Base }); return os.input(S) }"
+		const result = transformSource('consumer.ts', source)
+		expect(result.output).toContain('Base = z.string()')
+		expect(result.output).toContain('S = z.object({ base: Base })')
+	})
+
+	it.each([
+		"import { k } from 'cvx-kit'; export const S = k.object({ returns: z.void() })",
+		"import { queryGeneric as query } from 'convex/server'; export function build(query: any) { return query({ returns: z.void(), handler: () => {} }) }",
+		"import { kContract } from 'cvx-kit/contracts'; export const S = kContract.other({ returns: z.void() })",
+		"import { kContract } from 'cvx-kit/contracts'; const factory = kContract; export const S = factory.other({ returns: z.void() })",
+	])('rejects a returns field without a resolved registration callee: %s', (declaration) => {
+		const result = transformSource('schema.ts', `import { z } from 'zod'; ${declaration}`)
+		expect(result.output).toContain('returns: z.void()')
+		expect(result.skipped.map((site) => site.code)).toContain('void-position')
+	})
+
+	it.each([
+		"import { query } from './_generated/server'; export const S = query({ returns: z.void(), handler: () => {} })",
+		"import { kCustomQuery } from 'cvx-kit/registration'; const query = kCustomQuery(base, options); export const S = query({ returns: z.void(), handler: () => {} })",
+		"import { kContract } from 'cvx-kit/contracts'; export const S = kContract({ returns: z.void() })",
+	])('migrates void in a resolved registration or contract: %s', (declaration) => {
+		const result = transformSource('schema.ts', `import { z } from 'zod'; ${declaration}`)
+		expect(result.output).toContain('k.void()')
+		expect(result.skipped.map((site) => site.code)).not.toContain('void-position')
+	})
+
+	it('follows an instance builder field to its third-party initializer', () => {
+		const source =
+			"import { z } from 'zod'; import { os } from '@orpc/server'; class Builder { procedure = os }; const builder = new Builder(); const S = z.string(); builder.procedure.input(S)"
+		const result = transformSource('consumer.ts', source)
+		expect(result.output).toContain('S = z.string()')
+		expect(result.skipped.map((site) => site.code)).toContain('zod-consumer')
+	})
+
+	it('does not convert a bridge argument that resolves to a parameter', () => {
+		const source =
+			"import { z } from 'zod'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\nconst S = z.string(); export function bridge(S: any) { return zodToConvex(S) }\n"
+		const result = transformSource('bridge.ts', source)
+		expect(result.output).toContain('return zodToConvex(S)')
+		expect(result.output).toContain('import { zodToConvex }')
+		expect(result.skipped.map((site) => site.code)).toContain('zod-to-convex-unknown')
+	})
+
+	it('resolves a function-scoped var before an outer schema', () => {
+		const source =
+			"import { z } from 'zod'; import { zodToConvex } from 'convex-helpers/server/zod4'; const S = z.string(); export function bridge() { if (ready) { var S = other }; return zodToConvex(S) }"
+		const result = transformSource('bridge.ts', source)
+		expect(result.output).toContain('return zodToConvex(S)')
+		expect(result.skipped.map((site) => site.code)).toContain('zod-to-convex-unknown')
+	})
+
+	it('reports an untraceable builder member on a parameter', () => {
+		const source =
+			"import { z } from 'zod'; const S = z.string(); export function build(builder: any) { return builder.input(S) }"
+		const result = transformSource('consumer.ts', source)
+		expect(result.output).toContain('S = z.string()')
+		expect(result.skipped.map((site) => site.code)).toContain('zod-consumer-unproven')
+	})
+
+	it('holds void in an ordinary object field named returns', () => {
+		const result = transformSource(
+			'schema.ts',
+			"import { z } from 'zod'\nexport const S = z.object({ returns: z.void() })\n",
+		)
+		expect(result.output).toContain('returns: z.void()')
+		expect(result.skipped.map((site) => site.code)).toContain('void-position')
+	})
+
+	it('lets a nearer callable parameter override an outer builder', () => {
+		const result = transformSource(
+			'consumer.ts',
+			"import { z } from 'zod'\nimport { os } from '@orpc/server'\nconst procedure = os; const S = z.string(); export function build(procedure: (s: unknown) => unknown) { return procedure(S) }\n",
+		)
+		expect(result.output).toContain('S = k.string()')
+		expect(result.skipped.map((site) => site.code)).not.toContain('zod-consumer')
+	})
+
+	it.each([
+		[
+			'default',
+			"import { os } from '@orpc/server'; export default os",
+			"import os from './builder'; os.input(S)",
+		],
+		[
+			'namespace',
+			"import { os } from '@orpc/server'; export { os }",
+			"import * as builder from './builder'; builder.os.input(S)",
+		],
+	])('follows a %s builder export', (_name, builder, use) => {
+		tree(
+			{ 'builder.ts': builder, 'main.ts': `import { z } from 'zod'; const S = z.string(); ${use}` },
+			(root) => {
+				const result = run(['.', '--write'], root)
+				expect(readFileSync(join(root, 'main.ts'), 'utf8')).toContain('S = z.string()')
+				expect(result.report.totals['zod-consumer']).toBe(1)
+			},
+		)
+	})
+
+	it.each([true, false])('checks held pipe bindings with keep marker %s', (marker) => {
+		const source = marker
+			? "// cvx-kit-codemod: keep-zod\nimport { z } from 'zod'; import { S } from './schema'; export const Kept = z.string().pipe(S)"
+			: "import { z } from 'zod'; import { S } from './schema'; export function make(S: z.ZodString) { return z.string().startsWith('a').pipe(S) }"
+		tree(
+			{ 'schema.ts': "import { z } from 'zod'; export const S = z.string()", 'main.ts': source },
+			(root) => {
+				const result = run(['.', '--write'], root)
+				expect(result.exitCode).toBe(marker ? 1 : 0)
+				expect(result.report.totals['held-pipe-to-k'] ?? 0).toBe(marker ? 1 : 0)
+				expect(readFileSync(join(root, 'main.ts'), 'utf8')).toBe(source)
+			},
+		)
+	})
+
 	function tree(files, body) {
 		const root = mkdtempSync(join(tmpdir(), 'cvx-codemod-run-'))
 		try {

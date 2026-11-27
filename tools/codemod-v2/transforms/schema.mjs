@@ -1,7 +1,8 @@
 // Factories and chain methods: rewrites `z.<factory>(…)` to `k.<factory>(…)` and
 // the chain methods applied to a proven schema, or records why a site stays Zod.
-import { chainOf, isShadowed, outerChain, unwrap, walk } from './ast.mjs'
+import { chainOf, isShadowed, outerChain, resolveBinding, unwrap, walk } from './ast.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './sites.mjs'
+import { isRegistrationCallee } from './consumer.mjs'
 
 const FACTORIES = new Map([
 	['string', 'string'],
@@ -192,12 +193,21 @@ export const SCHEMA_METHODS = new Set([
 ])
 
 /** Whether `expression` evaluates to a Zod schema the codemod can prove. */
-export function isSchemaExpression(ctx, expression) {
+export function isSchemaExpression(ctx, expression, seen = new Set()) {
 	const node = unwrap(expression)
-	if (!node) return false
+	if (!node || seen.has(node)) return false
+	seen.add(node)
 	const { root, steps } = chainOf(node)
 	if (root.type !== 'Identifier') return false
 	if (steps.some((step) => step.kind === 'member' && TERMINAL_METHODS.has(step.name))) return false
+	const binding = resolveBinding(root, ctx.parents)
+	if (binding && binding.scope.type !== 'Program') {
+		return (
+			binding.kind === 'const' &&
+			binding.path?.length === 0 &&
+			isSchemaExpression(ctx, binding.init, seen)
+		)
+	}
 	if (ctx.zodNamespaces.has(root.name)) {
 		const first = steps[0]
 		return first?.kind === 'member' && first.name !== null && !first.name.startsWith('Zod')
@@ -341,13 +351,14 @@ export function processZodChain(ctx, unit, id) {
 		addInfo(ctx, unit, span(next), 'bytes-validator-narrowed')
 	}
 	if (first.name === 'void') {
-		let parent = ctx.parents.get(outer)
+		const parent = ctx.parents.get(outer)
 		if (
 			parent?.type !== 'Property' ||
 			parent.value !== outer ||
 			parent.computed ||
 			(parent.key.name ?? parent.key.value) !== 'returns' ||
-			call.arguments.length !== 0
+			call.arguments.length !== 0 ||
+			!isReturnsDefinition(ctx, parent)
 		) {
 			addSkip(ctx, unit, span(next), 'void-position')
 			return
@@ -887,4 +898,17 @@ export function stringEnumArgument(ctx, argument) {
 	return imported
 		? ctx.options.run?.isStringEnum(ctx.path, imported.source, imported.imported) === true
 		: false
+}
+
+/** A returns field belongs to a resolved registration or contract factory call. */
+function isReturnsDefinition(ctx, property) {
+	const object = ctx.parents.get(property)
+	const call = ctx.parents.get(object)
+	if (
+		object?.type !== 'ObjectExpression' ||
+		call?.type !== 'CallExpression' ||
+		!call.arguments.includes(object)
+	)
+		return false
+	return isRegistrationCallee(ctx, call.callee)
 }

@@ -1,5 +1,5 @@
 import { k } from 'cvx-kit'
-import { authQuery } from './auth'
+import { queryGeneric as authQuery } from 'convex/server'
 import { relations } from './relations'
 
 export const NoteArgs = k.strictObject({ id: k.id('notes') })

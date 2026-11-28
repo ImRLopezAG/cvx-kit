@@ -37,7 +37,7 @@ import {
 import { getterEdits, isFunctionDefinition } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
 import { isCreateTable, processTableCall, tableKind } from './transforms/tables.mjs'
-import { processZodType } from './transforms/types.mjs'
+import { prepareGenericHelpers, processZodType } from './transforms/types.mjs'
 
 export const KEEP_MARKER = 'cvx-kit-codemod: keep-zod'
 // The marker, optionally followed by a reason: `// cvx-kit-codemod: keep-zod -- SDK needs Zod`.
@@ -139,6 +139,7 @@ export function transformSource(path, source, options = {}) {
 			getters: options.getters !== false,
 			nativeNumberBounds: options.nativeNumberBounds === true,
 			run: options.run ?? null,
+			deferForeign: options.deferForeign === true,
 		})
 	} catch (error) {
 		return failure(path, source, error.message)
@@ -184,6 +185,7 @@ function createContext(path, source, program, options) {
 		imported: new Map(),
 		moduleDecls: new Map(),
 		schemaBindings: new Set(),
+		schemaFactories: new Set(),
 		schemaPaths: new Set(),
 		refinedBindings: new Set(),
 		numberBindings: new Set(),
@@ -241,6 +243,7 @@ function rewrite(path, source, program, options) {
 		}
 	}
 	classifyBindings(ctx, units)
+	prepareGenericHelpers(ctx, units)
 	for (const unit of units) scanUnit(ctx, unit)
 	for (const unit of units) scanConsumers(ctx, unit)
 	walk(program, (node) => {
@@ -310,6 +313,26 @@ function rewrite(path, source, program, options) {
 	}
 	ctx.importSkips = importSkips
 	const edits = [...units.flatMap(editsOf), ...imports.edits]
+	const genericTypes = new Set(
+		units
+			.filter((unit) => !isLeft(unit))
+			.flatMap((unit) => [...(unit.genericTypes ?? [])])
+			.filter(
+				(name) =>
+					!(
+						ctx.imported.get(name)?.source === 'cvx-kit/k' &&
+						ctx.imported.get(name)?.imported === name
+					),
+			),
+	)
+	if (genericTypes.size > 0)
+		edits.push({
+			start: 0,
+			end: 0,
+			text: `import type { ${[...genericTypes].join(', ')} } from 'cvx-kit/k'\n`,
+		})
+	removeUsedMasks(ctx, units, edits)
+
 	if (edits.length === 0) return summarize(path, source, ctx, units, isLeft, source, facts)
 	const output = applyEdits(source, edits)
 	const mixed =
@@ -428,13 +451,20 @@ function summarize(
 	}
 	skipped.sort((left, right) => left.line - right.line || left.column - right.column)
 	info.sort((left, right) => left.line - right.line || left.column - right.column)
-	const remainingZod = units.some((unit) => isLeft(unit) && counted(unit))
+	const remainingZod = units.some(
+		(unit) => isLeft(unit) && (counted(unit) || (ctx.hasK && unit.zodRefs > 0)),
+	)
 	const noChangeStatus = remainingZod
 		? ctx.hasK || ctx.v2Tables.size > 0
 			? 'mixed'
 			: 'kept'
 		: 'untouched'
-	return result(path, output, output === source ? noChangeStatus : status, {
+	const onlyZod =
+		remainingZod &&
+		!ctx.hasK &&
+		ctx.v2Tables.size === 0 &&
+		!units.some((unit) => !isLeft(unit) && unit.edits.some((edit) => edit.usesK))
+	return result(path, output, output === source ? noChangeStatus : onlyZod ? 'kept' : status, {
 		rewritten,
 		skipped,
 		info,
@@ -462,6 +492,7 @@ function isZodNumber(ctx, chain) {
 function classifyBindings(ctx, units) {
 	const bindings = [
 		ctx.schemaBindings,
+		ctx.schemaFactories,
 		ctx.schemaPaths,
 		ctx.tableBindings,
 		ctx.tableFactories,
@@ -474,6 +505,12 @@ function classifyBindings(ctx, units) {
 	for (let pass = 0; pass <= units.length; pass++) {
 		const before = size()
 		for (const unit of units) {
+			if (unit.declaration.type === 'FunctionDeclaration') {
+				const fn = unit.declaration
+				const only = fn.body?.body.length === 1 ? fn.body.body[0] : null
+				if (!fn.async && only?.type === 'ReturnStatement' && isSchemaExpression(ctx, only.argument))
+					ctx.schemaFactories.add(fn.id.name)
+			}
 			if (unit.declaration.type !== 'VariableDeclaration') continue
 			for (const declarator of unit.declaration.declarations) {
 				if (declarator.id.type === 'ObjectPattern' && declarator.init) {
@@ -586,9 +623,12 @@ function scanUnit(ctx, unit) {
 		ctx.program,
 	)
 	for (const call of calls) {
+		if (call.callee.type === 'Identifier' && ctx.genericHelpers?.has(call.callee.name))
+			unit.contexts.push(call)
 		const kind = tableKind(ctx, call)
 		if (kind) processTableCall(ctx, unit, call)
 	}
+	scanForeignSchemas(ctx, unit)
 	for (const call of calls) unprovenSchemaCall(ctx, unit, call)
 	walk(unit.node, (node) => {
 		if (node.type !== 'SpreadElement' || node.argument.type !== 'Identifier') return
@@ -642,15 +682,6 @@ function unprovenSchemaCall(ctx, unit, call) {
 	const { root } = chainOf(callee.object)
 	if (root.type === 'Identifier') {
 		if (ctx.zodNamespaces.has(root.name)) return
-		if (ctx.schemaBindings.has(root.name) || ctx.tableBindings.has(root.name)) return
-		const imported = ctx.imported.get(root.name)
-		if (
-			imported &&
-			(ctx.options.run?.isTable(ctx.path, imported.source, imported.imported) ||
-				ctx.options.run?.isK(ctx.path, imported.source, imported.imported))
-		)
-			return
-		if (root.name === 'k' && ctx.hasK) return
 	}
 	addManual(ctx, unit, { start: callee.property.start, end: call.end }, 'unproven-mask')
 }
@@ -908,4 +939,82 @@ function keptByMarker(path, source, program, options) {
 			...units.flatMap((unit) => unit.manual),
 		],
 	})
+}
+
+/** Imported values in schema positions must be proved by the run before becoming k fields. */
+function scanForeignSchemas(ctx, unit) {
+	if (ctx.options.deferForeign) return
+	const foreign = (expression) => {
+		const node = unwrap(expression)
+		if (!node) return false
+		const { root } = chainOf(node)
+		if (root.type !== 'Identifier') return false
+		const binding = resolveBinding(root, ctx.parents)
+		return (
+			binding?.kind === 'import' &&
+			!/^(?:zod|cvx-kit|convex)(?:[-/]|$)/.test(binding.source) &&
+			!isSchemaExpression(ctx, node)
+		)
+	}
+	walk(unit.node, (node, parent) => {
+		if (
+			node.type === 'Property' &&
+			!node.computed &&
+			['args', 'returns'].includes(node.key.name ?? node.key.value) &&
+			isFunctionDefinition(parent, ctx.parents.get(parent)) &&
+			foreign(node.value)
+		) {
+			unit.zodValue = true
+			addSkip(ctx, unit, node.value, 'zod-foreign-schema')
+		}
+		if (node.type !== 'CallExpression') return
+		const { root, steps } = chainOf(node.callee)
+		if (
+			root.type !== 'Identifier' ||
+			!ctx.zodNamespaces.has(root.name) ||
+			!['object', 'strictObject', 'looseObject'].includes(steps[0]?.name)
+		)
+			return
+		const fields = unwrap(node.arguments[0])
+		if (fields?.type !== 'ObjectExpression') return
+		for (const property of fields.properties)
+			if (property.type === 'Property' && foreign(property.value))
+				addSkip(ctx, unit, property.value, 'mixed-reference')
+	})
+}
+
+/** Remove local mask declarations only when every value reference is inside a landed edit. */
+function removeUsedMasks(ctx, units, edits) {
+	for (const unit of units) {
+		if (
+			unit.node !== unit.declaration ||
+			unit.declaration.type !== 'VariableDeclaration' ||
+			unit.declaration.kind !== 'const' ||
+			unit.declaration.declarations.length !== 1
+		)
+			continue
+		const declaration = unit.declaration.declarations[0]
+		if (
+			declaration.id.type !== 'Identifier' ||
+			unwrap(declaration.init)?.type !== 'ObjectExpression'
+		)
+			continue
+		const references = []
+		walk(ctx.program, (node, parent) => {
+			if (
+				node.type === 'Identifier' &&
+				node.name === declaration.id.name &&
+				isReference(node, parent) &&
+				resolveBinding(node, ctx.parents)?.init === declaration.init
+			)
+				references.push(node)
+		})
+		if (
+			references.length > 0 &&
+			references.every((node) =>
+				edits.some((edit) => edit.start <= node.start && node.end <= edit.end && edit.text !== ''),
+			)
+		)
+			edits.push({ start: unit.node.start, end: unit.node.end, text: '' })
+	}
 }

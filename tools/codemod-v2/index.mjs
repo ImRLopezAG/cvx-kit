@@ -16,6 +16,7 @@ import {
 } from 'node:fs'
 import { dirname, join, matchesGlob, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { REPORT_FIXES } from './report-codes.mjs'
 import { buildReport, formatSummary } from './report.mjs'
 import { createSourceResolver, KIT_OR_ZOD_MODULE } from './resolve.mjs'
 import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
@@ -238,7 +239,9 @@ export function run(argv, cwd = process.cwd()) {
 		nativeNumberBounds: options.nativeNumberBounds,
 	}
 	let first = files.map(
-		({ path, source }) => excluded.get(path) ?? transformSource(path, source, transformOptions),
+		({ path, source }) =>
+			excluded.get(path) ??
+			transformSource(path, source, { ...transformOptions, deferForeign: true }),
 	)
 	const lookup = { resolve: createSourceResolver(cwd), programs: new Map() }
 	let knowledge = runKnowledge(files, first, cwd, lookup)
@@ -324,7 +327,15 @@ function restoreStrict(options, files, cwd) {
 			return { path, restored: 0, already: 0, manual: [], noBase: false, error: error.message }
 		}
 	})
-	const report = { restoreStrict: options.restoreStrict, files: results }
+	const report = {
+		restoreStrict: options.restoreStrict,
+		codes: Object.fromEntries(
+			[...new Set(results.flatMap((result) => result.manual.map((site) => site.code)))].map(
+				(code) => [code, REPORT_FIXES[code]],
+			),
+		),
+		files: results,
+	}
 	if (options.report)
 		writeFileSync(resolve(cwd, options.report), `${JSON.stringify(report, null, '\t')}\n`)
 	return {

@@ -3,7 +3,7 @@
 	"skipped": [
 		{
 			"line": 3,
-			"code": "loose-object"
+			"code": "catchall"
 		},
 		{
 			"line": 4,
@@ -35,11 +35,11 @@
 		},
 		{
 			"line": 13,
-			"code": "coerce"
+			"code": "preprocess"
 		},
 		{
 			"line": 14,
-			"code": "coerce"
+			"code": "codec"
 		},
 		{
 			"line": 15,
@@ -47,15 +47,15 @@
 		},
 		{
 			"line": 16,
-			"code": "brand"
+			"code": "readonly"
 		},
 		{
 			"line": 17,
-			"code": "string-format"
+			"code": "file"
 		},
 		{
 			"line": 18,
-			"code": "string-format"
+			"code": "template-literal"
 		},
 		{
 			"line": 19,

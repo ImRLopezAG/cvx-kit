@@ -1,3 +1,4 @@
+import { REPORT_FIXES } from './report-codes.mjs'
 // Aggregates per-file codemod results into the JSON report and the printed
 // totals-only summary.
 
@@ -27,6 +28,11 @@ export function buildReport(results) {
 			considered === 0 ? 1 : Number((declarations.rewritten / considered).toFixed(4)),
 		totals: sortedCounts(totals),
 		info: sortedCounts(info),
+		codes: Object.fromEntries(
+			[...new Set([...Object.keys(totals), ...Object.keys(info)])]
+				.sort()
+				.map((code) => [code, REPORT_FIXES[code]]),
+		),
 		files,
 	}
 }
@@ -51,12 +57,12 @@ export function formatSummary(report, write) {
 	const totals = Object.entries(report.totals)
 	if (totals.length > 0) {
 		lines.push('skipped sites by code:')
-		for (const [code, count] of totals) lines.push(`  ${code}: ${count}`)
+		for (const [code, count] of totals) lines.push(`  ${code}: ${count}. ${report.codes[code]}`)
 	}
 	const info = Object.entries(report.info)
 	if (info.length > 0) {
 		lines.push('informational:')
-		for (const [code, count] of info) lines.push(`  ${code}: ${count}`)
+		for (const [code, count] of info) lines.push(`  ${code}: ${count}. ${report.codes[code]}`)
 	}
 	if (report.packagesWithoutKit?.length > 0) {
 		lines.push(`packages without cvx-kit: ${report.packagesWithoutKit.length}`)

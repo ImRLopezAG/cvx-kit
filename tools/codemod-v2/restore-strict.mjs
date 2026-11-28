@@ -3,6 +3,7 @@
 // beta.3 a plain `k.object` strips unknown keys under `parse`, so this mode reads each file as it
 // was at the pre-migration ref, pairs its Zod object factories with the file's current ones and
 // turns the `k.object` of every pair that was strict into `k.strictObject`.
+import { REPORT_FIXES } from './report-codes.mjs'
 import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
@@ -297,5 +298,7 @@ export function formatRestoreSummary(results, ref, write) {
 		for (const site of manual)
 			lines.push(`  ${site.path}:${site.baseLine} ${site.code}: ${site.message}`)
 	}
+	for (const code of new Set(manual.map((site) => site.code)))
+		lines.push(`  ${code}: ${REPORT_FIXES[code]}`)
 	return lines.join('\n')
 }

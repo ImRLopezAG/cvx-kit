@@ -69,7 +69,7 @@ describe('codemod-v2 fixtures', () => {
 		expect(outcome.skipped[0]).toEqual({
 			line: 3,
 			column: 59,
-			code: 'loose-object',
+			code: 'catchall',
 			text: 'catchall(z.string())',
 		})
 		expect(outcome.skipped.every((site) => site.text.length <= 80)).toBe(true)

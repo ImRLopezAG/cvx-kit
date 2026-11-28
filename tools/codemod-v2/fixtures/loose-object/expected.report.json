@@ -3,7 +3,7 @@
 	"skipped": [
 		{
 			"line": 6,
-			"code": "loose-object"
+			"code": "catchall"
 		}
 	]
 }

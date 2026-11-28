@@ -11,8 +11,8 @@ export const get = authQuery({
 })
 
 export const list = authQuery({
-	get args() { return relations.tables.notes.paginationOpts({ title: true }) },
-	get returns() { return relations.tables.notes.pageDto({}) },
+	args: relations.tables.notes.paginationOpts({ title: true }),
+	returns: relations.tables.notes.pageDto({}),
 	handler: async () => null,
 })
 

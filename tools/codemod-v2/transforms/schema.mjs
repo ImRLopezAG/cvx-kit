@@ -64,8 +64,6 @@ const STRING_FORMATS = new Set([
 	'e164',
 	'hostname',
 	'stringFormat',
-	'templateLiteral',
-	'file',
 ])
 
 // `k.email()` / `k.url()` take a message, or these option keys; any other option (Zod's `pattern`,
@@ -108,10 +106,12 @@ function optionsMap(argument, allowed) {
 
 const REPORTED_FACTORIES = new Map([
 	['lazy', 'recursive'],
+	['file', 'file'],
+	['templateLiteral', 'template-literal'],
 	['tuple', 'tuple'],
 	['coerce', 'coerce'],
-	['preprocess', 'coerce'],
-	['codec', 'coerce'],
+	['preprocess', 'preprocess'],
+	['codec', 'codec'],
 	['toJSONSchema', 'json-schema'],
 ])
 
@@ -129,6 +129,7 @@ const KEPT_METHODS = new Set([
 	'default',
 	'refine',
 	'transform',
+	'overwrite',
 	'pipe',
 	'describe',
 	'extend',
@@ -170,11 +171,11 @@ const METHOD_RENAMES = new Map([
 const TERMINAL_METHODS = new Set(['parse', 'safeParse', 'parseAsync', 'safeParseAsync'])
 
 const REPORTED_METHODS = new Map([
-	['catchall', 'loose-object'],
+	['catchall', 'catchall'],
 	['superRefine', 'super-refine'],
 	['meta', 'meta'],
 	['brand', 'brand'],
-	['readonly', 'brand'],
+	['readonly', 'readonly'],
 ])
 
 /** Method names that make a member call on a proven schema a schema-chain site. */
@@ -217,6 +218,9 @@ export function isSchemaExpression(ctx, expression, seen = new Set()) {
 		const first = steps[0]
 		return first?.kind === 'member' && steps[1]?.kind === 'call'
 	}
+	if (ctx.kit.get(root.name)?.imported === 'zid' && steps[0]?.kind === 'call')
+		return schemaTail(steps, 1)
+	if (ctx.schemaFactories.has(root.name) && steps[0]?.kind === 'call') return schemaTail(steps, 1)
 	if (ctx.tableBindings.has(root.name)) return tableSchemaSteps(steps) > 0
 	const tableImport = ctx.imported.get(root.name)
 	if (
@@ -226,14 +230,7 @@ export function isSchemaExpression(ctx, expression, seen = new Set()) {
 	)
 		return tableSchemaSteps(steps) > 0
 	const prefix = schemaMemberSteps(ctx, root, steps)
-	if (prefix >= 0)
-		return steps
-			.slice(prefix)
-			.every(
-				(step, index, rest) =>
-					step.kind === 'call' ||
-					(DERIVED_METHODS.has(step.name) && rest[index + 1]?.kind === 'call'),
-			)
+	if (prefix >= 0) return schemaTail(steps, prefix)
 	return false
 }
 
@@ -259,7 +256,27 @@ export function schemaMemberSteps(ctx, root, steps) {
 	return -1
 }
 
+function schemaTail(steps, from) {
+	for (let index = from; index < steps.length; index++) {
+		const step = steps[index]
+		if (step.kind !== 'member') return false
+		if (step.name === 'shape' && steps[index + 1]?.kind === 'member') {
+			index++
+			continue
+		}
+		if (step.name === 'element') continue
+		if (!DERIVED_METHODS.has(step.name) || steps[index + 1]?.kind !== 'call') return false
+		index++
+	}
+	return true
+}
+
 const DERIVED_METHODS = new Set([
+	...KEPT_METHODS,
+	...BOUND_ALIASES.keys(),
+	...METHOD_RENAMES.keys(),
+	'nullish',
+	'unwrap',
 	'extend',
 	'pick',
 	'omit',
@@ -342,6 +359,51 @@ export function processZodChain(ctx, unit, id) {
 		return
 	}
 	const call = steps[next].node
+	const positional = new Map([
+		['object', 1],
+		['strictObject', 1],
+		['looseObject', 1],
+		['array', 1],
+		['literal', 1],
+		['union', 1],
+		['record', 2],
+		['partialRecord', 2],
+		['discriminatedUnion', 2],
+	])
+	if (positional.has(first.name) && call.arguments.length > positional.get(first.name)) {
+		addSkip(ctx, unit, span(next), 'factory-params')
+		return
+	}
+	if (
+		['string', 'number', 'boolean', 'null', 'int', 'bigint', 'any', 'unknown', 'json'].includes(
+			first.name,
+		) &&
+		call.arguments.length > 0
+	) {
+		addSkip(ctx, unit, span(next), 'factory-params')
+		return
+	}
+	if (first.name === 'literal' && unwrap(call.arguments[0])?.type === 'ArrayExpression') {
+		const values = unwrap(call.arguments[0]).elements
+		if (
+			call.arguments.length !== 1 ||
+			values.length === 0 ||
+			!values.every((value) => value?.type === 'Literal' && value.value === String(value.value))
+		) {
+			addSkip(ctx, unit, span(next), 'literal-array')
+			return
+		}
+		target = 'enum'
+	}
+	if (first.name === 'iso' && factory.name === 'datetime' && call.arguments.length === 0)
+		addInfo(ctx, unit, span(next), 'iso-datetime-offset')
+	if (first.name === 'record' || first.name === 'partialRecord')
+		addInfo(ctx, unit, span(next), 'record-key-rule')
+	if (first.name === 'union' && unwrap(call.arguments[0])?.type === 'ArrayExpression') {
+		const members = unwrap(call.arguments[0]).elements
+		if (members.length >= 2 && members.every((member) => isObjectSchema(ctx, member)))
+			addInfo(ctx, unit, span(next), 'union-member-order')
+	}
 	if (first.name === 'iso' && call.arguments.length > 0) {
 		const arg = unwrap(call.arguments[0])
 		const offset =
@@ -494,7 +556,14 @@ function numberBounds(ctx, unit, steps, next, factory, site) {
 export function processBoundChain(ctx, unit, id, table) {
 	const outer = outerChain(id, ctx.parents)
 	const { steps } = chainOf(outer)
-	const from = table ? tableSchemaSteps(steps) : schemaMemberSteps(ctx, id, steps)
+	let from = table ? tableSchemaSteps(steps) : schemaMemberSteps(ctx, id, steps)
+	if (id.name === 'k' && ctx.hasK && steps[0]?.kind === 'member' && steps[1]?.kind === 'call')
+		from = 2
+	while (from >= 0 && steps[from]?.kind === 'member') {
+		if (steps[from].name === 'shape' && steps[from + 1]?.kind === 'member') from += 2
+		else if (steps[from].name === 'element') from++
+		else break
+	}
 	if (from < 0 || (table && from === 0)) return false
 	const method = steps[from]
 	if (method?.kind !== 'member' || steps[from + 1]?.kind !== 'call') return false
@@ -552,6 +621,10 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 			continue
 		}
 		if (!call) {
+			if (step.name === 'element') {
+				index++
+				continue
+			}
 			if (step.name === 'shape') {
 				index += 2
 				continue
@@ -584,6 +657,21 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 			if (step.name.startsWith('safeParse')) trackSafeParse(ctx, unit, steps, index, outer)
 			return
 		}
+		if (step.name === 'refine' && asyncRefinement(ctx, call.arguments[0])) {
+			addSkip(ctx, unit, site, 'refine-async')
+			index += 2
+			continue
+		}
+		if (
+			['trim', 'toLowerCase', 'toUpperCase'].includes(step.name) &&
+			steps
+				.slice(0, index)
+				.some(
+					(prior) =>
+						prior.kind === 'member' && ['min', 'max', 'length', 'regex'].includes(prior.name),
+				)
+		)
+			addInfo(ctx, unit, site, 'normalise-before-check')
 		if (step.name === 'nullish' && call.arguments.length === 0) {
 			addEdit(unit, step.node.property, 'nullable().optional')
 		} else if (
@@ -1023,4 +1111,56 @@ function isReturnsDefinition(ctx, property) {
 		contractDefinition(factory.arguments[0]) === definition &&
 		isDomainContractCallee(ctx, factory.callee)
 	)
+}
+
+/** Follow visible callback bindings and returned Promise constructors or calls. */
+function asyncRefinement(ctx, expression, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return false
+	seen.add(node)
+	if (node.type === 'Identifier') {
+		const binding = resolveBinding(node, ctx.parents)
+		if (binding?.init) return asyncRefinement(ctx, binding.init, seen)
+		let found = false
+		walk(ctx.program, (item) => {
+			if (item.type === 'FunctionDeclaration' && item.id?.name === node.name)
+				found ||= asyncRefinement(ctx, item, seen)
+		})
+		return found
+	}
+	if (/Function/.test(node.type)) {
+		if (node.async) return true
+		if (node.body.type !== 'BlockStatement') return asyncRefinement(ctx, node.body, seen)
+		let found = false
+		walk(node.body, (item) => {
+			if (item.type === 'ReturnStatement') found ||= asyncRefinement(ctx, item.argument, seen)
+		})
+		return found
+	}
+	if (
+		node.type === 'NewExpression' &&
+		node.callee.type === 'Identifier' &&
+		node.callee.name === 'Promise'
+	)
+		return true
+	if (node.type === 'CallExpression') {
+		const { root } = chainOf(node)
+		return (
+			root.type === 'Identifier' &&
+			(root.name === 'Promise' || asyncRefinement(ctx, node.callee, seen))
+		)
+	}
+	return false
+}
+
+function isObjectSchema(ctx, expression, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return false
+	seen.add(node)
+	const { root, steps } = chainOf(node)
+	if (root.type !== 'Identifier') return false
+	if (ctx.zodNamespaces.has(root.name) || (root.name === 'k' && ctx.hasK))
+		return ['object', 'strictObject', 'looseObject'].includes(steps[0]?.name)
+	const binding = resolveBinding(root, ctx.parents)
+	return Boolean(binding?.init && isObjectSchema(ctx, binding.init, seen))
 }

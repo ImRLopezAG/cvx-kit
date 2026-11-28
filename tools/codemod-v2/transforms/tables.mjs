@@ -1,7 +1,7 @@
 // Kit table boundaries: `zodTable('t', (id) => ({ … }), opts)` becomes
 // `kTable('t', { … }, opts)` with `id(…)` → `k.id(…)`, for every table form
 // whose callback has that same shape.
-import { isReference, isShadowed, walk } from './ast.mjs'
+import { isReference, isShadowed, resolveBinding, unwrap, walk } from './ast.mjs'
 import { addEdit, addSkip } from './sites.mjs'
 
 const TABLE_FUNCTIONS = new Set(['zodTable', 'zodVariantTable', 'tenantTable'])
@@ -26,6 +26,19 @@ export function isCreateTable(ctx, call) {
 }
 
 export function processTableCall(ctx, unit, call) {
+	const kind = tableKind(ctx, call)
+	const types = call.typeArguments?.params ?? []
+	if (kind === 'zodVariantTable' || kind === 'kVariantTable') {
+		if (types.length > 0) addSkip(ctx, unit, call.typeArguments, 'table-type-arguments')
+	} else
+		for (const type of types.slice(2, 5)) {
+			if (type.type === 'TSTypeQuery') {
+				if (keyArrayQuery(ctx, type.exprName))
+					addEdit(unit, type, `(${ctx.source.slice(type.start, type.end)})[number]`)
+				else addSkip(ctx, unit, type, 'table-type-arguments')
+			} else if (type.type === 'TSTupleType' || type.type === 'TSArrayType')
+				addSkip(ctx, unit, type, 'table-type-arguments')
+		}
 	unit.tableCall = true
 	unit.contexts.push(call)
 	const fields = call.arguments[1]
@@ -89,4 +102,31 @@ function objectOf(node) {
 	let inner = node
 	while (inner.type === 'ParenthesizedExpression') inner = inner.expression
 	return inner.type === 'ObjectExpression' ? inner : null
+}
+
+function keyArrayQuery(ctx, expression) {
+	const members = []
+	let root = expression
+	while (root.type === 'TSQualifiedName') {
+		members.unshift(root.right.name)
+		root = root.left
+	}
+	const binding = resolveBinding(root, ctx.parents)
+	if (binding?.kind !== 'const' || binding.path?.length !== 0) return false
+	let value = unwrap(binding.init)
+	for (const member of members) {
+		if (value?.type !== 'ObjectExpression') return false
+		value = unwrap(
+			value.properties.find(
+				(property) =>
+					property.type === 'Property' &&
+					!property.computed &&
+					(property.key.name ?? property.key.value) === member,
+			)?.value,
+		)
+	}
+	return (
+		value?.type === 'ArrayExpression' &&
+		value.elements.every((item) => item?.type === 'Literal' && item.value === String(item.value))
+	)
 }

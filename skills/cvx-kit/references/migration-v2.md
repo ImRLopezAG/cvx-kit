@@ -143,7 +143,7 @@ New in 2.0: `cvx-kit/k` (`k`, `KValidationError` and the schema types, including
 | `z.json()`                                                           | `k.json()`                                                                                  |                                                                                                                                                                                                                                        |
 | `zid('t')`                                                           | `k.id('t')`                                                                                 |                                                                                                                                                                                                                                        |
 | `z.iso.date()`                                                       | `k.isoDate()`                                                                               |                                                                                                                                                                                                                                        |
-| `z.iso.datetime()`, `z.iso.datetime({ offset: true })`               | `k.isoDateTime()`                                                                           | `k.isoDateTime()` also accepts `±HH:MM` offsets; other options (`local`, `precision`, a message) have no `k` form                                                                                                                      |
+| `z.iso.datetime()`, `z.iso.datetime({ offset: true })`               | `k.isoDateTime()`                                                                           | `k.isoDateTime()` widens bare `z.iso.datetime()` to accept `±HH:MM` offsets; use `.regex(/Z$/)` to keep UTC-only input; other options (`local`, `precision`, a message) have no `k` form                                               |
 | `z.date()`                                                           | not supported                                                                               | Convex cannot store a `Date`; use `k.timestamp()` or `k.isoDateTime()`                                                                                                                                                                 |
 | `.optional()`, `.nullable()`, `.default(v)`                          | same                                                                                        |                                                                                                                                                                                                                                        |
 | `.nullish()`                                                         | `.nullable().optional()`                                                                    | stored the same way                                                                                                                                                                                                                    |
@@ -408,6 +408,8 @@ A bare `k.number()` runs no kit check at a function boundary; `.finite()` and in
 
 `k.isoDate()`, `k.isoDateTime()` and `k.timestamp()` replace `z.iso.date()`, `z.iso.datetime()` and hand-written timestamp checks, with conversions (`toTimestamp()`, `toIsoDate()`, `toIsoDateTime()`) on input positions only. There is no date library in the kit. See [k](k.md#dates).
 
+`k.isoDateTime()` accepts timezone offsets such as `2026-11-27T10:00:00+02:00`; bare `z.iso.datetime()` accepts only a `Z` suffix. The codemod rewrites the bare call to `k.isoDateTime()`, which widens accepted input. There is no option on `k.isoDateTime` to refuse offsets. To keep UTC-only input, use `k.isoDateTime().regex(/Z$/)` before any conversion such as `.toTimestamp()`. The regex checks the ISO string, not a parsed date or timestamp.
+
 `k.timestamp()` accepts 1970-01-01T00:00:00.000Z through 9999-12-31T23:59:59.999Z only. A negative timestamp fails with `too_small`, so do not use `k.timestamp()` for dates before 1970; use `k.number().int()` or store an ISO string. A conversion outside the range, such as `k.isoDate().toTimestamp()` on `'1969-12-31'`, reports an `invalid_value` issue instead of throwing.
 
 ### Record keys follow Convex's rule
@@ -549,22 +551,21 @@ import { OpenAPIGenerator } from '@orpc/openapi'
 import type { KSchema } from 'cvx-kit/k'
 import { toJsonSchema } from 'cvx-kit/json-schema'
 
-function isKSchema(schema: StandardSchemaV1): schema is KSchema {
-	return schema['~standard'].vendor === 'cvx-kit'
+function isKSchema(schema: StandardSchemaV1 | undefined): schema is KSchema {
+	return schema?.['~standard'].vendor === 'cvx-kit'
 }
 
 const generator = new OpenAPIGenerator({
-	schemaConverters: [
+	converters: [
 		{
 			condition: isKSchema,
-			// The generator selects this converter only after isKSchema succeeds.
-			convert: (schema) => [toJsonSchema(schema as KSchema), false],
+			convert: (schema) => [isKSchema(schema) ? toJsonSchema(schema) : {}, false],
 		},
 	],
 })
 ```
 
-`KSchema` is a public type export, so the predicate uses the Standard Schema vendor rather than `instanceof`. This converter preserves the kit's patterns, numeric minimums, enum values and optional parameters in the OpenAPI document. `z.file()` has no `k` form: routes with file uploads keep Zod and its OpenAPI converter alongside this one.
+`KSchema` is a public type export, so the predicate uses the Standard Schema vendor rather than `instanceof`. This converter preserves the kit's patterns, numeric minimums, enum values and optional parameters in the OpenAPI document. `z.file()` has no `k` form: routes with file uploads keep Zod and its OpenAPI converter alongside this one. A consumer measured the cost of keeping both converters as +19 KB of kit and +7 KB of Zod in each bundle that imports the router.
 
 ### Files that keep Zod: use the namespace import
 
@@ -575,6 +576,8 @@ import * as z from 'zod' // not: import { z } from 'zod'
 ```
 
 The named `{ z }` import keeps Zod's whole namespace object in the bundle, locale tables and JSON Schema converters included. Measured in the Accord trial of this release, not by the kit's own benchmarks: one service file bundled alone held 733 KB of Zod with `import { z }` and 194 KB with `import * as z`. One `import { z }` anywhere in a bundle, including in a dependency, keeps the whole namespace, which cost about 520 KB per function bundle there (737 KB against 213 KB). Check dependencies too: Accord's bundles stayed at 737 KB after its own files were changed, because one dependency still imports `{ z }`. The `import { z } from 'zod'` lines elsewhere in this guide show v1 code.
+
+With `import * as z from 'zod/mini'`, no locale is loaded by default, so issues without a custom message read `Invalid input`. Call `z.config(z.locales.en())` once to enable English messages.
 
 ## The codemod
 

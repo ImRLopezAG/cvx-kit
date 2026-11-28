@@ -10,6 +10,14 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [Unreleased]
+
+### Fixed
+
+- `toZod` carries email and URL formats into JSON Schema in the Mini and classic entries without changing parsing.
+- `domain-file-responsibilities` allows `zod/mini` and `zod/v4-mini` wherever it allows Zod.
+- Migration guide: the oRPC OpenAPI example uses `converters` and handles routes with no input in its schema guard.
+
 ## [2.0.0-beta.8]
 
 ### Added

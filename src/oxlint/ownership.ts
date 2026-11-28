@@ -292,6 +292,8 @@ export const ownershipRules = {
 					![
 						'zod',
 						'zod/v4',
+						'zod/mini',
+						'zod/v4-mini',
 						'convex/values',
 						'cvx-kit',
 						'cvx-kit/k',

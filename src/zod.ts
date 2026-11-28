@@ -351,15 +351,18 @@ function applyCheck(base: Mini, record: KNode, kind: string, z: Factory): Mini {
 		if (kind !== 'string') return base
 		// SAFETY: .email and .url store their format as the record argument.
 		const format = record.arg as KFormat
-		if (format.kind === 'email')
-			return base.check(z.regex(emailPattern, message ?? 'Invalid email address'))
-		return base.check(
-			// SAFETY: the base is a string schema, so the refinement receives a string.
-			z.refine(
-				(value) => isUrl(value as string, format.protocol, format.hostname),
-				message ?? 'Invalid URL',
-			),
-		)
+		const check =
+			format.kind === 'email'
+				? z.regex(emailPattern, message ?? 'Invalid email address')
+				: z.refine(
+						// SAFETY: the base is a string schema, so the refinement receives a string.
+						(value) => isUrl(value as string, format.protocol, format.hostname),
+						message ?? 'Invalid URL',
+					)
+		// JSON Schema reads string_format from the check definition. Keep the existing
+		// check function so format metadata cannot change the kit's accepted strings.
+		Object.assign(check._zod.def, { check: 'string_format', format: format.kind })
+		return base.check(check)
 	}
 	if (record.op === 'int') return kind === 'number' ? base.check(z.int(message)) : base
 	if ((kind === 'number' || kind === 'bigint') && (record.op === 'gt' || record.op === 'lt')) {

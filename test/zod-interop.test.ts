@@ -4,6 +4,7 @@ import type { GenericValidator, JSONValue } from 'convex/values'
 import * as z from 'zod'
 import * as mini from 'zod/mini'
 import { k } from '../src/k'
+import { emailPattern } from '../src/k/formats'
 import { kZodIds, toZod } from '../src/zod'
 import { toZod as toClassicZod } from '../src/zod-classic'
 
@@ -72,7 +73,7 @@ describe('toZod', () => {
 					? classicOption
 					: toZod
 
-		// Expected JSON Schema captured from the beta.6 converter (ffac0b7), using the same Zod.
+		// Structural expectations captured from beta.6, extended with email and URL formats.
 		describe.each([
 			{
 				name: 'optional string',
@@ -90,10 +91,10 @@ describe('toZod', () => {
 				name: 'optional url',
 				schema: k.object({ f: k.string().url().optional() }),
 				expected: {
-					input: { type: 'object', properties: { f: { type: 'string' } } },
+					input: { type: 'object', properties: { f: { type: 'string', format: 'uri' } } },
 					output: {
 						type: 'object',
-						properties: { f: { type: 'string' } },
+						properties: { f: { type: 'string', format: 'uri' } },
 						additionalProperties: false,
 					},
 				},
@@ -277,6 +278,7 @@ describe('toZod', () => {
 						properties: {
 							f: {
 								type: 'string',
+								format: 'email',
 								pattern:
 									"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\\.)+[A-Za-z]{2,}$",
 							},
@@ -288,6 +290,7 @@ describe('toZod', () => {
 						properties: {
 							f: {
 								type: 'string',
+								format: 'email',
 								pattern:
 									"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\\.)+[A-Za-z]{2,}$",
 							},
@@ -295,6 +298,38 @@ describe('toZod', () => {
 						required: ['f'],
 						additionalProperties: false,
 					},
+				},
+			},
+			{
+				name: 'email factory',
+				schema: k.email(),
+				expected: {
+					input: { type: 'string', format: 'email', pattern: emailPattern.source },
+					output: { type: 'string', format: 'email', pattern: emailPattern.source },
+				},
+			},
+			{
+				name: 'email with max',
+				schema: k.email().max(320),
+				expected: {
+					input: { type: 'string', format: 'email', pattern: emailPattern.source, maxLength: 320 },
+					output: { type: 'string', format: 'email', pattern: emailPattern.source, maxLength: 320 },
+				},
+			},
+			{
+				name: 'url',
+				schema: k.url(),
+				expected: {
+					input: { type: 'string', format: 'uri' },
+					output: { type: 'string', format: 'uri' },
+				},
+			},
+			{
+				name: 'url with protocol',
+				schema: k.url({ protocol: /^https$/ }),
+				expected: {
+					input: { type: 'string', format: 'uri' },
+					output: { type: 'string', format: 'uri' },
 				},
 			},
 			{
@@ -467,7 +502,7 @@ describe('toZod', () => {
 		])('JSON Schema parity: $name', ({ schema, expected }) => {
 			for (const io of ['input', 'output'] as const) {
 				if (!(io in expected)) continue
-				it(`preserves beta.6 ${io} JSON Schema`, () => {
+				it(`preserves ${io} JSON Schema`, () => {
 					const converted = convert(schema)
 					const actual = z.toJSONSchema(converted, { io })
 					expect(actual).toEqual({
@@ -475,6 +510,44 @@ describe('toZod', () => {
 						...expected[io],
 					})
 				})
+			}
+		})
+
+		it('keeps email and URL parsing unchanged when carrying format metadata', () => {
+			for (const schema of [k.email(), k.email().max(320), k.string().email()]) {
+				const converted = convert(schema)
+				for (const value of [
+					'a@b.co',
+					"o'neil@example.org",
+					`${'a'.repeat(320)}@example.org`,
+					'.a@b.co',
+					'a..b@c.co',
+					'a@b',
+					'',
+					null,
+				])
+					expect(converted.safeParse(value).success).toBe(schema.safeParse(value).success)
+			}
+			for (const schema of [
+				k.url(),
+				k.url({ protocol: /^https$/ }),
+				k.url({ hostname: /^example\.com$/ }),
+			]) {
+				const converted = convert(schema)
+				for (const value of [
+					'https://example.com',
+					'  https://example.com  ',
+					'http:example.com',
+					'http://localhost:3000',
+					'mailto:a@b.co',
+					'custom:opaque',
+					'https://other.com',
+					'http://',
+					'/relative',
+					'',
+					null,
+				])
+					expect(converted.safeParse(value).success).toBe(schema.safeParse(value).success)
 			}
 		})
 

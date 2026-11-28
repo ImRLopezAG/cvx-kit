@@ -18,7 +18,7 @@ import type {
 import { discriminatorDispatch } from './dispatch'
 import { checkMessage } from './messages'
 import { setOwn } from './names'
-import { KSchema } from './schema'
+import { assertSchema, KSchema } from './schema'
 import type { KSafeParseResult } from './issues'
 import type {
 	KCheckMessage,
@@ -34,15 +34,15 @@ import type {
 
 export class KString extends KSchema<string, VString<string>> {
 	min(length: number, message?: KCheckMessage): this {
-		return this.link('min', length, checkMessage(message, 'min'))
+		return this.link('min', numberBound(length), checkMessage(message, 'min'))
 	}
 
 	max(length: number, message?: KCheckMessage): this {
-		return this.link('max', length, checkMessage(message, 'max'))
+		return this.link('max', numberBound(length), checkMessage(message, 'max'))
 	}
 
 	length(length: number, message?: KCheckMessage): this {
-		return this.link('length', length, checkMessage(message, 'length'))
+		return this.link('length', numberBound(length), checkMessage(message, 'length'))
 	}
 
 	regex(pattern: RegExp, message?: KCheckMessage): this {
@@ -87,11 +87,11 @@ export class KString extends KSchema<string, VString<string>> {
 
 export class KNumber extends KSchema<number, VFloat64<number>> {
 	min(value: number, message?: KCheckMessage): this {
-		return this.link('min', value, checkMessage(message, 'min'))
+		return this.link('min', numberBound(value), checkMessage(message, 'min'))
 	}
 
 	max(value: number, message?: KCheckMessage): this {
-		return this.link('max', value, checkMessage(message, 'max'))
+		return this.link('max', numberBound(value), checkMessage(message, 'max'))
 	}
 
 	int(message?: KCheckMessage): this {
@@ -267,15 +267,15 @@ export class KArray<E extends KType> extends KSchema<
 	}
 
 	min(length: number, message?: KCheckMessage): this {
-		return this.link('min', length, checkMessage(message, 'min'))
+		return this.link('min', numberBound(length), checkMessage(message, 'min'))
 	}
 
 	max(length: number, message?: KCheckMessage): this {
-		return this.link('max', length, checkMessage(message, 'max'))
+		return this.link('max', numberBound(length), checkMessage(message, 'max'))
 	}
 
 	length(length: number, message?: KCheckMessage): this {
-		return this.link('length', length, checkMessage(message, 'length'))
+		return this.link('length', numberBound(length), checkMessage(message, 'length'))
 	}
 }
 
@@ -494,6 +494,7 @@ export function id<T extends string>(table: T): KId<T> {
 }
 
 export function array<E extends KType>(element: E): KArray<E> {
+	assertSchema(element, 'array element')
 	return new KArray<E>(null, 'array', element, undefined)
 }
 
@@ -506,6 +507,7 @@ export function nativeRecord<K extends KRecordKey, V extends KType>(
 }
 
 export function union<const M extends readonly [KType, KType, ...KType[]]>(members: M): KUnion<M> {
+	for (const [index, member] of members.entries()) assertSchema(member, `union member ${index}`)
 	return new KUnion<M>(null, 'union', Object.freeze(members), undefined)
 }
 
@@ -513,6 +515,8 @@ export function discriminatedUnion<
 	Key extends string,
 	const M extends readonly [KDiscriminatedOption<Key>, ...KDiscriminatedOption<Key>[]],
 >(key: Key, options: M): KDiscriminatedUnion<Key, M> {
+	for (const [index, option] of options.entries())
+		assertSchema(option, `discriminatedUnion option ${index}`)
 	return new KDiscriminatedUnion<Key, M>(
 		null,
 		'discriminatedUnion',
@@ -538,7 +542,8 @@ function enumValues<T extends readonly [string, ...string[]]>(values: readonly s
 		if (typeof value !== 'string')
 			throw new TypeError(`k.enum() value at index ${index} must be a string`)
 	}
-	return new KEnum<T>(null, 'enum', Object.freeze(values), undefined)
+	Object.freeze(values)
+	return new KEnum<T>(null, 'enum', Object.freeze([...new Set(values)]), undefined)
 }
 
 function int64Bound(value: bigint): bigint {
@@ -547,4 +552,9 @@ function int64Bound(value: bigint): bigint {
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- BigInt must only receive a safe integer number here.
 	if (typeof value === 'number' && Number.isSafeInteger(value)) return BigInt(value)
 	throw new TypeError('k.int64() bounds must be bigints or safe integer numbers')
+}
+
+function numberBound(value: number): number {
+	if (Number.isNaN(value)) throw new TypeError('k: a bound cannot be NaN')
+	return value
 }

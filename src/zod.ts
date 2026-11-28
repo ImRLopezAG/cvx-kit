@@ -8,6 +8,7 @@
  */
 import type * as classic from 'zod'
 import * as z from 'zod/mini'
+import { copyFill } from './k/fills'
 import { membersOf } from './k/compile'
 import { emailPattern, isUrl, KConversionFailure, maxTimestamp } from './k/formats'
 import { NEVER } from './k/issues'
@@ -270,7 +271,10 @@ function rootSchema(root: KNode, policy: 'strip' | 'strict' | 'loose', z: Factor
 			// SAFETY: k.record stores its key and value schemas as the root argument.
 			const [key, value] = root.arg as readonly KType[]
 			// SAFETY: record keys are k.string() or k.id(), which convert to Zod record keys.
-			return z.record(convert(key, z) as z.ZodMiniString, convert(value, z))
+			return z.record(
+				convert(key, z).check(z.regex(/^[ -#%-^`-~][ -~]{0,1023}$/)) as z.ZodMiniString,
+				convert(value, z),
+			)
 		}
 		case 'union':
 			return z.union(membersOf(root).map((member) => convert(member, z)))
@@ -331,7 +335,13 @@ function applyNormaliser(base: Mini, record: KNode, kind: string, z: Factory): M
 function applyCheck(base: Mini, record: KNode, kind: string, z: Factory): Mini {
 	if (record.op === 'refine') {
 		const options = { message: messageOf(record.message), path: pathOf(record.message) }
-		return base.check(z.refine((value) => settled(callbackOf(record)(value)) === true, options))
+		return base.check(
+			z.refine((value) => {
+				const result = settled(callbackOf(record)(value))
+				if (isThenable(result)) throw new Error('A refinement must be synchronous')
+				return Boolean(result)
+			}, options),
+		)
 	}
 	if (record.op === 'check')
 		return base.check(
@@ -405,7 +415,10 @@ function withDefault(base: Mini, record: KNode, transformed: boolean, z: Factory
 		return z.optional(base)
 	}
 	// SAFETY: the default's type is the chain's input, or its output when a transform sits below it.
-	return transformed ? z._default(base, record.arg as never) : z.prefault(base, record.arg as never)
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a function default is always a factory; value defaults need a fresh deep copy.
+	const fill = typeof record.arg === 'function' ? record.arg : () => copyFill(record.arg)
+	// SAFETY: the fill returns this schema's output type; Zod's generic constructor cannot express the erased record type.
+	return transformed ? z._default(base, fill as never) : z.prefault(base, fill as never)
 }
 
 function messageOf(message: KMessage): string | undefined {

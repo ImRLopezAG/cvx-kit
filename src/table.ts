@@ -24,6 +24,7 @@ import {
 	type KString,
 	type KType,
 } from './k'
+import { copyFill } from './k/fills'
 import { containsTransform } from './k/parse'
 import { setOwn } from './k/names'
 import type { KDiscriminated } from './k/types'
@@ -1139,8 +1140,14 @@ function project(
 				break
 			case 'default':
 				if (value === undefined) {
-					// SAFETY: a default is a Convex value of the field's type.
-					value = current.arg as Value
+					// SAFETY: table defaults have the field's output type; a function argument is always a zero-argument factory.
+					/* oxlint-disable anti-slop/no-runtime-typeof -- distinguish the declared factory from a literal default. */
+					value = (
+						typeof current.arg === 'function'
+							? (current.arg as () => Value)()
+							: copyFill(current.arg)
+					) as Value
+					/* oxlint-enable anti-slop/no-runtime-typeof */
 				}
 				break
 			case 'strip':

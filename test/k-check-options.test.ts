@@ -60,7 +60,7 @@ describe('KValidationError', () => {
 		const before = Error.stackTraceLimit
 		const result = (() => {
 			try {
-				k.string().min(3).parse('a')
+				k.string().min(3)['~parseStrict']('a')
 			} catch (error) {
 				return error
 			}

@@ -82,7 +82,7 @@ export abstract class KSchema<
 		return new KNullable(this, 'nullable', undefined, undefined)
 	}
 
-	default(value: Exclude<Out, undefined>): KDefault<this> {
+	default(value: Exclude<Out, undefined> | (() => Exclude<Out, undefined>)): KDefault<this> {
 		// SAFETY: a default is a Convex value of this schema's output type.
 		return new KDefault(this, 'default', value as KArg, undefined)
 	}
@@ -95,8 +95,10 @@ export abstract class KSchema<
 		check: (value: Out) => value is U,
 		message?: string | KRefineOptions,
 	): KNarrowed<this, U>
-	refine(check: (value: Out) => boolean, message?: string | KRefineOptions): this
-	refine(check: (value: Out) => boolean, message?: string | KRefineOptions): this {
+	// oxlint-disable-next-line anti-slop/no-unknown-returns -- refinements accept any truthy callback result, including user-defined types.
+	refine(check: (value: Out) => unknown, message?: string | KRefineOptions): this
+	// oxlint-disable-next-line anti-slop/no-unknown-returns -- refinements accept any truthy callback result, including user-defined types.
+	refine(check: (value: Out) => unknown, message?: string | KRefineOptions): this {
 		return this.link('refine', check, refineMessage(message))
 	}
 
@@ -121,6 +123,7 @@ export abstract class KSchema<
 
 	/** Parse this schema's output with `target`. Produces a distinct kind, like `transform`. */
 	pipe<P extends KType>(target: P): KPipe<this, P> {
+		assertSchema(target, 'pipe target')
 		return new KPipe(this, 'pipe', target, undefined)
 	}
 
@@ -208,6 +211,11 @@ export abstract class KSchema<
 		// SAFETY: the record below a wrapper record is the schema the wrapper's class names as W.
 		return wrappedBy(this, op) as W
 	}
+}
+
+/** Check only the immediate declaration, without compiling or visiting children. */
+export function assertSchema(value: KNode, location: string): void {
+	if (!(value instanceof KSchema)) throw new TypeError(`k: ${location} must be a k schema`)
 }
 
 /**

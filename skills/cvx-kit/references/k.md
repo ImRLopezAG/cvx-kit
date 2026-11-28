@@ -69,6 +69,8 @@ export type Document = k.infer<typeof documentInput> // status required
 | `k.isoDateTime()`                        | ISO 8601 date-time with seconds and a `Z` or `±HH:MM` offset                                                                           | `v.string()`                                                        |
 | `k.timestamp()`                          | integer milliseconds from 1970-01-01 through the end of 9999 (UTC)                                                                     | `v.number()`                                                        |
 
+String `min`, `max` and `length` count Unicode code points, after normalisation. A `NaN` bound throws at declaration.
+
 Argument-less factories return one shared, immutable root, so `k.string()` allocates nothing.
 
 `k.number()` accepts `NaN` and infinities because native `v.number()` does. `min`, `max` and `length` reject `NaN`, and `.int()` and `k.int()` reject both `NaN` and infinities. Integers require `Number.isSafeInteger`: non-integers report `not_integer`, and integers outside the safe range report `too_small` or `too_big`. `.safe()` is redundant on an integer. Add `.finite()` when an unbounded number must be finite:
@@ -76,6 +78,10 @@ Argument-less factories return one shared, immutable root, so `k.string()` alloc
 ```ts
 const amount = k.number().finite()
 ```
+
+### Ids outside kit boundaries
+
+`k.id('t').parse(value)` accepts any string and types it as `Id<'t'>`. Convex checks the id and its table at the function boundary. For untrusted input outside a kit boundary, including HTTP actions, webhooks, Standard Schema and `toZod`, use `ctx.db.normalizeId('t', value)` and handle `null` before using the id.
 
 ### Records
 
@@ -153,7 +159,7 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.safe()`                                       | number                       | a safe integer; redundant on `k.int()` and after `.int()`                                                                                                                                                                      |
 | `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                       | type-preserving normalisers                                                                                                                                                                                                    |
 | `.overwrite(fn)`                                | all                          | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                                                                                   |
-| `.refine(fn, message?)`                         | all                          | `fn(value)` must return `true`; `message` is a string or `{ message, path }` (`error` is accepted as a string alias of `message`); a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
+| `.refine(fn, message?)`                         | all                          | `fn(value)` must return a truthy value; `message` is a string or `{ message, path }` (`error` is accepted as a string alias of `message`); a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
 | `.check((value, ctx) => …)`                     | all                          | adds any number of issues with `ctx.addIssue({ message, path?, code? })`                                                                                                                                                       |
 | `.transform(fn)`                                | all                          | a type-changing step; `fn(value, context)` may call `context.addIssue(...)`; see [Transforms](#transforms)                                                                                                                     |
 | `.pipe(schema)`                                 | all                          | parse this schema's output with `schema`; a transform kind                                                                                                                                                                     |
@@ -162,7 +168,9 @@ Every method returns a new immutable schema. Reusing a schema in several places 
 | `.strip()`                                      | object                       | explicit stripping, including in the kit's full parse; input JSON Schema omits `additionalProperties: false`                                                                                                                   |
 | `.strict()`                                     | object                       | application parse reports unknown keys as `unrecognized_key`; nested objects keep their own policy                                                                                                                             |
 
-Checks and normalisers run in declaration order after the structure is valid: normalisers first, then checks. Messages are optional; each check has a default message.
+Normalisers run before checks regardless of chain order, after the structure is valid. Within each group they run in declaration order. Messages are optional; each check has a default message.
+
+`refine` accepts any truthy result. A returned promise fails with a synchronous-refinement issue.
 
 A type-guard `refine` narrows the schema and everything built from it: the output, the input (without a transform) and the native validator's type, so an object field, array element, record value, union member, `pick`/`omit`/`extend`/`partial`/`required`, a table document and a function's `args` all see the narrowed type. `.optional()`, `.nullable()` and `.default()` after the guard keep it. The narrowing is type-only; the runtime validator stays `v.string()`:
 
@@ -192,6 +200,8 @@ const range = k.object({ from: k.int(), to: k.int() }).check((value, ctx) => {
 
 In a `k.union`, application parse first looks for a member that accepts every key of the value and only then for one that would strip some, so `k.union([k.object({ a }), k.object({ a, b })])` keeps `b` when it is present. Zod returns the first member that matches and drops `b`.
 
+`~parseStrict` does not look below `k.any()` or `k.custom()`. A contract result holding either is not a redaction boundary.
+
 Kit boundaries still reject unknown keys: function `args` and `returns`, table fields and writes, `kContract`, Effect command inputs, CRUD masks, filters and cursors. The native validator is always a closed `v.object`. Explicit `.strip()` additionally makes the kit's full parse strip (for example inside `.catch` or under `skipConvexValidation`) and omits `additionalProperties: false` from input-side JSON Schema. Plain `k.object` still emits `additionalProperties: false` to describe the boundary.
 
 | Operation                    | Result                                                                                                                    |
@@ -204,6 +214,8 @@ Kit boundaries still reject unknown keys: function `args` and `returns`, table f
 | `.partial('a', …)`           | only the named fields optional; the others keep their behaviour                                                           |
 | `.required('a', …)`          | the named fields (every field when none are named) lose their top `optional()`, the inverse of `partial()`; defaults stay |
 | `.keyof()`                   | a `k.enum` of the field names                                                                                             |
+
+Unknown keys in `pick`, `omit`, `required` and `partial` throw at declaration. A foreign schema or non-schema child in a container also throws at declaration, naming its location.
 
 The derived objects keep the receiver's policy, including `.strict()`, `.strip()` and `.loose()`, as in Zod 4.
 
@@ -260,6 +272,8 @@ const withId = create.extend({ id: k.id('people') })
 ```
 
 ## Defaults
+
+Plain object and array defaults and catch values are copied deeply on each fill. `.default(() => value)` and `.catch(() => value)` call the factory on each fill; a function argument is always a factory. Factory defaults are omitted from JSON Schema without calling the factory.
 
 A default makes the field optional on input and required on output:
 

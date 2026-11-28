@@ -9,7 +9,7 @@ import {
 	type KRecordKey,
 } from './kinds'
 import { isFieldName, setOwn } from './names'
-import { KOptional, KSchema } from './schema'
+import { assertSchema, KOptional, KSchema } from './schema'
 import type {
 	KExtendedFields,
 	KAnyDiffers,
@@ -182,6 +182,7 @@ export type KObjectInput<F extends KFields> = keyof F extends never
 export type KRequiredField<S extends KType> = S extends KOptional<infer I> ? KRequiredField<I> : S
 
 export function object<F extends KFields>(fields: F): KObject<F> {
+	for (const key of Object.keys(fields)) assertSchema(fields[key], `field '${key}'`)
 	return new KObject<F>(null, 'object', fields, undefined)
 }
 
@@ -212,6 +213,8 @@ export function record<K extends KRecordKey, V extends KType>(
 	value: V,
 ): K['_req'] extends KLiteralKeyValidator ? KLiteralRecord<K, V> : KRecord<K, V>
 export function record(key: KRecordKey, value: KType): KType {
+	assertSchema(key, 'record key')
+	assertSchema(value, 'record value')
 	const literals = recordKeyLiterals(key, 'k.record')
 	if (literals === null) return nativeRecord(key, value)
 	const fields: Record<string, KType> = {}
@@ -225,6 +228,8 @@ export function partialRecord<
 	V extends KType,
 >(key: K, value: V): KPartialRecord<K, V>
 export function partialRecord(key: KType, value: KType): KType {
+	assertSchema(key, 'record key')
+	assertSchema(value, 'record value')
 	const literals = recordKeyLiterals(key, 'k.partialRecord')
 	if (literals === null)
 		throw new Error('k.partialRecord() needs a finite set of string literal keys')
@@ -298,8 +303,8 @@ function checkedKeys(keys: readonly string[], factory: string): readonly string[
 	return keys
 }
 
-function maskKeys(
-	node: KNode,
+function maskKeys<F extends KFields>(
+	node: KObject<F>,
 	method: string,
 	args: readonly (string | KDeriveOptions)[],
 ): string[] {
@@ -316,6 +321,9 @@ function maskKeys(
 		throw new TypeError(
 			`k: ${method}() expects the key-list form, e.g. ${method}('a', 'b'), optionally followed by { dropChecks: true }`,
 		)
+	for (const key of keys)
+		if (!Object.hasOwn(fieldsOf(node), String(key)))
+			throw new TypeError(`k: ${method}() has unrecognized key '${key}'`)
 	derivedChecks(node, method, options)
 	// SAFETY: every argument before the trailing options object was checked to be a key.
 	return keys as string[]

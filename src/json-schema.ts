@@ -255,7 +255,8 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 				nullable = true
 				break
 			case 'default':
-				if (!transformed) fallback = jsonOf(defaultOf(record))
+				// oxlint-disable-next-line anti-slop/no-runtime-typeof -- exporting a schema must not execute a default factory.
+				if (!transformed && typeof record.arg !== 'function') fallback = jsonOf(defaultOf(record))
 				break
 			case 'min':
 			case 'max':

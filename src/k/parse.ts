@@ -1,5 +1,6 @@
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- This module is the decoding boundary: it receives undecoded values, narrows them by representation and hands them back as the schema's output, which the typed callers in schema.ts name. */
 import { membersOf } from './compile'
+import { copyFill } from './fills'
 import { isFieldName } from './names'
 import {
 	KConversionFailure,
@@ -69,7 +70,7 @@ export class KPlan {
 export function parseSchema(schema: KNode, input: unknown, keys: boolean = true): unknown {
 	const context = new WalkContext(keys)
 	const output = walk(schema, input, context, true, undefined)
-	if (context.issues.length > 0) throw new KValidationError(context.issues)
+	if (context.issues.length > 0) throw new KValidationError(context.issues, !keys)
 	return output
 }
 
@@ -92,7 +93,7 @@ export function runDeclared(schema: KNode, value: unknown): unknown {
 	if (!planOf(schema).declared) return value
 	const context = new WalkContext(false)
 	const output = walk(schema, value, context, false, undefined)
-	if (context.issues.length > 0) throw new KValidationError(context.issues)
+	if (context.issues.length > 0) throw new KValidationError(context.issues, true)
 	return output
 }
 
@@ -345,10 +346,15 @@ function walk(
 			return walk(node.prev, value, context, full, strip)
 		case 'nullable':
 			return value === null ? null : walk(node.prev, value, context, full, strip)
-		case 'default':
+		case 'default': {
 			if (value !== undefined) return walk(node.prev, value, context, full, strip)
-			if (planOf(node.prev).transform) return node.arg
-			return walk(node.prev, node.arg, context, full, strip)
+			const fill =
+				typeof node.arg === 'function'
+					? callbackResult(callbackOf(node)(undefined), context, 'default')
+					: copyFill(node.arg)
+			if (fill === FAIL || planOf(node.prev).transform) return fill
+			return walk(node.prev, fill, context, full, strip)
+		}
 		// The last policy declared on a chain wins, so an outer record is not overridden by an inner one.
 		case 'strip':
 			return walk(node.prev, value, context, full, strip ?? true)
@@ -373,7 +379,7 @@ function walk(
 			context.issues = issues
 			if (output !== FAIL && caught.length === 0) return output
 			if (context.probing) context.caught = true
-			if (typeof node.arg !== 'function') return node.arg
+			if (typeof node.arg !== 'function') return copyFill(node.arg)
 			return callbackResult(callbackOf(node)({ issues: caught, input: value }), context, 'catch')
 		}
 		default:
@@ -389,6 +395,14 @@ function walkRun(
 	strip: Keys | undefined,
 ): unknown {
 	const plan = planOf(node)
+	const bounds = Array.isArray(value) && plan.base?.op === 'array' && plan.normalisers.length === 0
+	if (bounds) {
+		const before = context.issues.length
+		for (const check of plan.checks)
+			if (check.op === 'min' || check.op === 'max' || check.op === 'length')
+				runCheck(check, value, context)
+		if (context.issues.length > before) return FAIL
+	}
 	// SAFETY: runPlan always records the base below a run.
 	let output = walk(plan.base as KNode, value, context, full, strip)
 	if (output === FAIL) return FAIL
@@ -418,7 +432,7 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 	switch (record.op) {
 		case 'min': {
 			const limit = numberArg(record)
-			if (!(sizeOf(value) >= limit))
+			if (!(sizeOf(value, record) >= limit))
 				context.add(
 					'too_small',
 					messageOf(record, `Too small: expected ${unitOf(value, limit, '>=')}`),
@@ -428,7 +442,7 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 		}
 		case 'max': {
 			const limit = numberArg(record)
-			if (!(sizeOf(value) <= limit))
+			if (!(sizeOf(value, record) <= limit))
 				context.add(
 					'too_big',
 					messageOf(record, `Too big: expected ${unitOf(value, limit, '<=')}`),
@@ -438,7 +452,7 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 		}
 		case 'length': {
 			const limit = numberArg(record)
-			const size = sizeOf(value)
+			const size = sizeOf(value, record)
 			if (size === limit) return
 			if (!(size > limit))
 				context.add(
@@ -483,7 +497,7 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 			return
 		case 'gt': {
 			const limit = numberArg(record)
-			if (!(sizeOf(value) > limit))
+			if (!(sizeOf(value, record) > limit))
 				context.add(
 					'too_small',
 					messageOf(record, `Too small: expected ${unitOf(value, limit, '>')}`),
@@ -493,7 +507,7 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 		}
 		case 'lt': {
 			const limit = numberArg(record)
-			if (!(sizeOf(value) < limit))
+			if (!(sizeOf(value, record) < limit))
 				context.add(
 					'too_big',
 					messageOf(record, `Too big: expected ${unitOf(value, limit, '<')}`),
@@ -509,12 +523,18 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 					undefined,
 				)
 			return
-		case 'refine':
-			if (settled(callbackOf(record)(value)) !== true) {
+		case 'refine': {
+			const result = settled(callbackOf(record)(value))
+			if (isThenable(result)) {
+				context.add('custom', 'A refinement must be synchronous', undefined)
+				return
+			}
+			if (!result) {
 				const options = optionsOf(record)
 				context.add('custom', options?.message ?? 'Invalid input', options?.path)
 			}
 			return
+		}
 		case 'check': {
 			const result = callbackOf(record)(value, new CheckContext(context))
 			if (isThenable(settled(result)))
@@ -1001,8 +1021,18 @@ function isJson(value: unknown): boolean {
 }
 
 /** What a bound compares: a length, a number, or an int64 kept as a bigint so no precision is lost. */
-function sizeOf(value: unknown): number | bigint {
-	if (typeof value === 'string' || Array.isArray(value)) return value.length
+function sizeOf(value: unknown, record: KNode): number | bigint {
+	if (typeof value === 'string') {
+		const limit = Number(record.arg)
+		const low = Math.ceil(value.length / 2)
+		if (record.op === 'min' && low >= limit) return low
+		if (record.op === 'max' && value.length <= limit) return value.length
+		if (value.length < limit || low > limit) return value.length < limit ? value.length : low
+		let count = 0
+		for (const _point of value) count++
+		return count
+	}
+	if (Array.isArray(value)) return value.length
 	return typeof value === 'bigint' ? value : Number(value)
 }
 

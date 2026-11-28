@@ -1,8 +1,8 @@
 import { defineTestApp } from 'convex-test'
 import { defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
 import { expect, test } from 'vite-plus/test'
-import { z } from 'zod'
-import { createModule, tenantTable, zid, zodTable, zodToConvex } from '../src/zod-table'
+import { k } from '../src/k'
+import { createModule, tenantTable, kTable } from '../src/table'
 import { defineRelations } from '../src/relations-public'
 import { createQueryEngine } from '../src/querying'
 import { createCursorCodec } from '../src/querying/cursors'
@@ -13,17 +13,17 @@ import { cursor, managed } from './fixture-querying/scalar'
 function fixture() {
 	const Inventory_Items = tenantTable(
 		'Inventory_Items',
-		() => ({
-			name: z.string(),
-			status: z.string(),
-		}),
+		{
+			name: k.string(),
+			status: k.string(),
+		},
 		{ publicFields: ['name', 'status'] },
 	)
 	Inventory_Items.table.index('by_status', ['status'])
-	const Sales_PaymentJournals = zodTable('Sales_PaymentJournals', () => ({
-		item: zid('Inventory_Items'),
-		amount: z.number(),
-	}))
+	const Sales_PaymentJournals = kTable('Sales_PaymentJournals', {
+		item: k.id('Inventory_Items'),
+		amount: k.number(),
+	})
 	const schema = defineSchema(
 		createModule(
 			{ Inventory_Items: Inventory_Items.table },
@@ -55,7 +55,7 @@ test('schema composition and zid retain uppercase and underscore table names', a
 	expect(Object.keys(f.schema.tables)).toEqual(['Inventory_Items', 'Sales_PaymentJournals'])
 	expect(f.Inventory_Items.tableName).toBe('Inventory_Items')
 	expect(f.Sales_PaymentJournals.tableName).toBe('Sales_PaymentJournals')
-	expect(zodToConvex(zid('Inventory_Items')).tableName).toBe('Inventory_Items')
+	expect(k.id('Inventory_Items').validator.tableName).toBe('Inventory_Items')
 	expect(f.Inventory_Items.insertSchema.shape).not.toHaveProperty('tenant')
 	await f.t.run(async ({ db }) => {
 		const item = await db.insert('Inventory_Items', { name: 'A', status: 'open', tenant: 'one' })

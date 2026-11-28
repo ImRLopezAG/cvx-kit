@@ -1,22 +1,26 @@
 import { defineSchema } from 'convex/server'
-import { z } from 'zod'
-import { zodTable } from '../../src/zod-table'
-import { defineRelations } from '../../src/relations'
+import { k } from '../../src/k'
+import { kTable } from '../../src/table'
+import { defineRelations, withFieldGroups } from '../../src/relations'
 
 export function searchDeclarations() {
-	const docs = zodTable(
+	const docs = kTable(
 		'docs',
-		() => ({
-			text: z.string().refine((value) => !value.includes('broken-dto')),
-			status: z.string(),
-			tenant: z.string(),
-			secret: z.string(),
-		}),
+		{
+			text: k.string().refine((value) => !value.includes('broken-dto')),
+			status: k.string(),
+			tenant: k.string(),
+			secret: k.string(),
+		},
 		{ publicFields: ['text', 'status'] },
 	)
-	const children = zodTable('children', (id) => ({ parent: id('docs'), name: z.string() }), {
-		publicFields: ['name'],
-	})
+	const children = kTable(
+		'children',
+		{ parent: k.id('docs'), name: k.string() },
+		{
+			publicFields: ['name'],
+		},
+	)
 	const table = docs.table
 		.searchIndex('search_text', {
 			searchField: 'text',
@@ -26,8 +30,9 @@ export function searchDeclarations() {
 		.searchIndex('staged', { searchField: 'text', staged: true })
 	const childTable = children.table.index('by_parent', ['parent'])
 	const definitions = {
-		docs: { ...docs, table, fieldGroups: { private: ['secret'] as const } },
-		children: { ...children, table: childTable },
+		// searchIndex and index return the boundary's own memoised table.
+		docs: withFieldGroups(docs, { private: ['secret'] as const }),
+		children,
 	}
 	const relations = defineRelations(definitions, (r) => ({
 		docs: {
@@ -121,16 +126,17 @@ export function searchFixture(budgets?: Partial<ManagedBudgets>) {
 		budgets,
 		fieldGroups: { docs: { private: () => false } },
 	})
-	const args = z.object({
-		text: z.string(),
-		options: z.any().optional(),
-		index: z.string().optional(),
-		fluent: z.string().optional(),
+	const args = k.object({
+		text: k.string(),
+		options: k.any().optional(),
+		index: k.string().optional(),
+		fluent: k.string().optional(),
 	})
 	// SAFETY: the transport deliberately admits invalid index strings to test runtime admission.
 	/* oxlint-disable anti-slop/no-reflect-apply, anti-slop/no-reflect-get -- Deliberately bypass fluent types to test raw JavaScript guards on registered endpoints. */
-	const run = (ctx: Parameters<typeof engine>[0], a: z.output<typeof args>) => {
-		let query = engine(ctx).docs
+	type DocsQuery = ReturnType<typeof engine>['docs']
+	const run = (ctx: Parameters<typeof engine>[0], a: k.infer<typeof args>) => {
+		let query: DocsQuery = engine(ctx).docs
 		if (a.fluent === 'when-before')
 			query = Reflect.apply(Reflect.get(query, 'when'), undefined, [1, 'by_creation_time'])
 		if (a.fluent?.startsWith('inactive-before-'))
@@ -140,8 +146,9 @@ export function searchFixture(budgets?: Partial<ManagedBudgets>) {
 			])
 		if (a.fluent === 'order-before')
 			query = Reflect.apply(Reflect.get(query, 'orderBy'), undefined, ['by_creation_time'])
+		const untyped: object = query
 		if (a.fluent === 'relation-search')
-			query = Reflect.apply(Reflect.get(query, 'relation'), undefined, [
+			query = Reflect.apply(Reflect.get(untyped, 'relation'), undefined, [
 				'synthetic-parent',
 				'children',
 			])
@@ -172,11 +179,13 @@ export function searchFixture(budgets?: Partial<ManagedBudgets>) {
 			}
 		},
 	})
-	const effectPage = effect.authQuery({
+	const effectDefinition = {
 		args,
 		returns: f.relations.tables.docs.pageDto({}),
-		handler: (ctx, a) => Effect.tryPromise({ try: () => run(ctx, a), catch: (error) => error }),
-	})
+		handler: (ctx: Parameters<typeof engine>[0], a: k.infer<typeof args>) =>
+			Effect.tryPromise({ try: () => run(ctx, a), catch: (error) => error }),
+	}
+	const effectPage = effect.authQuery(effectDefinition)
 	const equivalentPage = auth.authQuery({
 		args,
 		returns: f.relations.tables.docs.pageDto({}),
@@ -200,10 +209,10 @@ export function searchFixture(budgets?: Partial<ManagedBudgets>) {
 		},
 	})
 	const resume = auth.authQuery({
-		args: z.object({
-			parent: z.string(),
-			cursor: z.string(),
-			numItems: z.number(),
+		args: k.object({
+			parent: k.string(),
+			cursor: k.string(),
+			numItems: k.number(),
 		}),
 		returns: f.relations.tables.children.pageDto({}),
 		// SAFETY: test seeds supply native docs IDs; relation admission still validates the parent.

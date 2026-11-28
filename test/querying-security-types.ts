@@ -1,3 +1,4 @@
+import type { k } from '../src/k'
 import type {
 	GenericDataModel,
 	GenericQueryCtx,
@@ -10,7 +11,6 @@ import type { SecurityConfig, SecurityPolicyContext } from '../src/auth'
 import { groupDeclarations } from './fixture-querying/field-groups'
 import { createQueryEngine } from '../src/querying'
 import { cursor } from './fixture-querying/scalar'
-import type { z } from 'zod'
 
 const legacy: Rules<unknown, GenericDataModel> = { tasks: { read: async () => true } }
 const config: SecurityConfig<GenericDataModel, 'owner'> = { rules: () => legacy }
@@ -39,8 +39,8 @@ const optionalDto = groups.relations.tables.clients.pageDto(
 	{ fieldGroups: { finance: 'if-permitted' } },
 )
 export function groupDtoTypes(
-	required: z.output<typeof requiredDto>,
-	optional: z.output<typeof optionalDto>,
+	required: k.output<typeof requiredDto>,
+	optional: k.output<typeof optionalDto>,
 ) {
 	const amount: bigint = required.page[0].balance
 	const maybe: bigint | undefined = optional.page[0].balance

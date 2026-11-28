@@ -6,6 +6,7 @@ import {
 } from '@convex-dev/workflow'
 import { ConvexError, v } from 'convex/values'
 import { transactionalIdempotency } from 'cvx-kit/idempotency'
+import { k } from 'cvx-kit/k'
 import {
 	workflowExecution,
 	workflowBinding,
@@ -19,7 +20,6 @@ import {
 	type WorkflowOutcome,
 	type WorkflowNativeStatus,
 } from 'cvx-kit/workflow'
-import { z } from 'zod'
 import { components, internal } from './_generated/api'
 import {
 	internalMutation,
@@ -39,23 +39,21 @@ const manager = new WorkflowManager(components.workflow, {
 		defaultRetryBehavior: { maxAttempts: 3, initialBackoffMs: 10, base: 1 },
 	},
 })
-const inputSchema = z.object({ title: z.string() }).strict()
-const valueSchema = z.object({ title: z.string() }).strict()
-const failureSchema = z.object({ code: z.literal('DENIED'), key: z.string() }).strict()
-const outcomeSchema = z.discriminatedUnion('kind', [
-	z.object({ version: z.literal(1), kind: z.literal('succeeded'), value: valueSchema }).strict(),
-	z.object({ version: z.literal(1), kind: z.literal('failed'), error: failureSchema }).strict(),
+const inputSchema = k.object({ title: k.string() })
+const valueSchema = k.object({ title: k.string() })
+const failureSchema = k.object({ code: k.literal('DENIED'), key: k.string() })
+const outcomeSchema = k.discriminatedUnion('kind', [
+	k.object({ version: k.literal(1), kind: k.literal('succeeded'), value: valueSchema }),
+	k.object({ version: k.literal(1), kind: k.literal('failed'), error: failureSchema }),
 ])
-const hostStateSchema = z
-	.object({
-		generation: z.number().int().nonnegative(),
-		status: z.enum(['running', 'succeeded', 'failed', 'canceled']),
-		nativeStatus: z.enum(['running', 'succeeded', 'failed', 'canceled']),
-		outcome: outcomeSchema.optional(),
-	})
-	.strict()
-type Input = z.infer<typeof inputSchema>
-type Outcome = z.infer<typeof outcomeSchema>
+const hostStateSchema = k.object({
+	generation: k.int().min(0),
+	status: k.enum(['running', 'succeeded', 'failed', 'canceled']),
+	nativeStatus: k.enum(['running', 'succeeded', 'failed', 'canceled']),
+	outcome: outcomeSchema.optional(),
+})
+type Input = k.infer<typeof inputSchema>
+type Outcome = k.infer<typeof outcomeSchema>
 const executionValidator = v.object({
 	version: v.literal(1),
 	operation: v.string(),
@@ -385,7 +383,7 @@ async function statusBindings(ctx: MutationCtx, key: string) {
 		},
 		nativeStatus: async () => nativeStatus(await manager.status(ctx, workflowId)),
 		receiptOutcome: async (): Promise<
-			WorkflowOutcome<z.infer<typeof valueSchema>, z.infer<typeof failureSchema>> | undefined
+			WorkflowOutcome<k.infer<typeof valueSchema>, k.infer<typeof failureSchema>> | undefined
 		> => {
 			const native = await manager.status(ctx, workflowId)
 			if (native.type === 'completed') return outcomeSchema.parse(native.result)

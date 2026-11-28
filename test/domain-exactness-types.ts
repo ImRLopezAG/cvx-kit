@@ -1,11 +1,11 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation } from '../src/effect'
 import { defineDomainContract } from '../src/contracts'
 const contract = defineDomainContract({
 	queries: {
-		first: { input: z.string(), result: z.string() },
-		second: { input: z.string(), result: z.string() },
+		first: { input: k.string(), result: k.string() },
+		second: { input: k.string(), result: k.string() },
 	},
 })
 const options = {
@@ -49,7 +49,7 @@ createFoundation(options).Query({
 	operations: () => ({}),
 })
 const commands = defineDomainContract({
-	commands: { save: { input: z.string(), result: z.string(), classification: 'business' } },
+	commands: { save: { input: k.string(), result: k.string(), classification: 'business' } },
 })
 const maybeAudit = Math.random() > 0.5 ? () => null : undefined
 createEffectFoundation(options).Command({

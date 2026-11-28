@@ -1,5 +1,5 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { bindEffectCommand } from '../src/modules/effect/command'
 import { Observability } from '../src/components/foundation/modules/observability/observability'
 
@@ -55,15 +55,15 @@ const commands = create({
 		}),
 	operations: ({ command }) => ({
 		plain: command({
-			input: z.string(),
-			result: z.number().transform(String),
+			input: k.string(),
+			result: k.number().transform(String),
 			classification: 'business',
 			audit: () => null,
 			handler: (input) => input.length,
 		}),
 		typed: command({
-			input: z.number(),
-			result: z.number(),
+			input: k.number(),
+			result: k.number(),
 			classification: 'business',
 			audit: () => null,
 			prepare: () => ({
@@ -110,8 +110,8 @@ create({
 	context: (host: string) => host,
 	operations: ({ command }) => ({
 		invalid: command({
-			input: z.number(),
-			result: z.number(),
+			input: k.number(),
+			result: k.number(),
 			classification: 'business',
 			audit: () => null,
 			handler: (input) => input,

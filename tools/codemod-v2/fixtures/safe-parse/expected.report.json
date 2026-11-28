@@ -1,0 +1,7 @@
+{
+	"status": "kept",
+	"skipped": [
+		{ "line": 3, "code": "mixed-reference" },
+		{ "line": 7, "code": "zod-introspection" }
+	]
+}

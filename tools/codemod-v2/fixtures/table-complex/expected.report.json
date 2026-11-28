@@ -1,0 +1,17 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 4,
+			"code": "zod-type"
+		},
+		{
+			"line": 11,
+			"code": "table-callback-complex"
+		}
+	],
+	"declarations": {
+		"rewritten": 2,
+		"left": 1
+	}
+}

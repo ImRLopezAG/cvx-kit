@@ -14,14 +14,13 @@ test('one pure declaration supplies bounded scalar filters', () => {
 	expect(contract.schema.safeParse({ status: 'other' }).success).toBe(false)
 })
 
-import { z } from 'zod'
-import { zodTable, zodToConvex } from '../src/zod-table'
+import { k } from '../src/k'
+import { kTable } from '../src/table'
 import { defineRelations } from '../src/relations-public'
 import { defineSchema, queryGeneric, makeFunctionReference } from 'convex/server'
 import { convexTest } from 'convex-test'
 import { NoOp } from 'convex-helpers/server/customFunctions'
-import { zCustomQuery } from '../src/zod-registration'
-import { captureDto, materializeDto } from '../src/querying/schema-snapshot'
+import { kCustomQuery } from '../src/registration'
 
 const contract = defineFilterContract({
 	status: v.union(v.literal('open'), v.literal('done')),
@@ -32,8 +31,8 @@ const contract = defineFilterContract({
 	nullable: v.union(v.string(), v.null()),
 	reference: v.id('targets'),
 })
-const records = zodTable('records', () => contract.fields)
-const targets = zodTable('targets', () => ({ value: z.boolean() }))
+const records = kTable('records', contract.fields)
+const targets = kTable('targets', { value: k.boolean() })
 const registry = defineRelations({ records }, () => ({}))
 const options = registry.tables.records.filters(contract)
 
@@ -52,8 +51,9 @@ test('binding uses exact shared schema and verifies native optional/type/table c
 	expect(() => defineFilterContract({ variant: v.object({ tag: v.string() }) })).toThrow(
 		'Unsupported',
 	)
-	const restored = materializeDto(captureDto(options))
-	const native = JSON.stringify(zodToConvex(restored))
+	// v1 restored the binding from a captured recipe; a k binding is used directly.
+	const restored = options
+	const native = JSON.stringify(restored.validator)
 	expect(native).toContain('targets')
 	expect(
 		restored.parse({ numItems: 1, cursor: null, filters: { count: { in: [1n] } } }),
@@ -79,10 +79,10 @@ test('descriptors preserve scalar metadata and do not invent date semantics', ()
 })
 
 test('registered endpoint and browser contract accept the same bounded grammar and raw invalid inputs reject', async () => {
-	const endpoint = zCustomQuery(
+	const endpoint = kCustomQuery(
 		queryGeneric,
 		NoOp,
-	)({ args: options, returns: z.any(), handler: (_ctx, args) => args.filters ?? {} })
+	)({ args: options, returns: k.any(), handler: (_ctx, args) => args.filters ?? {} })
 	const t = convexTest(defineSchema({ records: records.table, targets: targets.table }), {
 		'./functions.ts': async () => ({ endpoint }),
 		'./_generated/server.ts': async () => ({ query: queryGeneric }),
@@ -207,41 +207,31 @@ test('native declaration mutation cannot change an already created contract', ()
 	})
 })
 
-test('cloned shared schemas and captured bindings retain bounded constructor preflight', () => {
+// k has no clone or meta; a derived record (describe) stands in for v1's Zod clones.
+test('derived shared schemas and bindings retain bounded preflight', () => {
 	const cyclic: any = {}
 	cyclic.not = cyclic
-	expect(contract.schema.clone().safeParse(cyclic).success).toBe(false)
-	expect(
-		materializeDto(captureDto(options)).safeParse({ numItems: 1, cursor: null, filters: cyclic })
-			.success,
-	).toBe(false)
+	expect(contract.schema.describe('derived').safeParse(cyclic).success).toBe(false)
+	expect(options.safeParse({ numItems: 1, cursor: null, filters: cyclic }).success).toBe(false)
 	const getter = Object.defineProperty({}, 'title', {
 		enumerable: true,
 		get() {
 			throw new Error('must not execute')
 		},
 	})
-	expect(contract.schema.clone().safeParse(getter).success).toBe(false)
+	expect(contract.schema.describe('derived').safeParse(getter).success).toBe(false)
 })
 
 test('derived shared ID schemas retain native endpoint and snapshot validators', async () => {
 	const idContract = defineFilterContract({ reference: v.id('targets') })
 	const base = idContract.fields.reference
-	const derived = [
-		base.clone(),
-		base.describe('Reference'),
-		base.meta({ title: 'Reference' }),
-		base.refine(() => true),
-	]
+	const derived = [base, base.describe('Reference'), base.refine(() => true)]
 	for (const field of derived) {
-		for (const args of [
-			z.object({ reference: field }),
-			materializeDto(captureDto(z.object({ reference: field }))),
-		]) {
-			const endpoint = zCustomQuery(
+		for (const args of [k.object({ reference: field })]) {
+			const endpoint = kCustomQuery(
 				queryGeneric,
 				NoOp,
-			)({ args, returns: z.any(), handler: (_ctx, value) => value.reference })
+			)({ args, returns: k.any(), handler: (_ctx, value) => value.reference })
 			// SAFETY: registered Convex functions expose their actual native argument validator.
 			const raw = endpoint as typeof endpoint & { exportArgs(): string }
 			expect(raw.exportArgs()).toContain('"tableName":"targets"')

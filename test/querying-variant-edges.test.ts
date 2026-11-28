@@ -76,7 +76,7 @@ test('variant filter depth boundary and cloned grammar agree with runtime prefli
 		not: { not: { not: { variant: { tag: 'creditor', filters: { amount: 7 } } } } },
 	} as const
 	const beyond = { not: boundary }
-	for (const schema of [input, input.clone()]) {
+	for (const schema of [input, input.describe('derived')]) {
 		expect(schema.safeParse({ numItems: 1, cursor: null, filters: boundary }).success).toBe(true)
 		expect(schema.safeParse({ numItems: 1, cursor: null, filters: beyond }).success).toBe(false)
 	}
@@ -119,7 +119,7 @@ test.each(['tag', 'filters'] as const)(
 				return key === 'tag' ? 'creditor' : { amount: 7 }
 			},
 		})
-		for (const schema of [input, input.clone()])
+		for (const schema of [input, input.describe('derived')])
 			expect(schema.safeParse({ numItems: 1, cursor: null, filters: { variant } }).success).toBe(
 				false,
 			)

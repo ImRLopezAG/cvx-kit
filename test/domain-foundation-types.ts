@@ -1,15 +1,15 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 const domain = defineDomainContract({
 	commands: {
 		save: {
-			input: z.string().transform(Number),
-			result: z.number().transform((n) => ({ n })),
+			input: k.string().transform(Number),
+			result: k.number().transform((n) => ({ n })),
 			classification: 'business',
 		},
 	},
-	queries: { get: { input: z.string(), result: z.number() } },
+	queries: { get: { input: k.string(), result: k.number() } },
 })
 const { Command, Query } = createFoundation({
 	observability: {
@@ -77,7 +77,7 @@ Query({
 	operations: ({ query }) => ({
 		get: query.get({
 			// @ts-expect-error protected schema
-			input: z.string(),
+			input: k.string(),
 			// @ts-expect-error schemas cannot be replaced in a contracted helper
 			handler: () => 2,
 		}),
@@ -88,8 +88,8 @@ const inline = Command({
 	audit: () => null,
 	operations: ({ command }) => ({
 		save: command({
-			input: z.string().transform(Number),
-			result: z.number(),
+			input: k.string().transform(Number),
+			result: k.number(),
 			classification: 'business',
 			handler: (input, context) => {
 				void context.actor

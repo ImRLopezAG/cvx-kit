@@ -9,7 +9,7 @@ import {
 } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { combineErrorContracts, defineErrorContract } from '../src/modules/contracts/errors'
 import { defineDomainContract } from '../src/modules/contracts/domain'
 import { effectApiBuilder } from '../src/modules/effect/api'
@@ -57,8 +57,8 @@ function setup(options: { writer?: 'ok' | 'missing' | 'throws' } = {}) {
 		},
 		operations: ({ action }) => ({
 			'settlement.post': action({
-				input: z.object({ title: z.string() }).strict(),
-				result: z.string(),
+				input: k.object({ title: k.string() }),
+				result: k.string(),
 				guard: (_ctx, input) => {
 					events.push('guard')
 					if (input.title === 'denied') throw Error('denied')
@@ -82,8 +82,8 @@ function setup(options: { writer?: 'ok' | 'missing' | 'throws' } = {}) {
 				}),
 			}),
 			'settlement.peek': action({
-				input: z.string(),
-				result: z.string(),
+				input: k.string(),
+				result: k.string(),
 				classification: 'read',
 				handler: (input) => input,
 			}),
@@ -179,8 +179,8 @@ describe('Effect Action registry', () => {
 				context: () => ({}),
 				operations: ({ action }) => ({
 					'settlement.ping': action({
-						input: z.string(),
-						result: z.string(),
+						input: k.string(),
+						result: k.string(),
 						handler: (input) => input,
 						audit: () => ({
 							operation: 'settlement.ping',
@@ -263,8 +263,8 @@ describe('Effect Action registry', () => {
 			context: (host: Host) => ({ inner: h.actions.withContext(host) }),
 			operations: ({ action }) => ({
 				'batch.run': action({
-					input: z.string(),
-					result: z.string(),
+					input: k.string(),
+					result: k.string(),
 					handler: (title, ctx) =>
 						ctx.inner
 							.exec('settlement.post', { title })
@@ -298,8 +298,8 @@ describe('Effect Action registry', () => {
 			context: (host: Host) => ({ inner: h.actions.withContext(host) }),
 			operations: ({ action }) => ({
 				'batch.forward': action({
-					input: z.string(),
-					result: z.string(),
+					input: k.string(),
+					result: k.string(),
 					handler: (title, ctx) => ctx.inner.exec('settlement.post', { title }),
 				}),
 			}),
@@ -328,8 +328,8 @@ describe('contracted Action registries', () => {
 	const settlement = defineDomainContract({
 		errors: settlementErrors,
 		actions: {
-			'settlement.post': { input: z.string(), result: z.string(), classification: 'provider' },
-			'settlement.check': { input: z.string(), result: z.boolean() },
+			'settlement.post': { input: k.string(), result: k.string(), classification: 'provider' },
+			'settlement.check': { input: k.string(), result: k.boolean() },
 		},
 	})
 
@@ -389,7 +389,7 @@ describe('contracted Action registries', () => {
 			actions: {
 				get 'lazy.ping'() {
 					reads++
-					return { input: z.string(), result: z.string() }
+					return { input: k.string(), result: k.string() }
 				},
 			},
 		})
@@ -409,7 +409,7 @@ describe('contracted Action registries', () => {
 		const actions = foundation.Action({
 			// SAFETY: deliberately bypass the declaration check to reach the runtime binding guard.
 			contract: {
-				actions: { bad: { input: z.string(), result: z.string(), handler: () => 'x' } },
+				actions: { bad: { input: k.string(), result: k.string(), handler: () => 'x' } },
 			} as never,
 			context: (host: Host) => host,
 			operations: (({ action }: { action: { handler: Function } }) => ({

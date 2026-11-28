@@ -3,6 +3,7 @@ import { v } from 'convex/values'
 import type { GenericDatabaseWriter } from 'convex/server'
 import { createAuthFunctions } from 'cvx-kit/auth'
 import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
+import { k } from 'cvx-kit/k'
 import {
 	bindOperationExecutor,
 	createOperationTools,
@@ -17,7 +18,6 @@ import {
 	type WorkflowExecution,
 } from 'cvx-kit/workflow'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import { api, internal, components } from './_generated/api'
 import {
 	action,
@@ -31,13 +31,13 @@ import {
 } from './_generated/server'
 import type { DataModel, Id } from './_generated/dataModel'
 
-const rawInput = z.object({ id: z.string(), title: z.string() }).strict()
+const rawInput = k.object({ id: k.string(), title: k.string() })
 // Non-idempotent marker makes accidental double decoding visible in stored state.
 const decodedInput = rawInput.extend({
-	title: z.string().transform(async (title) => `${title.trim().toLowerCase()}!`),
+	title: k.string().transform((title) => `${title.trim().toLowerCase()}!`),
 })
-const result = z.object({ title: z.string() }).strict()
-type Value = z.infer<typeof result>
+const result = k.object({ title: k.string() })
+type Value = k.infer<typeof result>
 type Authority = { actor: string; tenant: string; scope: string }
 export type Host = Authority & { db: GenericDatabaseWriter<DataModel> }
 interface Repository {
@@ -108,9 +108,7 @@ const auth = createAuthFunctions<DataModel, 'owner' | 'viewer'>({
 	mapRole: (role) => (role === 'owner' || role === 'viewer' ? role : null),
 	adminRoles: ['owner'],
 })
-const authoritySchema = z
-	.object({ actor: z.string(), tenant: z.string(), scope: z.string() })
-	.strict()
+const authoritySchema = k.object({ actor: k.string(), tenant: k.string(), scope: k.string() })
 const executionValidator = v.object({
 	version: v.literal(1),
 	operation: v.string(),
@@ -186,7 +184,7 @@ export const applyRename = boundary({
 async function issue(
 	ctx: MutationCtx,
 	authority: { actor: { userId: string }; tenant: string; role: string | null },
-	input: z.infer<typeof rawInput>,
+	input: k.infer<typeof rawInput>,
 ): Promise<WorkflowExecution<Input>> {
 	if (authority.role !== 'owner') throw new Error('INTEGRATED_RENAME_DENIED')
 	const scope = JSON.stringify(['integrated-rename', authority.tenant, authority.actor.userId])
@@ -287,7 +285,7 @@ export const native = manager.define({
 })
 export const start = auth.authMutation({
 	args: rawInput.shape,
-	returns: z.string(),
+	returns: k.string(),
 	handler: async (ctx, input): Promise<string> => {
 		const execution = await issue(ctx, ctx, input)
 		const row = await ctx.db.insert('workflowRuns', {

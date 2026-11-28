@@ -12,17 +12,17 @@ import {
 	type ApiFromModules,
 } from 'convex/server'
 import { customMutation, NoOp } from 'convex-helpers/server/customFunctions'
-import { zCustomMutation, zCustomQuery } from 'convex-helpers/server/zod4'
 import { Effect } from 'effect'
 import { describe, expect, it, vi } from 'vite-plus/test'
-import { z } from 'zod'
-import { zodTable } from '../src/zod-table'
-import { createEffectFoundation, effectZodApiBuilder } from '../src/effect'
+import { createEffectFoundation, effectApiBuilder } from '../src/effect'
 import { defineDomainContract } from '../src/contracts'
+import { k } from '../src/k'
+import { kCustomMutation, kCustomQuery } from '../src/registration'
+import { kTable } from '../src/table'
 import { createTriggers, timestamps, noDelete, triggerContext } from '../src/triggers'
 
-const intents = zodTable('intents', () => ({ key: z.string(), count: z.number() }))
-const history = zodTable('history', (id) => ({ intentId: id('intents') }))
+const intents = kTable('intents', { key: k.string(), count: k.number() })
+const history = kTable('history', { intentId: k.id('intents') })
 const schema = defineSchema({ intents: intents.table, history: history.table })
 type DataModel = DataModelFromSchemaDefinition<typeof schema>
 type MutationCtx = GenericMutationCtx<DataModel>
@@ -36,8 +36,8 @@ noDelete(triggers, 'intents')
 triggers.register('intents', async (ctx, change) => {
 	if (change.operation === 'insert') await ctx.db.insert('history', { intentId: change.id })
 })
-const wrapped = effectZodApiBuilder(zCustomMutation(mutation, triggerContext(triggers)), {})
-const wrappedQuery = effectZodApiBuilder(zCustomQuery(query, NoOp), {})
+const wrapped = effectApiBuilder(kCustomMutation(mutation, triggerContext(triggers)), {})
+const wrappedQuery = effectApiBuilder(kCustomQuery(query, NoOp), {})
 const { Command, Query } = createEffectFoundation({
 	observability: {
 		enabled: false,
@@ -50,7 +50,7 @@ const contract = defineDomainContract({
 		create: { input: intents.insertSchema, result: intents.schema, classification: 'business' },
 	},
 	queries: {
-		read: { input: z.object({ id: intents.schema.shape._id }), result: intents.schema.nullable() },
+		read: { input: k.object({ id: intents.schema.shape._id }), result: intents.schema.nullable() },
 	},
 })
 const commands = Command({
@@ -82,11 +82,11 @@ const read = wrappedQuery({
 	returns: intents.schema.nullable(),
 	handler: (ctx, input) => queries.exec('read', input, ctx),
 })
-const update = effectZodApiBuilder(
-	zCustomMutation(internalMutation, triggerContext(triggers)),
+const update = effectApiBuilder(
+	kCustomMutation(internalMutation, triggerContext(triggers)),
 	{},
 )({
-	args: { id: intents.schema.shape._id, count: z.number() },
+	args: { id: intents.schema.shape._id, count: k.number() },
 	returns: intents.schema,
 	handler: async (ctx, { id, count }) => {
 		await ctx.db.patch(id, { count })
@@ -106,7 +106,7 @@ const remove = customMutation(
 })
 const evidence = wrappedQuery({
 	args: {},
-	returns: z.array(history.schema),
+	returns: k.array(history.schema),
 	handler: (ctx) => ctx.db.query('history').take(10),
 })
 const functions = { create, read, update, remove, evidence }
@@ -154,7 +154,7 @@ describe('cvx-kit in a registered component', () => {
 	it('allows old rows without lifecycle timestamps but rejects contracts requiring them', async () => {
 		const legacy = { _id: 'legacy', _creationTime: 1, key: 'old', count: 1 }
 		expect(intents.schema.safeParse(legacy).success).toBe(true)
-		const required = intents.schema.required({ createdAt: true, updatedAt: true })
+		const required = intents.schema.extend({ createdAt: k.number(), updatedAt: k.number() })
 		expect(required.safeParse(legacy).success).toBe(false)
 	})
 	it('explicitly strips injected timestamps from a projected result contract', () => {
@@ -166,7 +166,7 @@ describe('cvx-kit in a registered component', () => {
 			createdAt: 1000,
 			updatedAt: 1000,
 		}
-		const projection = intents.schema.omit({ createdAt: true, updatedAt: true, archivedAt: true })
+		const projection = intents.schema.omit('createdAt', 'updatedAt', 'archivedAt')
 		expect(projection.safeParse(row).success).toBe(false)
 		expect(projection.strip().parse(row)).toEqual({
 			_id: 'intent',

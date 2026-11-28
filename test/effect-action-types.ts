@@ -1,5 +1,5 @@
 import type { Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { createEffectFoundation, type ContractValidationError } from '../src/effect'
 import { defineDomainContract } from '../src/modules/contracts/domain'
 
@@ -12,7 +12,7 @@ const actions = foundation.Action({
 	context: (host: { runMutation: true }) => host,
 	operations: ({ action }) => ({
 		// Classification and audit are optional for actions.
-		ping: action({ input: z.string(), result: z.number(), handler: (input) => input.length }),
+		ping: action({ input: k.string(), result: k.number(), handler: (input) => input.length }),
 	}),
 })
 const ran: Effect.Effect<number, ContractValidationError, never> = actions.exec('ping', 'x', {
@@ -27,8 +27,8 @@ foundation.Action({
 	context: (host: { runMutation: true }) => host,
 	operations: ({ action }) => ({
 		replay: action({
-			input: z.string(),
-			result: z.string(),
+			input: k.string(),
+			result: k.string(),
 			handler: (input) => input,
 			// @ts-expect-error Actions have no transaction to replay.
 			prepare: () => ({ kind: 'execute' as const }),
@@ -39,8 +39,8 @@ foundation.Action({
 	context: (host: { runMutation: true }) => host,
 	operations: ({ action }) => ({
 		guarded: action({
-			input: z.string(),
-			result: z.string(),
+			input: k.string(),
+			result: k.string(),
 			handler: (input) => input,
 			// @ts-expect-error Guards authorize actions; there is no permission host.
 			permission: 'settle',
@@ -51,14 +51,14 @@ foundation.Action({
 	// @ts-expect-error The action context host must satisfy the action audit writer's host.
 	context: (host: { db: true }) => host,
 	operations: ({ action }) => ({
-		ping: action({ input: z.string(), result: z.string(), handler: (input) => input }),
+		ping: action({ input: k.string(), result: k.string(), handler: (input) => input }),
 	}),
 })
 
 const contract = defineDomainContract({
 	actions: {
-		'provider.send': { input: z.string(), result: z.boolean() },
-		'provider.poll': { input: z.string(), result: z.string() },
+		'provider.send': { input: k.string(), result: k.boolean() },
+		'provider.poll': { input: k.string(), result: k.string() },
 	},
 })
 const contracted = foundation.Action({
@@ -84,6 +84,6 @@ foundation.Action({
 defineDomainContract({
 	actions: {
 		// @ts-expect-error Contracts declare schemas only; implementations live in registries.
-		'provider.send': { input: z.string(), result: z.boolean(), handler: () => true },
+		'provider.send': { input: k.string(), result: k.boolean(), handler: () => true },
 	},
 })

@@ -1,14 +1,14 @@
 import { defineSchema } from 'convex/server'
-import { z } from 'zod'
-import { createModule, tenantTable, zodTable } from '../../src/zod-table'
+import { k } from '../../src/k'
+import { createModule, kTable, tenantTable } from '../../src/table'
 import { webhookEventsTable } from '../../src/webhooks'
 
 export const projects = tenantTable(
 	'projects',
-	() => ({
-		name: z.string(),
-		ownerId: z.string(),
-	}),
+	{
+		name: k.string(),
+		ownerId: k.string(),
+	},
 	{
 		commandFields: ['name'],
 		publicFields: ['name'],
@@ -16,17 +16,17 @@ export const projects = tenantTable(
 )
 
 // Deliberately NOT in the tenancy registry: default-deny must hide it.
-export const globals = zodTable('globals', () => ({
-	note: z.string(),
-}))
+export const globals = kTable('globals', {
+	note: k.string(),
+})
 
 // Audit sink for the CRUD factory tests (writable via an explicit RLS rule).
-export const audits = zodTable('audits', () => ({
-	operation: z.string(),
-	actorId: z.string(),
-	aggregateType: z.string(),
-	aggregateId: z.string(),
-}))
+export const audits = kTable('audits', {
+	operation: k.string(),
+	actorId: k.string(),
+	aggregateType: k.string(),
+	aggregateId: k.string(),
+})
 
 const projectTables = {
 	projects: projects.table.index('by_tenant', ['tenant']),

@@ -3,7 +3,7 @@ import type { Scope } from 'effect'
 import { ConvexError, type Value } from 'convex/values'
 import type { ErrorContract, ErrorDefinitions } from '../contracts/errors'
 import { memoize } from '../contracts/lazy'
-import { projectErrorCause } from './errors'
+import { getArgumentRejection, projectErrorCause } from './errors'
 import { normalizeEffect } from './normalize'
 import type { CallbackRequirements, EffectValue } from './operation'
 
@@ -98,11 +98,13 @@ export function wrapEffectBuilder(
 				Effect.scoped(program) as Effect.Effect<unknown, unknown>,
 			)
 			if (Exit.isSuccess(exit)) return exit.value
+			const reason = exit.cause.reasons.length === 1 ? exit.cause.reasons[0] : undefined
+			if (reason && Cause.isDieReason(reason) && getArgumentRejection(exit.cause))
+				throw reason.defect
 			if (options.errors) {
 				// SAFETY: declared projection copies validated JSON-safe fields; all other Causes have a fixed safe envelope.
 				throw new ConvexError(projectErrorCause(options.errors, exit.cause) as Value)
 			}
-			const reason = exit.cause.reasons.length === 1 ? exit.cause.reasons[0] : undefined
 			if (reason && Cause.isFailReason(reason)) {
 				throw options.mapError ? options.mapError(reason.error) : reason.error
 			}

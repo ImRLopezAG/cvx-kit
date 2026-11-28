@@ -16,7 +16,7 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import type { AuthFunctionsConfig, AuthBundle } from '../src/auth'
 import { createEffectAuthFunctions, createEffectFoundation } from '../src/effect'
 import { createTriggers } from '../src/triggers'
@@ -28,9 +28,9 @@ const schema = defineSchema({
 type Model = DataModelFromSchemaDefinition<typeof schema>
 type Role = 'owner' | 'viewer'
 type Host = GenericMutationCtx<Model> & AuthBundle<Role>
-const input = z.object({ targetTenant: z.string().optional(), fail: z.boolean().optional() })
-const saveRef = makeFunctionReference<'mutation', z.input<typeof input>, null>('functions:save')
-const actionRef = makeFunctionReference<'action', z.input<typeof input>, null>(
+const input = k.object({ targetTenant: k.string().optional(), fail: k.boolean().optional() })
+const saveRef = makeFunctionReference<'mutation', k.input<typeof input>, null>('functions:save')
+const actionRef = makeFunctionReference<'action', k.input<typeof input>, null>(
 	'functions:actionSave',
 )
 const owner = { subject: 'alice', org_id: 'org-a', role: 'owner' }
@@ -64,7 +64,7 @@ function harness() {
 		operations: ({ command }) => ({
 			write: command({
 				input,
-				result: z.null(),
+				result: k.null(),
 				classification: 'business',
 				handler: (args, ctx) =>
 					Effect.promise(async () => {
@@ -89,7 +89,7 @@ function harness() {
 		operations: ({ command }) => ({
 			save: command({
 				input,
-				result: z.null(),
+				result: k.null(),
 				classification: 'business',
 				handler: (args, ctx) =>
 					Effect.gen(function* () {
@@ -147,7 +147,7 @@ function harness() {
 		operations: ({ command }) => ({
 			save: command({
 				input,
-				result: z.null(),
+				result: k.null(),
 				classification: 'business',
 				audit: () => null,
 				handler: (args, ctx) => Effect.promise(() => ctx.runMutation(saveRef, args)),
@@ -164,12 +164,12 @@ function harness() {
 	})
 	const save = functions.authMutation({
 		args: input.shape,
-		returns: z.null(),
+		returns: k.null(),
 		handler: (ctx, args) => ctx.commands.exec('save', args),
 	})
 	const actionSave = functions.authAction({
 		args: input.shape,
-		returns: z.null(),
+		returns: k.null(),
 		handler: (ctx, args) => ctx.commands.exec('save', args),
 	})
 	const t = convexTest(schema, {

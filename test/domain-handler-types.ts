@@ -1,5 +1,5 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation } from '../src/effect'
@@ -8,15 +8,15 @@ import { ContractValidationError } from '../src/modules/effect/schema'
 const contract = defineDomainContract({
 	commands: {
 		'notifications.markRead': {
-			input: z.string().transform(Number),
-			result: z.number().transform((n) => ({ n })),
+			input: k.string().transform(Number),
+			result: k.number().transform((n) => ({ n })),
 			classification: 'business',
 		},
-		close: { input: z.object({ id: z.string() }), result: z.boolean(), classification: 'business' },
+		close: { input: k.object({ id: k.string() }), result: k.boolean(), classification: 'business' },
 	},
 	queries: {
-		get: { input: z.number(), result: z.string() },
-		handler: { input: z.boolean(), result: z.boolean() },
+		get: { input: k.number(), result: k.string() },
+		handler: { input: k.boolean(), result: k.boolean() },
 	},
 })
 const options = {
@@ -167,7 +167,7 @@ normal.Query({
 	operations: ({ query }) => ({
 		// @ts-expect-error schemas belong to the contract
 		get: query.handler((input) => String(input), {
-			input: z.number(),
+			input: k.number(),
 		}),
 		handler: query.handler((input) => !input),
 	}),
@@ -220,7 +220,7 @@ effect.Query({
 
 const auditEffectContract = defineDomainContract({
 	commands: {
-		save: { input: z.number(), result: z.number(), classification: 'business' },
+		save: { input: k.number(), result: k.number(), classification: 'business' },
 	},
 })
 const audited = effect.Command({

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import { Foundation, type AnyCommandMiddleware } from '../src/components/foundation/client'
 
 const legacyMiddleware: AnyCommandMiddleware = async ({ operation, command, next }) => {
@@ -20,8 +20,8 @@ const { Command } = new Foundation(
 )
 const typed = Command.withContext<{ actorId: string }>()
 const legacyOperation = Command.operation({
-	command: z.object({}),
-	result: z.number(),
+	command: k.object({}),
+	result: k.number(),
 	classification: 'business',
 	audit: () => null,
 	middleware: [
@@ -44,10 +44,10 @@ new Command(
 )
 const operations = {
 	rename: typed.operation({
-		command: z.object({
-			title: z.string().transform((value) => value.length),
+		command: k.object({
+			title: k.string().transform((value) => value.length),
 		}),
-		result: z.object({ ok: z.boolean() }),
+		result: k.object({ ok: k.boolean() }),
 		classification: 'business',
 		aggregates: ['document'],
 		guard: (context, command) => {
@@ -77,8 +77,8 @@ const operations = {
 		}),
 	}),
 	count: typed.operation({
-		command: z.object({ count: z.number().default(0) }),
-		result: z.number(),
+		command: k.object({ count: k.number().default(0) }),
+		result: k.number(),
 		classification: 'business',
 		audit: ({ command, result }) => {
 			command.count.toFixed()
@@ -102,8 +102,8 @@ commands.exec({ operation: 'missing', handler: () => 1 })
 // @ts-expect-error handler result must match the schema
 commands.exec({ operation: 'count', handler: () => 'wrong' })
 typed.operation({
-	command: z.object({}),
-	result: z.number(),
+	command: k.object({}),
+	result: k.number(),
 	classification: 'business',
 	aggregates: ['document'],
 	audit: () => ({
@@ -133,8 +133,8 @@ new Command<{ actorId: string }, typeof operations>(operations, {
 const enriched = Command.withContext<{ actorId: string }, { traceId: string }>()
 const enrichedOperations = {
 	touch: enriched.operation({
-		command: z.object({}),
-		result: z.string(),
+		command: k.object({}),
+		result: k.string(),
 		classification: 'business',
 		middleware: [async ({ next }) => next({ context: { traceId: 'trace' } })],
 		guard: (context) => {
@@ -148,8 +148,8 @@ new Command<{ actorId: string }, typeof enrichedOperations>(enrichedOperations).
 	handler: (context) => context.traceId.toUpperCase(),
 })
 enriched.operation({
-	command: z.object({}),
-	result: z.string(),
+	command: k.object({}),
+	result: k.string(),
 	classification: 'business',
 	audit: () => null,
 	middleware: [

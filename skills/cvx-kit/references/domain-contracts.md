@@ -17,7 +17,7 @@ and handler-first implementation helpers. Existing inline Effect definitions and
 older `new Foundation(...)` constructors continue to work.
 
 ```ts
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { createFoundation } from 'cvx-kit'
 import { defineDomainContract } from 'cvx-kit/contracts'
 import { defineErrorContract } from 'cvx-kit/errors'
@@ -26,17 +26,17 @@ const contract = defineDomainContract({
 	errors: defineErrorContract({ Missing: { message: 'Task missing', details: {} } }),
 	commands: {
 		'tasks.create': {
-			input: z.string().transform(Number),
-			result: z.number().transform((count) => ({ count })),
+			input: k.string().transform(Number),
+			result: k.number().transform((count) => ({ count })),
 			classification: 'business',
 		},
 		'tasks.close': {
-			input: z.object({ id: z.string() }),
-			result: z.boolean(),
+			input: k.object({ id: k.string() }),
+			result: k.boolean(),
 			classification: 'business',
 		},
 	},
-	queries: { 'tasks.get': { input: z.number(), result: z.number() } },
+	queries: { 'tasks.get': { input: k.number(), result: k.number() } },
 })
 const { Command, Query } = createFoundation({
 	observability: {
@@ -149,7 +149,7 @@ become UnknownFailure. Wire exposure remains explicit through `.expose(owner, ke
 Enable `cvx/reserved-domain-file-anatomy` together with
 `cvx/domain-file-responsibilities` to enforce reserved filenames. A domain's
 commands.ts and queries.ts each export one genuine bound registry. Contracts are
-declarative; schema.ts may declare several zodTable shapes; table.ts owns their
+declarative; schema.ts may declare several kTable shapes; table.ts owns their
 topology, and domain/table.ts uses createModule to assemble module maps. The rules
 recognize aliases, namespaces, and the root foundation.ts facade. They do not
 require absent reserved files to be created.
@@ -177,7 +177,7 @@ const settlementErrors = defineErrorContract({
 })
 const settlementContract = defineDomainContract({
 	errors: settlementErrors,
-	actions: { 'settlement.post': { input: z.string(), result: z.string() } },
+	actions: { 'settlement.post': { input: k.string(), result: k.string() } },
 })
 const settlementActions = createEffectFoundation({
 	observability: {
@@ -210,17 +210,17 @@ create errors, so its registries get no `fail`/`attempt`. See
 Convex evaluates the whole import graph on every request, and module state never survives to the next one. A thunk defers the declaration, but the first read of any operation still builds all of them. A registry's first `exec` also binds every operation. Declare operations, or their `input`/`result`, as getters so a module builds only what it reads or executes:
 
 ```ts
-const paymentId = z.strictObject({ id: z.string() })
+const paymentId = k.object({ id: k.string() })
 export const financeContract = defineDomainContract(() => ({
 	queries: {
 		get listPayments() {
 			return {
-				input: z.strictObject({ cursor: z.string().nullable(), numItems: z.number() }),
-				result: z.array(z.strictObject({ id: z.string(), amount: z.number() })),
+				input: k.object({ cursor: k.string().nullable(), numItems: k.number() }),
+				result: k.array(k.object({ id: k.string(), amount: k.number() })),
 			}
 		},
 		get getPayment() {
-			return { input: paymentId, result: z.number().nullable() }
+			return { input: paymentId, result: k.number().nullable() }
 		},
 	},
 }))

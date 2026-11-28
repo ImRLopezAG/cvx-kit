@@ -1,0 +1,9 @@
+{
+  "status": "untouched",
+  "skipped": [
+    {
+      "line": 2,
+      "code": "type-helper-unknown"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 15,
+			"code": "zod-check"
+		}
+	],
+	"declarations": {
+		"rewritten": 2,
+		"left": 1
+	}
+}

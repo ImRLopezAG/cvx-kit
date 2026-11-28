@@ -1,0 +1,17 @@
+{
+  "status": "mixed",
+  "skipped": [
+    {
+      "line": 8,
+      "code": "enum-unproven"
+    },
+    {
+      "line": 9,
+      "code": "enum-unproven"
+    },
+    {
+      "line": 10,
+      "code": "enum-unproven"
+    }
+  ]
+}

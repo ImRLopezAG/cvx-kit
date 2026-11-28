@@ -26,7 +26,7 @@ export const reservedDomainFiles: CreateRule = {
 						: role === 'queries'
 							? 'one Query registry'
 							: role === 'schema'
-								? 'zodTable shapes'
+								? 'kTable shapes'
 								: role === 'contracts'
 									? 'declarative contracts'
 									: file === 'domain/table.ts'
@@ -136,11 +136,12 @@ function provenance(
 				'cvx-kit/effect',
 				'cvx-kit/components/foundation',
 				'cvx-kit/contracts',
-				'cvx-kit/zod-table',
+				'cvx-kit/table',
 				'cvx-kit/errors',
 			].includes(source)
 		) {
 			if (name === '*') return `namespace:${source}`
+			if (source === 'cvx-kit' && name === 'k') return 'validator'
 			if (
 				(source === 'cvx-kit/effect' && name === 'createEffectFoundation') ||
 				(source === 'cvx-kit' && name === 'createFoundation') ||
@@ -148,13 +149,13 @@ function provenance(
 			)
 				return 'foundationFactory'
 			if (
-				['cvx-kit', 'cvx-kit/zod-table'].includes(source) &&
-				['zodTable', 'zodVariantTable'].includes(name)
+				['cvx-kit', 'cvx-kit/table'].includes(source) &&
+				['kTable', 'kVariantTable'].includes(name)
 			)
 				return 'shapeFactory'
-			if (['cvx-kit', 'cvx-kit/zod-table'].includes(source) && name === 'createModule')
+			if (['cvx-kit', 'cvx-kit/table'].includes(source) && name === 'createModule')
 				return 'assemblyFactory'
-			if (source === 'cvx-kit/zod-table' && name === 'namespace') return 'namespaceFactory'
+			if (source === 'cvx-kit/table' && name === 'namespace') return 'namespaceFactory'
 			if (
 				source === 'cvx-kit/contracts' &&
 				['defineDomainContract', 'operationContract'].includes(name)
@@ -163,7 +164,9 @@ function provenance(
 			if (source === 'cvx-kit/errors' && name === 'defineErrorContract') return 'contractFactory'
 			return null
 		}
+		// A raw Zod import stays a validator so app-level Zod schemas in a contracts file are not flagged.
 		if (['zod', 'zod/v4', 'convex/values'].includes(source)) return 'validator'
+		if (source === 'cvx-kit/k' && name === 'k') return 'validator'
 		const target = resolveImport(resolver, filename, source)
 		const file = target && appFile(context, target)
 		if (

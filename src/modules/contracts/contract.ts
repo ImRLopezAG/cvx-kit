@@ -1,4 +1,6 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- These explicit validation boundaries receive untrusted transport values before schema decoding. */
+import type { KSafeParseResult } from '../../k/issues'
+
 /** Structural contracts keep the optional Effect peer out of this module. */
 export interface StandardSchema<Input = unknown, Output = Input> {
 	readonly '~standard': {
@@ -20,6 +22,10 @@ export type ValidationResult<Output> =
 export interface LegacyParser<Output = unknown> {
 	readonly parse: (value: unknown) => Output
 	readonly parseAsync?: (value: unknown) => Promise<Output>
+	/** A `k` schema's boundary parse: unknown keys are rejected rather than stripped. */
+	readonly '~parseStrict'?: (value: unknown) => Output
+	/** A `k` schema's non-throwing boundary parse, with unknown keys rejected. */
+	readonly '~safeParseStrict'?: (value: unknown) => KSafeParseResult<Output>
 }
 /** Decode execution is an opaque channel here; optional adapters give it concrete semantics. */
 export interface Decoder<Input = unknown, Output = unknown, Execution = unknown> {
@@ -34,8 +40,9 @@ export type NeutralSchema =
 	| (Decoder<unknown, unknown, ValidationResult<unknown> | Promise<ValidationResult<unknown>>> & {
 			readonly kind: 'contract'
 	  })
-export type ContractInput<S> =
-	S extends Decoder<infer Input, unknown, unknown>
+export type ContractInput<S> = S extends { readonly _void: true }
+	? void | null
+	: S extends Decoder<infer Input, unknown, unknown>
 		? Input
 		: S extends StandardSchema<infer Input, unknown>
 			? Input
@@ -44,8 +51,9 @@ export type ContractInput<S> =
 				: S extends LegacyParser<infer Output>
 					? Awaited<Output>
 					: never
-export type ContractOutput<S> =
-	S extends Decoder<unknown, infer Output, unknown>
+export type ContractOutput<S> = S extends { readonly _void: true }
+	? null
+	: S extends Decoder<unknown, infer Output, unknown>
 		? Output
 		: S extends StandardSchema<unknown, infer Output>
 			? Output
@@ -55,15 +63,22 @@ export type ContractOutput<S> =
 export type ContractExecution<S> =
 	S extends Decoder<unknown, unknown, infer Execution> ? Execution : never
 
-/** Validation failures are values. Throws/rejections are deliberately left as defects. */
+/** `k` and Standard Schema validation failures are values; legacy parser throws remain defects. */
 export async function decodeContract<S extends NeutralSchema>(
 	schema: S,
 	value: unknown,
 ): Promise<ValidationResult<ContractOutput<S>>> {
 	let result: ValidationResult<unknown>
 	if ('kind' in schema) result = await schema.decode(value)
-	else if ('parse' in schema)
-		result = { value: await (schema.parseAsync ? schema.parseAsync(value) : schema.parse(value)) }
+	else if ('parse' in schema && schema['~safeParseStrict']) {
+		const parsed = schema['~safeParseStrict'](value)
+		result = parsed.success ? { value: parsed.data } : { issues: parsed.issues }
+	} else if ('parse' in schema)
+		result = {
+			value: await (schema.parseAsync
+				? schema.parseAsync(value)
+				: (schema['~parseStrict'] ?? schema.parse).call(schema, value)),
+		}
 	else result = await schema['~standard'].validate(value)
 	// SAFETY: each branch returns the output associated with this exact schema.
 	return result as ValidationResult<ContractOutput<S>>

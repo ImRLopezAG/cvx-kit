@@ -44,11 +44,12 @@ writeFileSync(
 		2,
 	),
 )
-for (const [label, convex, helpers, zod, react, reactTypes] of [
-	['current', '1.48.0', '0.1.129', '4.6.5', '19.2.8', '19.2.2'],
+// No project installs zod: the v2 core and its client entries do not need it.
+for (const [label, convex, helpers, react, reactTypes, reactDomTypes] of [
+	['current', '1.51.0', '0.1.137', '19.3.1', '19.3.3', '19.3.0'],
 	// Convex 1.46 declarations use React.JSX. Runtime React 18.0.0 is supported,
 	// but @types/react 18.0.0 predates that namespace; use compatible React 18 declarations.
-	['minimum', '1.46.0', '0.1.127', '4.5.4', '18.0.0', '18.3.0'],
+	['minimum', '1.46.0', '0.1.130', '18.0.0', '18.3.0', '18.3.0'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -61,14 +62,13 @@ for (const [label, convex, helpers, zod, react, reactTypes] of [
 				'cvx-kit': `file:${tarball}`,
 				convex,
 				'convex-helpers': helpers,
-				zod,
 				typescript: '7.0.2',
 				'convex-test': '0.0.65',
 				'@types/node': '26.6.5',
 				react,
 				'react-dom': react,
 				'@types/react': reactTypes,
-				'@types/react-dom': reactTypes,
+				'@types/react-dom': reactDomTypes,
 				'@types/scheduler': '0.16.8',
 				effect: '4.0.2',
 			},
@@ -106,21 +106,25 @@ for (const [label, convex, helpers, zod, react, reactTypes] of [
 		join(fixture, 'react.tsx'),
 		readFileSync(join(root, 'test/fixture-packed-client/react.tsx'), 'utf8')
 			.replaceAll('../../src/react', 'cvx-kit/react')
-			.replaceAll('../../src/errors', 'cvx-kit/errors'),
+			.replaceAll('../../src/errors', 'cvx-kit/errors')
+			.replaceAll("'../../src/k'", "'cvx-kit/k'"),
 	)
 	writeFileSync(
 		join(fixture, 'list.tsx'),
 		readFileSync(join(root, 'test/fixture-packed-client/list.tsx'), 'utf8')
 			.replaceAll('../../src/react', 'cvx-kit/react')
-			.replaceAll('../../src/errors', 'cvx-kit/errors'),
+			.replaceAll('../../src/errors', 'cvx-kit/errors')
+			.replaceAll("'../../src/k'", "'cvx-kit/k'"),
 	)
 	writeFileSync(
 		join(fixture, 'optimistic.tsx'),
 		readFileSync(join(root, 'test/fixture-packed-client/optimistic.tsx'), 'utf8')
 			.replaceAll('../../src/react', 'cvx-kit/react')
-			.replaceAll('../../src/errors', 'cvx-kit/errors'),
+			.replaceAll('../../src/errors', 'cvx-kit/errors')
+			.replaceAll("'../../src/k'", "'cvx-kit/k'"),
 	)
 	run('bun', ['--no-env-file', 'install', '--ignore-scripts'], fixture, label + '-install')
+	assert.equal(existsSync(join(fixture, 'node_modules/zod')), false, `${label}: zod was installed`)
 	writeFileSync(
 		join(fixture, 'versions.json'),
 		JSON.stringify(
@@ -128,7 +132,6 @@ for (const [label, convex, helpers, zod, react, reactTypes] of [
 				[
 					'convex',
 					'convex-helpers',
-					'zod',
 					'typescript',
 					'convex-test',
 					'react',
@@ -254,8 +257,7 @@ writeFileSync(
 		dependencies: {
 			'cvx-kit': `file:${tarball}`,
 			convex: '1.46.0',
-			'convex-helpers': '0.1.127',
-			zod: '4.5.4',
+			'convex-helpers': '0.1.130',
 			typescript: '7.0.2',
 			'@types/node': '26.6.5',
 		},

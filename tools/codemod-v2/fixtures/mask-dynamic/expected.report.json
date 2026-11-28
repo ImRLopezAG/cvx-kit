@@ -1,0 +1,9 @@
+{
+	"status": "rewritten",
+	"skipped": [
+		{
+			"line": 7,
+			"code": "mask-dynamic"
+		}
+	]
+}

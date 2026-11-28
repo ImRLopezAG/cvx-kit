@@ -9,7 +9,7 @@ import {
 	queryGeneric,
 	type DataModelFromSchemaDefinition,
 } from 'convex/server'
-import { z } from 'zod'
+import { k } from '../../src/k'
 import { createAuthFunctions } from '../../src/auth'
 import { internal } from './_generated/api'
 
@@ -115,10 +115,10 @@ export const authNoHook = createAuthFunctions<FixtureDataModel, FixtureRole>({
 
 export const seedMembership = auth.systemMutation({
 	args: {
-		userId: z.string(),
-		organizationId: z.string(),
-		roleSlug: z.string(),
-		active: z.boolean(),
+		userId: k.string(),
+		organizationId: k.string(),
+		roleSlug: k.string(),
+		active: k.boolean(),
 	},
 	handler: async (ctx, args) => {
 		await ctx.db.insert('memberships', {
@@ -133,7 +133,7 @@ export const seedMembership = auth.systemMutation({
 
 /** Internal lookup for the action branch of the hook (no ctx.db in actions). */
 export const membershipByUser = auth.systemQuery({
-	args: { userId: z.string() },
+	args: { userId: k.string() },
 	handler: async (ctx, args) => {
 		const row = await ctx.db
 			.query('memberships')
@@ -151,7 +151,7 @@ export const membershipByUser = auth.systemQuery({
 })
 
 export const recordedVerifyCalls = auth.systemQuery({
-	args: { userId: z.string() },
+	args: { userId: k.string() },
 	handler: async (_ctx, args) => verifyCalls.filter((call) => call.userId === args.userId),
 })
 
@@ -173,7 +173,7 @@ export const whoamiAction = auth.authAction({
 })
 
 export const createItem = auth.authMutation({
-	args: { name: z.string() },
+	args: { name: k.string() },
 	handler: async (ctx, args) => {
 		await ctx.db.insert('items', {
 			name: args.name,

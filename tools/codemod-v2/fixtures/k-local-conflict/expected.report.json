@@ -1,0 +1,13 @@
+{
+	"status": "untouched",
+	"skipped": [
+		{
+			"line": 3,
+			"code": "k-conflict"
+		}
+	],
+	"declarations": {
+		"rewritten": 0,
+		"left": 0
+	}
+}

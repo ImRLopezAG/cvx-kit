@@ -1,5 +1,5 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { createEffectQuery, bindEffectQuery } from '../src/modules/effect/query'
 import { effectOperationFactory } from '../src/modules/effect/operation'
 import { Observability } from '../src/components/foundation/modules/observability/observability'
@@ -45,8 +45,8 @@ const queries = createEffectQuery({
 	},
 	operations: ({ query }) => ({
 		read: query({
-			input: z.string().transform((value) => value.length),
-			result: z.number().transform(String),
+			input: k.string().transform((value) => value.length),
+			result: k.number().transform(String),
 			permission: 'read',
 			handler: (input, context) =>
 				Effect.gen(function* () {
@@ -57,8 +57,8 @@ const queries = createEffectQuery({
 				}),
 		}),
 		provided: query({
-			input: z.number(),
-			result: z.number(),
+			input: k.number(),
+			result: k.number(),
 			permission: 'read',
 			handler: (input) =>
 				Effect.gen(function* () {
@@ -102,21 +102,21 @@ const ordinary = createEffectQuery({
 	context: (host: { actorId: string }) => host,
 	operations: ({ query }) => ({
 		ordinary: query({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			handler: async (input) => input.length,
 		}),
 		generated: query({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			handler: (input) =>
 				Effect.gen(function* () {
 					return yield* Effect.succeed(input.length)
 				}),
 		}),
 		named: query({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			handler: Effect.fn('query.named')(function* (input: string) {
 				return yield* Effect.succeed(input.length)
 			}),
@@ -134,8 +134,8 @@ createEffectQuery({
 	context: (host: { actorId: string }) => host,
 	operations: () => ({
 		read: enriched.query({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			middleware: ({ next }) => next({ context: { traceId: 'trace' } }),
 			handler: (input, context) => input.length + context.traceId.length,
 		}),
@@ -145,8 +145,8 @@ createEffectQuery({
 	context: (host: {}) => host,
 	operations: () => ({
 		read: {
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			handler: (input: string) => input.length,
 			// @ts-expect-error manually authored query entries also reject command audit vocabulary
 			aggregates: ['document'],
@@ -157,11 +157,11 @@ createEffectQuery({
 	context: (host: {}) => host,
 	operations: () => ({
 		read: {
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			handler: (input: string) => input.length,
 			// @ts-expect-error query entries cannot silently accept a command replay validator
-			replayResult: z.number(),
+			replayResult: k.number(),
 		},
 	}),
 })
@@ -181,8 +181,8 @@ const boundQuery = bound({
 	context: (host: { trusted: true; actorId: string }) => host,
 	operations: ({ query }) => ({
 		read: query({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			permission: 'read',
 			handler: (input) => input.length,
 		}),
@@ -197,7 +197,7 @@ bound({
 	// @ts-expect-error host must satisfy the injected permission checker
 	context: (host: { actorId: string }) => host,
 	operations: ({ query }) => ({
-		read: query({ input: z.string(), result: z.number(), handler: (input) => input.length }),
+		read: query({ input: k.string(), result: k.number(), handler: (input) => input.length }),
 	}),
 })
 const optionalBound = bindEffectQuery({
@@ -216,7 +216,7 @@ optionalBound({
 	// @ts-expect-error a possible checker still requires its trusted host capability
 	context: (host: { actorId: string }) => host,
 	operations: ({ query }) => ({
-		read: query({ input: z.string(), result: z.number(), handler: (input) => input.length }),
+		read: query({ input: k.string(), result: k.number(), handler: (input) => input.length }),
 	}),
 })
 createEffectQuery({
@@ -224,8 +224,8 @@ createEffectQuery({
 	operations: ({ operation }) => ({
 		// @ts-expect-error query registries reject ignored command-only preparation hooks
 		read: operation({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			handler: (input) => input.length,
 			prepare: () => ({ kind: 'execute' }),
 		}),
@@ -236,8 +236,8 @@ createEffectQuery({
 	operations: ({ operation }) => ({
 		// @ts-expect-error query registries reject ignored command-only audit hooks
 		read: operation({
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			handler: (input) => input.length,
 			audit: () => null,
 		}),
@@ -246,12 +246,18 @@ createEffectQuery({
 
 const contextBoundQuery = queries.withContext({ invocation: 'bound' })
 const boundRead = contextBoundQuery.exec('read', 'raw')
-type ContextBoundResult = Assert<Equal<Effect.Success<typeof boundRead>, Effect.Success<typeof read>>>
+type ContextBoundResult = Assert<
+	Equal<Effect.Success<typeof boundRead>, Effect.Success<typeof read>>
+>
 type ContextBoundErrors = Assert<Equal<Effect.Error<typeof boundRead>, Effect.Error<typeof read>>>
 type ContextBoundRequirements = Assert<
 	Equal<Effect.Services<typeof boundRead>, Effect.Services<typeof read>>
 >
-const contextBoundAssertions: [ContextBoundResult, ContextBoundErrors, ContextBoundRequirements] = [true, true, true]
+const contextBoundAssertions: [ContextBoundResult, ContextBoundErrors, ContextBoundRequirements] = [
+	true,
+	true,
+	true,
+]
 void contextBoundAssertions
 // @ts-expect-error Bound query inputs retain raw transformation types.
 contextBoundQuery.exec('read', 1)

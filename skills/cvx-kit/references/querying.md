@@ -21,25 +21,11 @@ selected relation that reaches it, including a through relation's junction. Each
 read; a relation target needs only its stored side for that check. Registry
 identity and metadata snapshots are computed on demand, with the same values as
 an eager registry. `verifyRelations(relations)` runs every deferred check now;
-call it from a test so CI rejects an invalid registry. Eligible DTOs defer
-private schema reconstruction until projection needs that table, then reuse it
-within the registry. Schemas
-outside the optimized recipe grammar use eager compatibility reconstruction.
-Public helper schemas remain fresh; parsing, authorization and read budgets
-still run normally. No call-site changes are needed.
-
-Use the ordinary, unmodified installed Zod runtime with stable constructor
-configuration for the lazy path. Configured hooks or detectably changed
-constructor configuration select the eager compatibility route at registration.
-In-place changes to installed constructor/memoizer machinery and later global
-constructor-hook changes are outside the optimized compatibility guarantee.
-
-Side-effecting Proxies around caller-owned Zod internals are unsupported:
-descriptor inspection can run traps before fallback, including traps that mutate
-traits, throw or record extra calls. This does not mean Proxies are detected or
-rejected. Ordinary schemas, mutable trait Sets, transplanted prototypes and
-public shape overrides retain their existing semantics. Custom readers and
-nonstandard trait collections use the original constructor-selection scan.
+call it from a test so CI rejects an invalid registry. A table's private DTO
+schemas are built when projection first needs that table, then reused within
+the registry. Helper schemas (`paginationOpts`, `pageDto`, `filters`) are
+memoised `k` schemas; parsing, authorization and read budgets still run on every
+request.
 
 ## Browser-safe scalar filters
 
@@ -57,7 +43,7 @@ export const taskFilters = defineFilterContract({
 	assignee: v.id('users'),
 })
 // server table declaration
-const tasks = zodTable('tasks', () => ({ ...taskFilters.fields, secret: z.string() }))
+const tasks = kTable('tasks', { ...taskFilters.fields, secret: k.string() })
 const relations = defineRelations({ tasks }, () => ({}))
 const args = relations.tables.tasks.filters(taskFilters)
 const list = authQuery({
@@ -68,19 +54,18 @@ const list = authQuery({
 ```
 
 Binding checks native field types, ID table names and optionality, and uses the
-exact shared filter schema in the pagination input. Kit table/auth constructors
-preserve native ID validation; browser validation checks ID strings and retains
-their output brands. Do not register the pure ID schemas directly through
-convex-helpers' server constructors: its private ID registry cannot recognize
-them. Existing `paginationOpts(selection)` keeps its relation/variant grammar.
+exact shared filter schema in the pagination input. `taskFilters.fields` holds a
+`k` schema per field, so the table stores native `v.id(...)` validators; browser
+validation checks ID strings and retains their output brands. Existing
+`paginationOpts(selection)` keeps its relation/variant grammar.
 The shared contract is scalar only: unsupported objects, arrays and variant
 tables are explicitly rejected, as are relation/variant filter expressions.
 
 `schema` validates direct fields, `fields`, `and`, `or`, `not` and native scalar
 operators under the same depth/node/in-value ceilings. `describe()` reports
 literal enum values, unions, ID tables, nullable/optional and bigint metadata.
-Number fields have no implicit date semantics; finite numbers follow legacy
-Zod validation. Bytes are outside this scalar grammar.
+Number fields have no implicit date semantics and must be finite. Bytes are
+outside this scalar grammar.
 
 `searchParam.encode(filters)` and `.decode(text)` return either
 `{ success: true, value }` or `{ success: false, error }`. Version 1 uses Convex
@@ -105,7 +90,7 @@ transform or widens the public DTO with unrelated fields.
 ```ts
 const relations = defineRelations(
 	{
-		clients: { ...clients, fieldGroups: { finance: ['balanceCents'] } },
+		clients: withFieldGroups(clients, { finance: ['balanceCents'] }),
 		grants,
 	},
 	() => ({}),
@@ -193,35 +178,29 @@ These examples put tasks, labels, and their junction in one owning module.
 
 ```ts
 // convex/domain/tasks/schema.ts
-import { z } from 'zod'
-import { zodTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
 
-export const tasks = zodTable(
+export const tasks = kTable(
 	'tasks',
-	(id) => ({
-		title: z.string(),
-		department: z.string(),
-		status: z.string(),
-		priority: z.number(),
-		reference: id('tasks').nullable().optional(),
-	}),
+	{
+		title: k.string(),
+		department: k.string(),
+		status: k.string(),
+		priority: k.number(),
+		reference: k.id('tasks').nullable().optional(),
+	},
 	{ publicFields: ['title', 'department', 'status', 'priority'] },
 )
 
-export const labels = zodTable(
-	'labels',
-	() => ({
-		name: z.string(),
-	}),
-	{ publicFields: ['name'] },
-)
+export const labels = kTable('labels', { name: k.string() }, { publicFields: ['name'] })
 
-export const edges = zodTable(
+export const edges = kTable(
 	'edges',
-	(id) => ({
-		task: id('tasks'),
-		label: id('labels'),
-	}),
+	{
+		task: k.id('tasks'),
+		label: k.id('labels'),
+	},
 	{ publicFields: [] },
 )
 ```
@@ -268,8 +247,8 @@ r.many.labels({ from: r.tasks._id, to: r.labels.task })
 ```
 
 Relationship names distinguish multiple references to the same table. Self
-references and junctions are supported. Tables can be `zodTable`, `tenantTable`,
-or the three-argument `zodVariantTable` boundaries. Declarations
+references and junctions are supported. Tables can be `kTable`, `createTable`,
+`tenantTable`, or the three-argument `kVariantTable` boundaries. Declarations
 are validated against table ownership, field compatibility, and supporting
 indexes. Convex does not infer relationships; this registry supplies them.
 
@@ -277,14 +256,11 @@ indexes. Convex does not infer relationships; this registry supplies them.
 declarations. Stored field semantics, public DTO validation, variants and active
 indexes are captured on each table's first use. Complete schema and index
 configuration before calling it. Later changes to source declarations do not
-affect a table after its first use. Create a new registry to adopt changes. Caller-owned
-declarations remain mutable. Each returned schema helper owns its validation
-graph; editing one helper does not change other helpers or private engine parsers.
-
-Relation DTOs support `.refine()`, including captured callback references and
-copied check definitions. They reject opaque `.superRefine()` and `.check()`
-callbacks on the table's first use; express those validations with `.refine()` instead.
-Application state accessed by callback closures remains live.
+affect a table after its first use. Create a new registry to adopt changes. `k`
+schemas are immutable, so deriving from a helper (`.extend(...)`) never changes
+the helper, other helpers or the engine's private parsers. Relation DTOs only
+validate; they never transform a stored value. Application state accessed by
+refinement closures remains live.
 
 For branch-specific joins, filters, and a complete variant endpoint, see
 [Variant querying](./variant-querying.md). Common compatible fields use the same
@@ -360,7 +336,7 @@ targets have the same public result. Duplicate junction occurrences remain in
 output, even when target reads are memoized.
 
 For scalar-only input, use `tasks.paginationOpts({ status: true })`. Both forms
-are Zod objects and support `.extend(...)` for endpoint-specific arguments.
+are `k` objects and support `.extend(...)` for endpoint-specific arguments.
 Use the contracts through your domain Query registry and keep public auth
 registration in `api/<entity>.ts`; see [domain-contracts.md](./domain-contracts.md).
 
@@ -383,7 +359,8 @@ const filters = {
 ```
 
 Register the schema through cvx-kit's configured auth/role/admin/system builders
-or its Zod custom builders, including the existing Effect Query/Command wiring.
+or `kCustomQuery`/`kCustomMutation`/`kCustomAction` from `cvx-kit/registration`,
+including the existing Effect Query/Command wiring.
 These builders install the compact native validator and its full generated
 semantic preflight together. Invalid filters fail before customization,
 authorization hooks, or handlers run, including handlers that never call the
@@ -405,14 +382,13 @@ remain large. The measured three-field/13-literal fixture produced 29.22 times
 smaller registered JSON and 35.85 times smaller generated arguments; these are
 fixture measurements, not promises for an application's total API size or runtime.
 
-The default is unchanged. The ordinary `zodToConvex` converter stays full;
-external registration wrappers do not acquire compact behavior. Supported
-clones, descriptions, metadata, refinements, and object/optional nesting retain
-the association. Shape edits, unsupported wrappers, or uncertain native metadata
-fall back to full conversion. Keep `skipConvexValidation` disabled when relying
-on native ID checks. Opted-in malformed deep values can report a serialized Zod
-error instead of a native Convex argument error; accepted filter semantics are
-unchanged.
+The default is unchanged. Reading `schema.validator` yourself gives the full
+validator; only cvx-kit's builders install the compact one. The association
+follows the filter schema, so `.extend(...)`, optional wrappers and nested
+objects that keep the same filter schema keep it. Keep `skipConvexValidation`
+disabled when relying on native ID checks. Opted-in malformed deep values fail
+with a `VALIDATION` error from the kit instead of a native Convex argument
+error; accepted filter semantics are unchanged.
 
 ## Query and filter
 
@@ -650,9 +626,8 @@ candidates; other supported filters run as residual eligibility checks.
 
 ```ts
 const selection = { labels: true } as const
-const result = relations.tables.tasks
-	.pageDto(selection)
-	.and(z.object({ paginationMode: z.literal('native-search') }))
+// Page results already allow the optional `paginationMode: 'native-search'` marker.
+const result = relations.tables.tasks.pageDto(selection)
 const run = (ctx, input) =>
 	querying(ctx)
 		.tasks.search('search_text', input.text)
@@ -770,7 +745,7 @@ Use the configured engine for native pagination that requires its own traversal:
 const codec = querying.cursorCodec(ctx, {
 	domain: 'clients-search-v1',
 	bind: { filters, sort, departments: serverDerivedDepartments },
-	schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+	schema: k.object({ native: k.string().nullable(), seen: k.int64() }),
 })
 const position = args.cursor ? codec.open(args.cursor) : { native: null, seen: 0n }
 // Recheck current permissions and authorize every native row before returning it.

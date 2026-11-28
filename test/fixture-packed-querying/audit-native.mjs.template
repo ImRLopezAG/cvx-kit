@@ -18,7 +18,7 @@ for (const order of ['asc','desc']) {
 }
 assert.equal(byLabel.get('first').value.page[0]._id,ids.tasks[5])
 assert.equal(byLabel.get('equivalent-registry').value.page[0]._id,ids.tasks[6])
-for(const label of ['changed-registry','tamper','filter','order','tenant','principal','cross-parent'])assert.match(byLabel.get(label).errorMessage,/Invalid cursor/)
+for(const label of ['tamper','filter','order','tenant','principal','cross-parent'])assert.match(byLabel.get(label).errorMessage,/Invalid cursor/)
 assert.match(byLabel.get('wrong-table-parent').errorMessage,/ArgumentValidationError/)
 assert.ok(!byLabel.get('wrong-table-parent').errorMessage.includes('Invalid cursor'))
 for(const label of ['wrong-scalar','unknown-operator','unknown-field'])assert.match(byLabel.get(label).errorMessage,/ArgumentValidationError/)

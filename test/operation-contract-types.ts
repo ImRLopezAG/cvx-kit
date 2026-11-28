@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import { v, type GenericId } from 'convex/values'
 import {
 	convexContract,
@@ -6,6 +6,7 @@ import {
 	standardContract,
 	type ContractInput,
 	type ContractOutput,
+	type StandardSchema,
 } from '../src/contracts'
 import {
 	effectOperationFactory,
@@ -19,14 +20,28 @@ import {
 type Equal<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
-const input = standardContract(z.string().transform(async (title) => title.trim()))
+const asyncTrim: StandardSchema<string, string> = {
+	'~standard': {
+		version: 1,
+		vendor: 'async',
+		validate: async (value) => ({ value: String(value).trim() }),
+	},
+}
+const asyncCount: StandardSchema<number, { count: number }> = {
+	'~standard': {
+		version: 1,
+		vendor: 'async',
+		validate: async (value) => ({ value: { count: Number(value) } }),
+	},
+}
+const input = standardContract(asyncTrim)
 const native = convexContract(v.object({ id: v.id('documents'), title: v.optional(v.string()) }))
-const result = z.number().transform(async (count) => ({ count }))
+const result = standardContract(asyncCount)
 const contract = operationContract({
 	input,
 	result,
-	replayResult: z.object({ count: z.number() }),
-	wire: { schema: z.string(), project: (value) => String(value.count) },
+	replayResult: k.object({ count: k.number() }),
+	wire: { schema: k.string(), project: (value) => String(value.count) },
 })
 const helper = effectOperationFactory<{ actorId: string }>()
 const save = helper.command({
@@ -49,7 +64,7 @@ const assertions: [
 	Assert<Equal<EffectOperationResult<typeof save>, { count: number }>>,
 ] = [true, true, true, true, true, true, true]
 void assertions
-const stale = { ...save, input: standardContract(z.number()) }
+const stale = { ...save, input: standardContract(k.number()) }
 const foundation = createEffectFoundation({
 	observability: {
 		enabled: false,
@@ -64,7 +79,7 @@ foundation.Command({
 })
 helper.query({
 	input,
-	result: z.number(),
+	result: k.number(),
 	// @ts-expect-error async schema produces a string, never a Promise or number
 	handler: (input: number) => input,
 })
@@ -72,6 +87,6 @@ operationContract({
 	input,
 	result,
 	// @ts-expect-error replay must decode the final object representation
-	replayResult: z.number(),
-	wire: { schema: z.string(), project: (value) => String(value.count) },
+	replayResult: k.number(),
+	wire: { schema: k.string(), project: (value) => String(value.count) },
 })

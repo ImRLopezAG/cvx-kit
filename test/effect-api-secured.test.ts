@@ -15,9 +15,9 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
 import { createAuthFunctions } from '../src/auth'
-import { effectZodApiBuilder } from '../src/effect'
+import { effectApiBuilder } from '../src/effect'
+import { k } from '../src/k'
 import { createTriggers } from '../src/triggers'
 
 const schema = defineSchema({
@@ -75,7 +75,7 @@ function harness() {
 			}),
 		},
 	})
-	const mutation = effectZodApiBuilder(auth.authMutation, {
+	const mutation = effectApiBuilder(auth.authMutation, {
 		services: (ctx) =>
 			Context.make(SecuredRequest, {
 				db: ctx.db,
@@ -86,14 +86,14 @@ function harness() {
 	const inFlight: { actor: string; tenant: string; value: string }[][] = []
 	const save = mutation({
 		args: {
-			actor: z.string(),
-			tenant: z.string(),
-			role: z.string(),
-			value: z.string(),
-			targetTenant: z.string().optional(),
-			failAfterWrite: z.boolean().optional(),
+			actor: k.string(),
+			tenant: k.string(),
+			role: k.string(),
+			value: k.string(),
+			targetTenant: k.string().optional(),
+			failAfterWrite: k.boolean().optional(),
 		},
-		returns: z.null(),
+		returns: k.null(),
 		handler: (_ctx, args) =>
 			Effect.gen(function* () {
 				const request = yield* SecuredRequest

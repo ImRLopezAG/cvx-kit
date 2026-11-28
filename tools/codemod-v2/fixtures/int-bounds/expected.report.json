@@ -1,0 +1,17 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 8,
+			"code": "coerce"
+		},
+		{
+			"line": 9,
+			"code": "unknown-factory"
+		}
+	],
+	"declarations": {
+		"rewritten": 5,
+		"left": 2
+	}
+}

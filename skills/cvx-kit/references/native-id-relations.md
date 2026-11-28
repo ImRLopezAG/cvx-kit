@@ -11,26 +11,27 @@ Declare the link on the ordinary source boundary:
 
 ```ts
 // convex/domain/tasks/schema.ts
-import { z } from 'zod'
-import { zodTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
+import { TASK_STATUSES } from './constants'
 
-export const tasks = zodTable(
+export const tasks = kTable(
 	'tasks',
-	(id) => ({
-		status: z.enum(['open', 'closed']),
-		rel: z
+	{
+		status: k.enum(TASK_STATUSES),
+		rel: k
 			.union([
-				id('tasks'),
-				id('leads'),
-				id('contacts'),
-				id('clients'),
-				id('creditors'),
-				id('deals'),
-				id('payments'),
-				id('ledger'),
+				k.id('tasks'),
+				k.id('leads'),
+				k.id('contacts'),
+				k.id('clients'),
+				k.id('creditors'),
+				k.id('deals'),
+				k.id('payments'),
+				k.id('ledger'),
 			])
 			.optional(),
-	}),
+	},
 	{
 		commandFields: ['status', 'rel'],
 		publicFields: ['status', 'rel'],

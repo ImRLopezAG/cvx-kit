@@ -1,6 +1,6 @@
 import { Context, Effect } from 'effect'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { createEffectFoundation } from '../src/effect'
 
 class Documents extends Context.Service<Documents, { title: string }>()('Documents') {}
@@ -27,8 +27,8 @@ describe('Effect Foundation composition', () => {
 			context: (host: { actorId: string }) => host,
 			operations: ({ query }) => ({
 				title: query({
-					input: z.object({}),
-					result: z.string(),
+					input: k.object({}),
+					result: k.string(),
 					permission: 'read',
 					handler: () =>
 						Effect.gen(function* () {
@@ -41,8 +41,8 @@ describe('Effect Foundation composition', () => {
 			context: (host: { actorId: string }) => host,
 			operations: ({ command }) => ({
 				rename: command({
-					input: z.object({ suffix: z.string() }),
-					result: z.string(),
+					input: k.object({ suffix: k.string() }),
+					result: k.string(),
 					classification: 'business',
 					permission: 'write',
 					handler: (input, host) =>

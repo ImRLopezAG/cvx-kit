@@ -7,7 +7,7 @@ import {
 	type GenericMutationCtx,
 } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { expect, it } from 'vite-plus/test'
 import { createEffectFoundation } from '../src/effect'
 
@@ -36,8 +36,8 @@ it.each(['promise', 'effect'] as const)(
 			context: (host: Host) => host,
 			operations: ({ command }) => ({
 				save: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					handler: (input, host) =>
 						Effect.promise(async () => {
@@ -87,8 +87,8 @@ it('validates a middleware short-circuit before audit and completion, skipping g
 		defaults: { guard: forbidden },
 		operations: ({ command }) => ({
 			save: command({
-				input: z.number(),
-				result: z
+				input: k.number(),
+				result: k
 					.number()
 					.max(5)
 					.transform((value) => {

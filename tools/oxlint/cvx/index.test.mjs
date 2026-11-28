@@ -20,6 +20,19 @@ tester.run('component-boundaries', rules['component-boundaries'], {
 		{ filename: component, code: "import { x } from './validators'" },
 		{ filename: component, code: "import { x } from 'convex/server'" },
 		{ filename: component, code: "import { x } from 'cvx-kit/auth'" },
+		{
+			filename: component,
+			code: "import { k } from '../../k'",
+		},
+		{
+			filename: component,
+			code: "import { k } from '../../k/index'",
+		},
+		{
+			filename: component,
+			code: "import { k } from 'cvx-kit/k'",
+			options: [{ packageName: 'cvx-kit' }],
+		},
 		{ filename: component, code: "import { x } from '@convex-dev/workflow'" },
 		{ filename: component, code: "export { x } from './validators'" },
 		{ filename: component, code: "function load(require) { return require('../../auth') }" },
@@ -70,6 +83,28 @@ tester.run('component-boundaries', rules['component-boundaries'], {
 		{
 			filename: component,
 			code: "import { x } from 'cvx-kit/auth'",
+			options: [{ packageName: 'cvx-kit' }],
+			errors: [{ messageId: 'boundary' }],
+		},
+		{
+			filename: component,
+			code: "import { x } from '../../k/schema'",
+			errors: [{ messageId: 'boundary' }],
+		},
+		{
+			filename: component,
+			code: "import { x } from '../../table'",
+			errors: [{ messageId: 'boundary' }],
+		},
+		{
+			filename: component,
+			code: "import { x } from 'cvx-kit/table'",
+			options: [{ packageName: 'cvx-kit' }],
+			errors: [{ messageId: 'boundary' }],
+		},
+		{
+			filename: component,
+			code: "import { x } from 'cvx-kit/k/schema'",
 			options: [{ packageName: 'cvx-kit' }],
 			errors: [{ messageId: 'boundary' }],
 		},
@@ -481,32 +516,50 @@ tester.run('consumer/no-inline-enums', consumerRules['no-inline-enums'], {
 	valid: [
 		{
 			filename: resolve('convex/domain/orders/schema.ts'),
-			code: "import { z } from 'zod'; import { STATES } from './constants'; z.enum(STATES)",
+			code: "import { k } from 'cvx-kit'; import { STATES } from './constants'; k.enum(STATES)",
 		},
 		{
 			filename: resolve('convex/domain/orders/schema.ts'),
-			code: "const z = { enum(values) {return values} }; z.enum(['a'])",
+			code: "const k = { enum(values) {return values} }; k.enum(['a'])",
+		},
+		{
+			filename: resolve('convex/domain/orders/schema.ts'),
+			code: "import { k } from 'cvx-kit'; export const STATES = ['draft', 'sent'] as const; export const state = k.enum(STATES)",
+		},
+		{
+			filename: resolve('convex/api/import-feed.ts'),
+			code: "import { z } from 'zod'; export const feed = z.enum(['draft', 'sent'])",
 		},
 	],
 	invalid: [
 		{
 			filename: resolve('convex/domain/orders/schema.ts'),
-			code: "import { z as schema } from 'zod'; schema.enum(['draft', 'sent'])",
+			code: "import { k as schema } from 'cvx-kit'; schema.enum(['draft', 'sent'])",
 			errors: [{ messageId: 'vocabulary' }],
 		},
 		{
 			filename: resolve('convex/domain/orders/schema.ts'),
-			code: "import * as z from 'zod'; z.enum(['draft'])",
+			code: "import * as kit from 'cvx-kit'; kit.k.enum(['draft'])",
 			errors: [{ messageId: 'vocabulary' }],
 		},
 		{
 			filename: resolve('convex/domain/orders/schema.ts'),
-			code: "import { z } from 'zod'; z.enum(['draft'] as const)",
+			code: "import { k } from 'cvx-kit/k'; k.enum(['draft', 'sent'])",
 			errors: [{ messageId: 'vocabulary' }],
 		},
 		{
 			filename: resolve('convex/domain/orders/schema.ts'),
-			code: "import { z } from 'zod'; z.enum(['draft'] satisfies string[])",
+			code: "import { k } from 'cvx-kit'; export const state = k.enum(['draft', 'sent']).default('draft')",
+			errors: [{ messageId: 'vocabulary' }],
+		},
+		{
+			filename: resolve('convex/domain/orders/schema.ts'),
+			code: "import { k } from 'cvx-kit'; k.enum(['draft'] as const)",
+			errors: [{ messageId: 'vocabulary' }],
+		},
+		{
+			filename: resolve('convex/domain/orders/schema.ts'),
+			code: "import { k } from 'cvx-kit'; k.enum(['draft'] satisfies string[])",
 			errors: [{ messageId: 'vocabulary' }],
 		},
 	],
@@ -578,7 +631,15 @@ tester.run('consumer/schema-file-boundaries', consumerRules['schema-file-boundar
 		},
 		{
 			filename: resolve('convex/domain/orders/schema.ts'),
-			code: "import { tenantTable as table } from 'cvx-kit/zod-table'; export const orders = table('orders', () => ({}))",
+			code: "import { tenantTable as table } from 'cvx-kit/table'; export const orders = table('orders', {})",
+		},
+		{
+			filename: resolve('convex/domain/orders/schema.ts'),
+			code: "import { kTable } from 'cvx-kit/table'; export const orders = kTable('orders', {})",
+		},
+		{
+			filename: resolve('convex/api/import-feed.ts'),
+			code: "import { z } from 'zod'; export const feed = z.object({ id: z.string() })",
 		},
 		{
 			filename: resolve('convex/domain/orders/table.ts'),
@@ -597,7 +658,17 @@ tester.run('consumer/schema-file-boundaries', consumerRules['schema-file-boundar
 		},
 		{
 			filename: resolve('convex/api/orders.ts'),
-			code: "import * as cvx from 'cvx-kit/zod-table'; cvx.zodTable('orders', () => ({}))",
+			code: "import * as cvx from 'cvx-kit/table'; cvx.kTable('orders', {})",
+			errors: [{ messageId: 'schema' }],
+		},
+		{
+			filename: resolve('convex/api/orders.ts'),
+			code: "import { kTable } from 'cvx-kit'; export const orders = kTable('orders', {})",
+			errors: [{ messageId: 'schema' }],
+		},
+		{
+			filename: resolve('convex/domain/orders/commands.ts'),
+			code: "import { kVariantTable } from 'cvx-kit/table'; kVariantTable('orders', {})",
 			errors: [{ messageId: 'schema' }],
 		},
 		{
@@ -832,7 +903,7 @@ for (const [name, valid, invalid] of [
 			['convex/lib.ts', 'export function calculateTotal(x) { return x * 2 }'],
 			['convex/crons.ts', 'export function calculateTotal(x) { return x * 2 }'],
 			['convex/http.ts', 'export const handle = (ctx, req) => { if (req.ok) return 1; return 0 }'],
-			['convex/schema.ts', 'export const schema = z.object({ value: z.string() })'],
+			['convex/schema.ts', 'export const schema = k.object({ value: k.string() })'],
 			['convex/anything.ts', 'export const client = new Something()'],
 		],
 	],
@@ -860,6 +931,10 @@ for (const [name, valid, invalid] of [
 			[
 				'convex/application/checkout.ts',
 				"import { save } from '../domain/orders/commands'; import { reserve } from '../domain/inventory/commands'; export function checkout(ctx,args) { return ctx.db.insert('orders', args) }",
+			],
+			[
+				'convex/application/checkout.ts',
+				"import { k } from 'cvx-kit'; import { save } from '../domain/orders/commands'; import { reserve } from '../domain/inventory/commands'; export const shape = k.object({ id: k.string() }); export function checkout(ctx,args) { return reserve(ctx,save(ctx,args)) }",
 			],
 		],
 	],
@@ -903,11 +978,11 @@ for (const [name, valid, invalid] of [
 		[
 			[
 				'convex/domain/table.ts',
-				"import { createModule } from 'cvx-kit/zod-table'; import { orderTables } from './orders/table'; export const domainTables = createModule(orderTables)",
+				"import { createModule } from 'cvx-kit/table'; import { orderTables } from './orders/table'; export const domainTables = createModule(orderTables)",
 			],
 			[
 				'convex/domain/table.ts',
-				"import { createModule, namespaceIndex } from 'cvx-kit/zod-table'; import { orderTables } from './orders/table'; export const domainTables = createModule(orderTables); export const tableNames = namespaceIndex(orderTables)",
+				"import { createModule, namespaceIndex } from 'cvx-kit/table'; import { orderTables } from './orders/table'; export const domainTables = createModule(orderTables); export const tableNames = namespaceIndex(orderTables)",
 			],
 			['convex/domain/orders/rules.ts', 'export function canBuy(order) { return order.total > 0 }'],
 			[
@@ -934,7 +1009,7 @@ for (const [name, valid, invalid] of [
 			],
 			[
 				'convex/domain/table.ts',
-				"import { createModule } from 'cvx-kit/zod-table'; import { save } from './orders/commands'; export const domainTables = createModule(save())",
+				"import { createModule } from 'cvx-kit/table'; import { save } from './orders/commands'; export const domainTables = createModule(save())",
 			],
 			[
 				'convex/domain/table.ts',
@@ -1143,19 +1218,19 @@ tester.run('reserved-domain-file-anatomy', consumerRules['reserved-domain-file-a
 		},
 		{
 			filename: resolve('convex/domain/tasks/contracts.ts'),
-			code: "import { z } from 'zod'; export const contract = { save: z.object({}) }",
+			code: "import { k } from 'cvx-kit'; export const contract = { save: k.object({}) }",
 		},
 		{
 			filename: resolve('convex/domain/tasks/schema.ts'),
-			code: "import { zodTable } from 'cvx-kit'; export const tasks = zodTable({}); export const links = zodTable({})",
+			code: "import { kTable } from 'cvx-kit'; export const tasks = kTable({}); export const links = kTable({})",
 		},
 		{
 			filename: resolve('convex/domain/tasks/table.ts'),
-			code: "import { zodTable } from 'cvx-kit'; const tasks = zodTable({}); export const tables = { tasks: tasks.table.index('by_id', ['id']) }",
+			code: "import { kTable } from 'cvx-kit'; const tasks = kTable({}); export const tables = { tasks: tasks.table.index('by_id', ['id']) }",
 		},
 		{
 			filename: resolve('convex/domain/table.ts'),
-			code: "import { createModule } from 'cvx-kit/zod-table'; export const tables = createModule({})",
+			code: "import { createModule } from 'cvx-kit/table'; export const tables = createModule({})",
 		},
 		{
 			filename: resolve('convex/domain/tasks/__tests__/commands.ts'),
@@ -1196,7 +1271,7 @@ tester.run('reserved-domain-file-anatomy', consumerRules['reserved-domain-file-a
 		},
 		{
 			filename: resolve('convex/domain/tasks/schema.ts'),
-			code: "import { z } from 'zod'; export const data = z.object({})",
+			code: "import { k } from 'cvx-kit'; export const data = k.object({})",
 			errors: [{ messageId: 'anatomy' }],
 		},
 		{

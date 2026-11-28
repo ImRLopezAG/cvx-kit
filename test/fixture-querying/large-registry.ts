@@ -1,7 +1,7 @@
-import { z } from 'zod'
+import { k } from '../../src/k'
 import { defineSchema } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable } from '../../src/zod-table'
+import { kTable } from '../../src/table'
 import { defineRelations } from '../../src/relations'
 import { createQueryEngine } from '../../src/querying'
 import { cursor } from './scalar'
@@ -9,22 +9,22 @@ import { cursor } from './scalar'
 /** Realistic metadata cardinality; root workload remains bounded and scalar. */
 export function largeRegistry(extra = false) {
 	const makeTable = (name: string) =>
-		zodTable(
+		kTable(
 			name,
-			() => ({
-				ordinal: z.number(),
-				department: z.string(),
-				status: z.string(),
-				tenant: z.string(),
-				description: z.string(),
-				active: z.boolean(),
-				rank: z.number(),
-				code: z.string(),
-				optional: z.string().optional(),
-				details: z.object({ text: z.string(), tags: z.array(z.string()) }),
-				secret: z.string(),
-				credential: z.string(),
-			}),
+			{
+				ordinal: k.number(),
+				department: k.string(),
+				status: k.string(),
+				tenant: k.string(),
+				description: k.string(),
+				active: k.boolean(),
+				rank: k.number(),
+				code: k.string(),
+				optional: k.string().optional(),
+				details: k.object({ text: k.string(), tags: k.array(k.string()) }),
+				secret: k.string(),
+				credential: k.string(),
+			},
 			{
 				publicFields: [
 					'ordinal',

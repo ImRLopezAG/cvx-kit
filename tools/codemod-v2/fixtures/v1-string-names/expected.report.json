@@ -1,0 +1,17 @@
+{
+  "status": "untouched",
+  "skipped": [
+    {
+      "line": 1,
+      "code": "v1-entry-string"
+    },
+    {
+      "line": 1,
+      "code": "v1-entry-string"
+    },
+    {
+      "line": 1,
+      "code": "v1-entry-string"
+    }
+  ]
+}

@@ -1,36 +1,36 @@
-import { z } from 'zod'
+import { k } from '../../src/k'
 import { defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable } from '../../src/zod-table'
+import { kTable } from '../../src/table'
 import { defineRelations } from '../../src/relations'
 import { createQueryEngine } from '../../src/querying'
 import { cursor, managed, observed } from './scalar'
 
 export function relationshipStressFixture() {
-	const tasks = zodTable(
+	const tasks = kTable(
 		'tasks',
-		() => ({
-			ordinal: z.number(),
-			tenant: z.string(),
-			department: z.string(),
-			status: z.string(),
-			active: z.boolean(),
-			priority: z.number(),
-			authorized: z.boolean(),
-		}),
+		{
+			ordinal: k.number(),
+			tenant: k.string(),
+			department: k.string(),
+			status: k.string(),
+			active: k.boolean(),
+			priority: k.number(),
+			authorized: k.boolean(),
+		},
 		{ publicFields: ['ordinal'] },
 	)
-	const labels = zodTable(
+	const labels = kTable(
 		'labels',
-		() => ({ ordinal: z.number(), tenant: z.string(), authorized: z.boolean(), name: z.string() }),
+		{ ordinal: k.number(), tenant: k.string(), authorized: k.boolean(), name: k.string() },
 		{ publicFields: ['ordinal', 'name'] },
 	)
-	const edges = zodTable('edges', (id) => ({
-		task: id('tasks'),
-		label: id('labels'),
-		authorized: z.boolean(),
-		ordinal: z.number(),
-	}))
+	const edges = kTable('edges', {
+		task: k.id('tasks'),
+		label: k.id('labels'),
+		authorized: k.boolean(),
+		ordinal: k.number(),
+	})
 	tasks.table.index('by_tenant_department_status', ['tenant', 'department', 'status'])
 	edges.table.index('by_task', ['task'])
 	const schema = defineSchema({ tasks: tasks.table, labels: labels.table, edges: edges.table })

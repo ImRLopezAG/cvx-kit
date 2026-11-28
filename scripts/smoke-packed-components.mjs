@@ -63,7 +63,6 @@ try {
 				dependencies: {
 					'cvx-kit': `file:${tarball}`,
 					convex: packageManifest.devDependencies.convex,
-					zod: packageManifest.devDependencies.zod,
 					'convex-helpers': packageManifest.devDependencies['convex-helpers'],
 				},
 				devDependencies: {
@@ -326,10 +325,15 @@ export const status = query({
 	if (history.length !== 1 || history[0].decision !== 'approved') {
 		throw new Error(`Unexpected approval history: ${JSON.stringify(history)}`)
 	}
+	// The callback runs as a scheduled workflow step, so its latency is the backend's, not ours.
 	let status
-	for (let attempt = 0; attempt < 20; attempt += 1) {
+	const completedDeadline = Date.now() + 60_000
+	while (Date.now() < completedDeadline) {
 		status = JSON.parse(runConvex('run', 'smoke:status', JSON.stringify({ runId })))
 		if (status.execution?.type === 'completed') break
+		if (['failed', 'canceled'].includes(status.execution?.type)) {
+			throw new Error(`Approval callback ended without completing: ${JSON.stringify(status)}`)
+		}
 		await new Promise((resolve) => setTimeout(resolve, 500))
 	}
 	if (status?.execution?.type !== 'completed') {

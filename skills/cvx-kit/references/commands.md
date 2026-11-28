@@ -31,15 +31,15 @@ authenticated request context.
 ```ts
 import { type AuditEntryInput } from 'cvx-kit/components/foundation'
 import { createEffectFoundation } from 'cvx-kit/effect'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 
 type Host = {
 	actorId: string
 	rename: (id: string, title: string) => Promise<void>
 	appendAudit: (entry: AuditEntryInput) => Promise<void>
 }
-const input = z.object({ id: z.string(), title: z.string() }).strict()
-const result = z.object({ ok: z.literal(true) }).strict()
+const input = k.object({ id: k.string(), title: k.string() })
+const result = k.object({ ok: k.literal(true) })
 const foundation = createEffectFoundation({
 	observability: {
 		enabled: false,
@@ -68,7 +68,7 @@ export const commands = foundation.Command({
 	}),
 })
 
-export const executeRename = (value: z.input<typeof input>, host: Host) =>
+export const executeRename = (value: k.input<typeof input>, host: Host) =>
 	commands.exec('documents.rename', value, host)
 ```
 
@@ -81,7 +81,7 @@ for expected failures in the inferred error channel.
 
 ## Execute at the API boundary
 
-Wrap the application's trusted `authMutation` once with `effectZodApiBuilder`
+Wrap the application's trusted `authMutation` once with `effectApiBuilder`
 in `convex/functions.ts`, then return the command Effect from the endpoint:
 
 This wiring sketch assumes the existing authenticated constructor, command
@@ -90,7 +90,7 @@ application's existing function export name:
 
 ```ts
 // convex/functions.ts
-export const authMutation = effectZodApiBuilder(base.authMutation, {
+export const authMutation = effectApiBuilder(base.authMutation, {
 	context: (ctx) => ({ commands: commands.withContext(toCommandContext(ctx)) }),
 })
 

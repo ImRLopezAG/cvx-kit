@@ -1,0 +1,17 @@
+{
+	"status": "rewritten",
+	"skipped": [
+		{
+			"line": 12,
+			"code": "unproven-mask"
+		},
+		{
+			"line": 12,
+			"code": "unproven-mask"
+		}
+	],
+	"declarations": {
+		"rewritten": 2,
+		"left": 0
+	}
+}

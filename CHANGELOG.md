@@ -10,7 +10,341 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [2.0.0-rc.3]
+
+Codemod only; the kit is unchanged from rc.2.
+
+### Fixed
+
+- Codemod: a Zod schema from a package the run cannot prove is `k` is left in place and reported as `zod-foreign-schema`, and the object, contract, function and shared locals around it are rewritten. In rc.2 one such field held the whole contract statement and its file, while the files using the contract were still rewritten and failed to compile at lines the report did not name. Replace the reported field with a local `k` schema (for pagination options, `convexPaginationOptions()`); no rerun is needed.
+
+## [2.0.0-rc.2]
+
+From the full reviews both consumer apps wrote on rc.1.
+
+### Fixed
+
+- A non-primitive `.default(value)` or `.catch(value)` returned the same instance on every parse, so one caller's mutation showed up in later parses. Plain objects and arrays are now copied on every fill, in `parse`, object fields, table inserts and function arguments.
+- A field that is not a `k` schema (a Zod schema, a string) throws when the schema is declared and names the field. It used to overflow the stack at parse.
+- `pick`, `omit`, `required` and `partial(...keys)` throw at definition for a key the object does not have.
+- A number bound of `NaN` throws at definition.
+- An array's length bound is checked before its elements.
+- `k.enum(['a', 'a'])` exports the literal once.
+- `toZod` carries the `k.record` key rule in both entries.
+- A `KValidationError` thrown by an application `parse` is named `KValidationError` and has a stack. Failures at kit boundaries stay without frames.
+- Codemod: a Zod schema from a package the run cannot prove is `k` is reported as `zod-foreign-schema` when used as `args` or `returns` (directly, through a local alias or inside a field map), and holds the object it is a field of. It used to be rewritten around, which did not compile. The report covers only positions that become `k` (a migrated function's `args` or `returns`, a contract entry, a field of a rewritten object), one entry per property, and those sites are not counted as declarations left.
+- Codemod: a mask after `.shape.<field>`, `.element` or `.unwrap()` is rewritten; a mask constant whose every use was rewritten is removed unless it is exported or used as a type.
+- Codemod: explicit table type arguments written as `typeof keys` become `(typeof keys)[number]`.
+- Codemod: a private helper typed `T extends z.ZodType` is rewritten to `AnyKSchema` when every caller passes a rewritten schema and its body uses only members `k` has.
+- Codemod: `z.literal([...])` of strings becomes `k.enum([...])`; a factory called with a params object is held as `factory-params`; an async `refine` is held as `refine-async`.
+- Codemod: an unknown option or a missing path exits 1.
+
+### Changed
+
+- `refine` passes on any truthy return, as `k.custom` and Zod do. A returned promise fails with "A refinement must be synchronous".
+- String `min`, `max` and `length` count Unicode code points, as Zod 4 and JSON Schema do. They counted UTF-16 units, so `'😀'` failed `.max(1)`.
+- Codemod report codes renamed where they named the wrong thing (`.readonly()`, `z.preprocess`, `.catchall()`, `z.file()`, `z.templateLiteral`). Every code carries a one-sentence fix in the JSON report and the summary.
+- The `zod/mini` interop entry pulls 83,324 bytes of Zod (rc.1: 79,065); the added bytes are Zod's tuple and never constructors.
+- The app-load bundle budget is 260 KB (rc.1: 255 KB); the measured bundle is 259.4 KB with the new forms.
+
+### Added
+
+- `.default(() => value)` and `.catch(() => value)`: the function is called on every fill. JSON Schema carries no `default` for a factory.
+- `k.ipv4()`, `k.ipv6()`, `k.uuid()` and the matching string methods, accepting what Zod 4's constructors accept.
+- Number `.gt()`, `.lt()` and `.multipleOf()`.
+- `k.never()`.
+- `k.tuple([a, b])`, `k.tuple([a], rest)` and `.rest(schema)`. Convex stores an array and checks each element against the union of the members; the kit checks position and length. Optional positions are not supported.
+- `toJsonSchema(schema, { unknownKeys: 'parse' })` publishes what application `parse` accepts: a plain object allows extra keys. The default output is unchanged.
+- `asId(table, value)` in `cvx-kit/test`, `componentResult(schema)` in `cvx-kit/contracts`, and `convexPaginationOptions()` in `cvx-kit/table`.
+- Codemod: mappings for all of the above, a table callback with local declarations is rewritten in place, and informational codes `iso-datetime-offset`, `normalise-before-check`, `union-member-order` and `record-key-rule` mark rewrites whose behaviour differs from Zod.
+
+### Not in this release
+
+- Recursive schemas. Convex validators cannot be recursive; a depth-bounded form changes what is accepted at the cut-off and an unbounded one stores as `v.any()`.
+
+## [2.0.0-rc.1]
+
+### Fixed
+
+- `toZod` carries email and URL formats into JSON Schema in the Mini and classic entries without changing parsing.
+- `domain-file-responsibilities` allows `zod/mini` and `zod/v4-mini` wherever it allows Zod.
+- Migration guide: the oRPC OpenAPI example uses `converters` and handles routes with no input in its schema guard.
+- Codemod: a contract declared with a callback (`defineDomainContract(() => ({ … }))`) is understood, and a schema reached across files through a re-export alias, destructuring or a member path (`contract.commands.create.input`) is known to be `k` after the run. Type helpers, `zodToConvex` and masks on such schemas are rewritten.
+- Codemod: a mask held in a constant (`const scoped = { tenant: true } as const`) becomes a key list; `result: z.void()` in a contract becomes `k.void()`; `z.enum(list.map(…))` is rewritten and listed as `enum-runtime-checked`.
+- Codemod: a call on a JavaScript global (`Object.keys(schema.shape)`) is no longer reported as a schema consumer, and an import from `cvx-kit/zod-table` is never left behind without a report (`paginated` moves to `cvx-kit/table`).
+
+On one consumer app's pre-migration source the codemod now rewrites 96.7% of declarations (beta.8: 94.1%).
+
+## [2.0.0-beta.8]
+
+### Added
+
+- `cvx-kit/zod/classic` exports `toZod(schema)` with classic Zod types and chain methods, using named constructors so bundlers can remove unused Zod exports and non-English locales: 219 KB of Zod in a one-field bundle, against 772 KB for the namespace option and 79 KB for the `zod/mini` form.
+
+### Changed
+
+- `toZod(schema, { zod })` from `cvx-kit/zod` is deprecated in favour of the classic entry: passing the namespace keeps all of Zod in the bundle. The option remains supported, and `.toZod()` still returns Mini output.
+
+### Fixed
+
+Regressions in beta.7, found by the Accord and one-office trials:
+
+- `k.enum(values)` infers again when `values` is a type parameter of the calling function. The conditional return type added with the object form stayed deferred there, so the enum was not assignable to a schema.
+- A converted schema works with `z.toJSONSchema` again: an `.optional()` field made it throw, and a field with a refinement or a normaliser lost its type in output mode.
+- Codemod: `z.enum(CONSTANT)` is rewritten again when the constant is a list of string literals, an object of string values or a string enum, declared in the file or imported from the run (through barrels, aliases and workspace packages). beta.7 held every enum that was not an inline literal.
+- Codemod: a schema is reported as consumed by a third-party library only when the schema itself is passed. A parsed value (`expect(schema.parse(x))`), a schema used inside a callback (`Effect.gen(function* () { … })`) and assertion or logging calls no longer hold it.
+
+On one consumer app's pre-migration source the codemod rewrites 94.1% of declarations (beta.6: 92.9%, beta.7: 49.2%).
+
+Also fixed:
+
+- `k.void()` works as a command or query contract result in Foundation and Effect registries: a handler may return nothing, `undefined` or `null`, and the client receives `null`.
+- `k.enum` accepts a plain readonly string array, including a mapped one, and infers its element union.
+- `k.enum` gives a separate message for an argument that is not a list or object, for empty values, and for a non-string value, naming its key or index.
+- Codemod: report paths are correct when the project is reached through a symlink, and a `tsconfig.json` whose `extends` is not installed no longer stops relative imports from resolving.
+
+## [2.0.0-beta.7]
+
+Closes the defects the Accord and one-office trials found on beta.6, and the findings of an independent review of beta.4–beta.6.
+
+### Breaking for an app on beta.6
+
+- `pick`, `omit`, `partial` and `required` throw a `TypeError` at definition when given a Zod-style mask object (`{ a: true }`). Before, the mask was read as options: `pick` returned an empty object, `omit` omitted nothing, and `partial` / `required` changed every field. Pass keys: `.pick('a')`.
+- `k.int64()` bounds throw at definition unless they are a bigint or a safe integer (`.min(1.5)`, `.min(NaN)` and `.min('0')` were accepted).
+- `k.enum` throws at definition for a string, an empty list or a non-string value. `k.enum('abc')` used to build an enum of the three characters.
+- `decodeContract` given a bare `k` schema resolves with issues instead of rejecting, as `kContract` does. Foundation commands and workflow contracts still throw the `VALIDATION` `ConvexError` with its issue paths. Effect registries are unchanged: a bare `k` failure still reaches the client as `VALIDATION`, and `kContract` remains the typed channel.
+- `toZod` carries `refine`, `check`, `overwrite`, `transform` and `pipe`. A converted schema that accepted input the `k` schema rejects now rejects it too.
+- Codemod: the `kept` file status means the file holds at least one Zod declaration left on purpose and listed. A file with only type references to external Zod is no longer `kept`. A held Zod chain that pipes into a rewritten schema fails the run (`held-pipe-to-k`).
+
+### Added
+
+- `partial('a', 'b')` makes only the named keys optional.
+- `k.enum({ A: 'a', B: 'b' })`: an object of string values, the same schema as `k.enum(['a', 'b'])`.
+- `k.void()` for the `returns` of a handler that returns nothing. It is `v.null()` on the wire and clients receive `null`.
+- `k.int64()` bounds accept a safe-integer number and store it as a bigint.
+- `toZod(schema, { zod })` builds a classic Zod schema with the namespace the caller passes. The kit still imports only `zod/mini`.
+- Codemod: cross-file knowledge follows tsconfig path aliases and workspace packages, so tables and schemas imported through `@app/*` are recognised.
+- Codemod: `zodToConvex(X)` on a rewritten schema becomes `X.validator`; `z.iso.datetime({ offset: true })`, `z.instanceof(ArrayBuffer)`, `z.void()` in a `returns` position, `z.enum(object)` with proven string values and `.normalize()` are rewritten; literal masks on imported tables and on `partial` / `required` become key lists.
+
+### Fixed
+
+- `TS2589` / `TS5114` where a query-engine handle was passed around or returned from a context function: the filter types recursed forever on an unresolved union validator. It did not depend on registry size.
+- `TS2589` on long `.extend` chains: 40 chained calls check where about 33 failed.
+- `k.custom(guard)` passes on any truthy guard result, as Zod does; it required exactly `true`.
+- `toJsonSchema` output below `.catch` no longer bounds an integer whose catch value is returned unchecked.
+- Codemod: a Zod schema that the same file passes to a third-party library (an oRPC builder, including a derived local builder and inline arguments) stays in Zod and is reported (`zod-consumer`). When the schema is rewritten in another file, the consumer site is reported with the `toZod` fix (`zod-consumer-import`). A package that imports only client entries of the kit is outside the migration.
+- Codemod: `z.iso.datetime` / `z.iso.date` with other arguments, `z.void()` outside `returns`, `z.enum` of values not proven to be strings or with an options argument, and `.startsWith()` are held and reported instead of producing code that does not compile or validates differently.
+- Codemod: a file that still calls `zid` keeps a working import (moved to `convex-helpers/server/zod4`); `convexToZod` and unreadable masks are reported; v1 entry names in string literals are reported, also in files with no Zod or kit import.
+- Codemod: schema, builder and bridge references are resolved to their lexical binding, so a function-local schema or a builder reached through an object property, destructuring, a class field, a default export or a namespace import is still recognised, and a parameter that shadows an import is not mistaken for it.
+- `toZod` skips a converted check or overwrite when its wrapped base failed, takes a default above a nested transform as parsed output, and no longer exposes a default hidden behind a transform through `.optional()`, all as `k` parse does.
+- An async `k.custom` guard never passes and its rejection is contained; a mask placed before `{ dropChecks: true }` throws like any other mask.
+- Codemod: a held table keeps its v1 form and its import instead of being half renamed; report paths no longer depend on the directory the run starts in; the package boundary is found from the file, not from the working directory.
+- `--restore-strict` pairs objects by their binding, reports repeated field signatures it cannot pair (`strict-ambiguous`) instead of making the wrong object strict, ignores a parameter that shadows the namespace, and reports `k.strictObject(...).strip()`.
+- The packed-components smoke waits for the approval callback on a deadline and stops early when the workflow fails.
+
+### Known limits
+
+- An object that embeds itself through `.extend` reaches `TS2590` at 16 levels; give one intermediate level an explicit type. A large inline `.extend` inside a union or array can reach it sooner; hoist it to a constant.
+- `toZod` keeps three Zod behaviours: its number rejects `NaN` and `Infinity`, its `any` accepts `undefined`, and its union takes the first matching member.
+- `toZod` does not support `.catch`.
+- A field that shares the name and value type of an option of `pick` / `omit` / `partial` / `required` (for example a boolean field named `dropChecks`) reads as options, not as a mask.
+
+## [2.0.0-beta.6]
+
+### Added
+
+- `k.email(message?)` and `k.url({ protocol?, hostname?, message? })`, also as `k.string().email()` / `.url()`: `invalid_format` issues, `format: 'email'` / `'uri'` in JSON Schema, carried by `toZod`. The email pattern is Zod 4's; a URL is what the WHATWG `URL` parser accepts.
+- `k.custom<T>(guard?, message?)`, Zod's `z.custom<T>()`: natively `v.any()`, typed `T`, with the guard run at parse and at function boundaries.
+- `k.int64()` bounds: `.min(n)`, `.max(n)`, `.positive()`, `.nonnegative()`, `.negative()`, `.nonpositive()`, taking bigints and comparing exactly. Before, a bounded `z.bigint()` had no `k` form and the codemod's rewrite of it did not compile.
+
+### Fixed
+
+- Codemod: a bounded `z.bigint()` is rewritten to the new `k.int64()` bounds (it produced code that did not compile); `z.email()`, `z.url()` and `z.custom<T>()` are rewritten to `k.email()`, `k.url()` and `k.custom<T>()` instead of being reported.
+- Codemod: a local binding named `z` that shadows the Zod import is no longer treated as Zod.
+- Codemod: files of a workspace package that does not depend on `cvx-kit` are skipped and listed (`package-without-cvx-kit`); `--include-packages-without-kit` rewrites them anyway.
+- Codemod: a second run reports files that still hold Zod as `mixed` or `kept` and counts only what that run rewrote; a table whose fields are a plain reference is no longer reported as `table-callback-complex`.
+- Codemod: an import from `cvx-kit/zod-table` never survives; a `zid` still used by a statement left as Zod is reported as `zid-in-zod-statement`.
+- Codemod: `z.infer` / `z.output` / `z.input` of a derived `k` schema (`.extend(...)`, `table.insertSchema`, …) is rewritten instead of reported as `type-helper-unknown`.
+
+## [2.0.0-beta.5]
+
+### Fixed
+
+- `toJsonSchema` emits only the stronger of an inclusive and an exclusive bound on the same side, so `k.int().positive()` is `exclusiveMinimum: 0` without the default safe-range `minimum` beside it. A chain that used to combine `.safe()` with `.positive()` or `.negative()` therefore loses the redundant bound it emitted up to beta.3 (`minimum: -9007199254740991` beside `exclusiveMinimum: 0`); the accepted values are the same, but a pinned JSON Schema snapshot of such a field changes.
+- `--restore-strict` pairs an object that moved within its file when exactly one leftover on each side has its field names, and no longer lists a strict object whose counterpart is already strict but declares its fields differently (in a constant, or renamed).
+
+## [2.0.0-beta.4]
+
+### Added
+
+- `cvx-kit-codemod-v2 <paths> --restore-strict <git-ref>`: for apps migrated with an earlier beta's codemod, restores `k.strictObject` wherever the Zod source at the pre-migration ref was `z.strictObject` or `.strict()`. Dry run without `--write`; sites it cannot pair are listed.
+
+### Fixed
+
+- `toJsonSchema` of `k.int()` and `.int()` emits the safe range (`minimum`/`maximum`) that parse enforces since beta.3, as Zod does for `z.int()`; before, only `.safe()` emitted it, so removing a redundant `.safe()` changed the schema.
+- `kVariantTable` rejected a `k.strictObject` branch as an object-level refinement, so a variant table migrated by the beta.3 codemod from `z.strictObject` branches threw at module load.
+
+## [2.0.0-beta.3]
+
+### Breaking since beta.2
+
+- **If you migrated with the beta.0, beta.1 or beta.2 codemod:** it rewrote every `z.strictObject(...)` and `.strict()` to a plain `k.object(...)`, which was strict then. On beta.3 each of those strips unknown keys under an application `parse`, with no type error, and the source no longer says which ones were strict. Kit boundaries still reject, so only objects parsed directly are affected: validators of server functions, webhooks and other untrusted input outside the kit. Compare against your pre-migration branch and restore `k.strictObject` where the Zod source was strict.
+
+- `k.int()` and `.int()` reject integers outside the safe range with `too_small` or `too_big`; non-integers report `not_integer`. `.safe()` remains available and is redundant on integers. `k.number()` is unchanged; use `.finite()` to reject NaN and infinities.
+- Application `parse`, `safeParse` and Standard Schema `validate` strip unknown object keys instead of failing. Code that relied on `unrecognized_key` must add `.strict()` or use `k.strictObject`. Existing `.strip()` calls keep working and can be removed where they only restored Zod's parse behaviour. Plain objects accept class instances through their own enumerable properties. Function args and returns, table fields and writes, contracts, Effect command inputs, CRUD masks, filters and cursors keep rejecting unknown keys.
+- The v2 codemod no longer adds `.strip()` to parsed objects or `.safe()` to integers. `z.strictObject` becomes `k.strictObject`, and `.strict()` stays. `--native-number-bounds` only controls the added `.finite()` on numbers. `--no-strip-parsed` is a deprecated no-op with a stderr notice. Already-migrated `k` code is left unchanged.
+- Unchanged: the schemas a table derives (`insertSchema`, `updateSchema`, `commandInput`, `publicDto`, `dto()`, `tools`), `k.record`/`k.partialRecord` with literal keys and the kit's own published schemas (pagination options, CRUD inputs, approvals validators) are now `.strict()` objects, so a direct `parse` of them still rejects unknown keys. JSON Schema output is unchanged: a plain object still emits `additionalProperties: false`.
+- The last unknown-key policy declared on a chain wins; in beta.2 `.strip().loose()` stripped.
+- `k.int().safe('message')` no longer customises the range message, because `k.int()` reports the range itself; use `k.number().int('message')` or `k.number().safe('message')`.
+- `toZod` converts a plain `k.object` to a stripping `z.object`; `.strict()` converts to `z.strictObject`.
+
+### Added
+
+- `.strict()` on objects and `k.strictObject(fields)`.
+- In a `k.union`, application parse prefers a member that accepts every key of the value over an earlier member that would strip some.
+
 ## [Unreleased]
+
+These changes are planned as 2.0.0, a breaking release that removes Zod from the kit. Follow the [2.0 migration guide](https://github.com/ImRLopezAG/cvx-kit/blob/main/skills/cvx-kit/references/migration-v2.md); the codemod in `tools/codemod-v2/` rewrites the mechanical call sites and reports the rest.
+
+### Breaking
+
+- Zod is removed from every core entry. Schemas are written with `k` (`cvx-kit`, `cvx-kit/k`), whose schemas carry plain native Convex validators. `zod` is now an optional peer, needed only for `cvx-kit/zod`.
+- `cvx-kit/zod-table` is removed. `zodTable` is `kTable`, `zodVariantTable` is `kVariantTable`, and the table builders and types move to `cvx-kit/table` (also exported from `cvx-kit`). Fields are a plain object, not a callback, and ids are `k.id('table')`. `zid`, `jsonSafeZid`, `zodToConvex` and `convexToZod` are removed.
+- `zodContract` is `kContract` (synchronous decoding) and `effectZodApiBuilder` is `effectApiBuilder`, one builder for `k` schemas and native validators.
+- Validation failures raised by the kit are a `ConvexError` with data `{ code: 'VALIDATION', issues: [{ path, code, message }] }` (`KValidationError`), replacing `ConvexError({ ZodError })`. Structural arg failures raised by Convex keep Convex's error. `safeParse` returns `{ success, issues }` on failure, with no `.error`.
+- `k.object` strips unknown keys during application parse, like `z.object`; `.strict()` rejects them. Kit boundaries remain strict. `catchall`, recursive schemas, tuples, `custom`/`instanceof`, `coerce`/`preprocess` and `meta` are not supported in 2.0.
+- The kit no longer parses return values. Convex validates them against the output-side validator, so a handler that returns more fields than `returns` declares now fails; return `toPublicDto(row)`. A transforming `returns` schema is rejected, return refinements do not run, and `returns` must be a schema, not a plain field object.
+- `k.record` with an enum, string literal or union-of-literals key builds an object with a closed native validator and one required field per value (v1's shape for `z.record(z.enum(...), v)`); a native record with literal keys is refused by Convex at push. `k.partialRecord` builds the optional-keys form. Other key kinds are a type error and throw at declaration. Object field names Convex refuses (leading `$`, empty, non-ASCII, over 1024 characters) throw when the validator is first built.
+- `transform` and `pipe` are rejected on table fields and return shapes; `trim`, `toLowerCase`, `toUpperCase` and `overwrite` stay allowed everywhere. Refinements and checks are synchronous; `superRefine` becomes `check`.
+- `insert`, `update`, `pick` and `omit` take string keys instead of `{ key: true }` masks. Table boundaries are accessors built on first read; an object spread copies them (building each), so `{ ...table, table: other }` replaces one member. Use `withFieldGroups` for field groups.
+- Ids are branded on input: `k.input` keeps `Id<'table'>`.
+- `k.number()` accepts `NaN` and infinities, as native `v.number()` does, and `int()` accepts only safe integers.
+- Out-of-range search options fail with `VALIDATION` instead of `SearchError('SEARCH_OPTIONS_UNSUPPORTED')`.
+- `AgentToolRecord.args` is a `k` schema; `approvalCallbackInput` is a `k` object and `approvalCallbackArgs` its native validator.
+- `k.record` keys must satisfy Convex's record-key rule after normalisation (non-empty, at most 1024 characters, printable ASCII, not starting with `$` or `_`); others fail with `invalid_format` at that key.
+- `k.timestamp()` accepts 1970-01-01T00:00:00.000Z through 9999-12-31T23:59:59.999Z; date conversions outside that range report an `invalid_value` issue instead of throwing.
+- Containers passed to `k.enum`, `k.union`, `k.discriminatedUnion`, `k.record` and `refine` options are frozen at declaration, and an object's field map is frozen when `.shape` is first read; `withFieldGroups` copies and freezes its map. Mutating a shared array or field object afterwards throws.
+- A `k.discriminatedUnion` whose options share a discriminator value throws when first used.
+- `k.input` of `k.object({})` is `{ readonly [key: string]: never }`, so an empty input rejects extra properties at the type level.
+- `pick`, `omit`, `extend` (including `extend({})`), `partial` and `required` on an object with object-level `refine`/`check`/`overwrite` throw at declaration instead of silently dropping them. Pass `{ dropChecks: true }` as the last argument to drop them, or `extend(fields, { keepChecks: true })` to keep them. The codemod reports such sites as `derive-drops-checks`.
+- `k.object` parses class instances from their own enumerable properties into a plain object.
+
+- `argumentFailure` (added in 0.2.0) no longer has a `'legacy'` policy. The default is `'validation'`, which throws `KValidationError` (`ConvexError({ code: 'VALIDATION', issues })`); `'declared'` and a function hook work as in 0.2.0. `zCustomFunctions` is `kCustomFunctions` in `cvx-kit/registration`.
+
+### Added
+
+- `createEffectFoundation({ argumentFailure })` applies the argument failure policy to Effect command, query and action `input` validation, including nested `exec`. By default a `k` input that fails reaches the client as `{ code: 'VALIDATION', issues }`; before, an API adapter with an `errors` projection reduced it to `UnknownFailure`. `'declared'` throws `INVALID_ARGUMENTS`.
+- `cvx-kit/k`: `k` factories (including `k.isoDate()`, `k.isoDateTime()`, `k.timestamp()` and their input conversions), chain methods, `parse`/`safeParse`, `k.infer`/`k.input`/`k.output`, Standard Schema v1 on every schema, and `KValidationError`.
+- `cvx-kit/table`: `kTable`, `createTable`, `tenantTable`, `kVariantTable` and the table types.
+- `cvx-kit/registration`: `kCustomQuery`, `kCustomMutation`, `kCustomAction` and `rawFunctionArgs`.
+- `cvx-kit/json-schema`: `toJsonSchema`, which renders ids as strings.
+- `cvx-kit/zod`: `toZod(schema)` and `.toZod()`, a one-way conversion to Zod 4. The result is a `zod/mini` schema, so the entry bundles Zod's core and not the classic method API: about 152 KB with `k` (73 KB of it Zod), against 815 KB when it was built on classic Zod. Extend a result with `zod/mini` functions. An id converts to `z.string()` typed as the table's `Id`, and `kZodIds.get(schema)?.tableName` names its table; convex-helpers' `zodToConvex` reads such an id as a plain string.
+- `withFieldGroups` in `cvx-kit/relations` and `AgentListArgs` in `cvx-kit/agent-tools`.
+- A codemod, `npx cvx-kit-codemod-v2 <path…> [--write] [--report out.json]`, shipped in the package as the `cvx-kit-codemod-v2` bin (also `node tools/codemod-v2/index.mjs` from a checkout).
+- The package ships `CHANGELOG.md` and the skill references (`skills/cvx-kit/references/*.md`, including this migration guide), so the docs match the installed version.
+
+### Added (since 2.0.0-beta.0)
+
+- Importing `cvx-kit/json-schema` makes every `k` schema implement Standard JSON Schema v1 (`~standard.jsonSchema.input/output({ target: 'draft-2020-12' | 'draft-07' })`), so libraries such as TanStack AI take `k` tool schemas directly. Without the import the property is absent and the converter stays out of the bundle. `toJsonSchema(schema, { refs: true })` emits repeated sub-schemas once under `$defs` (opt-in; default output unchanged).
+- `k.partialRecord(key, value)`.
+- `KCustomCtx<typeof builder>` (`cvx-kit/registration`, `cvx-kit`): the handler ctx of a `KCustomBuilder`, replacing convex-helpers' `ZCustomCtx`. `KCustomBuilder` is also exported from `cvx-kit`.
+- `AnyKSchema` (a parameter type for any `k` schema) and `KRecordKey` from `cvx-kit/k`; `KCursorSchema` from `cvx-kit/querying`.
+- Zod-parity members: `KArray.element`, `KObject.keyof()`, `KObject.required(...keys)`, `k.enum(...).exclude/extract/.enum`, number `.positive()`, `.negative()`, `.nonnegative()`, `.nonpositive()`, `.finite()`, `.safe()`, and `removeDefault()` (an alias of `unwrap()` on a default). The number checks leave the native validator unchanged; `toJsonSchema` and `toZod` describe them.
+- `toJsonSchema(schema, { io: 'output' })` describes the output side.
+- `.catch(fallback)` on every `k` schema, as Zod 4's `catch`: a value or `({ issues, input }) => value` replaces a value that fails. Its input-side native validator is `v.any()`, so the kit validates the whole value at a function boundary; table fields and `returns` reject it. `toZod` throws on it (not carried), and the codemod rewrites `.catch(...)` instead of reporting it.
+- `k.object(...).loose()` and `k.looseObject(fields)`: parse keeps unknown keys (hardened like `.strip()`); the native validator stays the closed object v1 exported for `z.looseObject`. `k.jsonObject()`: a plain object of JSON values with any keys Convex accepts in an object value (`_id` included, no leading `$`), natively `v.any()`. The codemod rewrites `z.looseObject`, `.passthrough()` and `.loose()`.
+
+- `transform` callbacks take the `check` context as a second parameter: `context.addIssue({ message, path?, code? })` fails the parse with those issues, at the transformed value's location, on every path (`parse`, `safeParse`, the function boundary, Standard Schema, Effect operation input). `k.NEVER` (typed `never`) is the value to return after adding an issue. One-parameter transforms are unchanged and get no context. The codemod rewrites a Zod transform whose `ctx.addIssue({ code: 'custom', message, path })` and `return z.NEVER` map directly, and reports `transform-issue` otherwise (it previously left such a unit on Zod as `unknown-factory`, or rewrote a non-custom `addIssue` without a report).
+
+### Fixed (since 2.0.0-beta.0)
+
+- Codemod: the keep marker accepts a reason (`// cvx-kit-codemod: keep-zod -- reason`); kit entry imports and renamed kit names are rewritten in every file, and moved names merge into an existing import of their module; a file importing `k` from `cvx-kit/k` is no longer skipped as a `k` conflict, so re-runs pick up the remaining Zod; `zCustomQuery`/`zCustomMutation`/`zCustomAction`/`ZCustomCtx` from convex-helpers become the `k` builders and `KCustomCtx`; the new number checks and `.check` are rewritten directly, and Zod-only chain spellings on `k` schemas and table members are rewritten, or reported (`unproven-mask`, `unproven-strict`) when the root cannot be proven; a type helper is rewritten only when its schema is known to be `k` (`type-helper-unknown` otherwise); objects that are parsed get `.strip()` by default (`--no-strip-parsed` to keep them strict) and are reported apart from boundary-only objects; table spreads are reported.
+- An object spread of a table boundary (`{ ...table, table: other }`) keeps `schema`, `publicDto`, `storage` and the other lazy members, for `kTable`, `createTable`, `tenantTable` and `kVariantTable`.
+- `k.object` rejected class instances with `expected object, received object`; see the plain-object entry above.
+- `k.infer` of an object holding a `k.any()` field beside a defaulted field made the `any` field optional.
+- `refine` with a type-guard predicate narrows the schema's type.
+- A type-guard `refine` now narrows inside containers too: an array element, record value or union member, an object field wrapped in `.optional()`, `.nullable()` or `.default()`, derived objects, table documents and function `args` all see the narrowed type (it narrows the native validator's type, at the type level only).
+- The relation index error (`No active index begins with or has a guarded prefix for "table.field"`) says when the table has no indexes in the running bundle (the module declaring them may not be imported) or lists the indexes it does have.
+- `KValidationError` is built without stack frames, so a validation failure on a dev backend no longer prints kit-internal frames as if it were a crash. Other errors keep their stacks.
+- `k.discriminatedUnion` accepts a discriminator that is a union of literals (`k.union([k.literal('a'), k.literal('b')])`), dispatching on each value. An unsupported discriminator, a missing key or a repeated value now throws at declaration, naming the key, the option index and what was found, instead of on first use.
+- The error for a transforming `returns` schema names the field path that transforms and says what to declare instead.
+- Check options read Zod 4's `error` key: `refine(fn, { error: '…' })` reported `Invalid input`. `error` is now a string alias of `message` in `refine` and in the message argument of `min`/`max`/`length`/`regex`/`int` and the number checks, which also accept an options object. A function-valued `error` is a type error and throws at declaration. The codemod rewrites inline `error:` to `message:`, reports `error-map` and the informational `check-options-by-reference`.
+- Codemod: v1's number refusals are kept. `z.int()` and `z.number().int()` become `k.int().safe()` and `z.number()` becomes `k.number().finite()` (informational `int-safe-preserved`, `number-finite-preserved`); `--native-number-bounds` emits the bare forms and reports `int-no-longer-safe` / `number-now-accepts-nan`. The codemod prints its options with `--help`.
+- `.catch` no longer opens holes in Convex's validation. It throws at declaration around a schema holding `k.id` at any depth (catch makes the value `v.any()` natively, and only Convex can check an id's table; `k.id(...).catch` is also a type error), on a discriminated-union option and on its discriminator field (catch the whole union instead). Three-argument `kVariantTable` and DTO extensions reject `catch` in branch fields, as ordinary table fields already did; a variant branch could store `v.any()`. A non-object given to a discriminated union is an `invalid_type` issue instead of a `TypeError`, also on the plan-only path at function boundaries.
+- `toJsonSchema` and `.catch`: a caught object field is not required on the input side, and the output side emits the wrapped schema's shape without its checks, since the fallback is not validated.- Field and enum names that match `Object.prototype` members (`__proto__`, `constructor`, `toString`, `hasOwnProperty`) work everywhere: `k.object`, its derivations, finite-key records, `k.partialRecord`, `k.enum(...).enum`, both native validators, parse, JSON Schema, `toZod` and table projections build field maps with own properties, so `k.record(k.literal('__proto__'), v)` no longer loses its field. A discriminator missing from an option is no longer read through the prototype.
+- `k.enum(...).extract(values)` follows the requested order at runtime, as its type and Zod 4 do; `exclude` keeps the source order.
+- `k.discriminatedUnion` no longer reports a conflict when one option lists the same discriminator value twice (`k.union([k.literal('a'), k.enum(['a', 'b'])])`).
+- `toPublicDto` threw `cannot project a 'jsonObject' schema` on a table with a `k.jsonObject()` public field; it now projects it (a stored non-object fails as `invalid_type`).
+- `toJsonSchema` output follows what parse can produce: an optional field stays optional through a `transform` (`required` no longer lists it), a `pipe` drops the `nullable`/default declared before it, and on the input side a check after a normaliser is no longer promised (`toLowerCase().regex(...)` accepted `'AB'`; after `trim` only the lower length bound is kept). A property test checks, over about 45 schemas, that every value parse accepts validates against the input schema and every parsed output against the output schema.
+- `k.jsonObject()` carries Convex's key rule into its JSON Schema (`propertyNames` pattern) and `toZod` for top-level keys; nested keys are checked by parse only.
+- `pick`, `omit`, `extend`, `partial` and `required` keep the receiver's unknown-key policy, as Zod 4 does: a `.loose()` or `.strip()` object's derivations were strict, which silently changed what parse accepted.
+- Codemod: safe-integer bounds are kept for `z.number().int(options)` (`k.number().int(options).safe()`) and for `.int()` on a binding proven to be a Zod number; `.int()` on an unproven value is reported as `unproven-int`. Objects derived from a `z.looseObject` or `z.strictObject` no longer get `.strip()` (the derivation keeps the policy in Zod and in `k`); one whose source cannot be seen is reported as the informational `derived-policy-unproven`. A type-only `k` import is promoted to a value import instead of leaving `k` undefined at runtime. `z.partialRecord` with a string key becomes `k.record` (Zod treats it as a record), with a finite literal key `k.partialRecord`, and other keys are reported as `partial-record-key`. With `--write`, a symlink whose real path is outside the given paths is skipped and listed in the report's `outsideRoots`. The run exits 1 when a file fails to parse (the report is still written), and a quoted glob or a missing path fails with a message that paths must be files or directories; `--help` documents exit codes.
+- `src/k` typechecks without Node's typings (`KValidationError` read `Error.stackTraceLimit` through them), so `node scripts/bench-validators.mjs --flavors convex,k` reports `k`'s instantiations again.
+
+### Changed
+
+- The stored shape and indexes of every table are unchanged from 0.1.35, so no data migration is expected.
+- `updateSchema` and `.partial()` no longer fill defaults, so a patch cannot overwrite stored values with defaults.
+- `toPublicDto` re-checks structure only; it no longer re-runs normalisers on stored values.
+- The `cvx-kit/oxlint` rules recognise `k`, `kTable`, `kVariantTable` and `cvx-kit/table`.
+- Relation helpers are memoised and immutable, and no longer depend on a list of audited Zod versions.
+- `min`, `max` and `length` reject `NaN`, and `.int()`/`k.int()` reject `NaN` and infinities; a bare `k.number()` still accepts both.
+- Async `transform` and `overwrite` callbacks fail with an issue, as async `refine` and `check` do.
+- `toZod` converts defaults to Zod's `prefault`, so they run through the rest of the chain as in `k`, and `partial()` fields carry no default.
+- `toJsonSchema` keeps the strongest of repeated bounds, emits extra `regex` checks as `allOf` patterns, and bounds timestamps.
+- With `skipConvexValidation`, the kit validates customization-declared args before the customization's `input` runs.
+- Pagination budgets (`maximumRowsRead`, `maximumBytesRead`) and search `numItems` are safe integers, and the Effect CRUD list `id` is finite, as in 0.1.x.
+- An Effect builder's registered return type is the handler's value when that satisfies `returns`, and the `returns` output otherwise.
+- Getter-declared `args` and `returns` (`get args() { return ... }`) are the documented default: a call builds only the function it invokes (benchmark app load 8.37 ms with properties, 6.06 ms with getters). The property form stays supported. The v2 codemod writes getters for function definitions unless the value is a plain reference; `--no-getters` opts out.
+- `toZod` converts `k.id` to `z.string()` typed as the table's `Id` instead of convex-helpers' `zid`; the table name is in the new `kZodIds` registry. convex-helpers' `zodToConvex` now reads a converted id as a string.
+
+### Removed
+
+- `cvx-kit/zod-table`, `zodTable`, `zodVariantTable`, `zid`, `jsonSafeZid`, `zodToConvex`, `convexToZod`, `zodContract`, `effectZodApiBuilder`, `EffectZodApiBuilder`, `TableBoundary`, `VariantBoundaryOptions` and `VariantTableBoundary`.
+- `bun run bench:per-call` (added in 0.2.0, written against the Zod surface). `node scripts/bench-request.mjs` covers first and warm calls.
+- The 0.2.0 lazy pagination helpers built on Zod (`lazyOptional`, recipe capture). `k` pagination boundaries allocate records only and build validators on first use.
+
+### Fixed
+
+- The `cvx-kit-codemod-v2` bin did nothing and exited 0 when run through its package symlink; it now resolves the script path.
+- `toJsonSchema` of a `.strip()` object no longer emits `additionalProperties: false` on the input side, since such an object accepts unknown keys. The output side still does.
+
+### Performance
+
+- Argument-less `k` scalars carry a prebuilt native validator, and `paginationOpts` builds each selected field's operator schema on first use; selection errors are still raised at the call.
+- Declaring schemas records a chain and builds nothing else; native validators and parse plans are built on first use, and a function whose schemas declare no checks, defaults or transforms does no validation work of its own. On the representative benchmark app (about 30 tables, relations, contracts and auth), a function module's bundle fell from 815.8 KB to 220.6 KB, its load time from 28.34 ms to 7.97 ms and its retained heap from 9.37 MB to 2.03 MB. On one consumer app's schema graph, declaring the schemas on import fell from 23.44 ms to 4.78 ms. See the [benchmark record](https://github.com/ImRLopezAG/cvx-kit/blob/main/docs/benchmarks/validators.md).
+- `cvx-kit/zod` no longer pulls classic Zod or convex-helpers into a bundle: `k` plus the interop entry fell from 237.4 KB (157.1 KB of Zod) to 152.2 KB (72.7 KB of Zod).
+- The built-in `queryErrors` and `argumentErrors` contracts are marked pure, so a module that does not read one drops it (about 0.8 KB of kit code in the benchmark app's function module).
+
+## [0.2.0] - 2026-11-26
+
+### Breaking
+
+- The `zod` peer range is now `^4.6.7` (was `^4.5.4`). Upgrade zod before installing this release.
+- The `convex-helpers` peer range is now `>=0.1.130 <0.2.0` (was `>=0.1.127`). Earlier helper releases do not type-check against zod 4.6.7 without `skipLibCheck`.
+
+### Added
+
+- `argumentFailure` on `createAuthFunctions` and `createAuthReaders` chooses what is thrown when a function's zod argument schema, or the compact pagination filter guard, rejects its input. `'legacy'` (the default) keeps the `ConvexError({ ZodError: [...] })` payload unchanged. `'declared'` throws the built-in `argumentErrors` contract's `INVALID_ARGUMENTS` envelope, which `decodeFailure`, `matchFailure` and `failureOf` read after `combineErrorContracts(appErrors, argumentErrors)`. A function receives `{ source: 'arguments' | 'filter', issues }` and returns the value to throw, for example the app's own `errors.toConvexError(...)`.
+- `createEffectFoundation({ argumentFailure })` applies the same policy to Effect command and query `input` validation, including direct and nested `exec`. `'legacy'` keeps the original decoder failure and endpoint projection. `'declared'` throws `INVALID_ARGUMENTS` through Effect API adapters, and a function receives `{ source: 'arguments', issues }` and returns the value to throw. The failure audit emits once per rejection without input or details. `createEffectAuthFunctions` inherits `argumentFailure` for endpoint Zod arguments through its shared auth config.
+- `cvx-kit/errors` exports `argumentErrors`, `sanitizeArgumentIssues`, `ARGUMENT_ISSUE_LIMITS` and the `ArgumentIssue`, `ArgumentFailure` and `ArgumentFailurePolicy` types. Issues carry only `path`, `code` and `message`, capped at 20 issues, 32 path segments, 256-character messages and 32 KB in total. cvx-kit never adds the rejected value; messages and path segments are the schema's own, as in the legacy payload.
+- `bun run bench:per-call` (`scripts/bench-per-call.mjs`) measures the first call in a fresh process and a warm loop for argument and result parsing, filtered pagination, relation pages, cursor sealing and Effect execution, with database read and policy-call counts. `--source label=root` compares source trees.
+
+### Changed
+
+- `relations.tables.<table>.paginationOpts(...)` still validates its selection at the call, with the same errors in the same order, but builds the `filters` schema only when it is parsed, unwrapped, converted for Convex or emitted as JSON Schema. `pageDto(...)` still reads every selected edge at the call and builds its row validator on first use. Registration, `.pick` and `.extend` build nothing. Exported Convex validators are unchanged. A module that declares many paginated operations no longer pays for the ones a request does not invoke.
+- Table materialization compares native validator JSON structurally instead of building canonical strings, and module-scope helper schemas in `cvx-kit/relations` are built on first use.
+- Effect command registries no longer read `contract.errors` at registration, so a thunk-declared domain contract is not forced at import.
+- Internal boolean checks use zod 4.6 `.validate()` instead of `.safeParse().success`, so a rejected value no longer builds a `ZodError`.
+- A paginated call without filters no longer builds the private filter grammar. Relation pages reuse child plans, scope digests and predicate classification across rows within one invocation; read counts, policy calls, error order and cursor bytes are unchanged. Cursor binding data is prepared once per pagination operation.
+- The native recipe fast path for pagination DTOs now recognises zod 4.6.7. It was silently disabled on that version.
+- Dependencies: convex 1.51.0, convex-helpers 0.1.137, convex-test 0.0.75, effect 4.1.6, zod 4.6.7, `@convex-dev/workflow` 0.5.0, vite-plus 1.8.0, oxlint 1.95.0, oxc-parser 0.160.0, jsdom 31.0.1, React 19.3.1. The `convex`, `effect` and `react` peer ranges are unchanged.
+
+### Notes
+
+- Measured on a frozen copy of a consumer app, importing one API module (local bundle, median of 11 fresh processes, against 0.1.35): 178 → 135 ms and 34.4 → 21.1 MB retained for a payments module, 243 → 184 ms and 39.9 → 34.8 MB for debts, 200 → 162 ms and 35.2 → 26.4 MB for enrollments, 131 → 119 ms and 24.0 → 19.7 MB for contacts. A search module that declares no relation pagination is unchanged (84 → 86 ms, 10.5 MB). First call of a 25-row relation page in the fixture: 29.2 → 25.5 ms; of a 100-row page: 44.5 → 39.6 ms. Other per-call scenarios are within noise. Building a filter schema now happens in the invoked function, so its first call does that work instead of the import.
+- With effect 4.1, a handler failure that coincides with a failing finalizer is reported in the combined cause as a defect carrying the same value, where 4.0 reported a failure. cvx-kit's error projection already treats combined causes as unknown failures, so declared failures are classified as before.
 
 ## [0.1.35] - 2026-11-25
 

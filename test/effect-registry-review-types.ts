@@ -1,5 +1,6 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
+import type { StandardSchema } from '../src/contracts'
 import { createEffectFoundation, effectOperationFactory } from '../src/effect'
 
 type Equal<Left, Right> =
@@ -23,8 +24,8 @@ const queries = foundation.Query({
 	defaults: { guard },
 	operations: () => ({
 		read: external.query({
-			input: z.number(),
-			result: z.number(),
+			input: k.number(),
+			result: k.number(),
 			handler: (input, context) => input + context.traceId.length,
 			middleware: ({ next }) => next({ context: { traceId: 'trace' } }),
 		}),
@@ -35,8 +36,8 @@ const commands = foundation.Command({
 	defaults: { guard },
 	operations: () => ({
 		save: external.command({
-			input: z.number(),
-			result: z.number(),
+			input: k.number(),
+			result: k.number(),
 			classification: 'business',
 			audit: () => null,
 			handler: (input, context) => input + context.traceId.length,
@@ -61,7 +62,7 @@ foundation.Query({
 	context: (host: {}) => host,
 	operations: () => ({
 		// @ts-expect-error unchecked manual entries must not bypass parsed input/result contracts
-		invalid: { input: z.string(), result: z.number(), handler: (input: number) => input },
+		invalid: { input: k.string(), result: k.number(), handler: (input: number) => input },
 	}),
 })
 foundation.Command({
@@ -69,8 +70,8 @@ foundation.Command({
 	operations: () => ({
 		// @ts-expect-error unchecked manual command entries must not bypass their contracts
 		invalid: {
-			input: z.string(),
-			result: z.number(),
+			input: k.string(),
+			result: k.number(),
 			classification: 'business',
 			audit: () => null,
 			handler: (input: number) => input,
@@ -96,8 +97,8 @@ optionalFoundation.Command({
 	context: (host: { actorId: string }) => host,
 	operations: ({ command }) => ({
 		save: command({
-			input: z.number(),
-			result: z.number(),
+			input: k.number(),
+			result: k.number(),
 			classification: 'business',
 			audit: () => null,
 			handler: (input) => input,
@@ -110,16 +111,16 @@ foundation.Query({
 	operations: () => ({
 		// @ts-expect-error a standalone helper must check the actual resolved base context
 		read: wrongContext.query({
-			input: z.number(),
-			result: z.number(),
+			input: k.number(),
+			result: k.number(),
 			handler: (input, context) => input + context.secret.length,
 		}),
 	}),
 })
 const plain = effectOperationFactory<{}>()
 const checkedQuery = plain.query({
-	input: z.string(),
-	result: z.number(),
+	input: k.string(),
+	result: k.number(),
 	handler: (input) => input.length,
 })
 foundation.Query({
@@ -130,18 +131,33 @@ foundation.Query({
 foundation.Query({
 	context: (host: {}) => host,
 	// @ts-expect-error a replaced input schema must agree with the checked handler
-	operations: () => ({ read: { ...checkedQuery, input: z.number() } }),
+	operations: () => ({ read: { ...checkedQuery, input: k.number() } }),
 })
 const checkedCommand = plain.command({
-	input: z.string(),
-	result: z.number(),
+	input: k.string(),
+	result: k.number(),
 	classification: 'business',
 	audit: () => null,
 	handler: (input) => input.length,
 })
+// k has no async transforms: asynchronous Standard Schemas stand in for them.
+const asyncInput: StandardSchema<string, number> = {
+	'~standard': {
+		version: 1,
+		vendor: 'test',
+		validate: async (value) => ({ value: String(value).length }),
+	},
+}
+const asyncResult: StandardSchema<number, string> = {
+	'~standard': {
+		version: 1,
+		vendor: 'test',
+		validate: async (value) => ({ value: String(value) }),
+	},
+}
 const asyncChecked = plain.query({
-	input: z.string().transform(async (value) => value.length),
-	result: z.number().transform(async (value) => String(value)),
+	input: asyncInput,
+	result: asyncResult,
 	handler: (input) => input + 1,
 })
 const asyncAssertions: [Assert<Equal<Parameters<typeof asyncChecked.handler>[0], number>>] = [true]

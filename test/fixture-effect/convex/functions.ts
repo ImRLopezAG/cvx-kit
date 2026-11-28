@@ -1,8 +1,8 @@
-import { effectApiBuilder, effectZodApiBuilder } from 'cvx-kit/effect'
+import { effectApiBuilder } from 'cvx-kit/effect'
+import { k } from 'cvx-kit/k'
+import { kCustomMutation } from 'cvx-kit/registration'
 import { Context, Effect } from 'effect'
 import { ConvexError, v } from 'convex/values'
-import { zCustomMutation } from 'convex-helpers/server/zod4'
-import { z } from 'zod'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { commands, declaredErrors, FixtureFailure, queries, Reader } from './domain'
 
@@ -165,19 +165,17 @@ export const invalidReturn = validatedMutation({
 			return 'invalid' as 'saved'
 		}),
 })
-const customMutation = effectZodApiBuilder(
-	zCustomMutation(internalMutation, {
+// With skipConvexValidation neither Convex nor the kit checks `returns`; the smoke script pins that.
+const customMutation = effectApiBuilder(
+	kCustomMutation(internalMutation, {
 		args: {},
 		input: () => ({ ctx: { actor: 'trusted-server' }, args: {} }),
 	}),
 	{ services: () => Context.empty() },
 )
 export const invalidCustomReturn = customMutation({
-	args: { key: z.string() },
-	returns: z
-		.string()
-		.transform((value) => value.length)
-		.refine((length) => length > 100, 'FIXTURE_CUSTOM_RETURN'),
+	args: { key: k.string() },
+	returns: k.string(),
 	skipConvexValidation: true,
 	handler: (ctx, args) =>
 		Effect.gen(function* () {

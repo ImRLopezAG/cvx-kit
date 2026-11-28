@@ -3,8 +3,11 @@ import {
 	paginationGrammar,
 	normalizeFilters,
 	scalarPredicateFromSchema,
+	unionOf,
+	type FilterGrammarOf,
 	type FilterTree,
 	type FieldSchemas,
+	type KFilterSchema,
 	type PaginationValidatorOptions,
 } from './shared/filters'
 // oxlint-disable-next-line cvx/no-internal-reexports -- Preserve existing internal imports while the neutral grammar owns implementation.
@@ -15,26 +18,40 @@ export {
 	MAX_FILTER_IN_VALUES,
 	type FilterGrammar,
 	type FieldSchemas,
+	type KFilterSchema,
 } from './shared/filters'
 import { valueEqual, type FilterAst, type FilterScalar } from './shared/ast'
 // oxlint-disable-next-line cvx/no-internal-reexports -- Existing executor consumers retain their type import boundary.
 export type { FilterAst, FilterScalar, FilterOperator } from './shared/ast'
-import { convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
 import { paginationOptsValidator } from 'convex/server'
 import { compareValues, type GenericId, type GenericValidator } from 'convex/values'
-import { z } from 'zod'
+import {
+	k,
+	type KEnum,
+	type KLiteral,
+	type KNullable,
+	type KNumber,
+	type KObject,
+	type KOptional,
+	type KSchema,
+	type KString,
+	type KType,
+} from '../k'
 
 /** Shared hard ceilings; the execution engine may impose lower budgets. */
 export const MAX_PAGE_SIZE = 100
 
-type NativeField<Schema extends z.ZodType> = ConvexValidatorFromZod<Schema, 'required'>
+type NativeField<Schema extends KType> = Schema['validator']
 type ScalarKind = 'id' | 'string' | 'float64' | 'int64' | 'boolean' | 'null' | 'literal'
+// An unresolved union's members are every validator, itself included: stop instead of descending forever.
 type SupportedNative<Validator extends GenericValidator> = Validator extends { kind: ScalarKind }
 	? true
 	: Validator extends { kind: 'union'; members: infer Members extends GenericValidator[] }
-		? false extends SupportedNative<Members[number]>
+		? GenericValidator extends Members[number]
 			? false
-			: true
+			: false extends SupportedNative<Members[number]>
+				? false
+				: true
 		: false
 
 export type ScalarSelection<Fields extends FieldSchemas> = {
@@ -50,9 +67,9 @@ export type ExactScalarSelection<Fields extends FieldSchemas, Selection> = Selec
 		: never
 }
 
-type NativeValue<Schema extends z.ZodType> = Exclude<NativeField<Schema>['type'], undefined>
+type NativeValue<Schema extends KType> = Exclude<NativeField<Schema>['type'], undefined>
 type FilterInputValue<Value> = Value extends GenericId<string> ? string : Value
-type FilterValue<Schema extends z.ZodType, Side extends 'input' | 'output'> = Side extends 'input'
+type FilterValue<Schema extends KType, Side extends 'input' | 'output'> = Side extends 'input'
 	? FilterInputValue<NativeValue<Schema>>
 	: NativeValue<Schema>
 type RangeKind = 'string' | 'float64' | 'int64' | 'literal'
@@ -61,14 +78,16 @@ type OrderedNative<Validator extends GenericValidator> = Validator extends { kin
 		? true
 		: false
 	: Validator extends { kind: 'union'; members: infer Members extends GenericValidator[] }
-		? false extends OrderedNative<Members[number]>
+		? GenericValidator extends Members[number]
 			? false
-			: true
+			: false extends OrderedNative<Members[number]>
+				? false
+				: true
 		: false
-type OrderedValue<Schema extends z.ZodType> =
+type OrderedValue<Schema extends KType> =
 	OrderedNative<NativeField<Schema>> extends true ? NativeValue<Schema> : never
 
-export type ScalarPredicate<Schema extends z.ZodType, Side extends 'input' | 'output'> =
+export type ScalarPredicate<Schema extends KType, Side extends 'input' | 'output'> =
 	| FilterValue<Schema, Side>
 	| ({ eq?: FilterValue<Schema, Side>; in?: FilterValue<Schema, Side>[] } & ([
 			OrderedValue<Schema>,
@@ -113,30 +132,82 @@ export type ScalarFilters<
 				not?: ScalarFilters<Fields, Selection, Side, Tail<Depth>>
 			})
 
-const nativeOptions = convexToZod(paginationOptsValidator)
-export const nativePagination = nativeOptions.strict().extend({
+/** The fields of the engine's pagination options: Convex's, bounded, plus `onEmptyBudget`. */
+export type NativePaginationFields = {
+	readonly numItems: KNumber
+	readonly cursor: KNullable<KString>
+	readonly endCursor: KOptional<KNullable<KString>>
+	readonly id: KOptional<KNumber>
+	readonly maximumRowsRead: KOptional<KNumber>
+	readonly maximumBytesRead: KOptional<KNumber>
 	/** Explicitly accept safe progressing empty splits; legacy safe splits remain supported. */
-	onEmptyBudget: z.literal('split').optional(),
-	numItems: nativeOptions.shape.numItems.int().positive().max(MAX_PAGE_SIZE),
-	maximumRowsRead: nativeOptions.shape.maximumRowsRead.unwrap().int().positive().optional(),
-	maximumBytesRead: nativeOptions.shape.maximumBytesRead.unwrap().int().positive().optional(),
-})
-export type NativePagination = z.output<typeof nativePagination>
+	readonly onEmptyBudget: KOptional<KLiteral<'split'>>
+}
+export type NativePaginationSchema = KObject<NativePaginationFields>
+export type NativePagination = {
+	numItems: number
+	cursor: string | null
+	endCursor?: string | null
+	id?: number
+	maximumRowsRead?: number
+	maximumBytesRead?: number
+	onEmptyBudget?: 'split'
+}
+
+/**
+ * The engine's pagination options, built on first request and then shared: nothing is declared at
+ * import (R22). Numbers are finite as v1's Zod conversion required; the native validator is Convex's
+ * `paginationOptsValidator` plus `onEmptyBudget`.
+ */
+export function nativePagination(): NativePaginationSchema {
+	return (nativeOptions ??= k.strictObject({
+		numItems: finiteNumber().int().refine(positive, POSITIVE).max(MAX_PAGE_SIZE),
+		cursor: k.string().nullable(),
+		endCursor: k.string().nullable().optional(),
+		id: finiteNumber().optional(),
+		// Safe integers only, as v1's Zod `.int()` required; budgets are client input.
+		maximumRowsRead: finiteNumber()
+			.int()
+			.refine(positive, POSITIVE)
+			.max(Number.MAX_SAFE_INTEGER)
+			.optional(),
+		maximumBytesRead: finiteNumber()
+			.int()
+			.refine(positive, POSITIVE)
+			.max(Number.MAX_SAFE_INTEGER)
+			.optional(),
+		onEmptyBudget: k.literal('split').optional(),
+	}))
+}
+
+/** Convex's own `paginationOptsValidator` as a `k` object, for `paginated(dto).args`. Unknown keys strip, as v1's did. */
+export function convexPaginationOptions(): KObject<Omit<NativePaginationFields, 'onEmptyBudget'>> {
+	if (convexOptions) return convexOptions
+	const native = paginationOptsValidator.fields
+	const fields = {
+		numItems: finiteNumber(),
+		cursor: k.string().nullable(),
+		endCursor: k.string().nullable().optional(),
+		id: finiteNumber().optional(),
+		maximumRowsRead: finiteNumber().optional(),
+		maximumBytesRead: finiteNumber().optional(),
+	}
+	for (const key of Object.keys(native))
+		if (!Object.hasOwn(fields, key)) throw new Error(`Unsupported Convex pagination field "${key}"`)
+	return (convexOptions = k.object(fields).strip())
+}
+
 /** Preserve the object boundary so pagination options can be registered directly as query args. */
-export type PaginationOptionsSchema<Filters, InputFilters = Filters> = z.ZodObject<
-	(typeof nativePagination)['shape'] & {
-		filters: z.ZodOptional<z.ZodType<Filters, InputFilters>>
-		order: z.ZodOptional<z.ZodEnum<{ asc: 'asc'; desc: 'desc' }>>
-	},
-	z.core.$strict
+export type PaginationOptionsSchema<Filters> = KObject<
+	NativePaginationFields & {
+		readonly filters: KOptional<KFilterSchema<Filters>>
+		readonly order: KOptional<KEnum<readonly ['asc', 'desc']>>
+	}
 >
 export type ScalarPaginationSchema<
 	Fields extends FieldSchemas,
 	Selection,
-> = PaginationOptionsSchema<
-	ScalarFilters<Fields, Selection>,
-	ScalarFilters<Fields, Selection, 'input'>
->
+> = PaginationOptionsSchema<ScalarFilters<Fields, Selection>>
 
 /** Scalar-only schema constructor shared by table and future registry boundaries.
  * Convex metadata describes stored INPUT, so storage refinements/transforms never run here.
@@ -149,28 +220,38 @@ export function scalarPaginationSchema<
 	selection: ExactScalarSelection<Fields, Selection>,
 	options?: PaginationValidatorOptions,
 ): ScalarPaginationSchema<Fields, Selection> {
+	// SAFETY: selected validators generate the same native scalar input/output relationships
+	// described by ScalarFilters, including native ID tables.
+	return paginationSchemaOf(validators, selection, options) as ScalarPaginationSchema<
+		Fields,
+		Selection
+	>
+}
+
+/** The untyped constructor behind `scalarPaginationSchema`, for boundaries that type it themselves. */
+export function paginationSchemaOf(
+	validators: Record<string, GenericValidator>,
+	selection: Readonly<Record<string, boolean>>,
+	options?: PaginationValidatorOptions,
+): KObject<any> {
 	const predicates: FieldSchemas = {}
 	for (const [key, selected] of Object.entries(selection)) {
 		if (selected !== true || !Object.hasOwn(validators, key)) {
 			throw new Error(`Invalid scalar filter selection "${key}"`)
 		}
-		predicates[key] = scalarPredicateSchema(validators[key]).optional()
+		predicates[key] = schemaOf(scalarPredicateSchema(validators[key])).optional()
 	}
 	const filters = boundedFilterSchema(predicates, options)
-	const result = nativePagination.extend({
+	return nativePagination().extend({
 		filters: filters.optional(),
-		order: z.enum(['asc', 'desc']).optional(),
+		order: k.enum(['asc', 'desc']).optional(),
 	})
-	// SAFETY: selected validators generate the same native scalar input/output relationships
-	// described by ScalarFilters, including converter-registered ID brands.
-	return result as ScalarPaginationSchema<Fields, Selection>
 }
 
-export function scalarPredicateSchema(validator: GenericValidator): z.ZodType {
+export function scalarPredicateSchema(validator: GenericValidator): KType {
 	assertSupportedScalar(validator)
-	const scalar = convexToZod(validator).nonoptional()
 	return scalarPredicateFromSchema(
-		scalar,
+		scalarFromNative(validator),
 		supportsRange(validator),
 		validator.isOptional === 'optional',
 	)
@@ -213,8 +294,11 @@ export interface CompiledFilters {
 	index: QueryIndex | null
 	prefix: readonly { field: string; value: FilterScalar }[]
 }
-type FilterSpec<Schema extends z.ZodType> =
-	z.input<Schema> extends { filters?: infer Spec } ? Spec : never
+type FilterSpec<Schema extends KSchema<any, any, any, any, any>> = Schema['_input'] extends {
+	filters?: infer Spec
+}
+	? Spec
+	: never
 export type ServerFilter<Fields extends FieldSchemas> = ScalarFilters<
 	Fields,
 	ScalarSelection<Fields>
@@ -228,9 +312,9 @@ interface BindingResult {
 /** Validate first; where is independently validated and ANDed with client predicates.
  * Only guaranteed sets at one consecutive index position may expand.
  */
-export function compileFilters<Schema extends z.ZodType>(
+export function compileFilters<Schema extends KSchema<any, any, any, any, any>>(
 	schema: Schema,
-	input: z.input<Schema>,
+	input: Schema['_input'],
 	indexes: readonly QueryIndex[],
 	conditions: readonly IndexCondition[] = [],
 	where?: FilterSpec<Schema>,
@@ -238,29 +322,62 @@ export function compileFilters<Schema extends z.ZodType>(
 	return parseFilterPlan(schema, input, indexes, conditions, where).compiled
 }
 
-/** Internal planner boundary: retain the parsed arguments without parsing them again. */
-export function parseFilterPlan<Schema extends z.ZodType>(
+/**
+ * Internal planner boundary: retain the parsed arguments without parsing them again. Both the
+ * client and the server filters run the full walker, so a failure is a `KValidationError` (KTD6).
+ */
+export function parseFilterPlan<Schema extends KSchema<any, any, any, any, any>>(
 	schema: Schema,
-	input: z.input<Schema>,
+	input: Schema['_input'],
 	indexes: readonly QueryIndex[],
 	conditions: readonly IndexCondition[] = [],
 	where?: FilterSpec<Schema>,
 	ordering?: string,
 ) {
-	const args = schema.parse(input)
+	const args: Schema['_output'] = schema['~parseStrict'](input)
 	// SAFETY: pagination schemas validate filters before this internal AST adapter reads them.
 	const parsed = args as { filters?: FilterTree }
 	// SAFETY: server filters use the same validation boundary as client filters.
 	const server =
 		where === undefined
 			? undefined
-			: (schema.parse({ ...parsed, filters: where }) as { filters?: FilterTree })
-	const grammar = paginationGrammar(schema)
+			: (schema['~parseStrict']({ ...parsed, filters: where }) as { filters?: FilterTree })
+	const compiled = planParsedFilters({
+		client: parsed.filters,
+		server: server?.filters,
+		// Unfiltered requests never read the grammar, so they do not build it.
+		grammar:
+			parsed.filters === undefined && server?.filters === undefined
+				? undefined
+				: paginationGrammar(schema),
+		indexes,
+		conditions,
+		ordering,
+	})
+	return { args, compiled }
+}
+
+/** The filters of one already parsed request and the indexes the planner may choose from. */
+export interface ParsedFilterRequest {
+	readonly client: FilterTree
+	readonly server: FilterTree
+	readonly grammar: FilterGrammarOf<unknown> | undefined
+	readonly indexes: readonly QueryIndex[]
+	readonly conditions: readonly IndexCondition[]
+	readonly ordering: string | undefined
+}
+
+/**
+ * Plan already validated filters: index choice, bindings, ranges and expansion, raising the
+ * transportable fan-out error.
+ */
+export function planParsedFilters(request: ParsedFilterRequest): CompiledFilters {
+	const { grammar, indexes, conditions, ordering } = request
 	const residual: FilterAst = {
 		kind: 'and',
 		children: [
-			canonicalSets(normalizeFilters(parsed.filters, grammar)),
-			canonicalSets(normalizeFilters(server?.filters, grammar)),
+			canonicalSets(normalizeFilters(request.client, grammar)),
+			canonicalSets(normalizeFilters(request.server, grammar)),
 		],
 	}
 	const guaranteed = guaranteedBindings(residual)
@@ -290,46 +407,48 @@ export function parseFilterPlan<Schema extends z.ZodType>(
 	)
 	const condition = conditions.find((entry) => entry.value !== null && entry.value !== undefined)
 	let index: QueryIndex | null = null
+	let prefix: CompiledFilters['prefix'] = []
 	if (ordering !== undefined) {
 		if (condition) throw new Error('orderBy cannot be combined with an active when selector')
 		index = sorted.find((entry) => entry.name === ordering) ?? null
 		if (!index) throw new Error(`Unknown ordering index "${ordering}"`)
+		prefix = prefixBindings(index, guaranteed.values)
 	} else if (condition) {
 		index = sorted.find((entry) => entry.name === condition.index) ?? null
-		if (!index || prefixBindings(index, guaranteed.values).length === 0)
+		if (index) prefix = prefixBindings(index, guaranteed.values)
+		if (!prefix.length)
 			throw new Error(`Explicit index "${condition.index}" is incompatible with guaranteed filters`)
 	} else {
 		let length = 0
 		let ranged = false
 		for (const candidate of sorted) {
-			const prefix = prefixBindings(candidate, guaranteed.values)
-			const expanded = sets.has(candidate.fields[prefix.length])
-			const usable = prefix.length + Number(expanded)
+			const candidatePrefix = prefixBindings(candidate, guaranteed.values)
+			const expanded = sets.has(candidate.fields[candidatePrefix.length])
+			const usable = candidatePrefix.length + Number(expanded)
 			const hasRange = ranges.has(candidate.fields[usable])
 			if (usable > length || (usable === length && hasRange && !ranged)) {
 				index = candidate
+				prefix = candidatePrefix
 				length = usable
 				ranged = hasRange
 			}
 		}
 	}
-	const prefix = index ? prefixBindings(index, guaranteed.values) : []
 	const expansion =
 		index && !guaranteed.impossible
 			? expansionForIndex(index, prefix, sets, ordering !== undefined || !!condition)
 			: null
-	const compiled: CompiledFilters = {
+	return {
 		sets,
 		expansion,
 		residual,
 		bindings: guaranteed.values,
 		ranges,
-		range: index ? rangeForIndex(index, prefixBindings(index, guaranteed.values), ranges) : null,
+		range: index ? rangeForIndex(index, prefix, ranges) : null,
 		unsatisfiable: guaranteed.impossible,
 		index,
-		prefix: index ? prefixBindings(index, guaranteed.values) : [],
+		prefix,
 	}
-	return { args, compiled }
 }
 export function withinRange(value: FilterScalar, range: FieldRange): boolean {
 	const lower = range.lower && compareValues(value, range.lower.value)
@@ -524,10 +643,58 @@ function supportsRange(validator: GenericValidator): boolean {
 		case 'int64':
 			return true
 		case 'literal':
-			return z.union([z.string(), z.number(), z.bigint()]).safeParse(validator.value).success
+			return orderedLiteral(validator.value)
 		case 'union':
 			return validator.members.every(supportsRange)
 		default:
 			return false
 	}
+}
+
+let nativeOptions: NativePaginationSchema | undefined
+let convexOptions: KObject<Omit<NativePaginationFields, 'onEmptyBudget'>> | undefined
+
+const POSITIVE = 'Too small: expected number to be >0'
+
+function finiteNumber(): KNumber {
+	return k.number().refine(Number.isFinite, 'Invalid input: expected a finite number')
+}
+
+function positive(value: number): boolean {
+	return value > 0
+}
+
+/** The `k` scalar a native validator describes; numbers are finite, as v1's Zod conversion required. */
+function scalarFromNative(validator: GenericValidator): KType {
+	switch (validator.kind) {
+		case 'id':
+			return k.id(validator.tableName)
+		case 'string':
+			return k.string()
+		case 'float64':
+			return finiteNumber()
+		case 'int64':
+			return k.int64()
+		case 'boolean':
+			return k.boolean()
+		case 'null':
+			return k.null()
+		case 'literal':
+			return k.literal(validator.value)
+		case 'union':
+			return unionOf(validator.members.map(scalarFromNative))
+		default:
+			throw new Error(`Unsupported scalar filter kind "${validator.kind}"`)
+	}
+}
+
+// oxlint-disable-next-line anti-slop/no-runtime-typeof -- A native literal value is classified by representation.
+function orderedLiteral(value: string | number | bigint | boolean): boolean {
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Booleans are the only literals without an order.
+	return typeof value !== 'boolean'
+}
+
+function schemaOf(schema: KType): KSchema<any, any, any, any, any> {
+	// SAFETY: every KType at runtime is a KSchema record created by a k factory.
+	return schema as KSchema<any, any, any, any, any>
 }

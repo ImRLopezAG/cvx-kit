@@ -1,17 +1,11 @@
-import { z } from 'zod'
-import {
-	v,
-	ConvexError,
-	type Value,
-	type GenericValidator,
-	type PropertyValidators,
-} from 'convex/values'
+/* oxlint-disable anti-slop/no-unknown-parameters -- The preflight receives raw registered arguments before any schema has decoded them. */
+import { v, type GenericValidator, type PropertyValidators } from 'convex/values'
 import { vRequired } from 'convex-helpers/validators'
-import { zodToConvex } from '../zod-convex'
+import { KValidationError, type KPath, type KType } from '../k'
 import { compactFilterMetadata, MAX_FILTER_DEPTH, type FilterGrammar } from './shared/filters'
 
 /** Private projection. The caller must install the captured semantic preflight. */
-export function compactNativeFilter(schema: z.core.$ZodType): GenericValidator | undefined {
+export function compactNativeFilter(schema: KType): GenericValidator | undefined {
 	const metadata = compactFilterMetadata(schema)
 	if (!metadata) return undefined
 	const completed = new WeakMap<FilterGrammar, Map<number, GenericValidator>>()
@@ -20,7 +14,7 @@ export function compactNativeFilter(schema: z.core.$ZodType): GenericValidator |
 		const cached = predicates.get(grammar)
 		if (cached) return cached
 		const result = Object.fromEntries(
-			Object.entries(grammar.fields).map(([k, s]) => [k, zodToConvex(s)]),
+			Object.entries(grammar.fields).map(([key, schema]) => [key, schema.validator]),
 		)
 		predicates.set(grammar, result)
 		return result
@@ -98,23 +92,33 @@ export function compactNativeFilter(schema: z.core.$ZodType): GenericValidator |
 	return known(metadata.grammar, 0) ? expression(metadata.grammar, 0) : undefined
 }
 
-/** Conversion and preflight are one registration decision. Unsupported wrappers
- * stay on the ordinary converter and never acquire a compact guard. */
-interface ArgumentBoundary {
-	validator: Extract<GenericValidator, { kind: 'object' }>
-	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- This is the parser boundary for raw registered arguments.
+/**
+ * Conversion and preflight are one registration decision. `validator` is what Convex receives: the
+ * declared args with each compact filter projected; `preflight` runs the full structural walker
+ * (KTD3) on exactly those projected filters, before customization, and raises the KTD6 error.
+ */
+export interface ArgumentBoundary {
+	readonly validator: Extract<GenericValidator, { kind: 'object' }>
 	preflight(value: unknown): void
 }
-export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoundary {
-	const full = zodToConvex(schema)
-	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Guards parse untrusted registered values before customization.
-	type Guard = (value: unknown, path: string[]) => void
+
+/**
+ * The compact projection of an args object, or undefined when no field holds a compact filter.
+ * `fields` are the `k` argument fields; `full` builds the native args validator, which may also hold
+ * native fields beside them. Args without a compact filter build no native validator here.
+ */
+export function compactArgumentBoundary(
+	fields: Readonly<Record<string, KType>>,
+	full: () => Extract<GenericValidator, { kind: 'object' }>,
+): ArgumentBoundary | undefined {
+	if (!Object.values(fields).some((field) => holdsCompactFilter(field, new Set()))) return undefined
+	type Guard = (value: unknown, path: KPath) => void
 	interface Pair {
 		validator: GenericValidator
 		guard?: Guard
 	}
-	const completed = new WeakMap<z.core.$ZodType, Pair>()
-	function visit(node: z.core.$ZodType, native: GenericValidator): Pair {
+	const completed = new WeakMap<KType, Pair>()
+	function visit(node: KType, native: GenericValidator): Pair {
 		const cached = completed.get(node)
 		if (cached) return cached
 		const metadata = compactFilterMetadata(node)
@@ -124,23 +128,15 @@ export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoun
 			result = {
 				validator: projected,
 				guard: (value, path) => {
-					const parsed = metadata.semantic.safeParse(value)
+					const parsed = metadata.semantic['~safeParseStrict'](value)
 					if (!parsed.success)
-						throw new ConvexError({
-							// SAFETY: serialized issues are the existing helper-compatible Convex Value error payload.
-							ZodError: JSON.parse(
-								JSON.stringify(
-									parsed.error.issues.map((issue) => ({
-										...issue,
-										path: [...path, ...issue.path],
-									})),
-								),
-							) as Value[],
-						})
+						throw new KValidationError(
+							parsed.issues.map((issue) => ({ ...issue, path: [...path, ...issue.path] })),
+						)
 				},
 			}
-		} else if (node instanceof z.core.$ZodOptional) {
-			const child = visit(node._zod.def.innerType, vRequired(native))
+		} else if ((node.op === 'optional' || node.op === 'partial') && node.prev !== null) {
+			const child = visit(schemaOf(node.prev), vRequired(native))
 			if (child.guard)
 				result = {
 					validator: v.optional(child.validator),
@@ -148,51 +144,96 @@ export function compactArgumentBoundary(schema: z.core.$ZodObject): ArgumentBoun
 						if (value !== undefined) child.guard!(value, path)
 					},
 				}
-		} else if (node instanceof z.core.$ZodObject && native.kind === 'object') {
-			const children = Object.entries(node._zod.def.shape).map(
-				([key, child]) => [key, visit(child, native.fields[key])] as const,
-			)
-			if (children.some(([, child]) => child.guard))
-				result = {
-					validator: v.object(
-						Object.fromEntries(children.map(([key, child]) => [key, child.validator])),
-					),
-					guard: (value, path) => {
-						if (value === null || Object(value) !== value || Array.isArray(value)) layoutError(path)
-						// SAFETY: the boxing check above excludes primitive argument containers.
-						const object = value as object
-						const prototype = Object.getPrototypeOf(object)
-						if (prototype !== Object.prototype && prototype !== null) layoutError(path)
-						for (const [key, child] of children)
-							if (child.guard) {
-								const descriptor = Object.getOwnPropertyDescriptor(object, key)
-								if (descriptor && (!('value' in descriptor) || !descriptor.enumerable))
-									layoutError([...path, key])
-								if (!descriptor && key in object) layoutError([...path, key])
-								child.guard(descriptor?.value, [...path, key])
-							}
-					},
-				}
+		} else if (native.kind === 'object') {
+			const memberFields = objectFields(node)
+			if (memberFields) result = objectPair(memberFields, native, visit) ?? result
 		}
 		completed.set(node, result)
 		return result
 	}
-	const pair = visit(schema, full)
+	const pair = objectPair(fields, full(), visit)
+	if (!pair?.guard) return undefined
+	const guard = pair.guard
 	if (pair.validator.kind !== 'object') throw new Error('Expected object argument boundary')
 	return {
 		validator: pair.validator,
 		preflight(value) {
-			pair.guard?.(value, [])
+			guard(value, [])
 		},
 	}
 }
 
-function layoutError(path: string[]): never {
-	throw new ConvexError({
-		ZodError: [
-			{ code: 'custom', path, message: 'Unsupported filter layout or depth/node budget exceeded' },
-		],
-	})
+/** The pair for an object whose `k` fields are `memberFields`; native-only fields keep their validators. */
+function objectPair(
+	memberFields: Readonly<Record<string, KType>>,
+	native: Extract<GenericValidator, { kind: 'object' }>,
+	visit: (
+		node: KType,
+		native: GenericValidator,
+	) => { validator: GenericValidator; guard?: (value: unknown, path: KPath) => void },
+) {
+	const children = Object.entries(memberFields).map(
+		([key, child]) => [key, visit(child, native.fields[key])] as const,
+	)
+	if (!children.some(([, child]) => child.guard)) return undefined
+	return {
+		validator: v.object({
+			...native.fields,
+			...Object.fromEntries(children.map(([key, child]) => [key, child.validator])),
+		}),
+		guard: (value: unknown, path: KPath) => {
+			if (value === null || Object(value) !== value || Array.isArray(value)) layoutError(path)
+			// SAFETY: the boxing check above excludes primitive argument containers.
+			const object = value as object
+			const prototype = Object.getPrototypeOf(object)
+			if (prototype !== Object.prototype && prototype !== null) layoutError(path)
+			for (const [key, child] of children)
+				if (child.guard) {
+					const descriptor = Object.getOwnPropertyDescriptor(object, key)
+					if (descriptor && (!('value' in descriptor) || !descriptor.enumerable))
+						layoutError([...path, key])
+					if (!descriptor && key in object) layoutError([...path, key])
+					child.guard(descriptor?.value, [...path, key])
+				}
+		},
+	}
+}
+
+/** Whether a compact filter sits in `node`, through the optional and object records `visit` follows. */
+function holdsCompactFilter(node: KType, seen: Set<KType>): boolean {
+	if (seen.has(node)) return false
+	seen.add(node)
+	if (compactFilterMetadata(node)) return true
+	if ((node.op === 'optional' || node.op === 'partial') && node.prev !== null)
+		return holdsCompactFilter(schemaOf(node.prev), seen)
+	const memberFields = objectFields(node)
+	return (
+		memberFields !== undefined &&
+		Object.values(memberFields).some((child) => holdsCompactFilter(child, seen))
+	)
+}
+
+function layoutError(path: KPath): never {
+	throw new KValidationError([
+		{ code: 'custom', path, message: 'Unsupported filter layout or depth/node budget exceeded' },
+	])
+}
+
+/** The field map of an object schema, through validation-only records chained on its root. */
+function objectFields(schema: KType): Readonly<Record<string, KType>> | undefined {
+	let current: KType = schema
+	while (current.prev !== null) {
+		if (!['describe', 'refine', 'check', 'strip', 'strict'].includes(current.op)) return undefined
+		current = schemaOf(current.prev)
+	}
+	if (current.op !== 'object') return undefined
+	// SAFETY: k.object stores its field map as the root argument.
+	return current.arg as Readonly<Record<string, KType>>
+}
+
+function schemaOf(node: KType['prev'] & object): KType {
+	// SAFETY: every record reachable from a k schema was created by a k factory.
+	return node as KType
 }
 
 function knownNative(validator: GenericValidator): boolean {

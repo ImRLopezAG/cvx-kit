@@ -40,9 +40,10 @@ function run(command, args, cwd, label, env = process.env) {
 	}
 }
 run('bun', ['pm', 'pack', '--ignore-scripts', '--destination', proof], root, 'pack')
-for (const [label, installer, helpers, zod] of [
-	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers'], manifest.devDependencies.zod],
-	['minimum', installerOverride ?? 'npm', '0.1.127', '4.5.4'],
+// Neither project installs zod: the v2 core does not need it.
+for (const [label, installer, helpers] of [
+	['installed', installerOverride ?? 'bun', manifest.devDependencies['convex-helpers']],
+	['minimum', installerOverride ?? 'npm', '0.1.130'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -55,7 +56,6 @@ for (const [label, installer, helpers, zod] of [
 				'cvx-kit': `file:${join(proof, `${manifest.name}-${manifest.version}.tgz`)}`,
 				convex: manifest.devDependencies.convex,
 				'convex-helpers': helpers,
-				zod,
 				'convex-test': manifest.devDependencies['convex-test'],
 				'vite-plus': manifest.devDependencies['vite-plus'],
 				'@edge-runtime/vm': manifest.devDependencies['@edge-runtime/vm'],
@@ -64,13 +64,14 @@ for (const [label, installer, helpers, zod] of [
 			},
 		}),
 	)
-	for (const name of ['zod-variant-table.test.ts', 'zod-variant-table-types.ts']) {
-		writeFileSync(
-			join(fixture, name),
-			readFileSync(join(root, 'test', name), 'utf8')
-				.replaceAll('../src/zod-table', 'cvx-kit/zod-table')
-				.replaceAll('../src/relations', 'cvx-kit/relations'),
-		)
+	for (const name of ['variant-table.test.ts', 'variant-table-types.ts']) {
+		const source = readFileSync(join(root, 'test', name), 'utf8')
+			.replaceAll("'../src/table'", "'cvx-kit/table'")
+			.replaceAll("'../src/k'", "'cvx-kit/k'")
+			.replaceAll("'../src/json-schema'", "'cvx-kit/json-schema'")
+			.replaceAll("'../src/relations'", "'cvx-kit/relations'")
+		if (source.includes("'../src/")) throw new Error(`${name} imports an unmapped ../src module`)
+		writeFileSync(join(fixture, name), source)
 	}
 	writeFileSync(
 		join(fixture, 'tsconfig.json'),
@@ -97,11 +98,11 @@ for (const [label, installer, helpers, zod] of [
 		join(fixture, 'convex/schema.ts'),
 		`
 import { defineSchema, defineTable } from 'convex/server'
-import { z } from 'zod'
-import { zodVariantTable, zid } from 'cvx-kit/zod-table'
-export const payments = zodVariantTable('payments', z.discriminatedUnion('type', [
- z.strictObject({ type: z.literal('draft'), clientId: zid('clients'), amount: z.number() }),
- z.strictObject({ type: z.literal('creditor'), clientId: zid('clients'), creditorId: zid('creditors'), amount: z.number() }),
+import { k } from 'cvx-kit/k'
+import { kVariantTable } from 'cvx-kit/table'
+export const payments = kVariantTable('payments', k.discriminatedUnion('type', [
+ k.object({ type: k.literal('draft'), clientId: k.id('clients'), amount: k.number() }),
+ k.object({ type: k.literal('creditor'), clientId: k.id('clients'), creditorId: k.id('creditors'), amount: k.number() }),
 ]), { discriminator: 'type', variants: {
  draft: { commandFields: ['clientId', 'amount'], publicFields: ['clientId'] },
  creditor: { commandFields: ['clientId', 'creditorId', 'amount'], publicFields: ['clientId', 'creditorId'] },
@@ -174,7 +175,7 @@ if (row.type === 'draft') {
 	)
 	run(
 		join(fixture, 'node_modules/.bin/vp'),
-		['test', 'run', 'zod-variant-table.test.ts'],
+		['test', 'run', 'variant-table.test.ts'],
 		fixture,
 		`${label}-runtime`,
 	)

@@ -1,0 +1,21 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 14,
+			"code": "string-format"
+		},
+		{
+			"line": 16,
+			"code": "string-format"
+		},
+		{
+			"line": 20,
+			"code": "custom"
+		}
+	],
+	"declarations": {
+		"rewritten": 2,
+		"left": 3
+	}
+}

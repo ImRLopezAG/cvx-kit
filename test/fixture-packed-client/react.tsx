@@ -1,17 +1,17 @@
 import { useCommand, decodeFailure, matchFailure } from '../../src/react'
-import { z } from 'zod'
+import { k } from '../../src/k'
 import { defineErrorContract } from '../../src/errors'
 import type { FunctionReference } from 'convex/server'
 import type { OptimisticLocalStore } from 'convex/browser'
 const errors = defineErrorContract({
 	CONFLICT: {
 		message: 'Changed',
-		details: { revision: z.number() },
+		details: { revision: k.number() },
 	},
 	FORBIDDEN: { message: 'Forbidden', details: {} },
 })
 const underscore = defineErrorContract({
-	_: { message: 'Underscore', details: { id: z.string() } },
+	_: { message: 'Underscore', details: { id: k.string() } },
 })
 type UnderscoreFailure = Extract<ReturnType<typeof underscore.decode>, { _tag: 'DeclaredFailure' }>
 // @ts-expect-error The fallback must accept UnknownFailure even when '_' is a declared code.

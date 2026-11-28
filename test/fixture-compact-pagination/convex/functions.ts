@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { createAuthFunctions } from 'cvx-kit/auth'
 import {
 	query,
@@ -33,21 +33,21 @@ function entered() {
 	return 'accepted'
 }
 // This handler deliberately never enters the query engine.
-export const scalar = auth.authQuery({ args: scalarOptions, returns: z.string(), handler: entered })
+export const scalar = auth.authQuery({ args: scalarOptions, returns: k.string(), handler: entered })
 export const relation = auth.authQuery({
 	args: relationOptions,
-	returns: z.string(),
+	returns: k.string(),
 	handler: entered,
 })
-export const idHeavy = auth.authQuery({ args: idOptions, returns: z.string(), handler: entered })
+export const idHeavy = auth.authQuery({ args: idOptions, returns: k.string(), handler: entered })
 export const variantIds = auth.authQuery({
 	args: variantIdOptions,
-	returns: z.string(),
+	returns: k.string(),
 	handler: entered,
 })
-export const mutate = auth.authMutation({ args: idOptions, returns: z.string(), handler: entered })
-export const act = auth.authAction({ args: idOptions, returns: z.string(), handler: entered })
-export const system = auth.systemQuery({ args: idOptions, returns: z.string(), handler: entered })
+export const mutate = auth.authMutation({ args: idOptions, returns: k.string(), handler: entered })
+export const act = auth.authAction({ args: idOptions, returns: k.string(), handler: entered })
+export const system = auth.systemQuery({ args: idOptions, returns: k.string(), handler: entered })
 export const seed = mutation({
 	args: {},
 	handler: async (ctx) => {

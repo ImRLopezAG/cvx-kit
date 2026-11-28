@@ -1,35 +1,20 @@
 import { defineSchema, defineTable } from 'convex/server'
 import { v } from 'convex/values'
-import { tenantTable } from 'cvx-kit/zod-table'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
+import { tenantTable } from 'cvx-kit/table'
 import { vWorkflowId } from '@convex-dev/workflow'
 
-const noteFields = () => ({ title: z.string(), secret: z.string(), owner: z.string() })
-
-export const crudNotes = tenantTable<
+export const crudNotes = tenantTable(
 	'crudNotes',
-	ReturnType<typeof noteFields>,
-	readonly ['secret', 'owner'],
-	readonly ['title'],
-	readonly ['title']
->('crudNotes', noteFields, {
-	commandFields: ['title'],
-	serverFields: ['secret', 'owner'],
-	publicFields: ['title'],
-})
+	{ title: k.string(), secret: k.string(), owner: k.string() },
+	{ commandFields: ['title'], serverFields: ['secret', 'owner'], publicFields: ['title'] },
+)
 
-const idempotentFields = () => ({ title: z.string(), key: z.string(), scope: z.string() })
-export const idempotentNotes = tenantTable<
+export const idempotentNotes = tenantTable(
 	'idempotentNotes',
-	ReturnType<typeof idempotentFields>,
-	readonly ['key', 'scope'],
-	readonly ['title'],
-	readonly ['title']
->('idempotentNotes', idempotentFields, {
-	commandFields: ['title'],
-	serverFields: ['key', 'scope'],
-	publicFields: ['title'],
-})
+	{ title: k.string(), key: k.string(), scope: k.string() },
+	{ commandFields: ['title'], serverFields: ['key', 'scope'], publicFields: ['title'] },
+)
 
 export const receiptVersions = v.object({
 	operation: v.string(),

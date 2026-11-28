@@ -78,7 +78,7 @@ context that may own several related tables**, not necessarily one. Two
 tables belong in the same module when a single command routinely writes both,
 or when one's vocabulary is meaningless without the other; otherwise they are
 separate modules. The file anatomy in §2 is unchanged — a module's
-`schema.ts` simply declares several `zodTable`s and its `table.ts` exports
+`schema.ts` simply declares several `kTable`s and its `table.ts` exports
 one merged map (combine maps in `domain/table.ts` with `createModule`, which
 rejects duplicate owners). A one-table module is the degenerate case, so
 small apps look exactly like before.
@@ -151,8 +151,8 @@ export const <verb> = authMutation({
 })
 
 export const list = authQuery({
-  args: { limit: z.number() },
-  returns: z.array(<entity>.publicDto),
+  args: { limit: k.int().min(1).max(100) },
+  returns: k.array(<entity>.publicDto),
   handler: (ctx, { limit }) =>
     ctx.include(ctx.db.query('<entities>'))
       .matching('by_<field>', (ix) => ix.eq('<field>', ctx.actor.userId))
@@ -167,11 +167,11 @@ moves to the domain.
 
 ### `domain/<entity>/schema.ts` — shapes only
 
-- The module's `zodTable(...)` declarations (one per owned table), with `serverFields`,
+- The module's `kTable(...)` declarations (one per owned table), with `serverFields`,
   `commandFields`, `publicFields` decided deliberately.
 - DTO compositions derived from the table's boundaries
-  (`z.object({ ...<entity>.publicDto.shape, ... }).strict()`).
-- Inferred types (`export type <Entity> = z.infer<typeof <entity>.schema>`).
+  (`<entity>.publicDto.extend({ ... })`, or `<entity>.dto({ extend })`).
+- Inferred types (`export type <Entity> = k.infer<typeof <entity>.schema>`).
 - NO indexes, NO `defineTable`, NO enum literals (consume `constants.ts`).
 
 ### `domain/<entity>/table.ts` — topology only
@@ -300,9 +300,9 @@ maintain an architecture-testing framework.
 | Rule predicate         | `can<Verb>` / `is<Condition>`                                                               | `canApprove`, `isTransitionLegal`                      |
 | Trigger registration   | `register<Entity>Triggers(triggers)`                                                        | exported from the entity, called in root `triggers.ts` |
 | Internal-callback file | `<purpose>_functions.ts`, sibling of `<purpose>.ts`                                         | `approval_functions.ts`                                |
-| zodTable export        | camelCase plural, same as table                                                             | `export const <entities> = zodTable(...)`              |
+| kTable export          | camelCase plural, same as table                                                             | `export const <entities> = kTable(...)`                |
 | DTO schema             | `<entity><Purpose>Dto`                                                                      | `<entity>SummaryDto`                                   |
-| Zod schema value       | camelCase noun                                                                              | `commandInput`, `publicDto`                            |
+| `k` schema value       | camelCase noun                                                                              | `commandInput`, `publicDto`                            |
 | Type                   | PascalCase; no `I`/`T` prefixes                                                             | `<Entity>State`                                        |
 | Test file              | `<subject>.test.ts` in `__tests__/`                                                         | `commands.test.ts`                                     |
 | Public function path   | `api/<entity>:<fn>` — clients never call a root path                                        | —                                                      |
@@ -319,7 +319,7 @@ Allowed, per zone (anything not listed is forbidden):
 
 | From                   | May import                                                                                                                                      |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api/<entity>.ts`      | `functions.ts`, `domain/<entity>/*`, `domain/shared/*`, zod                                                                                     |
+| `api/<entity>.ts`      | `functions.ts`, `domain/<entity>/*`, `domain/shared/*`, `cvx-kit/k`                                                                             |
 | `domain/<entity>/*`    | `functions.ts`, `foundation.ts`, component facades, `domain/shared/*`, own directory, generated `internal`/`api` (references only), kit modules |
 | `domain/shared/*`      | kit modules and infrastructure shared by multiple modules; module-specific clients stay local                                                   |
 | root facades           | kit modules, `components` from generated api                                                                                                    |
@@ -336,7 +336,8 @@ component internals (anything below a component's client facade),
 
 - TypeScript strict; no `any` in exported signatures; `as never` only at kit
   seams that document it.
-- Zod objects that cross a boundary are `.strict()` — always.
+- Objects that cross a boundary are strict `k.object`s (always strict; use
+  `.strip()` only to drop known-extra keys on parse).
 - `Object.freeze` for registries and long-lived configuration objects.
 - Comments state constraints the code can't (`// Optional only for rows
   created before <epoch>.`) — never narration of the next line.

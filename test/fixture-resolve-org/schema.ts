@@ -1,14 +1,14 @@
 import { defineSchema } from 'convex/server'
-import { z } from 'zod'
-import { createModule, tenantTable, zodTable } from '../../src/zod-table'
+import { k } from '../../src/k'
+import { createModule, kTable, tenantTable } from '../../src/table'
 
 // Tenant-scoped rows for the end-to-end tenancy composition test.
 export const items = tenantTable(
 	'items',
-	() => ({
-		name: z.string(),
-		ownerId: z.string(),
-	}),
+	{
+		name: k.string(),
+		ownerId: k.string(),
+	},
 	{
 		commandFields: ['name'],
 		publicFields: ['name'],
@@ -16,12 +16,12 @@ export const items = tenantTable(
 )
 
 // The app-table membership source the resolveOrganization hook reads from.
-export const memberships = zodTable('memberships', () => ({
-	userId: z.string(),
-	organizationId: z.string(),
-	roleSlug: z.string(),
-	active: z.boolean(),
-}))
+export const memberships = kTable('memberships', {
+	userId: k.string(),
+	organizationId: k.string(),
+	roleSlug: k.string(),
+	active: k.boolean(),
+})
 
 const tenantTables = {
 	items: items.table.index('by_tenant', ['tenant']),

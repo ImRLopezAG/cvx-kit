@@ -1,0 +1,10 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{ "line": 3, "code": "recursive" },
+		{ "line": 5, "code": "mixed-reference" },
+		{ "line": 7, "code": "mixed-reference" },
+		{ "line": 9, "code": "mixed-reference" }
+	],
+	"declarations": { "rewritten": 1, "left": 3 }
+}

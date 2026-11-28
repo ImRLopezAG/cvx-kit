@@ -13,10 +13,11 @@ import {
 } from 'convex/server'
 import { anyApi } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { describe, expect, it } from 'vite-plus/test'
 import { createAuthFunctions } from '../src/auth'
 import { createQueryEngine, CursorError } from '../src/querying'
+import type { KCursorSchema } from '../src/querying/cursors'
 import { groupDeclarations } from './fixture-querying/field-groups'
 import { cursor as codecKeys } from './fixture-querying/scalar'
 import { createManagedSecurity } from '../src/querying/security'
@@ -239,14 +240,14 @@ const openRead = unrestricted.authQuery({
 	}),
 })
 const create = auth.authMutation({
-	args: { name: z.string(), permission: z.string() },
+	args: { name: k.string(), permission: k.string() },
 	handler: async (ctx, args) => {
 		const permission = ctx.db.normalizeId('permissions', args.permission)!
 		return ctx.db.insert('tasks', { name: args.name, tenant: ctx.tenant, permission })
 	},
 })
 const modify = auth.authMutation({
-	args: { id: z.string() },
+	args: { id: k.string() },
 	handler: async (ctx, args) => {
 		const id = ctx.db.normalizeId('tasks', args.id)!
 		await ctx.db.patch('tasks', id, { name: 'modified' })
@@ -259,7 +260,7 @@ const modify = auth.authMutation({
 	},
 })
 const changedDependency = auth.authMutation({
-	args: { permission: z.string() },
+	args: { permission: k.string() },
 	handler: async (ctx, args) => {
 		const permission = ctx.db.normalizeId('permissions', args.permission)!
 		await ctx.db.insert('tasks', { name: 'before', tenant: ctx.tenant, permission })
@@ -435,12 +436,12 @@ it('seals and opens a bigint payload through a registered authenticated query', 
 		adminRoles: [],
 	})
 	const endpoint = codecAuth.authQuery({
-		args: { token: z.string().optional() },
+		args: { token: k.string().optional() },
 		handler: (ctx, args) => {
 			const codec = engine.cursorCodec(ctx, {
 				domain: 'native-clients-v1',
 				bind: { sort: 'asc' },
-				schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+				schema: k.object({ native: k.string().nullable(), seen: k.int64() }),
 			})
 			return args.token ? codec.open(args.token) : codec.seal({ native: null, seen: 42n })
 		},
@@ -486,7 +487,7 @@ it('rejects native, mutation and action contexts before adapters, keys or schema
 			.cursorCodec(ctx as never, {
 				domain: 'native',
 				bind: null,
-				schema: z.string().transform((value) => {
+				schema: k.string().transform((value) => {
 					schemaCalls++
 					return value
 				}),
@@ -524,13 +525,13 @@ it('keeps public cursor integrity separate from current native consumer authoriz
 		mapRole: () => 'owner',
 		adminRoles: [],
 	})
-	const options = { domain: 'native', bind: null, schema: z.strictObject({ seen: z.bigint() }) }
+	const options = { domain: 'native', bind: null, schema: k.object({ seen: k.int64() }) }
 	const issue = codecAuth.authQuery({
 		args: {},
 		handler: (ctx) => engine.cursorCodec(ctx, options).seal({ seen: 1n }),
 	})
 	const resume = codecAuth.authQuery({
-		args: { cursor: z.string() },
+		args: { cursor: k.string() },
 		handler: async (ctx, args) => {
 			const value = engine.cursorCodec(ctx, options).open(args.cursor)
 			if (!(await ctx.db.query('permissions').first())?.clients) throw new Error('DENIED')
@@ -566,72 +567,47 @@ it('contains rejecting async schema transforms and refinements on both synchrono
 	const endpoint = codecAuth.authQuery({
 		args: {},
 		handler: (ctx) => {
-			type Tree = { native: string; children: Tree[] }
-			const tree: Tree = { native: 'root', children: [{ native: 'leaf', children: [] }] }
-			const invalidTree = { native: 'root', children: [{ native: 42, children: [] }] }
-			for (const warmed of [false, true]) {
-				const schema: z.ZodType<Tree> = z.lazy(() =>
-					z.object({ native: z.string(), children: z.array(schema) }),
-				)
-				if (warmed) expect(schema.parse(tree)).toEqual(tree)
-				const binding = { domain: 'recursive-schema', bind: warmed }
-				const codec = engine.cursorCodec(ctx, { ...binding, schema })
-				expect(codec.open(codec.seal(tree))).toEqual(tree)
-				expect(() => codec.seal(invalidTree)).toThrow('Invalid cursor')
-				const invalidToken = engine
-					.cursorCodec(ctx, { ...binding, schema: z.any() })
-					.seal(invalidTree)
-				expect(() => codec.open(invalidToken)).toThrow('Invalid cursor')
-			}
+			// v1 also round-tripped a recursive z.lazy tree; k has no recursive (lazy) kind.
 			const options = { domain: 'reject-async', bind: null }
 			const payload = { native: 'position' }
-			const token = engine.cursorCodec(ctx, { ...options, schema: z.any() }).seal(payload)
+			const token = engine.cursorCodec(ctx, { ...options, schema: k.any() }).seal(payload)
+			// k forms of v1's cases; preprocess, promise, lazy, catch, prefault and callback defaults
+			// have no k counterpart.
 			for (const schema of [
-				z.any().transform(async () => {
+				k.any().transform(async () => {
 					throw new Error('private-async-transform')
 				}),
-				z.any().refine(async () => {
+				// SAFETY: untyped JS callers can return promises from checks; the codec must contain them.
+				k.any().refine((async () => {
 					throw new Error('private-async-refinement')
+				}) as never),
+				k.any().transform(() => Promise.reject(new Error('private-promise-transform'))),
+				// SAFETY: as above.
+				k.any().refine((() => Promise.reject(new Error('private-promise-refinement'))) as never),
+				k.object({
+					native: k.string().transform(() => Promise.reject(new Error('private-nested-promise'))),
 				}),
-				z.any().transform(() => Promise.reject(new Error('private-promise-transform'))),
-				z.any().refine(() => Promise.reject(new Error('private-promise-refinement'))),
-				z.object({
-					native: z.string().transform(() => Promise.reject(new Error('private-nested-promise'))),
+				// SAFETY: as above.
+				k.any().check((() => Promise.reject(new Error('private-check'))) as never),
+				k.object({
+					// SAFETY: as above.
+					native: k
+						.string()
+						.refine((() => Promise.reject(new Error('private-nested-refinement'))) as never),
 				}),
-				z.any().superRefine(() => Promise.reject(new Error('private-super-refinement'))),
-				z.any().check(() => Promise.reject(new Error('private-check'))),
-				z
-					.any()
-					.transform(() => Promise.reject<string>(new Error('private-caught-transform')))
-					.catch('fallback'),
-				z
-					.any()
-					.refine(() => Promise.reject(new Error('private-caught-refinement')))
-					.catch('fallback'),
-				z.object({
-					native: z.string().refine(() => Promise.reject(new Error('private-nested-refinement'))),
-				}),
-				z.preprocess(() => Promise.reject(new Error('private-preprocess')), z.any()),
-				z.object({ missing: z.any().default(() => Promise.reject(new Error('private-default'))) }),
-				z.object({
-					missing: z.any().prefault(() => Promise.reject(new Error('private-prefault'))),
-				}),
-				z
-					.promise(z.any().transform(() => Promise.reject(new Error('private-promise-schema'))))
-					.transform(() => 'unused'),
-				z.lazy(() => z.any().transform(() => Promise.reject(new Error('private-lazy-transform')))),
-				z.any().transform(() =>
+				k.any().transform(() =>
 					Promise.resolve().then(() => {
 						throw new Error('private-deferred-transform')
 					}),
 				),
-				z.object({
-					native: z.string().transform(async () => {
+				k.object({
+					native: k.string().transform(async () => {
 						throw new Error('private-nested-transform')
 					}),
 				}),
 			]) {
-				const codec = engine.cursorCodec(ctx, { ...options, schema })
+				// SAFETY: these outputs are deliberately not Convex values; the runtime must reject them.
+				const codec = engine.cursorCodec(ctx, { ...options, schema: schema as KCursorSchema })
 				for (const run of [() => codec.seal(payload), () => codec.open(token)]) {
 					expect(run).toThrow(CursorError)
 					expect(run).toThrow('Invalid cursor')

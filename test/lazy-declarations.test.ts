@@ -1,55 +1,21 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from 'vite-plus/test'
 import { Effect } from 'effect'
-import { z } from 'zod'
-import { zodTable, zodVariantTable } from '../src/zod-table'
+import { k } from '../src/k'
+import { KObject } from '../src/k/object'
+import { kTable } from '../src/table'
 import { createEffectFoundation } from '../src/effect'
 import { defineDomainContract } from '../src/contracts'
 import { checkArchitecture } from '../src/oxlint'
 
 afterEach(() => vi.restoreAllMocks())
 
-it.each(['ordinary', 'variant'] as const)(
-	'%s declaration defers derived schemas and memoizes first reads',
-	(kind) => {
-		const partial = vi.spyOn(z.ZodObject.prototype, 'partial')
-		const boundary =
-			kind === 'ordinary'
-				? zodTable('items', () => ({ name: z.string() }), {
-						publicFields: ['name'],
-						commandFields: ['name'],
-					})
-				: zodVariantTable(
-						'items',
-						z.discriminatedUnion('type', [
-							z.strictObject({ type: z.literal('item'), name: z.string() }),
-						]),
-						{
-							discriminator: 'type',
-							variants: { item: { publicFields: ['name'], commandFields: ['name'] } },
-						},
-					)
-		expect(partial).not.toHaveBeenCalled()
-		expect(boundary.table).toBeDefined()
-		const update = boundary.updateSchema
-		expect(partial).toHaveBeenCalledTimes(1)
-		expect(boundary.updateSchema).toBe(update)
-		expect(boundary.publicDto).toBe(boundary.dto())
-		expect(boundary.tools).toBe(boundary.tools)
-		expect(
-			boundary.insertSchema.safeParse(
-				kind === 'ordinary' ? { name: 'ok' } : { type: 'item', name: 'ok' },
-			).success,
-		).toBe(true)
-	},
-)
-
 it('builds thunk contracts on property read and preserves enumeration and schema identities', () => {
 	let builds = 0
-	const input = z.string()
+	const input = k.string()
 	const contract = defineDomainContract(() => {
 		builds++
-		return { queries: { get: { input, result: z.string() } } }
+		return { queries: { get: { input, result: k.string() } } }
 	})
 	expect(builds).toBe(0)
 	expect(contract.queries.get.input).toBe(input)
@@ -74,8 +40,8 @@ it('defers both foundation registries until execution, builds once, and keeps co
 			queryBuilds++
 			return {
 				get: query({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					handler: (input, context) => input + context,
 				}),
 			}
@@ -87,8 +53,8 @@ it('defers both foundation registries until execution, builds once, and keeps co
 			commandBuilds++
 			return {
 				save: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					handler: (input, context) => input + context,
 					audit: () => ({
@@ -131,38 +97,20 @@ it('force-builds selected registries through checkArchitecture without executing
 	expect(builds).toBe(1)
 })
 
-it('memoizes page composition while returning independent public validators', async () => {
+it('memoizes page composition and shares the immutable k validator', async () => {
 	const { defineRelations } = await import('../src/relations')
-	const items = zodTable('items', () => ({ name: z.string() }), { publicFields: ['name'] })
+	const items = kTable('items', { name: k.string() }, { publicFields: ['name'] })
 	const registry = defineRelations({ items }, () => ({}))
-	// The first call returns its fresh build; a repeated selection captures the
-	// recipe, and only later calls reconstruct without recomposing.
+	// v1 rebuilt independent Zod copies so callers could not mutate each other's; k records are
+	// immutable, so a repeated selection returns the boundary it built the first time.
 	const first = registry.tables.items.pageDto({})
-	const captured = registry.tables.items.pageDto({})
-	const extend = vi.spyOn(z.ZodObject.prototype, 'extend')
+	const extend = vi.spyOn(KObject.prototype, 'extend')
 	const second = registry.tables.items.pageDto({})
 	expect(extend).not.toHaveBeenCalled()
-	expect(second).not.toBe(first)
-	expect(second).not.toBe(captured)
+	expect(second).toBe(first)
 	const page = { page: [{ _id: 'items:1', name: 'ok' }], isDone: true, continueCursor: '' }
 	expect(second.parse(page)).toEqual(page)
-})
-
-it('reuses ordinary pagination native field conversion and preserves fresh validators', () => {
-	const items = zodTable('items', () => ({ name: z.string() }), { publicFields: ['name'] })
-	const first = items.paginationOpts({ name: true })
-	const fields = items.schema._zod.def.shape
-	const nativeReads = vi.fn(() => fields)
-	Object.defineProperty(items.schema._zod.def, 'shape', { configurable: true, get: nativeReads })
-	const second = items.paginationOpts({ name: true })
-	expect(nativeReads).not.toHaveBeenCalled()
-	expect(second).not.toBe(first)
-	expect(second.safeParse({ numItems: 1, cursor: null, filters: { name: 'ok' } }).success).toBe(
-		true,
-	)
-	expect(
-		second.safeParse({ numItems: 1, cursor: null, filters: { secret: 'hidden' } }).success,
-	).toBe(false)
+	extend.mockRestore()
 })
 
 it.each(['Query', 'Command'] as const)(
@@ -208,7 +156,7 @@ it('force-checks contracted thunk registries once without resolving context or c
 	let calls = 0
 	const contract = defineDomainContract(() => {
 		builds++
-		return { queries: { get: { input: z.number(), result: z.number() } } }
+		return { queries: { get: { input: k.number(), result: k.number() } } }
 	})
 	const foundation = createEffectFoundation({
 		writeAudit: () => {},
@@ -240,34 +188,20 @@ it('force-checks contracted thunk registries once without resolving context or c
 	expect([builds, resolutions, calls]).toEqual([1, 1, 1])
 })
 
-it('memoizes relation pagination predicates without sharing mutable public validators', async () => {
+it('memoizes relation pagination predicates and shares the immutable k validator', async () => {
 	const { defineRelations } = await import('../src/relations')
-	const items = zodTable('items', () => ({ rank: z.number() }), { publicFields: ['rank'] })
+	const items = kTable('items', { rank: k.number() }, { publicFields: ['rank'] })
 	const registry = defineRelations({ items }, () => ({}))
-	const extend = vi.spyOn(z.ZodObject.prototype, 'extend')
+	const extend = vi.spyOn(KObject.prototype, 'extend')
 	const first = registry.tables.items.paginationOpts({ rank: true })
 	const firstBuilds = extend.mock.calls.length
 	extend.mockClear()
 	const second = registry.tables.items.paginationOpts({ rank: true })
 	expect(extend.mock.calls.length).toBeLessThan(firstBuilds)
-	const filter = first.shape.filters.unwrap()
-	if (!(filter instanceof z.ZodObject)) throw new Error('Expected filter object')
-	const predicate = filter.shape.rank.unwrap()
-	if (!(predicate instanceof z.ZodUnion)) throw new Error('Expected scalar predicate')
-	Reflect.set(predicate.options, '0', z.string())
+	// v1 also mutated one result's Zod predicate to prove isolation; k records are immutable.
+	expect(second).toBe(first)
 	const invalid = { numItems: 1, cursor: null, filters: { rank: 'invalid' } }
-	expect(first.safeParse(invalid).success).toBe(true)
-	expect(second.safeParse(invalid).success).toBe(false)
-	expect(registry.tables.items.paginationOpts({ rank: true }).safeParse(invalid).success).toBe(
-		false,
-	)
-})
-
-it('preserves writable public declaration properties without replacing the internal DTO owner', () => {
-	const items = zodTable('items', () => ({ name: z.string() }), { publicFields: ['name'] })
-	const replacement = z.strictObject({ name: z.string().min(5) })
-	items.publicDto = replacement
-	expect(items.publicDto).toBe(replacement)
-	expect(items.dto().safeParse({ name: 'ok' }).success).toBe(true)
-	expect(items.publicDto.safeParse({ name: 'ok' }).success).toBe(false)
+	expect(first.safeParse(invalid).success).toBe(false)
+	expect(second.safeParse({ ...invalid, filters: { rank: 1 } }).success).toBe(true)
+	extend.mockRestore()
 })

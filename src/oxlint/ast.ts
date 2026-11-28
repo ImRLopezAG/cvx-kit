@@ -1,27 +1,43 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, relative, resolve, sep } from 'node:path'
 import type { Context, ESTree, RuleMeta, Scope, Visitor } from '@oxlint/plugins'
-import { z } from 'zod'
 import { parseSync, type Node } from 'oxc-parser'
 import { createResolver, resolveImport } from './architecture'
 import { findComponentRoot, conventionalComponentRoot } from './components'
+import { k } from '../k/index'
 
-export const consumerOptions = z.object({
-	convexDir: z.string().min(1).default('convex'),
-	componentDirs: z.array(z.string().min(1)).default([]),
-	domainPublicFiles: z.record(z.string(), z.array(z.string().min(1))).default({}),
-})
+/** Options every consumer-facing rule accepts; unknown keys are ignored. */
+export const consumerOptions = k
+	.object({
+		convexDir: k.string().min(1).default('convex'),
+		componentDirs: k.array(k.string().min(1)).default([]),
+		domainPublicFiles: k.record(k.string(), k.array(k.string().min(1))).default({}),
+	})
+	.strip()
 
 export function appFile(context: Context, filename = context.filename) {
 	const requestedRoot = resolve(
 		context.cwd,
-		consumerOptions.parse(context.options[0] ?? {}).convexDir,
+		consumerOptions['~parseStrict'](context.options[0] ?? {}).convexDir,
 	)
 	const root = existsSync(requestedRoot) ? realpathSync(requestedRoot) : requestedRoot
 	const file = relative(root, existsSync(filename) ? realpathSync(filename) : filename)
 		.split(sep)
 		.join('/')
 	return file === '..' || file.startsWith('../') || file.startsWith('/') ? null : file
+}
+
+/** Entries that export the `k` validator namespace. */
+export const K_SOURCES: readonly string[] = ['cvx-kit', 'cvx-kit/k']
+
+/** Entries that export the table builders (`kTable`, `kVariantTable`, `tenantTable`, `createModule`). */
+export const TABLE_SOURCES: readonly string[] = ['cvx-kit', 'cvx-kit/table']
+
+/** Factory name when `node` is a `k.<factory>(...)` call whose `k` comes from a kit entry. */
+export function kFactory(context: Context, node: ESTree.CallExpression): string | null {
+	if (node.callee.type !== 'MemberExpression') return null
+	const owner = imported(context, node.callee.object)
+	return owner?.name === 'k' && K_SOURCES.includes(owner.source) ? propertyName(node.callee) : null
 }
 
 export function imported(
@@ -41,7 +57,7 @@ export function imported(
 	if (node.type === 'MemberExpression') {
 		const owner = imported(context, node.object, active)
 		const name = propertyName(node)
-		return owner && name && ['*', 'z', 'v', 'default'].includes(owner.name)
+		return owner && name && ['*', 'z', 'k', 'v', 'default'].includes(owner.name)
 			? { source: owner.source, name }
 			: null
 	}
@@ -56,7 +72,7 @@ export function imported(
 	const member = localDestructured(context, node)
 	if (member) {
 		const owner = imported(context, member.expression, active)
-		return owner && ['*', 'z', 'v', 'default'].includes(owner.name)
+		return owner && ['*', 'z', 'k', 'v', 'default'].includes(owner.name)
 			? { source: owner.source, name: member.name }
 			: null
 	}
@@ -332,13 +348,13 @@ export function componentRoot(context: Context, filename: string) {
 	if (cache.has(filename)) return cache.get(filename) ?? null
 	const requestedRoot = resolve(
 		context.cwd,
-		consumerOptions.parse(context.options[0] ?? {}).convexDir,
+		consumerOptions['~parseStrict'](context.options[0] ?? {}).convexDir,
 	)
 	const root = existsSync(requestedRoot) ? realpathSync(requestedRoot) : requestedRoot
 	const file = existsSync(filename) ? realpathSync(filename) : resolve(filename)
-	const roots = consumerOptions
-		.parse(context.options[0] ?? {})
-		.componentDirs.map((path) => resolve(root, path))
+	const roots = consumerOptions['~parseStrict'](context.options[0] ?? {}).componentDirs.map(
+		(path) => resolve(root, path),
+	)
 	const owner = findComponentRoot(file, roots) ?? conventionalComponentRoot(file, root)
 	cache.set(filename, owner)
 	return owner
@@ -538,8 +554,8 @@ function physicalReadProvenance(
 		if (factory && foundationFactory(factory)) return 'foundation'
 		if (
 			factory &&
-			['cvx-kit', 'cvx-kit/zod-table', 'cvx-kit/tenancy'].includes(factory.source) &&
-			['zodTable', 'tenantTable', 'zodVariantTable'].includes(factory.name)
+			['cvx-kit', 'cvx-kit/table', 'cvx-kit/tenancy'].includes(factory.source) &&
+			['kTable', 'tenantTable', 'kVariantTable'].includes(factory.name)
 		)
 			return 'table'
 		if (
@@ -686,8 +702,8 @@ function* evaluateReadProvenance(
 		const ref = imported(context, node)
 		if (
 			ref &&
-			['zod', 'zod/v4', 'convex/values'].includes(ref.source) &&
-			['z', 'v', '*', 'default'].includes(ref.name)
+			['cvx-kit', 'cvx-kit/k', 'convex/values'].includes(ref.source) &&
+			['k', 'v', '*', 'default'].includes(ref.name)
 		)
 			return 'validator'
 		if (ref) return importedReadProvenance(context, ref)
@@ -718,8 +734,8 @@ function* evaluateReadProvenance(
 	if (ref && foundationFactory(ref)) return 'foundation'
 	if (
 		ref &&
-		['cvx-kit', 'cvx-kit/zod-table', 'cvx-kit/tenancy'].includes(ref.source) &&
-		['zodTable', 'tenantTable', 'zodVariantTable'].includes(ref.name)
+		['cvx-kit', 'cvx-kit/table', 'cvx-kit/tenancy'].includes(ref.source) &&
+		['kTable', 'tenantTable', 'kVariantTable'].includes(ref.name)
 	)
 		return 'table'
 	if (

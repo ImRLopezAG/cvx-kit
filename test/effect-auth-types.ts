@@ -20,7 +20,7 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
 import type { AuthFunctionsConfig, AuthBundle } from 'cvx-kit/auth'
 import { createEffectAuthFunctions, createEffectFoundation } from 'cvx-kit/effect'
 
@@ -51,8 +51,8 @@ const commands = foundation.Command({
 	context: (ctx: GenericMutationCtx<Model> & AuthBundle<Role>) => ctx,
 	operations: ({ command }) => ({
 		write: command({
-			input: z.object({}),
-			result: z.null(),
+			input: k.object({}),
+			result: k.null(),
 			classification: 'business',
 			audit: () => null,
 			handler: () => null,
@@ -62,7 +62,7 @@ const commands = foundation.Command({
 const queries = foundation.Query({
 	context: (ctx: (GenericQueryCtx<Model> | GenericMutationCtx<Model>) & AuthBundle<Role>) => ctx,
 	operations: ({ query }) => ({
-		read: query({ input: z.object({}), result: z.null(), handler: () => null }),
+		read: query({ input: k.object({}), result: k.null(), handler: () => null }),
 	}),
 })
 const remote = makeFunctionReference<'mutation', {}, null>('notes:write')
@@ -105,7 +105,7 @@ const functions = createEffectAuthFunctions(
 for (const builder of [functions.authQuery, functions.roleQuery('owner'), functions.adminQuery]) {
 	builder({
 		args: {},
-		returns: z.null(),
+		returns: k.null(),
 		handler: (ctx) => {
 			const role: Role = ctx.role
 			const label: string = ctx.actorLabel
@@ -193,12 +193,12 @@ functions.systemAction({
 // @ts-expect-error role inference preserves the configured vocabulary
 functions.roleMutation('admin')
 const transformed = functions.authQuery({
-	args: { value: z.string().transform(Number) },
-	returns: z.number().transform((value) => ({ value })),
+	args: { value: k.string().transform(Number) },
+	returns: k.object({ value: k.number() }),
 	handler: (ctx, args) => {
 		const parsed: number = args.value
 		void ctx.actorLabel
-		return Effect.succeed(parsed)
+		return Effect.succeed({ value: parsed })
 	},
 })
 type Api = ApiFromModules<{ notes: { transformed: typeof transformed } }>

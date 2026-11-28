@@ -14,7 +14,7 @@ import {
 	type GenericQueryCtx,
 } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { Context } from 'effect'
 import {
 	createAuthFunctions,
@@ -23,7 +23,7 @@ import {
 	type AuthReadersConfig,
 	type Include,
 } from 'cvx-kit/auth'
-import { createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
+import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
 
 const schema = defineSchema({ notes: defineTable({ title: v.string() }) })
 type Model = DataModelFromSchemaDefinition<typeof schema>
@@ -55,8 +55,8 @@ const commands = foundation.Command({
 	context: (ctx: GenericMutationCtx<Model> & AuthBundle<Role>) => ctx,
 	operations: ({ command }) => ({
 		write: command({
-			input: z.object({}),
-			result: z.null(),
+			input: k.object({}),
+			result: k.null(),
 			classification: 'business',
 			audit: () => null,
 			handler: () => null,
@@ -66,7 +66,7 @@ const commands = foundation.Command({
 const queries = foundation.Query({
 	context: (ctx: (GenericQueryCtx<Model> | GenericMutationCtx<Model>) & AuthBundle<Role>) => ctx,
 	operations: ({ query }) => ({
-		read: query({ input: z.object({}), result: z.null(), handler: () => null }),
+		read: query({ input: k.object({}), result: k.null(), handler: () => null }),
 	}),
 })
 function queryContext(ctx: GenericQueryCtx<Model>) {
@@ -167,7 +167,7 @@ void bundle
 auth.roleQuery('admin')
 
 // The Effect adapter must accept symbolic native interfaces without losing fields.
-effectZodApiBuilder(auth.authMutation, { services: () => Context.empty() })({
+effectApiBuilder(auth.authMutation, { services: () => Context.empty() })({
 	args: {},
 	handler: (ctx) => {
 		mutationContext(ctx)

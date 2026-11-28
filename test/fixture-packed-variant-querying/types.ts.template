@@ -1,10 +1,10 @@
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { defineRelations } from 'cvx-kit/relations'
 import type { Id, Doc } from './convex/_generated/dataModel'
 import { relations, tables, paymentPage, creditorPage, querying } from './convex/relations'
 import { payments } from './convex/schema'
 function accepts<T>(_value: T) {}
-declare const page: z.output<typeof paymentPage>
+declare const page: k.output<typeof paymentPage>
 for (const row of page.page) {
  accepts<Id<'payments'>>(row._id)
  accepts<Id<'clients'>>(row.clientId)
@@ -26,7 +26,7 @@ else {
  // @ts-expect-error sanctioned native codegen must preserve the branch distinction
  stored.creditorId
 }
-declare const scoped: z.output<typeof creditorPage>
+declare const scoped: k.output<typeof creditorPage>
 for (const creditor of scoped.page) for (const payment of creditor.payments.page) {
  accepts<'creditor_payment'>(payment.type)
  accepts<Id<'creditors'>>(payment.creditorId)
@@ -60,7 +60,7 @@ engine.payments.where({ variant: { tag: 'unknown', filters: {} } })
 declare const wrongId: Id<'clients'>
 // @ts-expect-error a client ID cannot populate a creditor join key
 engine.payments.where({ variant: { tag: 'creditor_payment', filters: { creditorId: wrongId } } })
-declare const update: z.output<typeof payments.tools.update>
+declare const update: k.output<typeof payments.tools.update>
 if (update.data.type === 'client_draft') {
  accepts<number | undefined>(update.data.draftDate)
  // @ts-expect-error tagged partial contracts exclude absent branch fields
@@ -68,22 +68,22 @@ if (update.data.type === 'client_draft') {
 }
 
 // Installed public API acceptance for ordinary native-ID unions.
-import { zodTable } from 'cvx-kit/zod-table'
+import { kTable } from 'cvx-kit/table'
 import { taskPage, taskChildPage, taskOptions } from './convex/relations'
 import { tasks, ledger } from './convex/schema'
-type TaskRow = z.output<typeof taskPage>['page'][number]
+type TaskRow = k.output<typeof taskPage>['page'][number]
 type NativeLink = Id<'tasks'> | Id<'leads'> | Id<'contacts'> | Id<'clients'> | Id<'creditors'> | Id<'deals'> | Id<'payments'> | Id<'ledger'> | null | undefined
 declare const taskRow: TaskRow
 declare const nativeLink: NativeLink
 accepts<NativeLink>(taskRow.rel)
 accepts<TaskRow['rel']>(nativeLink)
-accepts<z.output<ReturnType<typeof tasks.dto<true>>> | null>(taskRow.referenceTask)
+accepts<k.output<ReturnType<typeof tasks.dto<true>>> | null>(taskRow.referenceTask)
 accepts<Id<'clients'> | undefined>(taskRow.client?._id)
 accepts<Id<'tasks'>>(taskRow.referencingTasks.page[0]._id)
 accepts<Id<'tasks'>>(taskRow.client!.tasks.page[0]._id)
 accepts<string>(taskRow.referencingTasks.continueCursor)
 accepts<boolean>(taskRow.referencingTasks.isDone)
-accepts<z.output<typeof taskChildPage>['page'][number]['_id']>(taskRow._id)
+accepts<k.output<typeof taskChildPage>['page'][number]['_id']>(taskRow._id)
 accepts<'client_draft' | 'creditor_payment' | undefined>(taskRow.payment?.type)
 accepts<'client_draft' | undefined>(taskRow.draftPayment?.type)
 accepts<'payment' | 'adjustment' | undefined>(taskRow.ledgerEntry?.type)
@@ -99,20 +99,20 @@ relations.tables.tasks.pageDto({ invented: true })
 // @ts-expect-error private scalar cannot be selected as a relation
 relations.tables.tasks.pageDto({ secret: true })
 // @ts-expect-error private field is excluded from this endpoint's generated filter mask
-accepts<z.output<typeof taskOptions>>({ numItems: 2, cursor: null, filters: { department: 'A' } })
+accepts<k.output<typeof taskOptions>>({ numItems: 2, cursor: null, filters: { department: 'A' } })
 declare const outsiderId: Id<'attachments'>
 // @ts-expect-error ninth-table ID cannot populate the native command union
-accepts<z.output<typeof tasks.commandInput>>({ name: 'wrong', status: 'open', rel: outsiderId })
-declare const taskCommand: z.output<typeof tasks.commandInput>
+accepts<k.output<typeof tasks.commandInput>>({ name: 'wrong', status: 'open', rel: outsiderId })
+declare const taskCommand: k.output<typeof tasks.commandInput>
 // @ts-expect-error server-owned command evidence
 taskCommand.secret
 declare const ledgerStored: Doc<'ledger'>
 accepts<number>(ledgerStored.createdAt)
 accepts<number>(ledgerStored.recordedAt)
-declare const ledgerCommand: z.output<typeof ledger.commandInput>
+declare const ledgerCommand: k.output<typeof ledger.commandInput>
 // @ts-expect-error explicit timestamp excluded from command mask
 ledgerCommand.createdAt
-declare const ledgerUpdate: z.output<typeof ledger.tools.update>
+declare const ledgerUpdate: k.output<typeof ledger.tools.update>
 // @ts-expect-error explicit timestamp excluded from update mask
 ledgerUpdate.data.recordedAt
 if (taskRow.ledgerEntry?.type === 'payment') {
@@ -140,7 +140,7 @@ defineRelations(tables, (r, branch) => {
  r.one.tasks({ from: r.tasks.rel.forTable('clients'), to: r.tasks._id })
  return {}
 })
-const probes = zodTable('tasks', id => ({ rel: z.union([id('tasks'), id('unregistered')]), mixed: z.union([id('tasks'), z.string()]), single: id('tasks').nullable().optional(), duplicate: z.union([id('tasks'), id('tasks')]), scalar: z.union([z.string(), z.number()]) }))
+const probes = kTable('tasks', { rel: k.union([k.id('tasks'), k.id('unregistered')]), mixed: k.union([k.id('tasks'), k.string()]), single: k.id('tasks').nullable().optional(), duplicate: k.union([k.id('tasks'), k.id('tasks')]), scalar: k.union([k.string(), k.number()]) })
 defineRelations({ tasks: probes }, r => {
  // @ts-expect-error native member must also be registered
  r.tasks.rel.forTable('unregistered')
@@ -155,11 +155,11 @@ defineRelations({ tasks: probes }, r => {
 })
 
 declare const clientDto: NonNullable<TaskRow['client']>
-accepts<z.output<ReturnType<typeof tables.clients.dto<true>>>>(clientDto)
-declare const ledgerInsert: z.output<typeof ledger.insertSchema>
+accepts<k.output<ReturnType<typeof tables.clients.dto<true>>>>(clientDto)
+declare const ledgerInsert: k.output<typeof ledger.insertSchema>
 // @ts-expect-error server timestamp absent from generated insert
 ledgerInsert.createdAt
-declare const ledgerPartial: z.output<typeof ledger.updateSchema>
+declare const ledgerPartial: k.output<typeof ledger.updateSchema>
 // @ts-expect-error server timestamp absent from generated partial update
 ledgerPartial.recordedAt
 const installedInversePages = {
@@ -172,9 +172,9 @@ const installedInversePages = {
  payments: relations.tables.payments.pageDto({ tasks: true }),
  ledger: relations.tables.ledger.pageDto({ tasks: true }),
 }
-declare const inversePayment: z.output<typeof installedInversePages.payments>['page'][number]
+declare const inversePayment: k.output<typeof installedInversePages.payments>['page'][number]
 accepts<Id<'tasks'>>(inversePayment.tasks.page[0]._id)
 accepts<Id<'payments'>>(inversePayment._id)
-declare const inverseLedger: z.output<typeof installedInversePages.ledger>['page'][number]
+declare const inverseLedger: k.output<typeof installedInversePages.ledger>['page'][number]
 accepts<Id<'tasks'>>(inverseLedger.tasks.page[0]._id)
 accepts<'payment' | 'adjustment'>(inverseLedger.type)

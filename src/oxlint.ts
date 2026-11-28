@@ -19,6 +19,8 @@ import {
 	isFunctionsImport,
 	isTableChain,
 	isDbWrite,
+	kFactory,
+	TABLE_SOURCES,
 	metadata,
 	componentRoot,
 	staticString,
@@ -206,7 +208,7 @@ const applicationRules: Record<RuleName, CreateRule> = {
 				'Follow api → application/domain → shared; sibling modules expose only rules.ts and queries.ts.',
 		}),
 		create(context) {
-			const { domainPublicFiles } = consumerOptions.parse(context.options[0] ?? {})
+			const { domainPublicFiles } = consumerOptions['~parseStrict'](context.options[0] ?? {})
 			const file = appFile(context)
 			if (componentRoot(context, context.filename)) return {}
 			const resolver = createResolver()
@@ -329,21 +331,15 @@ const applicationRules: Record<RuleName, CreateRule> = {
 	},
 	'no-inline-enums': {
 		meta: metadata('Keep vocabularies in named constants.ts tuples.', {
-			vocabulary: 'Define a named readonly tuple in constants.ts and pass it to z.enum().',
+			vocabulary: 'Define a named readonly tuple in constants.ts and pass it to k.enum().',
 		}),
 		create(context) {
 			return {
 				CallExpression(node) {
-					const ref = imported(context, node.callee)
 					let values = node.arguments[0]
 					while (values?.type === 'TSAsExpression' || values?.type === 'TSSatisfiesExpression')
 						values = values.expression
-					if (
-						ref &&
-						/^zod(?:\/v4)?$/.test(ref.source) &&
-						ref.name === 'enum' &&
-						values?.type === 'ArrayExpression'
-					)
+					if (kFactory(context, node) === 'enum' && values?.type === 'ArrayExpression')
 						context.report({ node, messageId: 'vocabulary' })
 				},
 			}
@@ -417,8 +413,10 @@ const applicationRules: Record<RuleName, CreateRule> = {
 			return {
 				CallExpression(node) {
 					const ref = imported(context, node.callee)
-					if (!(ref?.name === 'object' && ['zod', 'zod/v4', 'convex/values'].includes(ref.source)))
-						return
+					const isObject =
+						kFactory(context, node) === 'object' ||
+						(ref?.name === 'object' && ref.source === 'convex/values')
+					if (!isObject) return
 					const argument = node.arguments[0]
 					const fieldsNode = argument && (localInitializer(context, argument) ?? argument)
 					if (fieldsNode?.type !== 'ObjectExpression') return
@@ -582,12 +580,12 @@ const applicationRules: Record<RuleName, CreateRule> = {
 							)
 						)
 							expected =
-								'a component schema.ts/table.ts; host tables use zodTable in domain/<module>/schema.ts'
+								'a component schema.ts/table.ts; host tables use kTable in domain/<module>/schema.ts'
 					}
 					if (
 						ref &&
-						['cvx-kit', 'cvx-kit/zod-table'].includes(ref.source) &&
-						['zodTable', 'tenantTable', 'zodVariantTable'].includes(ref.name) &&
+						TABLE_SOURCES.includes(ref.source) &&
+						['kTable', 'tenantTable', 'kVariantTable'].includes(ref.name) &&
 						!/^domain\/[^/]+\/schema\.ts$/.test(file) &&
 						!(
 							componentRoot(context, context.filename) &&

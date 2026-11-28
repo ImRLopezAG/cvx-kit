@@ -1,15 +1,17 @@
 import { expect, test } from 'vite-plus/test'
 import { defineSchema } from 'convex/server'
-import { z } from 'zod'
 import { compileFilters } from '../src/querying/filters'
 import { createPlanner } from '../src/querying/planner'
 import { defineRelations, getRelationExecutor } from '../src/relations'
-import { zodTable, zodVariantTable } from '../src/zod-table'
+import { k } from '../src/k'
+import { kTable, kVariantTable } from '../src/table'
 
 test('planner and direct compiler reject invalid clients and independently enforce stored constraints', () => {
-	const items = zodTable('items', () => ({ name: z.string(), secret: z.string() }), {
-		publicFields: ['name'],
-	})
+	const items = kTable(
+		'items',
+		{ name: k.string(), secret: k.string() },
+		{ publicFields: ['name'] },
+	)
 	const registry = defineRelations({ items }, () => ({}))
 	const planner = createPlanner(defineSchema({ items: items.table }), registry)
 	const input = { numItems: 1, cursor: null, filters: { name: 'visible' } }
@@ -32,69 +34,47 @@ test('planner and direct compiler reject invalid clients and independently enfor
 	expect(() => planner.plan('items', input, [], [{ missing: 'x' }])).toThrow()
 })
 
-test('row projection observes mutable public and extension declarations on every call', () => {
-	let checks = 0
-	const items = zodTable(
+// v1 also re-read consumer edits to Zod shapes and extension objects on every projection; `k`
+// records are immutable, so only the call-site checks below still apply.
+test('row projection rejects extension values without an extension schema', () => {
+	const items = kTable(
 		'items',
-		() => ({
-			name: z
-				.string()
-				.default('default')
-				.refine((value) => {
-					checks++
-					return value !== 'bad'
-				}),
-			secret: z.string(),
-		}),
+		{ name: k.string(), secret: k.string() },
 		{ publicFields: ['name'] },
 	)
-	const row = { secret: 'private' }
-	expect(items.toPublicDto(row)).toEqual({ name: 'default' })
-	expect(checks).toBe(1)
-	const extend = { extra: z.string() }
-	expect(items.toPublicDto(row, { extend, values: { extra: 'ok' } })).toEqual({
-		name: 'default',
-		extra: 'ok',
-	})
-	extend.extra = z.string().min(3)
-	expect(() => items.toPublicDto(row, { extend, values: { extra: 'ok' } })).toThrow()
-	Reflect.set(extend, 'name', z.string())
-	expect(() => items.toPublicDto(row, { extend, values: { extra: 'long' } })).toThrow(/collision/)
-	Reflect.set(items.publicDto.shape, 'name', z.string().min(4))
-	expect(() => items.toPublicDto({ name: 'abc', secret: 'private' })).toThrow()
 	for (const values of [{ extra: 'unexpected' }, [], 'unexpected', 1]) {
 		// @ts-expect-error JavaScript callers can pass unexpected values without an extension.
 		expect(() => items.toPublicDto({ name: 'valid', secret: 'private' }, { values })).toThrow()
 	}
 })
 
-function variantItems() {
-	return zodVariantTable(
+test('variant include-id projection keeps native id validation', () => {
+	const items = kVariantTable(
 		'items',
-		z.discriminatedUnion('type', [
-			z.strictObject({ type: z.literal('entry'), name: z.string(), secret: z.string() }),
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal('entry'), name: k.string(), secret: k.string() }),
 		]),
 		{ discriminator: 'type', variants: { entry: { publicFields: ['name'] } } },
 	)
-}
-
-test('variant include-id projection observes later branch edits and keeps native id validation', () => {
-	const items = variantItems()
-	const row = { type: 'entry' as const, name: 'ok', secret: 'private', _id: 'items:1' }
+	const row = {
+		type: 'entry' as const,
+		name: 'ok',
+		secret: 'private',
+		_id: k.id('items').parse('items:1'),
+	}
 	expect(items.toPublicDto(row, true)).toEqual({ type: 'entry', name: 'ok', _id: 'items:1' })
-	// A returned helper must not expose the projector's private ID validator.
-	const exposed = items.dto(true)
-	Reflect.set(exposed.options[0].shape, '_id', z.number())
-	expect(items.toPublicDto(row, true)._id).toBe('items:1')
-	Reflect.set(items.publicDto.options[0].shape, 'name', z.string().min(4))
-	expect(() => items.toPublicDto(row, true)).toThrow()
-	expect(items.toPublicDto({ ...row, name: 'valid' }, true).name).toBe('valid')
-	// @ts-expect-error Native IDs still reject non-string values at runtime.
-	expect(() => items.toPublicDto({ ...row, name: 'valid', _id: 42 }, true)).toThrow()
+	// @ts-expect-error Native ids still reject non-string values at runtime.
+	expect(() => items.toPublicDto({ ...row, _id: 42 }, true)).toThrow()
 })
 
 test('variant validation must run again after an eligibility callback mutates a validated row', () => {
-	const items = variantItems()
+	const items = kVariantTable(
+		'items',
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal('entry'), name: k.string(), secret: k.string() }),
+		]),
+		{ discriminator: 'type', variants: { entry: { publicFields: ['name'] } } },
+	)
 	const executor = getRelationExecutor(defineRelations({ items }, () => ({})))
 	const row = { type: 'entry', name: 'valid', secret: 'private', _id: 'items:1', _creationTime: 1 }
 	executor.validateDocument('items', row)
@@ -106,18 +86,19 @@ test('variant validation must run again after an eligibility callback mutates a 
 	).toThrow()
 })
 
-test('shared source DTO nodes restore as independent siblings within each helper result', () => {
-	const shared = z.object({ text: z.string() })
-	const items = zodTable('items', () => ({ left: shared, right: shared }), {
-		publicFields: ['left', 'right'],
-	})
+test('shared source DTO nodes validate as independent siblings within each helper result', () => {
+	// v1 also mutated one helper result's Zod shape; k records are immutable and shared, so each
+	// sibling keeps its own declared validation without copies.
+	const shared = k.object({ text: k.string() })
+	const items = kTable(
+		'items',
+		{ left: shared, right: shared },
+		{ publicFields: ['left', 'right'] },
+	)
 	const registry = defineRelations({ items }, () => ({}))
 	const first = registry.tables.items.pageDto({})
-	const second = registry.tables.items.pageDto({})
-	if (!(first instanceof z.ZodObject)) throw new Error('Expected object page DTO')
-	Reflect.set(first.shape.page.element.shape.left.shape, 'text', z.number())
 	const page = {
-		page: [{ _id: 'items:1', left: { text: 1 }, right: { text: 'valid' } }],
+		page: [{ _id: 'items:1', left: { text: 'valid' }, right: { text: 'valid' } }],
 		isDone: true,
 		continueCursor: '',
 	}
@@ -125,8 +106,9 @@ test('shared source DTO nodes restore as independent siblings within each helper
 	expect(
 		first.safeParse({ ...page, page: [{ ...page.page[0], right: { text: 1 } }] }).success,
 	).toBe(false)
-	expect(second.safeParse(page).success).toBe(false)
-	expect(registry.tables.items.pageDto({}).safeParse(page).success).toBe(false)
+	expect(first.safeParse({ ...page, page: [{ ...page.page[0], left: { text: 1 } }] }).success).toBe(
+		false,
+	)
 	expect(
 		getRelationExecutor(registry).project(
 			'items',

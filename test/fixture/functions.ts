@@ -9,7 +9,7 @@ import {
 	queryGeneric,
 	type DataModelFromSchemaDefinition,
 } from 'convex/server'
-import { z } from 'zod'
+import { k } from '../../src/k'
 import { createAuthFunctions } from '../../src/auth'
 import { appendOnly, createTriggers, timestamps } from '../../src/triggers'
 import { documents } from './schema'
@@ -48,7 +48,7 @@ export const auth = createAuthFunctions<FixtureDataModel, FixtureRole>({
 })
 
 export const create = auth.authMutation({
-	args: { title: z.string(), secretNote: z.string() },
+	args: { title: k.string(), secretNote: k.string() },
 	handler: async (ctx, args) => {
 		await ctx.db.insert('documents', {
 			title: args.title,
@@ -92,7 +92,7 @@ export const history = auth.authQuery({
 })
 
 export const tamperHistory = auth.authMutation({
-	args: { title: z.string() },
+	args: { title: k.string() },
 	handler: async (ctx, args) => {
 		const first = await ctx.db.query('documentHistory').first()
 		if (!first) throw new Error('no history to tamper with')
@@ -105,7 +105,7 @@ export const editorsRename = auth.roleMutation(
 	'editor',
 	'owner',
 )({
-	args: { title: z.string() },
+	args: { title: k.string() },
 	handler: async (ctx, args) => {
 		const first = await ctx.db.query('documents').first()
 		if (first) await ctx.db.patch(first._id, { title: args.title })

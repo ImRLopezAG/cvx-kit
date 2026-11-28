@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
 
 import {
 	Foundation,
@@ -7,6 +6,7 @@ import {
 	type AnyCommandMiddleware,
 } from '../src/components/foundation/client'
 import { KitError } from '../src/errors'
+import { k } from '../src/k'
 import { rateLimit, type RateLimiterLike } from '../src/middleware'
 
 type Ctx = { actorId: string; tenant?: string }
@@ -39,8 +39,8 @@ function commandHarness(middleware: AnyCommandMiddleware[]) {
 	)
 	const operations = {
 		'notes.touch': Command.operation({
-			command: z.object({}).strict(),
-			result: z.object({ ok: z.literal(true) }).strict(),
+			command: k.object({}),
+			result: k.object({ ok: k.literal(true) }),
 			classification: 'business',
 			middleware,
 			audit: () => ({
@@ -102,6 +102,17 @@ describe('rateLimit middleware', () => {
 		expect(run).toEqual([])
 	})
 
+	it('a non-string ctx.tenant fails with VALIDATION before the limiter runs', async () => {
+		const { limiter, calls } = fakeLimiter(true)
+		const { touch, calls: run } = commandHarness([rateLimit({ limiter, name: 'touch' })])
+		const forged: Ctx = { actorId: 'u' }
+		// A runtime-only tenant that breaks the declared type.
+		Object.assign(forged, { tenant: 7 })
+		await expect(touch(forged, {})).rejects.toMatchObject({ data: { code: 'VALIDATION' } })
+		expect(calls).toEqual([])
+		expect(run).toEqual([])
+	})
+
 	it('onLimit observes the rejection before the throw', async () => {
 		const { limiter } = fakeLimiter(false, 500)
 		const seen: number[] = []
@@ -138,8 +149,8 @@ describe('rateLimit middleware', () => {
 		)
 		const operations = {
 			'notes.touch': Command.operation({
-				command: z.object({}).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({}),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'business',
 				audit: () => null,
 			}),

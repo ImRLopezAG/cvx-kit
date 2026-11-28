@@ -6,6 +6,7 @@
  * registers the COMPILED component modules from dist, so dist is the only
  * code the package ships.
  */
+import type { GenericId } from 'convex/values'
 import type { TestConvex } from 'convex-test'
 import type { GenericSchema, SchemaDefinition } from 'convex/server'
 import approvalsSchema from '../dist/components/approvals/schema.js'
@@ -27,4 +28,10 @@ export function registerFoundation(t: RegistersComponents, name = 'foundation') 
 /** Registers the approvals component under its default install name. */
 export function registerApprovals(t: RegistersComponents, name = 'approvals') {
 	t.registerComponent(name, approvalsSchema, approvalsModules)
+}
+
+/** Brands a test fixture string. It does not validate a real Convex id. */
+export function asId<T extends string>(_table: T, value: string): GenericId<T> {
+	// SAFETY: fixture branding is deliberate; storage references require actual inserted ids.
+	return value as GenericId<T>
 }

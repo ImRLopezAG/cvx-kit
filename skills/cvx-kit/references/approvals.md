@@ -167,10 +167,15 @@ Expose the configured workflow through a host query; component pagination uses
 available inside components:
 
 ```ts
+import { paginationOptsValidator } from 'convex/server'
+import { k } from 'cvx-kit/k'
+
+const APPROVAL_INBOX_STATES = ['pending', 'approved', 'rejected', 'expired', 'canceled'] as const
+
 export const approvalInbox = authQuery({
 	args: {
-		state: z.enum(['pending', 'approved', 'rejected', 'expired', 'canceled']).optional(),
-		paginationOpts: convexToZod(paginationOptsValidator),
+		state: k.enum(APPROVAL_INBOX_STATES).optional(),
+		paginationOpts: paginationOptsValidator, // native validators mix with k fields
 	},
 	handler: (ctx, args) =>
 		publishApproval.list(ctx, {

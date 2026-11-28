@@ -1,9 +1,16 @@
-import { z } from 'zod'
+/* oxlint-disable anti-slop/no-runtime-typeof -- The filter budget preflight classifies undecoded values by representation before any schema walk reads them. */
+import type { PropertyValidators, VObject } from 'convex/values'
+import { k, type KCheckContext, type KSchema, type KType } from '../../k'
+import { KAny } from '../../k/kinds'
 import type { FilterAst, FilterScalar, FilterOperator } from './ast'
+
 export const MAX_FILTER_DEPTH = 4
 export const MAX_FILTER_NODES = 256
 export const MAX_FILTER_IN_VALUES = 100
-export type FieldSchemas = Record<string, z.ZodType>
+
+/** A filter predicate per field name; each is a `k` schema. */
+export type FieldSchemas = Record<string, KType>
+
 export type FilterTree =
 	| string
 	| number
@@ -14,96 +21,97 @@ export type FilterTree =
 	| FilterTree[]
 	| { [key: string]: FilterTree }
 
-// Compose Zod's exported core constructor with its ordinary object initializer.
-// Clones use this constructor again, preserving preflight without replacing the
-// converter-recognized object definition or any native scalar/ID validators.
-const relationPredicates = new WeakMap<
-	z.core.$ZodType,
-	{ cardinality: 'one' | 'many'; target: FilterGrammar }
->()
-const variantPredicates = new WeakMap<z.core.$ZodType, NonNullable<FilterGrammar['variants']>>()
-const filterGrammars = new WeakMap<z.core.$ZodType, FilterGrammar>()
+/**
+ * Each boolean child and relation target expression consumes one of four edges. some/none wrappers
+ * and fields namespaces consume nodes, but no extra depth. `Field` is the predicate schema type; the
+ * engine's own grammars use `k` schemas, and the structure-only readers accept any.
+ */
+export interface FilterGrammarOf<Field> {
+	fields: Record<string, Field>
+	variants?: { discriminator: string; options: Record<string, FilterGrammarOf<Field>> }
+	relations: Record<string, { cardinality: 'one' | 'many'; target: FilterGrammarOf<Field> }>
+}
+
+export type FilterGrammar = FilterGrammarOf<KType>
 
 export interface PaginationValidatorOptions {
 	validator: 'compact'
 }
 
+/**
+ * A filter boundary: a `k` schema whose native validator is the full structural filter validator and
+ * whose parse first runs the layout and depth/node budget preflight, then the structural walk. Its
+ * output is its input: filters declare no defaults or transforms. Like every `k` schema, both sides
+ * carry native ID brands, as the native validator does.
+ */
+export type KFilterSchema<Filters = FilterTree> = KSchema<
+	Filters,
+	VObject<Filters, PropertyValidators>
+>
+
 export interface FilterBoundaryMetadata {
 	readonly grammar: FilterGrammar
-	readonly semantic: z.ZodType
-}
-const compactFilters = new WeakMap<
-	z.core.$ZodType,
-	{
-		metadata: FilterBoundaryMetadata
-		matches(): boolean
-	}
->()
-
-/** Only constructors created here can carry permission to project a filter. */
-export function compactFilterMetadata(schema: z.core.$ZodType): FilterBoundaryMetadata | undefined {
-	const entry = compactFilters.get(schema)
-	return entry?.matches() ? entry.metadata : undefined
+	readonly semantic: KFilterSchema
 }
 
-/** Each boolean child and relation target expression consumes one of four edges.
- * some/none wrappers and fields namespaces consume nodes, but no extra depth.
- */
-export interface FilterGrammar {
-	fields: FieldSchemas
-	variants?: { discriminator: string; options: Record<string, FilterGrammar> }
-	relations: Record<string, { cardinality: 'one' | 'many'; target: FilterGrammar }>
+/** Only boundaries created here can carry permission to project a filter. */
+export function compactFilterMetadata(schema: KType): FilterBoundaryMetadata | undefined {
+	const record = boundaryRecord(schema)
+	return record && compactFilters.get(record)
+}
+
+/** Only library-owned field getters may stay deferred when a compact grammar is captured. */
+const deferredPredicates = new WeakSet<() => KType>()
+
+export function deferFilterField(fields: FieldSchemas, name: string, build: () => KType): void {
+	let schema: KType | undefined
+	const get = () => (schema ??= build())
+	deferredPredicates.add(get)
+	Object.defineProperty(fields, name, { enumerable: true, get })
 }
 
 export function relationFilterSchema(
 	grammar: FilterGrammar,
-	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
+	cache: FilterNodeCache = new WeakMap(),
 	options?: PaginationValidatorOptions,
-): z.ZodType {
-	if (options?.validator === 'compact') {
-		let captured: FilterGrammar
-		try {
-			captured = captureGrammar(grammar)
-		} catch (error) {
-			if (!(error instanceof UnsupportedFilterCapture)) throw error
-			return boundedObject(filterNodeSchema(grammar, 0, cache)._zod.def, grammar)
-		}
-		const semantic = boundedObject(filterNodeSchema(captured, 0)._zod.def, captured)
-		return boundedObject(
-			filterNodeSchema(grammar, 0, cache)._zod.def,
-			captured,
-			Object.freeze({ grammar: captured, semantic }),
-		)
-	}
-	return boundedObject(filterNodeSchema(grammar, 0, cache)._zod.def, grammar)
+): KFilterSchema {
+	if (options?.validator !== 'compact')
+		return boundedFilter(() => filterNodeSchema(grammar, 0, cache), grammar)
+	// k records are immutable, so a frozen copy of the grammar's structure is all a compact
+	// boundary needs to stay independent of later edits to the caller's grammar objects.
+	const captured = captureGrammar(grammar)
+	const schema = boundedFilter(() => filterNodeSchema(captured, 0), captured)
+	compactFilters.set(schema, Object.freeze({ grammar: captured, semantic: schema }))
+	return schema
 }
 
 /**
- * The engine's private filter boundary. It accepts exactly what
- * relationFilterSchema(grammar) accepts, but builds relation predicates only for
- * the relations an input names: absent optional relations validate nothing. So
- * a query never reads relation grammars, or their tables, that it does not use.
+ * The engine's private filter boundary. It accepts exactly what relationFilterSchema(grammar) accepts,
+ * but builds relation predicates only for the relations an input names: absent optional relations
+ * validate nothing. So a query never reads relation grammars, or their tables, that it does not use.
  */
 export function lazyRelationFilterSchema(
 	grammar: FilterGrammar,
-	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
-): z.ZodType {
+	cache: FilterNodeCache = new WeakMap(),
+): KFilterSchema {
 	const restricted = new Map<string, FilterGrammar>()
 	const ids = new WeakMap<FilterGrammar, number>()
 	let nextId = 0
-	const idOf = (source: FilterGrammar) => {
+	function idOf(source: FilterGrammar): number {
 		let id = ids.get(source)
 		if (id === undefined) ids.set(source, (id = nextId++))
 		return id
 	}
-	// A restriction is a function of the root grammar and the relation names used
-	// per grammar, so that flat set is its key: no larger than the input.
+	// A restriction is a function of the root grammar and the relation names used per grammar, so
+	// that flat set is its key: no larger than the input.
 	function restrict(used: Map<FilterGrammar, Set<string>>): FilterGrammar {
-		const key = JSON.stringify(
-			[...used]
-				.map(([source, names]) => [idOf(source), [...names].sort()] as const)
-				.sort(([a], [b]) => a - b),
-		)
+		const key = used.size
+			? JSON.stringify(
+					[...used]
+						.map(([source, names]) => [idOf(source), [...names].sort()] as const)
+						.sort(([a], [b]) => a - b),
+				)
+			: ''
 		let result = restricted.get(key)
 		if (!result) {
 			result = build(used, grammar, 0, new Map())
@@ -112,9 +120,8 @@ export function lazyRelationFilterSchema(
 		}
 		return result
 	}
-	// One restricted grammar per source grammar and depth. filterNodeSchema builds
-	// no relations at MAX_FILTER_DEPTH, so neither does a restriction; this also
-	// bounds the walk over a cyclic grammar.
+	// One restricted grammar per source grammar and depth. filterNodeSchema builds no relations at
+	// MAX_FILTER_DEPTH, so neither does a restriction; this also bounds the walk over a cyclic grammar.
 	function build(
 		used: Map<FilterGrammar, Set<string>>,
 		source: FilterGrammar,
@@ -146,33 +153,38 @@ export function lazyRelationFilterSchema(
 			}
 		return result
 	}
-	const scalar = restrict(new Map())
-	return boundedObject(filterNodeSchema(scalar, 0, cache)._zod.def, grammar, undefined, (used) =>
-		filterNodeSchema(restrict(used), 0, cache),
+	return boundedFilter(
+		() => filterNodeSchema(restrict(new Map()), 0, cache),
+		grammar,
+		// Validate against the relations this input names; the rest are absent.
+		(used) => filterNodeSchema(restrict(used), 0, cache),
 	)
 }
 
-export function paginationGrammar(schema: z.ZodType): FilterGrammar | undefined {
-	if (!(schema instanceof z.ZodObject)) return undefined
-	const filters = schema.shape.filters
-	if (!(filters instanceof z.ZodOptional)) return undefined
-	const root = filters.unwrap()
-	const cached = filterGrammars.get(root)
-	if (cached) return cached
-	if (!(root instanceof z.ZodObject)) return undefined
+/** The grammar of a pagination object's `filters` field, when a boundary created here supplies it. */
+export function paginationGrammar(schema: KType): FilterGrammar | undefined {
+	const fields = objectFields(schema)
+	const filters = fields?.filters
+	const root = filters?.op === 'optional' ? previous(filters) : null
+	if (root === null) return undefined
+	const record = boundaryRecord(root)
+	if (record) return filterGrammars.get(record)
+	const nodeFields = objectFields(root)
+	if (!nodeFields) return undefined
+	const variant = nodeFields.variant
 	return {
-		fields: root.shape,
-		variants: variantPredicates.get(root.shape.variant),
+		fields: nodeFields,
+		variants: variant === undefined ? undefined : variantPredicates.get(variant),
 		relations: Object.fromEntries(
-			Object.entries(root.shape).flatMap(([name, predicate]) => {
-				// SAFETY: object shapes contain Zod schemas; metadata only recognizes predicates created by our grammar.
-				const relation = relationPredicates.get(predicate as z.core.$ZodType)
+			Object.entries(nodeFields).flatMap(([name, predicate]) => {
+				const relation = relationPredicates.get(predicate)
 				return relation ? [[name, relation]] : []
 			}),
 		),
 	}
 }
-export function normalizeFilters(value: FilterTree, grammar?: FilterGrammar): FilterAst {
+
+export function normalizeFilters(value: FilterTree, grammar?: FilterGrammarOf<unknown>): FilterAst {
 	const children: FilterAst[] = []
 	if (!value) return { kind: 'and', children }
 	// SAFETY: the caller parsed a strict filter object; its grammar has no array/primitive expression.
@@ -223,30 +235,22 @@ export function normalizeFilters(value: FilterTree, grammar?: FilterGrammar): Fi
 	}
 	return { kind: 'and', children }
 }
-export function scalarPredicateFromSchema(
-	scalar: z.ZodType,
-	range: boolean,
-	optional: boolean,
-): z.ZodType {
-	const equality = z.object({
-		eq: scalar.optional(),
-		in: z.array(scalar).max(MAX_FILTER_IN_VALUES).optional(),
-	})
-	const ranged = range
-		? equality.extend({
-				gt: scalar.optional(),
-				gte: scalar.optional(),
-				lt: scalar.optional(),
-				lte: scalar.optional(),
-			})
-		: equality
-	const existence = optional ? ranged.extend({ exists: z.boolean().optional() }) : ranged
-	return z.union([
-		scalar,
-		existence
-			.strict()
+
+/** The predicate for one scalar field: the value itself, or a non-empty operator object. */
+export function scalarPredicateFromSchema(scalar: KType, range: boolean, optional: boolean): KType {
+	const value = schemaOf(scalar)
+	const operators = Object.fromEntries([
+		['eq', value.optional()],
+		['in', k.array(value).max(MAX_FILTER_IN_VALUES).optional()],
+		...(range ? RANGE_OPERATORS.map((name) => [name, value.optional()] as const) : []),
+		...(optional ? [['exists', k.boolean().optional()] as const] : []),
+	])
+	return unionOf([
+		value,
+		k
+			.strictObject(operators)
 			.refine(
-				(value) => Object.values(value).some((entry) => entry !== undefined),
+				(entries) => Object.values(entries).some((entry) => entry !== undefined),
 				'At least one operator is required',
 			),
 	])
@@ -255,52 +259,120 @@ export function scalarPredicateFromSchema(
 export function boundedFilterSchema(
 	predicates: FieldSchemas,
 	options?: PaginationValidatorOptions,
-): z.ZodType {
+): KFilterSchema {
 	return relationFilterSchema({ fields: predicates, relations: {} }, undefined, options)
+}
+
+/** Union of `k` schemas, including the one-member union v1's Zod conversion produced natively. */
+export function unionOf(members: readonly KType[]): KType {
+	// SAFETY: k.union stores any member list; v1 emitted a native union for every member count.
+	return k.union(members as readonly [KType, KType])
+}
+
+type FilterNodeCache = WeakMap<FilterGrammar, Map<number, KType>>
+
+/** Operators a scalar predicate accepts only where the field's values are ordered. */
+const RANGE_OPERATORS = ['gt', 'gte', 'lt', 'lte'] as const
+
+const BUDGET_MESSAGE = 'Unsupported filter layout or depth/node budget exceeded'
+
+/** Boundary records, by the grammar their budget preflight reads. */
+const filterGrammars = new WeakMap<KType, FilterGrammar>()
+/** Compact-capable boundaries and their captured grammar. */
+const compactFilters = new WeakMap<KType, FilterBoundaryMetadata>()
+/** Generated relation and variant predicates, so a structural object's grammar can be recovered. */
+const relationPredicates = new WeakMap<
+	KType,
+	{ cardinality: 'one' | 'many'; target: FilterGrammar }
+>()
+const variantPredicates = new WeakMap<KType, NonNullable<FilterGrammar['variants']>>()
+
+/** Ops a boundary may carry above its own record without changing what it validates natively. */
+const TRANSPARENT_OPS: ReadonlySet<string> = new Set(['describe', 'refine', 'check'])
+
+/**
+ * The boundary: a private `k.any()` root whose native validator is the lazily built structural one,
+ * and a `check` on it that runs the budget preflight before the structural walk. Wrappers chained on
+ * the result (optional, nullable, describe) compile natively from that root, so they all export the
+ * structural validator, and the check runs on both the full walk and the plan-only path (KTD3).
+ */
+function boundedFilter(
+	build: () => KType,
+	grammar: FilterGrammar,
+	resolve?: (used: Map<FilterGrammar, Set<string>>) => KType,
+): KFilterSchema {
+	let structural: KType | undefined
+	function structure(): KType {
+		return (structural ??= build())
+	}
+	const root = new KAny(null, 'any', undefined, undefined)
+	// SAFETY: `native` is the root's memo slot for its native validator; compileNative and the
+	// `validator` getter only read it, so supplying it lazily keeps declaration free of native work.
+	Object.defineProperty(root, 'native', {
+		get: () => structure().validator,
+		enumerable: true,
+		configurable: true,
+	})
+	const record = root.check((value: FilterTree, context: KCheckContext) => {
+		const used = resolve && new Map<FilterGrammar, Set<string>>()
+		if (!withinFilterBudget(value, grammar, used)) {
+			context.addIssue({ code: 'custom', message: BUDGET_MESSAGE })
+			return
+		}
+		const parsed = schemaOf(used && resolve ? resolve(used) : structure())['~safeParseStrict'](
+			value,
+		)
+		if (!parsed.success) for (const issue of parsed.issues) context.addIssue(issue)
+	})
+	filterGrammars.set(record, grammar)
+	return filterSchemaOf(record)
 }
 
 function filterNodeSchema(
 	grammar: FilterGrammar,
 	depth: number,
-	cache = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>(),
-): z.ZodObject {
+	cache: FilterNodeCache = new WeakMap(),
+): KType {
 	const cached = cache.get(grammar)?.get(depth)
 	if (cached) return cached
 	const predicates = grammar.fields
+	const controls = new Set(['and', 'or', 'not', 'fields', ...(grammar.variants ? ['variant'] : [])])
 	const direct = Object.fromEntries(
-		Object.entries(predicates).filter(
-			([key]) =>
-				!['and', 'or', 'not', 'fields', ...(grammar.variants ? ['variant'] : [])].includes(key),
-		),
+		Object.entries(predicates).filter(([key]) => !controls.has(key)),
 	)
-	const relations: FieldSchemas = {}
+	const relations: Record<string, KType> = {}
 	for (const [name, relation] of Object.entries(grammar.relations)) {
 		if (depth === MAX_FILTER_DEPTH) continue
-		const target = filterNodeSchema(relation.target, depth + 1, cache)
-		relations[name] = (
+		const target = schemaOf(filterNodeSchema(relation.target, depth + 1, cache))
+		const predicate = schemaOf(
 			relation.cardinality === 'one'
 				? target.nullable()
-				: z.union([z.object({ some: target }).strict(), z.object({ none: target }).strict()])
+				: unionOf([k.strictObject({ some: target }), k.strictObject({ none: target })]),
 		).optional()
-		relationPredicates.set(relations[name], relation)
+		relations[name] = predicate
+		relationPredicates.set(predicate, relation)
 	}
 	if (grammar.variants && depth < MAX_FILTER_DEPTH) {
 		const options = Object.entries(grammar.variants.options).map(([tag, branch]) =>
-			z.strictObject({ tag: z.literal(tag), filters: filterNodeSchema(branch, depth + 1, cache) }),
+			k.strictObject({ tag: k.literal(tag), filters: filterNodeSchema(branch, depth + 1, cache) }),
 		)
 		if (options.length) {
-			relations.variant = z.union(options).optional()
-			variantPredicates.set(relations.variant, grammar.variants)
+			const variant = schemaOf(unionOf(options)).optional()
+			relations.variant = variant
+			variantPredicates.set(variant, grammar.variants)
 		}
 	}
-	const node = z
-		.object({ ...direct, ...relations, fields: z.object(predicates).strict().optional() })
-		.strict()
-	const child = depth === MAX_FILTER_DEPTH ? undefined : filterNodeSchema(grammar, depth + 1, cache)
+	const node = k.strictObject({
+		...direct,
+		...relations,
+		fields: k.strictObject(predicates).optional(),
+	})
+	const child =
+		depth === MAX_FILTER_DEPTH ? undefined : schemaOf(filterNodeSchema(grammar, depth + 1, cache))
 	const result = child
 		? node.extend({
-				and: z.array(child).min(1).max(MAX_FILTER_NODES).optional(),
-				or: z.array(child).min(1).max(MAX_FILTER_NODES).optional(),
+				and: k.array(child).min(1).max(MAX_FILTER_NODES).optional(),
+				or: k.array(child).min(1).max(MAX_FILTER_NODES).optional(),
 				not: child.optional(),
 			})
 		: node
@@ -418,12 +490,12 @@ function withinFilterBudget(
 				if (
 					!tag ||
 					!('value' in tag) ||
-					!z.string().safeParse(tag.value).success ||
+					typeof tag.value !== 'string' ||
 					!Object.hasOwn(entry.grammar.variants?.options ?? {}, tag.value)
 				)
 					return false
 				context = 'expression'
-				target = entry.grammar.variants!.options[String(tag.value)]
+				target = entry.grammar.variants!.options[tag.value]
 			} else if (entry.context === 'fields') context = 'predicate'
 			else if (entry.context === 'composition' || entry.context === 'many') context = 'expression'
 			pending.push({ value: descriptor.value, depth, context, grammar: target })
@@ -431,6 +503,7 @@ function withinFilterBudget(
 	}
 	return true
 }
+
 function normalizeScalar(field: string, predicate: FilterTree): FilterAst[] {
 	if (predicate === undefined) return []
 	if (Object(predicate) !== predicate) {
@@ -448,133 +521,72 @@ function normalizeScalar(field: string, predicate: FilterTree): FilterAst[] {
 		}))
 }
 
-function boundedObject(
-	definition: z.ZodObject['_zod']['def'],
-	grammar: FilterGrammar,
-	metadata?: FilterBoundaryMetadata,
-	resolve?: (used: Map<FilterGrammar, Set<string>>) => z.ZodObject,
-): z.ZodObject {
-	const expected = Object.entries(definition.shape)
-	const expectedCatchall = definition.catchall
-	const BoundedFilterObject = z.core.$constructor<z.ZodObject>(
-		'BoundedFilterObject',
-		(inst, def) => {
-			z.ZodObject.init(inst, def)
-			filterGrammars.set(inst, grammar)
-			// Clones/refinements retain the generated fields. Shape edits use full conversion.
-			if (
-				metadata &&
-				def.catchall === expectedCatchall &&
-				Object.keys(def.shape).length === expected.length &&
-				expected.every(([key, value]) => def.shape[key] === value)
-			)
-				compactFilters.set(inst, {
-					metadata,
-					matches: () =>
-						inst._zod.def.catchall === expectedCatchall &&
-						Object.keys(inst._zod.def.shape).length === expected.length &&
-						expected.every(([key, value]) => inst._zod.def.shape[key] === value),
-				})
-			const parse = inst._zod.parse
-			inst._zod.parse = (payload, ctx) => {
-				const used = resolve && new Map<FilterGrammar, Set<string>>()
-				// SAFETY: layout preflight precedes Zod's value traversal.
-				if (!withinFilterBudget(payload.value as FilterTree, grammar, used)) {
-					payload.issues.push({
-						code: 'custom',
-						input: payload.value,
-						message: 'Unsupported filter layout or depth/node budget exceeded',
-					})
-					return payload
-				}
-				// Validate against the relations this input names; the rest are absent.
-				return used ? resolve(used)._zod.run(payload, ctx) : parse(payload, ctx)
-			}
-		},
-	)
-	return new BoundedFilterObject(definition)
+/** The record a boundary was created as, below any transparent records chained on it. */
+function boundaryRecord(schema: KType): KType | undefined {
+	for (let current: KType | null = schema; current !== null; current = previous(current)) {
+		if (filterGrammars.has(current)) return current
+		if (!TRANSPARENT_OPS.has(current.op)) return undefined
+	}
+	return undefined
 }
 
-class UnsupportedFilterCapture extends Error {}
+/** The field map of an object schema, through validation-only records chained on its root. */
+function objectFields(schema: KType): Readonly<Record<string, KType>> | undefined {
+	let current: KType = schema
+	while (current.prev !== null) {
+		if (!TRANSPARENT_OPS.has(current.op) && current.op !== 'strip' && current.op !== 'strict')
+			return undefined
+		current = previous(current) ?? current
+	}
+	if (current.op !== 'object') return undefined
+	// SAFETY: k.object stores its field map as the root argument.
+	return current.arg as Readonly<Record<string, KType>>
+}
 
-// Copy the generated schema graph before exposing the public filter. These are
-// generated scalar predicates, not arbitrary storage schemas or consumer hooks.
+function filterSchemaOf(record: KType): KFilterSchema {
+	// SAFETY: the record's validator is the structural filter object and its parse yields its input.
+	return record as KFilterSchema
+}
+
+function previous(schema: KType): KType | null {
+	// SAFETY: every record reachable from a k schema was created by a k factory.
+	return schema.prev as KType | null
+}
+
+function schemaOf(schema: KType): KSchema<any, any, any, any, any> {
+	// SAFETY: every KType at runtime is a KSchema record created by a k factory.
+	return schema as KSchema<any, any, any, any, any>
+}
+
+/** Freeze a copy of the grammar's structure, reading every relation getter once. */
 function captureGrammar(
 	source: FilterGrammar,
 	seen = new WeakMap<FilterGrammar, FilterGrammar>(),
 ): FilterGrammar {
 	const cached = seen.get(source)
 	if (cached) return cached
-	const schemas = new WeakMap<z.ZodType, z.ZodType>()
-	function copy(schema: z.core.$ZodType): z.ZodType {
-		if (!(schema instanceof z.ZodType)) throw new Error('Expected generated classic filter schema')
-		const cached = schemas.get(schema)
-		if (cached) return cached
-		let result: z.ZodType
-		if (schema instanceof z.ZodObject)
-			result = schema.clone({
-				...schema._zod.def,
-				// oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- Installed Zod object definition property.
-				shape: Object.fromEntries(Object.entries(schema.shape).map(([k, v]) => [k, copy(v)])),
-				catchall: schema._zod.def.catchall ? copy(schema._zod.def.catchall) : undefined,
-			})
-		else if (schema instanceof z.ZodUnion)
-			result = schema.clone({ ...schema._zod.def, options: schema.options.map(copy) })
-		else if (schema instanceof z.ZodArray)
-			result = schema.clone({ ...schema._zod.def, element: copy(schema.element) })
-		else if (schema instanceof z.ZodOptional)
-			result = schema.clone({ ...schema._zod.def, innerType: copy(schema._zod.def.innerType) })
-		else if (schema instanceof z.ZodNonOptional)
-			result = schema.clone({ ...schema._zod.def, innerType: copy(schema._zod.def.innerType) })
-		else if (schema instanceof z.ZodNullable)
-			result = schema.clone({ ...schema._zod.def, innerType: copy(schema._zod.def.innerType) })
-		else if (schema instanceof z.ZodEnum)
-			result = schema.clone({ ...schema._zod.def, entries: { ...schema._zod.def.entries } })
-		else if (schema instanceof z.ZodLiteral)
-			result = schema.clone({ ...schema._zod.def, values: [...schema._zod.def.values] })
-		else if (
-			schema instanceof z.ZodString ||
-			schema instanceof z.ZodNumber ||
-			schema instanceof z.ZodBigInt ||
-			schema instanceof z.ZodBoolean ||
-			schema instanceof z.ZodNull ||
-			schema instanceof z.ZodNever ||
-			schema instanceof z.ZodCustom
+	const fields: FieldSchemas = {}
+	for (const key of Object.keys(source.fields)) {
+		const descriptor = Object.getOwnPropertyDescriptor(source.fields, key)!
+		// Caller-owned getters still snapshot now; only our immutable lazy predicates defer reads.
+		Object.defineProperty(
+			fields,
+			key,
+			descriptor.get && deferredPredicates.has(descriptor.get)
+				? descriptor
+				: { enumerable: true, value: source.fields[key] },
 		)
-			result = z.core.clone(schema, { ...schema._zod.def }, { parent: true })
-		else throw new UnsupportedFilterCapture()
-		// Generated membership limits and nonempty-operator refinements must not
-		// share mutable check definitions with the public graph.
-		if (schema._zod.def.checks) {
-			const checks = schema._zod.def.checks.map((check) => {
-				if (check instanceof z.ZodCustom) {
-					const copied = copy(check)
-					if (!(copied instanceof z.ZodCustom)) throw new UnsupportedFilterCapture()
-					return copied
-				}
-				if (check instanceof z.core.$ZodCheckMaxLength)
-					return new z.core.$ZodCheckMaxLength({ ...check._zod.def })
-				if (check instanceof z.core.$ZodCheckMinLength)
-					return new z.core.$ZodCheckMinLength({ ...check._zod.def })
-				throw new UnsupportedFilterCapture()
-			})
-			result = result.clone({ ...result._zod.def, checks })
-		}
-		schemas.set(schema, result)
-		return result
 	}
-	const result: FilterGrammar = {
-		fields: Object.freeze(
-			Object.fromEntries(Object.entries(source.fields).map(([k, v]) => [k, copy(v)])),
-		),
-		relations: {},
-	}
+	const result: FilterGrammar = { fields: Object.freeze(fields), relations: {} }
 	seen.set(source, result)
 	result.relations = Object.freeze(
 		Object.fromEntries(
-			Object.entries(source.relations).map(([k, v]) => [
-				k,
-				Object.freeze({ cardinality: v.cardinality, target: captureGrammar(v.target, seen) }),
+			Object.entries(source.relations).map(([name, relation]) => [
+				name,
+				Object.freeze({
+					cardinality: relation.cardinality,
+					target: captureGrammar(relation.target, seen),
+				}),
 			]),
 		),
 	)
@@ -583,7 +595,10 @@ function captureGrammar(
 			discriminator: source.variants.discriminator,
 			options: Object.freeze(
 				Object.fromEntries(
-					Object.entries(source.variants.options).map(([k, v]) => [k, captureGrammar(v, seen)]),
+					Object.entries(source.variants.options).map(([tag, option]) => [
+						tag,
+						captureGrammar(option, seen),
+					]),
 				),
 			),
 		})

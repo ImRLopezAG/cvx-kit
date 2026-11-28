@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	defineRelations,
 	getRelationExecutor,
@@ -8,8 +8,8 @@ import {
 	type RelationRegistryIdentity,
 	type RelationTables,
 } from '../src/relations'
-import { zodTable, zodVariantTable } from '../src/zod-table'
-import { defineTables, register } from '../scripts/bench/relations-fixture'
+import { kTable, kVariantTable } from '../src/table'
+import { defineTables, register } from './fixture-querying/bench-relations'
 
 /** The untyped runtime helper surface: these registries use generated table names. */
 interface RuntimeRegistry extends RelationRegistryIdentity {
@@ -34,24 +34,28 @@ const unchecked = defineRelations as unknown as (
 	declare: (r: RuntimeBuilder, branch: (table: string, tag: string) => RuntimeBuilder) => object,
 ) => RuntimeRegistry
 
-/** Counts DTO captures and stored-schema reads per table without changing either. */
+/**
+ * Counts DTO captures and native-table reads per table without changing either. v1 counted reads of
+ * the stored Zod schema; v2 reads each referenced table's immutable `k` schema for field names at
+ * declaration (no native validator is built), and materialises a table by reading its native table.
+ */
 // oxlint-disable-next-line anti-slop/no-unknown-returns -- Schema recipes and runtime fixture adapters intentionally erase constructor-specific results; their callers validate or assert the result.
-function observed(tables: Record<string, { dto: (includeId: true) => unknown; schema: unknown }>) {
+function observed(tables: Record<string, { dto: (includeId: true) => unknown; table: unknown }>) {
 	const dto: Record<string, number> = {}
 	const stored: Record<string, number> = {}
 	for (const [name, table] of Object.entries(tables)) {
 		dto[name] = 0
 		stored[name] = 0
 		const original = table.dto
-		const schema = table.schema
+		const native = table.table
 		Reflect.set(table, 'dto', (includeId: true) => {
 			dto[name]++
 			return original(includeId)
 		})
-		Object.defineProperty(table, 'schema', {
+		Object.defineProperty(table, 'table', {
 			get: () => {
 				stored[name]++
-				return schema
+				return native
 			},
 		})
 	}
@@ -67,9 +71,9 @@ function observed(tables: Record<string, { dto: (includeId: true) => unknown; sc
 function chain() {
 	const tables = Object.fromEntries(
 		Array.from({ length: 12 }, (_, i) => {
-			const table = zodTable(
+			const table = kTable(
 				`t${i}`,
-				(id) => ({ parentId: id(`t${Math.max(0, i - 1)}`), code: z.string() }),
+				{ parentId: k.id(`t${Math.max(0, i - 1)}`), code: k.string() },
 				{
 					publicFields: ['parentId', 'code'],
 				},
@@ -121,7 +125,7 @@ describe('lazy per-table registration', () => {
 		executor.project('t2', { _id: 't2:1', parentId: 't1:1', code: 'x' }, () => true)
 		executor.select('t3', { parent: true })
 		registry.tables.t2.paginationOpts({ code: true })
-		getRelationMetadata(registry).tables.t3
+		void getRelationMetadata(registry).tables.t3
 		// Later uses read no caller-owned source again.
 		expect(seen.counts()).toEqual(before)
 		expect(seen.dto()).toEqual(['t2', 't3'])
@@ -160,8 +164,9 @@ describe('lazy per-table registration', () => {
 		const seen = observed(tables.tables)
 		const registry = register(tables)
 		expect(seen.dto()).toEqual([])
-		// Only the variant table's discriminator is read, by descriptor.
-		expect(seen.stored()).toEqual(['payments'])
+		// v1 read the variant table's discriminator from its native union here; v2 reads it from
+		// the k schema, so no native table is read at registration.
+		expect(seen.stored()).toEqual([])
 		registry.tables.tasks.paginationOpts({ status: true })
 		expect(seen.dto()).toEqual(['tasks'])
 	})
@@ -169,10 +174,14 @@ describe('lazy per-table registration', () => {
 
 describe('deferred checks still throw no later than first use', () => {
 	function invalid() {
-		const good = zodTable('good', () => ({ code: z.string() }), { publicFields: ['code'] })
-		const bad = zodTable('bad', () => ({ text: z.string().superRefine(() => {}) }), {
-			publicFields: ['text'],
-		})
+		const good = kTable('good', { code: k.string() }, { publicFields: ['code'] })
+		const bad = kTable(
+			'bad',
+			{ text: k.string().trim() },
+			{
+				publicFields: ['text'],
+			},
+		)
 		return { good, bad }
 	}
 
@@ -181,7 +190,7 @@ describe('deferred checks still throw no later than first use', () => {
 		const uses: ((registry: RuntimeRegistry) => unknown)[] = [
 			(registry) => registry.tables.bad.pageDto({}),
 			(registry) => registry.tables.bad.paginationOpts({}),
-			(registry) => registry.tables.bad.filters({ native: {}, schema: z.object({}) }),
+			(registry) => registry.tables.bad.filters({ native: {}, schema: k.object({}) }),
 			(registry) => getRelationExecutor(registry).pagination('bad'),
 			(registry) => getRelationExecutor(registry).select('bad', {}),
 			(registry) => getRelationExecutor(registry).groups('bad', {}),
@@ -195,7 +204,7 @@ describe('deferred checks still throw no later than first use', () => {
 		for (const use of uses) {
 			const registry = unchecked(invalid(), () => ({}))
 			expect(registry.tables.good.pageDto({})).toBeDefined()
-			expect(() => use(registry)).toThrow(/opaque.*refine/i)
+			expect(() => use(registry)).toThrow(/DTOs only validate/)
 		}
 	})
 
@@ -215,7 +224,7 @@ describe('deferred checks still throw no later than first use', () => {
 			}
 			return undefined
 		})
-		expect(String(failures[0])).toMatch(/opaque.*refine/i)
+		expect(String(failures[0])).toMatch(/DTOs only validate/)
 		expect(failures[1]).toBe(failures[0])
 		expect(failures[2]).toBe(failures[0])
 		expect(seen.counts().dto.bad).toBe(1)
@@ -223,12 +232,16 @@ describe('deferred checks still throw no later than first use', () => {
 
 	test('through relations validate their junction only when selected, and fully', () => {
 		function junction(valid: boolean) {
-			const a = zodTable('a', () => ({ code: z.string() }), { publicFields: ['code'] })
-			const b = zodTable('b', () => ({ code: z.string() }), { publicFields: ['code'] })
-			const links = zodTable('links', () => ({ a: z.string(), b: z.string() }), {
-				publicFields: ['a'],
-			})
-			if (!valid) Reflect.set(links, 'dto', () => z.object({ a: z.string().superRefine(() => {}) }))
+			const a = kTable('a', { code: k.string() }, { publicFields: ['code'] })
+			const b = kTable('b', { code: k.string() }, { publicFields: ['code'] })
+			const links = kTable(
+				'links',
+				{ a: k.string(), b: k.string() },
+				{
+					publicFields: ['a'],
+				},
+			)
+			if (!valid) Reflect.set(links, 'dto', () => k.object({ a: k.string().trim() }))
 			links.table.index('by_a', ['a'])
 			b.table.index('by_code', ['code'])
 			const seen = observed({ a, b, links })
@@ -247,14 +260,18 @@ describe('deferred checks still throw no later than first use', () => {
 		expect(selected.seen.dto()).toEqual(['a', 'b', 'links'])
 		const invalid = junction(false)
 		expect(invalid.registry.tables.a.paginationOpts({ code: true })).toBeDefined()
-		expect(() => invalid.registry.tables.a.pageDto({ bs: true })).toThrow(/opaque.*refine/i)
+		expect(() => invalid.registry.tables.a.pageDto({ bs: true })).toThrow(/DTOs only validate/)
 	})
 
 	test('an invalid edge throws when read, when the engine walks it, and on verification', () => {
-		const owners = zodTable('owners', () => ({ code: z.string() }), { publicFields: ['code'] })
-		const children = zodTable('children', () => ({ owner: z.string() }), {
-			publicFields: ['owner'],
-		})
+		const owners = kTable('owners', { code: k.string() }, { publicFields: ['code'] })
+		const children = kTable(
+			'children',
+			{ owner: k.string() },
+			{
+				publicFields: ['owner'],
+			},
+		)
 		const registry = unchecked({ owners, children }, (r) => ({
 			owners: { children: r.many.children({ from: r.owners.code, to: r.children.owner }) },
 		}))
@@ -271,27 +288,47 @@ describe('deferred checks still throw no later than first use', () => {
 		)
 		expect(() => registry.identity).toThrow(/active index begins/)
 		expect(() => verifyRelations(registry)).toThrow(/active index begins/)
+		// A table with no indexes in the bundle names the likely cause: the declaring module is not imported.
+		expect(() => verifyRelations(registry)).toThrow(
+			/table "children" has no indexes registered in this bundle.*may not be imported/,
+		)
+	})
+
+	test('an index error lists the indexes a table does have in the bundle', () => {
+		const owners = kTable('owners', { code: k.string() }, { publicFields: ['code'] })
+		const children = kTable('children', { owner: k.string(), other: k.string() })
+		children.table.index('by_other', ['other'])
+		const registry = unchecked({ owners, children }, (r) => ({
+			owners: { children: r.many.children({ from: r.owners.code, to: r.children.owner }) },
+		}))
+		expect(() => verifyRelations(registry)).toThrow(
+			/"children" has by_other\(other\) in this bundle/,
+		)
 	})
 
 	test('an invalid edge target fails the edge without failing unrelated tables', () => {
 		const { good, bad } = invalid()
-		const owners = zodTable('owners', (id) => ({ badId: id('bad') }), { publicFields: ['badId'] })
+		const owners = kTable('owners', { badId: k.id('bad') }, { publicFields: ['badId'] })
 		bad.table.index('by_text', ['text'])
 		const registry = unchecked({ good, bad, owners }, (r) => ({
 			owners: { bad: r.one.bad({ from: r.owners.badId, to: r.bad._id }) },
 		}))
 		expect(registry.tables.owners.pageDto({})).toBeDefined()
 		// The edge itself is valid; selecting it materializes the invalid target.
-		expect(() => registry.tables.owners.pageDto({ bad: true })).toThrow(/opaque.*refine/i)
+		expect(() => registry.tables.owners.pageDto({ bad: true })).toThrow(/DTOs only validate/)
 		expect(registry.tables.good.pageDto({})).toBeDefined()
 	})
 
 	test('forTable checks throw on first use of the owning table; through checks on verification', () => {
-		const a = zodTable('a', () => ({ code: z.string() }), { publicFields: ['code'] })
-		const b = zodTable('b', () => ({ code: z.string() }), { publicFields: ['code'] })
-		const links = zodTable('links', (id) => ({ a: id('a'), b: z.number() }), {
-			publicFields: ['a'],
-		})
+		const a = kTable('a', { code: k.string() }, { publicFields: ['code'] })
+		const b = kTable('b', { code: k.string() }, { publicFields: ['code'] })
+		const links = kTable(
+			'links',
+			{ a: k.id('a'), b: k.number() },
+			{
+				publicFields: ['a'],
+			},
+		)
 		const member = unchecked({ a, b, links }, (r) => {
 			r.links.a.forTable('a')
 			r.links.b.forTable('a')
@@ -311,7 +348,7 @@ describe('deferred checks still throw no later than first use', () => {
 
 	test('structural errors still throw at registration', () => {
 		const { good } = invalid()
-		const other = zodTable('other', () => ({ code: z.string() }), { publicFields: ['code'] })
+		const other = kTable('other', { code: k.string() }, { publicFields: ['code'] })
 		const cases: [RelationTables, Parameters<typeof unchecked>[1], RegExp | string][] = [
 			[{ wrong: good }, () => ({}), 'Invalid relation table "wrong"'],
 			[{ good }, () => ({ missing: {} }), 'Unknown source table "missing"'],
@@ -346,56 +383,31 @@ describe('deferred checks still throw no later than first use', () => {
 		]
 		for (const [tables, declare, error] of cases)
 			expect(() => unchecked(tables, declare)).toThrow(error)
-		const accessor = { ...good }
-		Object.defineProperty(accessor, 'table', { get: () => good.table, enumerable: true })
-		expect(() => unchecked({ good: accessor }, () => ({}))).toThrow(
-			'Unsupported native table accessor',
-		)
-	})
-
-	test('completing a stored-tier table inspects its stored schema again first', () => {
-		const owners = zodTable('owners', () => ({ code: z.string() }), { publicFields: ['code'] })
-		const payments = zodVariantTable(
-			'payments',
-			z.discriminatedUnion('type', [
-				z.strictObject({ type: z.literal('card'), ownerId: z.string() }),
-				z.strictObject({ type: z.literal('wire'), ownerId: z.string() }),
-			]),
-			{
-				discriminator: 'type',
-				variants: { card: { publicFields: ['ownerId'] }, wire: { publicFields: ['ownerId'] } },
-			},
-		)
-		payments.table.index('by_type_ownerId', ['type', 'ownerId'])
-		const registry = unchecked({ owners, payments }, (r, branch) => ({
-			owners: {
-				card: r.many.payments({ from: r.owners.code, to: branch('payments', 'card').ownerId }),
-			},
-		}))
-		// Reading the edge captures only the target's stored tier.
-		expect(getRelationMetadata(registry).declarations.owners.card).toBeDefined()
-		const internals = payments.schema._zod
-		const def = internals.def
-		let calls = 0
-		Object.defineProperty(internals, 'def', {
-			configurable: true,
-			get: () => {
-				calls++
-				return def
+		// v1 rejected a native-table accessor at registration. A v2 kTable's `table` is itself a
+		// memoised accessor, so registration accepts it and reads it only on the table's first use.
+		let reads = 0
+		const accessor = new Proxy(good, {
+			get(target, key) {
+				if (key === 'table') reads++
+				// oxlint-disable-next-line anti-slop/no-reflect-get -- The observer forwards every member with the table as receiver.
+				return Reflect.get(target, key, target)
 			},
 		})
-		expect(() => registry.tables.payments.pageDto({})).toThrow(/accessor/)
-		expect(() => registry.tables.payments.pageDto({})).toThrow(/accessor/)
-		expect(calls).toBe(0)
+		const registry = unchecked({ good: accessor }, () => ({}))
+		expect(reads).toBe(0)
+		registry.tables.good.pageDto({})
+		expect(reads).toBe(1)
 	})
 
+	// v1's 'completing a stored-tier table inspects its stored schema again first' re-ran the Zod
+	// accessor preflight; k records are immutable, so that re-inspection no longer exists.
 	test('variant references come from the preflighted native union without materializing it', () => {
-		const owners = zodTable('owners', () => ({ code: z.string() }), { publicFields: ['code'] })
-		const payments = zodVariantTable(
+		const owners = kTable('owners', { code: k.string() }, { publicFields: ['code'] })
+		const payments = kVariantTable(
 			'payments',
-			z.discriminatedUnion('type', [
-				z.strictObject({ type: z.literal('card'), ownerId: z.string(), extra: z.string() }),
-				z.strictObject({ type: z.literal('wire'), ownerId: z.string(), extra: z.number() }),
+			k.discriminatedUnion('type', [
+				k.object({ type: k.literal('card'), ownerId: k.string(), extra: k.string() }),
+				k.object({ type: k.literal('wire'), ownerId: k.string(), extra: k.number() }),
 			]),
 			{
 				discriminator: 'type',

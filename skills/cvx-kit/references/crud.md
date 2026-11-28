@@ -5,7 +5,7 @@
 > `cvx-kit/effect`; see [domain integrations](./domain-operations.md).
 
 `createCrudCommands` generates the three standard operations every entity
-starts with — create, update, archive — from one zodTable declaration,
+starts with — create, update, archive — from one kTable declaration,
 **fully inside the audited command pipeline**: strict command inputs from
 `commandFields`, mandatory audit with a declared aggregate type (enforced by
 the aggregates allowlist), observability, guards, and middleware.
@@ -22,7 +22,7 @@ import { Command } from '../foundation'          // the destructured facade
 
 const crud = createCrudCommands({
   Command,
-  table: <entities>,                              // a zodTable / tenantTable
+  table: <entities>,                              // a kTable / createTable / tenantTable
   aggregateType: '<entity>',
   classification: 'business',                     // default
   actor: (ctx) => ctx.actor.userId,               // audited actor

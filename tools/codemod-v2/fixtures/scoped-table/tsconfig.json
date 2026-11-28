@@ -1,0 +1,16 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"skipLibCheck": true,
+		"types": ["node"],
+		"noEmit": true,
+		"paths": {
+			"cvx-kit": ["../../../../src/index.ts"],
+			"cvx-kit/table": ["../../../../src/table.ts"]
+		}
+	},
+	"files": ["expected.ts", "../scalar-tuples/expected.ts"]
+}

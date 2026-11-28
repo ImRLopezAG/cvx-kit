@@ -1,0 +1,9 @@
+{
+  "status": "mixed",
+  "skipped": [
+    {
+      "line": 3,
+      "code": "string-prefix"
+    }
+  ]
+}

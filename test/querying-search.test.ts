@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vite-plus/test'
-import { z } from 'zod'
+import { k, KValidationError } from '../src/k'
 import { getRelationMetadata, defineRelations } from '../src/relations'
-import { paginated } from '../src/zod-table'
+import { paginated } from '../src/table'
 import { queryFailureContract } from '../src/querying'
 import { SearchError, planSearch } from '../src/querying/search'
 import { createPlanner } from '../src/querying/planner'
@@ -72,6 +72,27 @@ describe('U11.2 search contract', () => {
 			).plan.unsatisfiable,
 		).toBe(true)
 	})
+	it('reports an out-of-range search limit with code VALIDATION and its path', () => {
+		const f = searchDeclarations(),
+			planner = createPlanner(f.schema, f.relations)
+		for (const [options, path] of [
+			[{ numItems: 0, cursor: null }, ['numItems']],
+			[{ numItems: 1.5, cursor: null }, ['numItems']],
+			[{ numItems: 1, cursor: null, scanLimit: 0 }, ['scanLimit']],
+			[{ numItems: Number.MAX_SAFE_INTEGER + 1, cursor: null }, ['numItems']],
+			[{ numItems: 1, cursor: null, scanLimit: Number.MAX_SAFE_INTEGER + 1 }, ['scanLimit']],
+		] as const) {
+			try {
+				planSearch(planner, 'docs', 'search_text', 'x', options, [])
+				throw new Error('accepted')
+			} catch (error) {
+				expect(error).toBeInstanceOf(KValidationError)
+				expect(error).toMatchObject({
+					data: { code: 'VALIDATION', issues: [expect.objectContaining({ path })] },
+				})
+			}
+		}
+	})
 	it('rejects invalid text/options/staged index and transports only owned errors', () => {
 		const f = searchDeclarations(),
 			planner = createPlanner(f.schema, f.relations)
@@ -105,7 +126,7 @@ describe('U11.2 search contract', () => {
 	})
 	it('retains the search page marker through generic return validation', () => {
 		expect(
-			paginated(z.object({ id: z.string() })).result.parse({
+			paginated(k.object({ id: k.string() })).result.parse({
 				page: [],
 				isDone: false,
 				continueCursor: 'x',

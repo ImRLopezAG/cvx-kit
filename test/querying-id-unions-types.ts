@@ -1,8 +1,8 @@
 import { expectTypeOf } from 'vite-plus/test'
 import type { GenericId } from 'convex/values'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineRelations, type FieldReference } from '../src/relations-public'
-import { zodTable } from '../src/zod-table'
+import { kTable } from '../src/table'
 import { idUnionFixture, idUnionTables } from './fixture-querying/id-unions'
 
 const f = idUnionFixture()
@@ -14,7 +14,7 @@ const dto = f.relations.tables.tasks.pageDto({
 	postedPayment: true,
 	ledgerEntry: true,
 })
-type Row = z.output<typeof dto>['page'][number]
+type Row = k.output<typeof dto>['page'][number]
 expectTypeOf<Row['rel']>().toEqualTypeOf<
 	| GenericId<'tasks'>
 	| GenericId<'leads'>
@@ -68,13 +68,13 @@ defineRelations(idUnionTables(), (r, branch) => {
 		},
 	}
 })
-const tasks = zodTable('tasks', (id) => ({
-	rel: z.union([id('tasks'), id('missing')]).optional(),
-	mixed: z.union([id('tasks'), z.string()]),
-	nil: z.null(),
-	single: id('tasks').nullable().optional(),
-	duplicate: z.union([id('tasks'), id('tasks')]),
-}))
+const tasks = kTable('tasks', {
+	rel: k.union([k.id('tasks'), k.id('missing')]).optional(),
+	mixed: k.union([k.id('tasks'), k.string()]),
+	nil: k.null(),
+	single: k.id('tasks').nullable().optional(),
+	duplicate: k.union([k.id('tasks'), k.id('tasks')]),
+})
 defineRelations({ tasks }, (r) => {
 	// @ts-expect-error declared but unregistered member
 	r.tasks.rel.forTable('missing')

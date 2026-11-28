@@ -1,11 +1,10 @@
 import type { GenericDatabaseWriter } from 'convex/server'
 import { v } from 'convex/values'
 import { createAuthFunctions } from 'cvx-kit/auth'
-import { createEffectFoundation, effectZodApiBuilder } from 'cvx-kit/effect'
+import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
 import { defineErrorContract } from 'cvx-kit/errors'
-import { zid } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import type { DataModel, Id } from './_generated/dataModel'
 import {
 	action,
@@ -18,8 +17,8 @@ import {
 import { crudNotes } from './schema'
 
 const errors = defineErrorContract({
-	MISSING: { message: 'Note missing', details: { id: z.string() } },
-	AFTER_PATCH: { message: 'Rename rejected after patch', details: { id: z.string() } },
+	MISSING: { message: 'Note missing', details: { id: k.string() } },
+	AFTER_PATCH: { message: 'Rename rejected after patch', details: { id: k.string() } },
 })
 
 interface Repository {
@@ -65,7 +64,7 @@ function repository(db: GenericDatabaseWriter<DataModel>, actor: string): Reposi
 	}
 }
 
-const securedMutation = effectZodApiBuilder(auth.authMutation, {
+const securedMutation = effectApiBuilder(auth.authMutation, {
 	services: (ctx) => Context.make(Notes, repository(ctx.db, ctx.actor.userId)),
 	errors,
 })
@@ -80,23 +79,20 @@ type Host = {
 
 export const rename = securedMutation({
 	// The native API accepts raw text. Only the domain input decoder transforms it.
-	args: { id: zid('crudNotes'), title: z.string(), failAfterPatch: z.boolean().optional() },
-	returns: crudNotes.publicDto.strict(),
+	args: { id: k.id('crudNotes'), title: k.string(), failAfterPatch: k.boolean().optional() },
+	returns: crudNotes.publicDto,
 	handler: (ctx, args) => {
 		// Each registration execution has its own decoder and counters, including retries.
 		let transforms = 0
 		const events: string[] = []
-		const input = z
-			.object({
-				id: zid('crudNotes'),
-				title: z.string().transform(async (title) => {
-					await Promise.resolve()
-					transforms += 1
-					events.push('decode')
-					return title.trim().toLowerCase()
-				}),
-			})
-			.strict()
+		const input = k.object({
+			id: k.id('crudNotes'),
+			title: k.string().transform((title) => {
+				transforms += 1
+				events.push('decode')
+				return title.trim().toLowerCase()
+			}),
+		})
 		const foundation = createEffectFoundation({
 			observability: {
 				enabled: false,
@@ -127,7 +123,7 @@ export const rename = securedMutation({
 			operations: ({ command }) => ({
 				rename: command({
 					input,
-					result: crudNotes.publicDto.strict(),
+					result: crudNotes.publicDto,
 					classification: 'business',
 					permission: 'notes:rename',
 					handler: (decoded) =>

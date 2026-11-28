@@ -15,7 +15,7 @@ const root = resolve(import.meta.dirname, '..')
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const temporary = mkdtempSync(join(tmpdir(), 'cvx-kit-effect-'))
 const effectVersion = '4.0.1'
-const helpersVersion = '0.1.127'
+const helpersVersion = '0.1.130'
 const nodeTypesVersion = '26.6.1'
 const domainGuidePath = join(root, 'skills/cvx-kit/references/domain-operations.md')
 const domainGuideImports = new Set([
@@ -73,7 +73,9 @@ function copyPublicTypeFixture(fixture, filename, publicImport) {
 		.replaceAll('../src/modules/effect/errors', 'cvx-kit/effect')
 		.replaceAll('../src/components/foundation/client', 'cvx-kit/components/foundation')
 		.replaceAll('../src/crud', 'cvx-kit/crud')
-		.replaceAll('../src/zod-table', 'cvx-kit/zod-table')
+		.replaceAll("'../src/k'", "'cvx-kit/k'")
+		.replaceAll("'../src/table'", "'cvx-kit/table'")
+		.replaceAll("'../src/registration'", "'cvx-kit/registration'")
 	if (/from ['"]\.\.\/src\//.test(source))
 		throw new Error(`${filename} still uses private source imports`)
 	writeFileSync(join(fixture, filename), source)
@@ -137,29 +139,30 @@ import { Foundation } from 'cvx-kit/components/foundation'
 import { Foundation as RootFoundation } from 'cvx-kit'
 import { createAuthFunctions, defaultRoleMap } from 'cvx-kit/auth'
 import { createCrudCommands } from 'cvx-kit/crud'
-import { zodTable } from 'cvx-kit/zod-table'
-import { decodeContract, standardContract, zodContract } from 'cvx-kit/contracts'
+import { kTable } from 'cvx-kit/table'
+import { decodeContract, standardContract, kContract } from 'cvx-kit/contracts'
 import { captureIdempotencyInvocation, transactionalIdempotency, canonicalConvexBytes } from 'cvx-kit/idempotency'
 import { defineErrorContract } from 'cvx-kit/errors'
 import { workflowTransition } from 'cvx-kit/workflow'
 import { selectOperation, bindOperationExecutor, createOperationTools, operationToolDialect } from 'cvx-kit/agent-tools'
 import { actionGeneric, queryGeneric, mutationGeneric, internalActionGeneric, internalQueryGeneric, internalMutationGeneric } from 'convex/server'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { convexTest } from 'convex-test'
 import { defineSchema, anyApi } from 'convex/server'
 const require = createRequire(import.meta.url)
 if (process.argv.includes('--without-effect')) {
  assert.throws(() => require.resolve('effect'), { code: 'MODULE_NOT_FOUND' }, 'optional peer was unexpectedly auto-installed')
 }
+assert.throws(() => require.resolve('zod'), { code: 'MODULE_NOT_FOUND' }, 'zod was unexpectedly installed')
 assert.equal(RootFoundation, Foundation)
 assert.equal(typeof workflowTransition, 'function')
 const toolOwner = Symbol('packed-tools')
-const toolSelection = selectOperation(toolOwner, 'query', 'measure', { input: z.object({ title: z.string() }), result: z.number() })
+const toolSelection = selectOperation(toolOwner, 'query', 'measure', { input: k.object({ title: k.string() }), result: k.number() })
 const toolExecutor = bindOperationExecutor(toolSelection, { owner: toolOwner, key: 'measure', execute: async raw => raw.title.length })
 const operationTools = createOperationTools({ measure: { operation: toolSelection, executor: toolExecutor, description: 'Measure a title', converter: { dialect: operationToolDialect, convert: () => ({ type: 'object', properties: { title: { type: 'string' } }, required: ['title'], additionalProperties: false }) } } })
 assert.deepEqual(await operationTools.measure.invoke({ title: 'packed' }), { _tag: 'Success', value: 6 })
 let normalizations = 0
-const normalized = zodContract(z.string().transform(async value => { normalizations++; return value.trim() }))
+const normalized = kContract(k.string().transform(value => { normalizations++; return value.trim() }))
 assert.deepEqual(await decodeContract(normalized, ' packed '), { value: 'packed' })
 assert.equal(normalizations, 1)
 const receiverSchema = { '~standard': {
@@ -168,7 +171,7 @@ const receiverSchema = { '~standard': {
 } }
 assert.deepEqual(await decodeContract(receiverSchema, 'packed'), { value: 'packed' })
 assert.deepEqual(await decodeContract(standardContract(receiverSchema), 'packed'), { value: 'packed' })
-const errors = defineErrorContract({ DENIED: { message: 'Denied', details: { key: z.string() } } })
+const errors = defineErrorContract({ DENIED: { message: 'Denied', details: { key: k.string() } } })
 const envelope = errors.project(errors.create('DENIED', { key: 'packed' }))
 assert.deepEqual(errors.decode(JSON.parse(JSON.stringify(envelope))), envelope)
 const audits = []
@@ -176,7 +179,7 @@ const { Command } = new Foundation({ functions: { status: null } }, {
  observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }), writeAudit: (_ctx, entry) => audits.push(entry) },
 })
 const operations = { measure: Command.operation({
- command: z.object({ title: z.string().transform(value => value.length) }), result: z.number(),
+ command: k.object({ title: k.string().transform(value => value.length) }), result: k.number(),
  classification: 'business', audit: () => null,
 }) }
 const execute = new Command(operations).exec({ operation: 'measure', handler: async (ctx, input) => ctx.offset + input.title })
@@ -189,13 +192,13 @@ const auth = createAuthFunctions({
  internalQuery: internalQueryGeneric, internalMutation: internalMutationGeneric, internalAction: internalActionGeneric,
  getAuthUser: async () => ({ id: 'actor' }), mapRole: defaultRoleMap, adminRoles: ['admin'],
 })
-const authenticated = auth.authQuery({ args: {}, returns: z.string(), handler: ctx => ctx.actor.userId + ':' + ctx.tenant })
+const authenticated = auth.authQuery({ args: {}, returns: k.string(), handler: ctx => ctx.actor.userId + ':' + ctx.tenant })
 const authTest = convexTest(defineSchema({}), {
  './_generated/server.js': async () => ({ query: queryGeneric }),
  './auth.js': async () => ({ authenticated }),
 })
 assert.equal(await authTest.withIdentity({ subject: 'actor', org_id: 'org', role: 'member' }).query(anyApi.auth.authenticated, {}), 'actor:org')
-const table = zodTable('notes', () => ({ text: z.string() }), { commandFields: ['text'] })
+const table = kTable('notes', { text: k.string() }, { commandFields: ['text'] })
 const crud = createCrudCommands({ Command, table, aggregateType: 'note', actor: () => 'actor' })
 const changes = []
 const ctx = { db: { insert: async (name, row) => { changes.push([name, row]); return 'note-id' }, patch: async (id, row) => changes.push([id, row]) } }
@@ -209,7 +212,7 @@ const invocation = captureIdempotencyInvocation({ binding: { kind: 'mutation', a
 const ledger = []
 let authorizations = 0
 const idempotency = transactionalIdempotency({
- final: { replayResult: zodContract(z.object({ version: z.literal(1), value: z.string() }).transform(wire => wire.value)), encode: value => ({ version: 1, value }) },
+ final: { replayResult: kContract(k.object({ version: k.literal(1), value: k.string() }).transform(wire => wire.value)), encode: value => ({ version: 1, value }) },
  authorize: () => { authorizations++ }, lookup: () => ledger, fingerprint: bytes => bytes,
  claim: (_identity, receipt) => { ledger.push(receipt); return 0 }, complete: (index, receipt) => { ledger[index] = receipt },
 })
@@ -221,7 +224,7 @@ assert.equal(replay.kind, 'replay')
 assert.deepEqual(await decodeContract(idempotency.replayResult, replay.result), { value: 'final!' })
 assert.equal(authorizations, 2)
 assert.equal(ledger.length, 1)
-const domain = defineDomainContract({ commands: { save: { input: z.string().transform(Number), result: z.number().transform(count => ({ count })), classification: 'business' } } })
+const domain = defineDomainContract({ commands: { save: { input: k.string().transform(Number), result: k.number().transform(count => ({ count })), classification: 'business' } } })
 const regular = createFoundation({ observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }) }, writeAudit: () => undefined })
 const domainCommands = regular.Command({ contract: domain, context: host => host, audit: () => null, operations: ({ command }) => ({ save: command.save({ handler: value => value + 1 }) }) })
 assert.deepEqual(await domainCommands.exec('save', '2', {}), { count: 3 })
@@ -231,14 +234,14 @@ const legacyTypes = `
 import { Foundation } from 'cvx-kit'
 import { createAuthFunctions, defaultRoleMap } from 'cvx-kit/auth'
 import { createCrudCommands } from 'cvx-kit/crud'
-import { zodTable } from 'cvx-kit/zod-table'
+import { kTable } from 'cvx-kit/table'
 import { actionGeneric, queryGeneric, mutationGeneric, internalActionGeneric, internalQueryGeneric, internalMutationGeneric, type GenericMutationCtx, type GenericDataModel } from 'convex/server'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 const { Command } = new Foundation({ functions: { status: null } }, {
  observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }) },
 })
 const operation = Command.withContext<{ offset: number }>().operation({
- command: z.object({ title: z.string().transform(value => value.length) }), result: z.number(), classification: 'business', audit: () => null,
+ command: k.object({ title: k.string().transform(value => value.length) }), result: k.number(), classification: 'business', audit: () => null,
 })
 const commands = new Command<{ offset: number }, { measure: typeof operation }>({ measure: operation })
 const execute = commands.exec({ operation: 'measure', handler: async (ctx, input) => ctx.offset + input.title })
@@ -248,9 +251,9 @@ const auth = createAuthFunctions({ query: queryGeneric, mutation: mutationGeneri
  internalQuery: internalQueryGeneric, internalMutation: internalMutationGeneric, internalAction: internalActionGeneric,
  getAuthUser: async () => ({ id: 'actor' }), mapRole: defaultRoleMap, adminRoles: ['admin'],
 })
-const authenticated = auth.authQuery({ args: {}, returns: z.string(), handler: ctx => ctx.actor.userId })
+const authenticated = auth.authQuery({ args: {}, returns: k.string(), handler: ctx => ctx.actor.userId })
 void authenticated
-const table = zodTable('notes', () => ({ text: z.string() }), { commandFields: ['text'] })
+const table = kTable('notes', { text: k.string() }, { commandFields: ['text'] })
 const crud = createCrudCommands<GenericMutationCtx<GenericDataModel>, typeof table>({ Command, table, aggregateType: 'note', actor: () => 'actor' })
 declare const ctx: GenericMutationCtx<GenericDataModel>
 void crud.executeCreate(ctx, { text: 'packed' })
@@ -259,22 +262,22 @@ void crud.executeCreate(ctx, { text: 'packed' })
 const domainTypes = `
 import { Context, Effect } from 'effect'
 import { createEffectFoundation } from 'cvx-kit/effect'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
 type Assert<T extends true> = T
 class Reader extends Context.Service<Reader, { count: number }>()('PackedReader') {}
 class Failure { readonly _tag = 'PackedFailure' }
 const foundation = createEffectFoundation({ observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }) }, writeAudit: () => undefined })
 const queries = foundation.Query({ context: (host: { actor: string }) => host, operations: ({ query }) => ({
- read: query({ input: z.string().transform(value => value.length), result: z.number().transform(String),
+ read: query({ input: k.string().transform(value => value.length), result: k.number().transform(String),
   handler: (input, ctx) => Effect.gen(function* () { ctx.actor.toUpperCase(); if (input < 1) return yield* Effect.fail(new Failure()); return input + (yield* Reader).count }),
  }),
- recovered: query({ input: z.number(), result: z.number(), handler: input => Effect.gen(function* () { if (input < 0) return yield* Effect.fail(new Failure()); return input + (yield* Reader).count }),
+ recovered: query({ input: k.number(), result: k.number(), handler: input => Effect.gen(function* () { if (input < 0) return yield* Effect.fail(new Failure()); return input + (yield* Reader).count }),
   middleware: ({ next }) => next().pipe(Effect.provideService(Reader, { count: 1 }), Effect.catchTag('PackedFailure', () => Effect.succeed(0))),
  }),
- ordinary: query({ input: z.number(), result: z.number(), handler: input => input }),
- promise: query({ input: z.number(), result: z.number(), handler: async input => input }),
- named: query({ input: z.number(), result: z.number(), handler: Effect.fn('packed.named')(function* (input: number) { return yield* Effect.succeed(input) }) }),
+ ordinary: query({ input: k.number(), result: k.number(), handler: input => input }),
+ promise: query({ input: k.number(), result: k.number(), handler: async input => input }),
+ named: query({ input: k.number(), result: k.number(), handler: Effect.fn('packed.named')(function* (input: number) { return yield* Effect.succeed(input) }) }),
 }) })
 const read = queries.exec('read', 'raw', { actor: 'trusted' })
 const recovered = queries.exec('recovered', 1, { actor: 'trusted' })
@@ -292,13 +295,13 @@ import { strict as assert } from 'node:assert'
 import { createRequire } from 'node:module'
 import { realpathSync } from 'node:fs'
 import { Context, Effect } from 'effect'
-import { createEffectFoundation, createEffectCrud, effectApiBuilder, effectZodApiBuilder, createOperationTools } from 'cvx-kit/effect'
+import { createEffectFoundation, createEffectCrud, effectApiBuilder, createOperationTools } from 'cvx-kit/effect'
 import { createOperationTools as neutralOperationTools } from 'cvx-kit/agent-tools'
-import { zodTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
+import { kCustomMutation } from 'cvx-kit/registration'
 import { queryGeneric, internalMutationGeneric, actionGeneric } from 'convex/server'
-import { zCustomMutation } from 'convex-helpers/server/zod4'
 import { v } from 'convex/values'
-import { z } from 'zod'
 const require = createRequire(import.meta.url)
 const packageRequire = createRequire(import.meta.resolve('cvx-kit/effect'))
 assert.equal(createOperationTools, neutralOperationTools)
@@ -307,10 +310,10 @@ class Request extends Context.Service()('PackedRequest') {}
 const events = []
 const foundation = createEffectFoundation({ observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }) }, writeAudit: () => events.push('audit') })
 const queries = foundation.Query({ context: host => host, operations: ({ query }) => ({
- read: query({ input: z.string().transform(value => value.length), result: z.number(), handler: input => Effect.gen(function* () { events.push('read'); return input + (yield* Request).offset }) }),
+ read: query({ input: k.string().transform(value => value.length), result: k.number(), handler: input => Effect.gen(function* () { events.push('read'); return input + (yield* Request).offset }) }),
 }) })
 const commands = foundation.Command({ context: host => host, operations: ({ command }) => ({
- save: command({ input: z.string(), result: z.number(), classification: 'business', audit: () => ({ operation: 'save', actorId: 'actor', aggregate: { type: 'note', id: 'note-id' } }), handler: (input, host) => Effect.gen(function* () { events.push('save'); return yield* queries.exec('read', input, host) }) }),
+ save: command({ input: k.string(), result: k.number(), classification: 'business', audit: () => ({ operation: 'save', actorId: 'actor', aggregate: { type: 'note', id: 'note-id' } }), handler: (input, host) => Effect.gen(function* () { events.push('save'); return yield* queries.exec('read', input, host) }) }),
 }) })
 const execution = commands.exec('save', 'abc', {})
 assert.ok(Effect.isEffect(execution), 'public facade must return the host Effect value')
@@ -323,12 +326,13 @@ for (const handler of [() => 3, () => Promise.resolve(3), () => Effect.succeed(3
  assert.equal(await plain({ handler })._handler({}, {}), 3)
 }
 const customization = []
-const custom = effectZodApiBuilder(zCustomMutation(internalMutationGeneric, { args: { session: v.string() }, input: (_ctx, args) => { customization.push('custom'); return { ctx: { actor: args.session }, args: { made: 4 } } } }), {
+const custom = effectApiBuilder(kCustomMutation(internalMutationGeneric, { args: { session: v.string() }, input: (_ctx, args) => { customization.push('custom'); return { ctx: { actor: args.session }, args: { made: 4 } } } }), {
  services: ctx => { customization.push('provide:' + ctx.actor); return Context.make(Request, { offset: 2 }) },
-})({ args: { amount: z.string().transform(value => value.length) }, returns: z.number().transform(String), skipConvexValidation: true,
+// v2 runs no return transforms (a transforming \`returns\` is rejected at registration), so the result stays a number.
+})({ args: { amount: k.string().transform(value => value.length) }, returns: k.number(), skipConvexValidation: true,
  handler: (ctx, args) => Effect.gen(function* () { customization.push('handle:' + ctx.actor); return args.amount + args.made + (yield* Request).offset }),
 })
-assert.equal(await custom._handler({}, { session: 'trusted', amount: 'abc' }), '9')
+assert.equal(await custom._handler({}, { session: 'trusted', amount: 'abc' }), 9)
 assert.deepEqual(customization, ['custom', 'provide:trusted', 'handle:trusted'])
 assert.ok(custom.isInternal && custom.isMutation)
 assert.ok(effectApiBuilder(actionGeneric, { services: () => Context.empty() })(() => 1).isAction)
@@ -344,7 +348,7 @@ await assert.rejects(plain({ handler: () => Effect.die(new Error('packed-defect'
 await assert.rejects(plain({ handler: () => Effect.interrupt })._handler({}, {}))
 const crudAudits = []
 const crudFoundation = createEffectFoundation({ observability: { enabled: false, classifyError: () => ({ outcome: 'failed', errorCode: 'FAILED' }) }, writeAudit: (_host, entry) => crudAudits.push(entry) })
-const crudTable = zodTable('packedNotes', () => ({ title: z.string(), secret: z.string() }), { commandFields: ['title'], serverFields: ['secret'], publicFields: ['title'] })
+const crudTable = kTable('packedNotes', { title: k.string(), secret: k.string() }, { commandFields: ['title'], serverFields: ['secret'], publicFields: ['title'] })
 let crudRow
 const crudHost = { actor: 'packed-actor', db: { insert: async (_table, values) => { crudRow = values; return 'packed-id' }, patch: async (_id, values) => { crudRow = { ...crudRow, ...values } } } }
 const crud = createEffectCrud({ foundation: crudFoundation, table: crudTable, context: host => host, aggregateType: 'note', actor: host => host.actor, checkId: (_host, id) => id === 'packed-id', enrich: () => ({ secret: 'private' }), read: { maxPageSize: 2, project: row => ({ title: row.title }), get: () => crudRow ?? null, list: () => ({ page: crudRow ? [crudRow] : [], isDone: true, continueCursor: '' }) } })
@@ -384,7 +388,6 @@ try {
 				'convex-helpers': helpersVersion,
 				'convex-test': '0.0.61',
 				'@convex-dev/workflow': manifest.dependencies['@convex-dev/workflow'],
-				zod: manifest.devDependencies.zod,
 			}
 			if (withEffect) dependencies.effect = effectVersion
 			const devDependencies = { typescript: manifest.devDependencies.typescript }
@@ -417,7 +420,7 @@ try {
 					'domain-handler-types.ts',
 					'domain-exactness-types.ts',
 					'effect-api-types.ts',
-					'effect-api-zod-types.ts',
+					'effect-api-k-types.ts',
 					'effect-auth-types.ts',
 					'effect-registry-review-types.ts',
 					'operation-contract-types.ts',
@@ -474,7 +477,7 @@ try {
 			run(runtime, ['legacy.mjs', ...(withEffect ? [] : ['--without-effect'])], fixture)
 			if (withEffect) run(runtime, ['effect.mjs'], fixture)
 			console.log(
-				`${name}: public consumer runtime pass (Convex ${manifest.devDependencies.convex}, Zod ${manifest.devDependencies.zod}${withEffect ? `, Effect ${effectVersion}` : ', Effect absent'})`,
+				`${name}: public consumer runtime pass (Convex ${manifest.devDependencies.convex}, zod not installed${withEffect ? `, Effect ${effectVersion}` : ', Effect absent'})`,
 			)
 		}
 	}

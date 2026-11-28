@@ -1,7 +1,6 @@
 import type { GenericSchema, SchemaDefinition, DataModelFromSchemaDefinition } from 'convex/server'
 import type { GenericId } from 'convex/values'
-import type { EnginePaginationResult } from './zod-table'
-import { z } from 'zod'
+import type { EnginePaginationResult } from './table'
 import type {
 	RelationTables,
 	RelationDeclarations,
@@ -15,12 +14,7 @@ import type {
 	GroupSelection,
 	ExactGroupSelection,
 } from './relations'
-import {
-	createPlanner,
-	digest,
-	type QueryInput,
-	type StoredConstraint,
-} from './querying/planner'
+import { createPlanner, digest, type QueryInput, type StoredConstraint } from './querying/planner'
 import { executeQuery, type ExecutionRequest } from './querying/execution'
 import {
 	relationshipExecutor,
@@ -32,12 +26,13 @@ import {
 } from './querying/relationships'
 import {
 	createCursorCodec,
-	createScopedCursorCodec,
-	type ScopedCursorOptions,
-	type ScopedCursorCodec,
 	createEnvironmentCursorCodec,
+	createScopedCursorCodec,
 	type CursorCodecConfig,
 	type CursorBinding,
+	type ScopedCursorOptions,
+	type ScopedCursorCodec,
+	type KCursorSchema,
 } from './querying/cursors'
 import {
 	createManagedSecurity,
@@ -56,7 +51,7 @@ export { SearchError } from './querying/search'
 export type { SearchPaginationResult } from './querying/search'
 export { queryFailureContract } from './querying/failures'
 export { CursorError } from './querying/cursors'
-export type { ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
+export type { KCursorSchema, ScopedCursorOptions, ScopedCursorCodec } from './querying/cursors'
 
 const emptyGroups: ResolvedGroups = { fieldGroups: {}, relations: {} }
 
@@ -296,7 +291,7 @@ type QueryEngine<
 		[T in keyof Tables]: TableQuery<Tables, D, T, {}, [1, 1, 1, 1], never, Schema>
 	}
 	/** Opens prove integrity only; native consumers must enforce current row authorization. */
-	cursorCodec<S extends z.ZodType<Value>>(
+	cursorCodec<S extends KCursorSchema>(
 		ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>,
 		options: ScopedCursorOptions<S>,
 	): ScopedCursorCodec<S>
@@ -429,7 +424,8 @@ export function createQueryEngine<
 					),
 				orderBy: (index: string) => {
 					if (search) throw new SearchError('SEARCH_ORDER_UNSUPPORTED')
-					if (!z.string().safeParse(index).success) throw new Error('Unknown ordering index')
+					// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Index names arrive from untyped callers.
+					if (typeof index !== 'string') throw new Error('Unknown ordering index')
 					return tableQuery(table, conditions, constraints, selection, route, index, groups, search)
 				},
 				when: (value: IndexCondition['value'], index: string) => {
@@ -495,14 +491,7 @@ export function createQueryEngine<
 					planner.select(table, selection)
 					assertRelationshipDepth(selection, route?.path.length ?? 0)
 					const searchPlan = search
-						? planSearch(
-								planner,
-								table,
-								search.index,
-								search.text,
-								input,
-								constraints,
-							)
+						? planSearch(planner, table, search.index, search.text, input, constraints)
 						: undefined
 					const plan =
 						searchPlan?.plan ??
@@ -595,11 +584,17 @@ export function createQueryEngine<
 						...groupBinding,
 						scope: { ...request.scope },
 					}
-					if (searchPlan) serverFilters.search = {
-						mode: 'search', text: searchPlan.text,
-						index: {...searchPlan.metadata, filterFields: [...searchPlan.metadata.filterFields]},
-						equalities: searchPlan.equalities, scanLimit: searchPlan.scanLimit ?? null,
-					}
+					if (searchPlan)
+						serverFilters.search = {
+							mode: 'search',
+							text: searchPlan.text,
+							index: {
+								...searchPlan.metadata,
+								filterFields: [...searchPlan.metadata.filterFields],
+							},
+							equalities: searchPlan.equalities,
+							scanLimit: searchPlan.scanLimit ?? null,
+						}
 					const binding: CursorBinding = {
 						table: route?.table ?? table,
 						index: searchPlan?.metadata.name ?? plan.index?.name ?? 'by_creation_time',
@@ -712,13 +707,19 @@ export function createQueryEngine<
 		}
 		// SAFETY: each key comes from the exact validated registry; the planner
 		// validates all input and projection while mapped types retain table brands.
-		return Object.freeze(
-			Object.fromEntries(Object.keys(relations.tables).map((table) => [table, tableQuery(table)])),
-		) as { [T in keyof Tables]: TableQuery<Tables, D, T, {}, [1, 1, 1, 1], never, Schema> }
+		return typedTables<{
+			[T in keyof Tables]: TableQuery<Tables, D, T, {}, [1, 1, 1, 1], never, Schema>
+		}>(
+			Object.freeze(
+				Object.fromEntries(
+					Object.keys(relations.tables).map((table) => [table, tableQuery(table)]),
+				),
+			),
+		)
 	}
 	return Object.assign(querying, {
 		tables: relations.tables,
-		cursorCodec<S extends z.ZodType<Value>>(
+		cursorCodec<S extends KCursorSchema>(
 			ctx: ManagedQueryContext<DataModelFromSchemaDefinition<Schema>>,
 			options: ScopedCursorOptions<S>,
 		): ScopedCursorCodec<S> {
@@ -734,4 +735,11 @@ function hasGroups(groups: ResolvedGroups): boolean {
 	return (
 		Object.keys(groups.fieldGroups).length > 0 || Object.values(groups.relations).some(hasGroups)
 	)
+}
+
+/** The per-table query map under its mapped type; checking the two structurally is too deep. */
+// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- The runtime map's values are typed by T, which the caller states.
+function typedTables<T>(tables: Readonly<Record<string, object>>): T {
+	// SAFETY: the caller builds one table query for every key of the validated registry.
+	return tables as T
 }

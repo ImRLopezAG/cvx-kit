@@ -1,12 +1,12 @@
+import type { k } from '../src/k'
 import { expect, test } from 'vite-plus/test'
 import { parseFilterPlan } from '../src/querying/filters'
-import type { z } from 'zod'
 import { declarations } from './fixture-querying/scalar'
 const f = declarations()
 const schema = f.tasks.paginationOpts({ department: true, count: true, status: true })
 const indexes = [{ name: 'by_department_count', fields: ['department', 'count'] }]
 test('U4 normalizes eligible sets, selects one position and keeps other OR residual', () => {
-	const plan = (filters: z.input<typeof schema>['filters'], ordering?: string) =>
+	const plan = (filters: k.input<typeof schema>['filters'], ordering?: string) =>
 		parseFilterPlan(
 			schema,
 			{ numItems: 2, cursor: null, filters },
@@ -38,7 +38,7 @@ test('U4 normalizes eligible sets, selects one position and keeps other OR resid
 })
 
 test('U4 intersects sets with equality/ranges without Cartesian expansion', () => {
-	const plan = (filters: z.input<typeof schema>['filters']) =>
+	const plan = (filters: k.input<typeof schema>['filters']) =>
 		parseFilterPlan(schema, { numItems: 1, cursor: null, filters }, indexes).compiled
 	expect(
 		plan({ and: [{ department: { in: ['a', 'b'] } }, { department: { in: ['b', 'c'] } }] })

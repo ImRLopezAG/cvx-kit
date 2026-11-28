@@ -1,5 +1,4 @@
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import { ConvexError, v, type Value } from 'convex/values'
 import {
 	defineSchema,
@@ -18,15 +17,11 @@ import {
 	type GenericDatabaseReader,
 } from 'convex/server'
 import { createAuthFunctions } from 'cvx-kit/auth'
-import {
-	createEffectFoundation,
-	createEffectCrud,
-	effectApiBuilder,
-	effectZodApiBuilder,
-} from 'cvx-kit/effect'
+import { createEffectFoundation, createEffectCrud, effectApiBuilder } from 'cvx-kit/effect'
 import { defineErrorContract } from 'cvx-kit/errors'
-import { zid, tenantTable } from 'cvx-kit/zod-table'
-import { zodContract, standardContract, convexContract } from 'cvx-kit/contracts'
+import { k } from 'cvx-kit/k'
+import { tenantTable } from 'cvx-kit/table'
+import { kContract, standardContract, convexContract } from 'cvx-kit/contracts'
 import {
 	captureIdempotencyInvocation,
 	transactionalIdempotency,
@@ -79,13 +74,13 @@ const internalMutation: MutationBuilder<Model, 'internal'> = internalMutationGen
 const internalQuery: QueryBuilder<Model, 'internal'> = internalQueryGeneric
 const internalAction: ActionBuilder<Model, 'internal'> = internalActionGeneric
 const errors = defineErrorContract({
-	MISSING: { message: 'Document missing', details: { id: z.string() } },
+	MISSING: { message: 'Document missing', details: { id: k.string() } },
 })
-const document = z.object({ id: zid('documents'), title: z.string() }).strict()
-const createInput = z.object({ title: z.string().trim().min(1) }).strict()
-const renameInput = z.object({ id: zid('documents'), title: z.string().trim().min(1) }).strict()
-const getInput = z.object({ id: zid('documents') }).strict()
-type Document = z.infer<typeof document>
+const document = k.object({ id: k.id('documents'), title: k.string() })
+const createInput = k.object({ title: k.string().trim().min(1) })
+const renameInput = k.object({ id: k.id('documents'), title: k.string().trim().min(1) })
+const getInput = k.object({ id: k.id('documents') })
+type Document = k.infer<typeof document>
 interface Repository {
 	create(title: string): Promise<Document>
 	rename(id: Document['id'], title: string): Promise<Document>
@@ -269,12 +264,12 @@ const auth = createAuthFunctions<Model, 'owner'>({
 		}),
 	},
 })
-const securedMutation = effectZodApiBuilder(auth.authMutation, {
+const securedMutation = effectApiBuilder(auth.authMutation, {
 	services: (ctx) => Context.make(Documents, repository(ctx.db, ctx.tenant)),
 	errors,
 })
 export const create = securedMutation({
-	args: { key: z.string().min(1), title: z.string() },
+	args: { key: k.string().min(1), title: k.string() },
 	returns: document,
 	handler: (ctx, args) => {
 		const invocation = captureIdempotencyInvocation({
@@ -299,7 +294,7 @@ export const create = securedMutation({
 		return commands.exec('create', { title: args.title }, host)
 	},
 })
-const securedQuery = effectZodApiBuilder(auth.authQuery, {
+const securedQuery = effectApiBuilder(auth.authQuery, {
 	services: (ctx) =>
 		Context.make(DocumentReader, {
 			get: async (id) => {
@@ -340,8 +335,8 @@ const stepBinding = workflowBinding({
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ id: z.string(), title: z.string() }).strict(),
-	result: z.object({ title: z.string() }).strict(),
+	args: k.object({ id: k.string(), title: k.string() }),
+	result: k.object({ title: k.string() }),
 	reference: internal.integratedRename.applyRename,
 })
 export function nativeWorkflowStep(
@@ -356,21 +351,21 @@ workflowBinding({
 	operationVersion: '1',
 	contractVersion: '1',
 	bindingVersion: '1',
-	args: z.object({ id: z.string(), title: z.string() }).strict(),
-	result: z.object({ title: z.string() }).strict(),
+	args: k.object({ id: k.string(), title: k.string() }),
+	result: k.object({ title: k.string() }),
 	// @ts-expect-error A registered mutation reference cannot be an action binding.
 	reference: internal.integratedRename.applyRename,
 })
 
 workflowBinding({
 	...stepBinding,
-	args: z.object({ id: z.string(), title: z.number() }),
+	args: k.object({ id: k.string(), title: k.number() }),
 	// @ts-expect-error The real mutation takes a string title, not a numeric title.
 	reference: internal.integratedRename.applyRename,
 })
 workflowBinding({
 	...stepBinding,
-	result: z.object({ title: z.number() }),
+	result: k.object({ title: k.number() }),
 	// @ts-expect-error The real mutation returns a string title, not a numeric title.
 	reference: internal.integratedRename.applyRename,
 })
@@ -451,11 +446,15 @@ export function decodeRemoteFailure(error: ConvexError<Value>) {
 	return errors.decode(error.data)
 }
 
-const documentTable = tenantTable('documents', () => ({ title: z.string() }), {
-	commandFields: ['title'],
-	serverFields: [],
-	publicFields: ['title'],
-})
+const documentTable = tenantTable(
+	'documents',
+	{ title: k.string() },
+	{
+		commandFields: ['title'],
+		serverFields: [],
+		publicFields: ['title'],
+	},
+)
 export const documentCrud = createEffectCrud({
 	foundation,
 	table: documentTable,
@@ -474,6 +473,6 @@ export const documentCrud = createEffectCrud({
 				.paginate(options),
 	},
 })
-export const rawTitleContract = zodContract(z.string().trim())
-export const standardTitleContract = standardContract(z.string())
+export const rawTitleContract = kContract(k.string().trim())
+export const standardTitleContract = standardContract(k.string())
 export const nativeDocumentIdContract = convexContract(v.id('documents'))

@@ -1,8 +1,6 @@
 import { defineSchema, defineTable, type DataModelFromSchemaDefinition } from 'convex/server'
 import { v } from 'convex/values'
-import { zid } from 'convex-helpers/server/zod4'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
 
 import {
 	assertTenantOwned,
@@ -12,15 +10,16 @@ import {
 	type Rules,
 } from '../src/tenancy'
 import { KitError } from '../src/errors'
-import { createModule, tenantTable, zodTable } from '../src/zod-table'
+import { k } from '../src/k'
+import { createModule, kTable, tenantTable } from '../src/table'
 
 const ruleSchema = defineSchema({
 	projects: defineTable({ tenant: v.optional(v.string()) }),
 	audits: defineTable({}),
 })
 type RuleDataModel = DataModelFromSchemaDefinition<typeof ruleSchema>
-const projectRow = { _id: zid('projects').parse('projects:1'), _creationTime: 0 }
-const auditRow = { _id: zid('audits').parse('audits:1'), _creationTime: 0 }
+const projectRow = { _id: k.id('projects').parse('projects:1'), _creationTime: 0 }
+const auditRow = { _id: k.id('audits').parse('audits:1'), _creationTime: 0 }
 
 describe('createTenantRules', () => {
 	const rules = createTenantRules<RuleDataModel>('org_1', ['projects'])
@@ -85,9 +84,13 @@ describe('tenant reference guards', () => {
 })
 
 describe('tenantTable boundaries', () => {
-	const projects = tenantTable('projects', () => ({ name: z.string(), ownerId: z.string() }), {
-		publicFields: ['name', 'tenant'],
-	})
+	const projects = tenantTable(
+		'projects',
+		{ name: k.string(), ownerId: k.string() },
+		{
+			publicFields: ['name', 'tenant'],
+		},
+	)
 
 	it('stores tenant but excludes it from every write boundary', () => {
 		expect(Object.keys(projects.storage.shape)).toContain('tenant')
@@ -109,8 +112,8 @@ describe('tenantTable boundaries', () => {
 
 describe('createModule', () => {
 	it('merges module maps and rejects duplicate owners', () => {
-		const a = { projects: zodTable('projects', () => ({ name: z.string() })).table }
-		const b = { audits: zodTable('audits', () => ({ action: z.string() })).table }
+		const a = { projects: kTable('projects', { name: k.string() }).table }
+		const b = { audits: kTable('audits', { action: k.string() }).table }
 		expect(createModule(a, b)).toEqual({
 			projects: a.projects,
 			audits: b.audits,

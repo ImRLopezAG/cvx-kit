@@ -137,7 +137,7 @@ export async function compileApprovalDescriptor(
 			return { ...step }
 		}),
 	)
-	const descriptor = approvalWorkflowDescriptor.parse({
+	const descriptor = approvalWorkflowDescriptor['~parseStrict']({
 		schemaVersion: 1,
 		compatibilityKey: definition.compatibilityKey,
 		name: definition.name,

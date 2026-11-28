@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
 	cpSync,
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -125,9 +126,10 @@ writeFileSync(
 		2,
 	),
 )
-for (const [label, convex, helpers, zod, convexTest] of [
-	['current', '1.48.0', '0.1.129', '4.6.5', '0.0.65'],
-	['minimum', '1.46.0', '0.1.127', '4.5.4', '0.0.65'],
+// Neither project installs zod: the v2 querying surface does not need it.
+for (const [label, convex, helpers, convexTest] of [
+	['current', '1.51.0', '0.1.137', '0.0.75'],
+	['minimum', '1.46.0', '0.1.130', '0.0.65'],
 ]) {
 	const fixture = join(proof, label)
 	mkdirSync(fixture)
@@ -140,7 +142,6 @@ for (const [label, convex, helpers, zod, convexTest] of [
 				'cvx-kit': `file:${tarball}`,
 				convex,
 				'convex-helpers': helpers,
-				zod,
 				typescript: '7.0.2',
 				'convex-test': convexTest,
 				effect: manifest.devDependencies.effect,
@@ -181,8 +182,9 @@ for (const [label, convex, helpers, zod, convexTest] of [
 		}),
 	)
 	run('bun', ['--no-env-file', 'install', '--ignore-scripts'], fixture, `${label}-install`)
+	assert.equal(existsSync(join(fixture, 'node_modules/zod')), false, `${label}: zod was installed`)
 	const versions = Object.fromEntries(
-		['cvx-kit', 'convex', 'convex-helpers', 'zod', 'typescript', 'convex-test'].map((name) => [
+		['cvx-kit', 'convex', 'convex-helpers', 'typescript', 'convex-test'].map((name) => [
 			name,
 			JSON.parse(readFileSync(join(fixture, 'node_modules', name, 'package.json'), 'utf8')).version,
 		]),

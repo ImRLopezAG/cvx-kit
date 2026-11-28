@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { expect, test } from 'vite-plus/test'
 import {
 	relationshipStressFixture,
@@ -23,15 +23,17 @@ function latencySummary(samples: readonly number[]) {
 
 test('U6 source engine full v3 stress sequences match independent ordered ID hashes and duplicate output', async () => {
 	const started = performance.now()
-	const oracle = z
+	const oracle = k
 		.object({
-			counts: z.object({ tasks: z.number(), labels: z.number(), junctions: z.number() }),
-			visibleDuplicateParents: z.array(z.number()),
-			expected: z.record(
-				z.string(),
-				z.object({ asc: z.array(z.number()), desc: z.array(z.number()) }),
+			counts: k.object({ tasks: k.number(), labels: k.number(), junctions: k.number() }),
+			visibleDuplicateParents: k.array(k.number()),
+			expected: k.record(
+				k.string(),
+				k.object({ asc: k.array(k.number()), desc: k.array(k.number()) }),
 			),
 		})
+		// The oracle file carries more keys; v1's Zod object stripped them, a k object needs .strip().
+		.strip()
 		.parse(
 			JSON.parse(
 				readFileSync(

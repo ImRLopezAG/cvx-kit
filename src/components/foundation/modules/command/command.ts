@@ -2,6 +2,8 @@
 export type Parseable<Output> = Readonly<{
 	parse: <Input>(value: Input) => Output
 	parseAsync?: <Input>(value: Input) => Promise<Output>
+	/** A `k` schema's boundary parse: unknown keys are rejected rather than stripped. */
+	'~parseStrict'?: <Input>(value: Input) => Output
 }>
 
 /** Structural mirror of portable neutral contracts: components cannot import host modules. */
@@ -224,7 +226,7 @@ export function parseCommandSchema<S extends CommandSchema>(
 	if (!('parse' in schema))
 		throw new TypeError('This command schema requires asynchronous decoding')
 	// SAFETY: this legacy parser belongs to the selected schema.
-	return schema.parse(value) as SchemaOutput<S>
+	return (schema['~parseStrict'] ?? schema.parse).call(schema, value) as SchemaOutput<S>
 }
 
 /** Interpreter-owned decoding awaits validation and leaves thrown/rejected defects intact. */
@@ -236,7 +238,7 @@ export async function decodeCommandSchema<S extends CommandSchema>(
 		// SAFETY: parseAsync and parse share the selected legacy schema's output.
 		return (await (schema.parseAsync
 			? schema.parseAsync(value)
-			: schema.parse(value))) as SchemaOutput<S>
+			: (schema['~parseStrict'] ?? schema.parse).call(schema, value))) as SchemaOutput<S>
 	}
 	const result = await ('kind' in schema
 		? schema.decode(value)

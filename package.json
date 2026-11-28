@@ -1,12 +1,12 @@
 {
 	"name": "cvx-kit",
-	"version": "0.1.35",
-	"description": "Reusable Convex application kit: foundation kernels, approvals component, zod table boundaries, WorkOS-backed auth function constructors, and audited command protocol.",
+	"version": "2.0.0-rc.3",
+	"description": "Reusable Convex application kit: foundation kernels, approvals component, table boundaries on native Convex validators, WorkOS-backed auth function constructors, and audited command protocol.",
 	"keywords": [
 		"component",
 		"convex",
-		"workos",
-		"zod"
+		"validators",
+		"workos"
 	],
 	"homepage": "https://github.com/ImRLopezAG/cvx-kit#readme",
 	"bugs": {
@@ -18,23 +18,31 @@
 		"type": "git",
 		"url": "git+https://github.com/ImRLopezAG/cvx-kit.git"
 	},
+	"bin": {
+		"cvx-kit-codemod-v2": "./tools/codemod-v2/index.mjs"
+	},
 	"files": [
 		"dist",
 		"src/test.ts",
 		"README.md",
-		"LICENSE"
+		"CHANGELOG.md",
+		"LICENSE",
+		"skills/cvx-kit/references/*.md",
+		"tools/codemod-v2/*.mjs",
+		"tools/codemod-v2/transforms/*.mjs"
 	],
 	"type": "module",
-	"sideEffects": false,
+	"sideEffects": [
+		"./dist/zod.mjs",
+		"./src/zod.ts",
+		"./dist/json-schema.mjs",
+		"./src/json-schema.ts"
+	],
 	"exports": {
 		"./package.json": "./package.json",
 		".": {
 			"types": "./dist/index.d.mts",
 			"import": "./dist/index.mjs"
-		},
-		"./zod-table": {
-			"types": "./dist/zod-table.d.mts",
-			"import": "./dist/zod-table.mjs"
 		},
 		"./relations": {
 			"types": "./dist/relations-public.d.mts",
@@ -95,6 +103,30 @@
 		"./errors": {
 			"types": "./dist/errors.d.mts",
 			"import": "./dist/errors.mjs"
+		},
+		"./k": {
+			"types": "./dist/k.d.mts",
+			"import": "./dist/k.mjs"
+		},
+		"./table": {
+			"types": "./dist/table.d.mts",
+			"import": "./dist/table.mjs"
+		},
+		"./registration": {
+			"types": "./dist/registration.d.mts",
+			"import": "./dist/registration.mjs"
+		},
+		"./json-schema": {
+			"types": "./dist/json-schema.d.mts",
+			"import": "./dist/json-schema.mjs"
+		},
+		"./zod/classic": {
+			"types": "./dist/zod-classic.d.mts",
+			"import": "./dist/zod-classic.mjs"
+		},
+		"./zod": {
+			"types": "./dist/zod.d.mts",
+			"import": "./dist/zod.mjs"
 		},
 		"./test": "./src/test.ts",
 		"./components/foundation": {
@@ -171,41 +203,44 @@
 		"release:minor": "npm version minor && git push --follow-tags"
 	},
 	"dependencies": {
-		"@convex-dev/workflow": "0.4.10",
+		"@convex-dev/workflow": "0.5.0",
 		"@noble/ciphers": "2.4.0",
-		"@oxlint/plugins": "1.87.0",
+		"@oxlint/plugins": "1.95.0",
 		"@standard-schema/spec": "^1.1.0",
 		"convex-audit-log": "^0.2.0",
-		"oxc-parser": "0.153.0",
+		"oxc-parser": "0.160.0",
 		"oxc-resolver": "11.24.2"
 	},
 	"devDependencies": {
 		"@edge-runtime/vm": "^5.0.0",
-		"@types/node": "^26.6.5",
-		"@types/react": "19.2.2",
-		"@types/react-dom": "19.2.2",
-		"convex": "1.48.0",
-		"convex-helpers": "0.1.129",
-		"convex-test": "^0.0.65",
-		"effect": "4.0.2",
-		"jsdom": "26.1.0",
-		"oxlint": "1.87.0",
+		"@types/node": "^26.6.11",
+		"@types/react": "19.3.3",
+		"@types/react-dom": "19.3.0",
+		"convex": "1.51.0",
+		"convex-helpers": "0.1.137",
+		"convex-test": "^0.0.75",
+		"effect": "4.1.6",
+		"jsdom": "31.0.1",
+		"oxlint": "1.95.0",
 		"publint": "^0.3.25",
-		"react": "19.2.8",
-		"react-dom": "19.2.8",
+		"react": "19.3.1",
+		"react-dom": "19.3.1",
 		"typescript": "7.0.2",
-		"vite": "npm:@voidzero-dev/vite-plus-core@1.1.0",
-		"vite-plus": "1.1.0",
-		"zod": "4.6.5"
+		"vite": "npm:@voidzero-dev/vite-plus-core@8.3.8001",
+		"vite-plus": "1.8.0",
+		"zod": "4.6.7"
 	},
 	"peerDependencies": {
 		"convex": "^1.46.0",
-		"convex-helpers": ">=0.1.127 <0.2.0",
+		"convex-helpers": ">=0.1.130 <0.2.0",
 		"effect": ">=4.0.1 <5",
 		"react": "^18.0.0 || ^19.0.0",
-		"zod": "^4.5.4"
+		"zod": "^4.6.7"
 	},
 	"peerDependenciesMeta": {
+		"zod": {
+			"optional": true
+		},
 		"effect": {
 			"optional": true
 		},
@@ -214,7 +249,7 @@
 		}
 	},
 	"overrides": {
-		"vite": "npm:@voidzero-dev/vite-plus-core@1.1.0"
+		"vite": "npm:@voidzero-dev/vite-plus-core@8.3.8001"
 	},
 	"devEngines": {
 		"packageManager": {

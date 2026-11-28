@@ -1,0 +1,9 @@
+{
+  "status": "kept",
+  "skipped": [
+    {
+      "line": 3,
+      "code": "enum-unproven"
+    }
+  ]
+}

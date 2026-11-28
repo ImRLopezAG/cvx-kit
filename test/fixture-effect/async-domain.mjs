@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { ConvexHttpClient } from 'convex/browser'
 import { ConvexError } from 'convex/values'
 import { defineErrorContract } from 'cvx-kit/errors'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { api, internal } from './convex/_generated/api.js'
 
 const config = JSON.parse(readFileSync('.convex/local/default/config.json', 'utf8'))
@@ -22,8 +22,8 @@ function connection(identity = owner) {
 }
 const client = connection()
 const errors = defineErrorContract({
-	MISSING: { message: 'Note missing', details: { id: z.string() } },
-	AFTER_PATCH: { message: 'Rename rejected after patch', details: { id: z.string() } },
+	MISSING: { message: 'Note missing', details: { id: k.string() } },
+	AFTER_PATCH: { message: 'Rename rejected after patch', details: { id: k.string() } },
 })
 const state = (id) => client.query(internal.crud.state, { id })
 const proof = (id) => client.query(internal.asyncDomain.proof, { id })

@@ -1,9 +1,6 @@
-import { z } from 'zod'
-
 type SemanticValue = string | number | boolean
 
 const semanticToken = /^[A-Za-z][A-Za-z0-9_.-]{0,159}$/
-const semanticValue = z.union([z.string().regex(semanticToken), z.number().finite(), z.boolean()])
 
 /** Emit bounded semantic fields only; free-form payloads and identifiers drop. */
 export function emitSemanticEvent(
@@ -14,11 +11,21 @@ export function emitSemanticEvent(
 		if (!semanticToken.test(event)) return
 		const safe = Object.fromEntries(
 			Object.entries(fields).filter(
-				([key, value]) => semanticToken.test(key) && semanticValue.safeParse(value).success,
+				([key, value]) => semanticToken.test(key) && isSemanticValue(value),
 			),
 		)
 		console.info(JSON.stringify({ event, ...safe }))
 	} catch {
 		// Telemetry must never change command behavior.
 	}
+}
+
+/** A token-shaped string, a finite number or a boolean; everything else drops. */
+function isSemanticValue(value: SemanticValue | undefined): boolean {
+	return (
+		value === true ||
+		value === false ||
+		Number.isFinite(value) ||
+		(String(value) === value && semanticToken.test(value))
+	)
 }

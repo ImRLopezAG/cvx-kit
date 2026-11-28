@@ -1,0 +1,13 @@
+{
+	"status": "mixed",
+	"skipped": [
+		{
+			"line": 6,
+			"code": "type-helper-unknown"
+		}
+	],
+	"declarations": {
+		"rewritten": 1,
+		"left": 0
+	}
+}

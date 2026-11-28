@@ -16,9 +16,9 @@ import {
 } from 'convex/server'
 import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
 import type { AuthFunctionsConfig, AuthBundle } from '../src/auth'
 import { createEffectAuthFunctions } from '../src/effect'
+import { k } from '../src/k'
 
 const schema = defineSchema({})
 type Model = DataModelFromSchemaDefinition<typeof schema>
@@ -27,7 +27,7 @@ class Actor extends Context.Service<Actor, { user: string; tenant: string; role:
 	'SharedFactoryActor',
 ) {}
 const owner = { subject: 'alice', org_id: 'org-a', role: 'owner' }
-const result = z.object({ user: z.string(), tenant: z.string(), role: z.string() })
+const result = k.object({ user: k.string(), tenant: k.string(), role: k.string() })
 const families = ['auth', 'role', 'admin', 'system'] as const
 const kinds = ['Query', 'Mutation', 'Action'] as const
 function harness() {
@@ -95,12 +95,12 @@ function harness() {
 		builder({ args: {}, returns: result, handler: (ctx) => ctx.snapshot() }),
 	)
 	const transformed = f.authQuery({
-		args: { value: z.string().transform(Number) },
-		returns: z.number().transform((value) => ({ value })),
+		args: { value: k.string().transform(Number) },
+		returns: k.object({ value: k.number() }),
 		handler: (_ctx, args) =>
 			Effect.gen(function* () {
 				yield* Actor
-				return args.value
+				return { value: args.value }
 			}),
 	})
 	const failed = f.authQuery({ args: {}, handler: () => Effect.fail('SECRET') })
@@ -149,13 +149,13 @@ function harness() {
 		const caller = identity ? t.withIdentity(identity) : t
 		const name = `functions:${family}${kind}`
 		if (kind === 'Query')
-			return caller.query(makeFunctionReference<'query', {}, z.output<typeof result>>(name), {})
+			return caller.query(makeFunctionReference<'query', {}, k.infer<typeof result>>(name), {})
 		if (kind === 'Mutation')
 			return caller.mutation(
-				makeFunctionReference<'mutation', {}, z.output<typeof result>>(name),
+				makeFunctionReference<'mutation', {}, k.infer<typeof result>>(name),
 				{},
 			)
-		return caller.action(makeFunctionReference<'action', {}, z.output<typeof result>>(name), {})
+		return caller.action(makeFunctionReference<'action', {}, k.infer<typeof result>>(name), {})
 	}
 	return {
 		t,

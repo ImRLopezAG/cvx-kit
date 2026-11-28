@@ -8,7 +8,7 @@ import {
 } from 'convex/server'
 import { v } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { bindEffectCommand } from '../src/modules/effect/command'
 import { Observability } from '../src/components/foundation/modules/observability/observability'
 
@@ -70,8 +70,8 @@ function harness(
 		},
 		operations: ({ command }) => ({
 			save: command({
-				input: z.string().trim(),
-				result: z.literal('saved').refine(() => options.failure !== 'result'),
+				input: k.string().trim(),
+				result: k.literal('saved').refine(() => options.failure !== 'result'),
 				classification: 'business',
 				permission: 'save',
 				aggregates: ['document'],
@@ -155,19 +155,17 @@ describe('Effect command lifecycle', () => {
 			},
 			operations: ({ command }) => ({
 				save: command({
-					input: z.string().transform(async (value) => {
-						await Promise.resolve()
+					input: k.string().transform((value) => {
 						calls.push('input')
 						return value.trim()
 					}),
-					result: z
+					result: k
 						.number()
-						.transform(async (value) => {
-							await Promise.resolve()
+						.transform((value) => {
 							calls.push('result')
 							return String(value)
 						})
-						.refine(async (value) => value !== '0'),
+						.refine((value) => value !== '0'),
 					classification: 'business',
 					permission: 'save',
 					prepare: () => ({
@@ -221,12 +219,12 @@ describe('Effect command lifecycle', () => {
 			context: (host: { saved: number }) => host,
 			operations: ({ command }) => ({
 				save: command({
-					input: z.string(),
-					result: z.number().transform(async (count) => {
+					input: k.string(),
+					result: k.number().transform((count) => {
 						calls.push('fresh-transform')
 						return { count }
 					}),
-					replayResult: z.object({ count: z.number() }).refine(async ({ count }) => count > 0),
+					replayResult: k.object({ count: k.number() }).refine(({ count }) => count > 0),
 					classification: 'business',
 					permission: 'save',
 					prepare: ({ saved }) => ({ kind: 'replay' as const, result: { count: saved } }),
@@ -272,8 +270,8 @@ describe('Effect command lifecycle', () => {
 				}),
 			operations: ({ command }) => ({
 				save: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: (input) => input,
@@ -305,8 +303,8 @@ describe('Effect command lifecycle', () => {
 			context: (_host: { actor: string }) => ({ actor: 'domain' }),
 			operations: ({ command }) => ({
 				save: command({
-					input: z.string().trim(),
-					result: z.string().transform((value) => {
+					input: k.string().trim(),
+					result: k.string().transform((value) => {
 						parses++
 						return value.length
 					}),
@@ -366,8 +364,8 @@ describe('Effect command lifecycle', () => {
 			context: (_host: Record<never, never>) => ({}),
 			operations: ({ command }) => ({
 				save: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					permission: 'save',
 					audit: () => null,
@@ -476,22 +474,22 @@ describe('Effect command lifecycle', () => {
 			context: (_host: Record<never, never>) => ({}),
 			operations: ({ command }) => ({
 				plain: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: (input) => input,
 				}),
 				promise: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: async (input) => input,
 				}),
 				gen: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: (input) =>
@@ -500,8 +498,8 @@ describe('Effect command lifecycle', () => {
 						}),
 				}),
 				fn: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: Effect.fn('named.command')(function* (input: number) {
@@ -535,8 +533,8 @@ describe('Effect command lifecycle', () => {
 			context: (_host: Record<never, never>) => ({}),
 			operations: ({ command }) => ({
 				duplicate: command({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					classification: 'business',
 					audit: () => null,
 					handler: (input) => input,
@@ -577,8 +575,8 @@ describe('Effect command lifecycle', () => {
 				context: (_host: Record<never, never>) => ({}),
 				operations: ({ command }) => ({
 					fail: command({
-						input: z.number(),
-						result: z.number(),
+						input: k.number(),
+						result: k.number(),
 						classification: 'business',
 						audit: () => null,
 						handler: (): Effect.Effect<never, Error> | Promise<never> => callback(),

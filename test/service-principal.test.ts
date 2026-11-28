@@ -17,7 +17,7 @@ import {
 	type UserIdentity,
 } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { describe, expect, it } from 'vite-plus/test'
 import {
 	createAuthFunctions,
@@ -91,7 +91,7 @@ function bundleFor(clientId: string, organizationId: string) {
 function principal(_ctx: GenericQueryCtx<DM> | GenericMutationCtx<DM>, args: DefaultFunctionArgs) {
 	return bundleFor(String(args.clientId), String(args.organizationId))
 }
-const scope = { clientId: z.string(), organizationId: z.string() }
+const scope = { clientId: k.string(), organizationId: k.string() }
 const agentQuery = auth.serviceQuery(principal)
 const agentMutation = auth.serviceMutation(principal)
 
@@ -109,11 +109,11 @@ const list = agentQuery({
 	},
 })
 const forged = agentQuery({
-	args: { ...scope, principal: z.any().optional() },
+	args: { ...scope, principal: k.any().optional() },
 	handler: async (ctx) => ctx.clientId,
 })
 const write = agentMutation({
-	args: { ...scope, body: z.string(), clientFor: z.string() },
+	args: { ...scope, body: k.string(), clientFor: k.string() },
 	handler: async (ctx, args) => {
 		await ctx.db.insert('notes', { tenant: ctx.tenant, clientId: args.clientFor, body: args.body })
 		return null
@@ -128,7 +128,10 @@ const edit = agentMutation({
 	},
 })
 /** A host mistake: an extra named like a native handle must not replace the secured one. */
-const rawDbPrincipal = (ctx: GenericQueryCtx<DM> | GenericMutationCtx<DM>, args: DefaultFunctionArgs) => ({
+const rawDbPrincipal = (
+	ctx: GenericQueryCtx<DM> | GenericMutationCtx<DM>,
+	args: DefaultFunctionArgs,
+) => ({
 	...principal(ctx, args),
 	db: ctx.db,
 })
@@ -169,7 +172,7 @@ const effectList = effectAuth.serviceQuery(principal)({
 		})),
 })
 const effectWrite = effectAuth.serviceMutation(principal)({
-	args: { ...scope, clientFor: z.string() },
+	args: { ...scope, clientFor: k.string() },
 	handler: (ctx, args) =>
 		Effect.promise(() =>
 			ctx.db.insert('notes', { tenant: ctx.tenant, clientId: args.clientFor, body: 'fx' }),
@@ -243,6 +246,7 @@ describe('service principal constructors', () => {
 	it('runs the query engine under a service ctx without UNMANAGED_QUERY_CONTEXT', async () => {
 		const f = groupDeclarations()
 		type FDM = DataModelFromSchemaDefinition<typeof f.schema>
+		// The query engine's boundaries are k schemas; the v2 constructors register them.
 		const fixtureAuth = createAuthFunctions<FDM, Role>({
 			...builders,
 			getAuthUser: async () => null,
@@ -258,7 +262,7 @@ describe('service principal constructors', () => {
 		const querying = createQueryEngine({ schema: f.schema, relations: f.relations }, { cursor })
 		const args = f.relations.tables.clients
 			.paginationOpts({ name: true })
-			.extend({ hidden: z.string() })
+			.extend({ hidden: k.string() })
 		const page = fixtureAuth.serviceQuery((_ctx, raw) => ({
 			...bundleFor('c1', 'one'),
 			hidden: String(raw.hidden),

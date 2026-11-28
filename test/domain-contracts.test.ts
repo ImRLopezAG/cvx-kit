@@ -1,16 +1,16 @@
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { defineErrorContract } from '../src/errors'
 
 it('preserves domain keys, schema objects, and error ownership', () => {
-	const input = z.string().transform((text) => text.length)
-	const result = z.number().transform((count) => ({ count }))
+	const input = k.string().transform((text) => text.length)
+	const result = k.number().transform((count) => ({ count }))
 	const errors = defineErrorContract({ NOT_FOUND: { message: 'Missing', details: {} } })
 	const contract = defineDomainContract({
 		errors,
 		commands: { create: { input, result, classification: 'business' } },
-		queries: { get: { input: z.number(), result } },
+		queries: { get: { input: k.number(), result } },
 	})
 	expect(Object.keys(contract.commands)).toEqual(['create'])
 	expect(contract.commands.create.input).toBe(input)

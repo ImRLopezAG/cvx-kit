@@ -1,5 +1,5 @@
 import { decodeFailure, matchFailure } from '../src/react/failures'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { Cause } from 'effect'
 import {
 	defineErrorContract,
@@ -9,8 +9,8 @@ import {
 import { projectErrorCause } from '../src/modules/effect/errors'
 
 const definitions = {
-	NotFound: { message: 'Not found', details: { id: z.string() } },
-	Conflict: { message: 'Conflict', details: { revision: z.number() } },
+	NotFound: { message: 'Not found', details: { id: k.string() } },
+	Conflict: { message: 'Conflict', details: { revision: k.number() } },
 } as const
 const contract = defineErrorContract(definitions)
 const error = contract.create('NotFound', { id: '1' })
@@ -51,7 +51,7 @@ void [code, id, server, forged, decoded]
 // The client always receives an explicit declaration; generated references carry no error metadata.
 const clientContract = defineErrorContract({
 	First: { message: 'First', details: {} },
-	NewlyDeclared: { message: 'New', details: { revision: z.number() } },
+	NewlyDeclared: { message: 'New', details: { revision: k.number() } },
 })
 matchFailure(new Error(), clientContract, {
 	First: () => 'first',
@@ -70,7 +70,7 @@ if (clientDecoded._tag === 'DeclaredFailure' && clientDecoded.code === 'NewlyDec
 }
 
 const underscore = defineErrorContract({
-	_: { message: 'Underscore', details: { id: z.string() } },
+	_: { message: 'Underscore', details: { id: k.string() } },
 })
 type UnderscoreFailure = Extract<ReturnType<typeof underscore.decode>, { _tag: 'DeclaredFailure' }>
 // @ts-expect-error The '_' slot is also the fallback and must accept UnknownFailure.

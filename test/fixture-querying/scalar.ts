@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { k } from '../../src/k'
 import {
 	defineSchema,
 	type DataModelFromSchemaDefinition,
@@ -8,7 +8,7 @@ import {
 	type GenericTableInfo,
 } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable } from '../../src/zod-table'
+import { kTable } from '../../src/table'
 import { defineRelations } from '../../src/relations'
 import {
 	registerQueryReader,
@@ -19,23 +19,23 @@ import type { Rules } from '../../src/tenancy'
 import { createQueryEngine } from '../../src/querying'
 
 export function declarations() {
-	const tasks = zodTable(
+	const tasks = kTable(
 		'tasks',
-		(id) => ({
-			ordinal: z.number(),
-			department: z.string(),
-			status: z.string(),
-			active: z.boolean(),
-			count: z.number(),
-			code: z.string(),
-			optional: z.string().nullable().optional(),
-			optionalOrdered: z.string().optional(),
-			big: z.bigint(),
-			reference: id('tasks').nullable(),
-			permission: id('permissions').optional(),
-			tenant: z.string(),
-			secret: z.string(),
-		}),
+		{
+			ordinal: k.number(),
+			department: k.string(),
+			status: k.string(),
+			active: k.boolean(),
+			count: k.number(),
+			code: k.string(),
+			optional: k.string().nullable().optional(),
+			optionalOrdered: k.string().optional(),
+			big: k.int64(),
+			reference: k.id('tasks').nullable(),
+			permission: k.id('permissions').optional(),
+			tenant: k.string(),
+			secret: k.string(),
+		},
 		{ publicFields: ['ordinal', 'department', 'status'] },
 	)
 	const nativeTasks = tasks.table
@@ -48,7 +48,7 @@ export function declarations() {
 		.index('by_big', ['big'])
 		.index('by_optional', ['optional'])
 		.index('by_optionalOrdered', ['optionalOrdered'])
-	const permissions = zodTable('permissions', () => ({ allowed: z.boolean(), tenant: z.string() }))
+	const permissions = kTable('permissions', { allowed: k.boolean(), tenant: k.string() })
 	const relations = defineRelations({ tasks, permissions }, (r) => ({
 		tasks: { referenceTask: r.one.tasks({ from: r.tasks.reference, to: r.tasks._id }) },
 	}))

@@ -1,7 +1,7 @@
 /* oxlint-disable anti-slop/no-object-parameters, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- Interpreter parity fixture deliberately erases the two execution kinds; separate fixtures verify their precise public types. */
 import { Effect } from 'effect'
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation } from '../src/effect'
@@ -14,12 +14,12 @@ for (const effect of [false, true]) {
 		const domain = defineDomainContract({
 			commands: {
 				save: {
-					input: z.string(),
-					result: z.string().transform((value) => ({ value })),
-					replayResult: z.object({ value: z.string() }),
+					input: k.string(),
+					result: k.string().transform((value) => ({ value })),
+					replayResult: k.object({ value: k.string() }),
 					classification: 'business',
 				},
-				close: { input: z.number(), result: z.number(), classification: 'business' },
+				close: { input: k.number(), result: k.number(), classification: 'business' },
 			},
 		})
 		const options = {
@@ -128,9 +128,9 @@ for (const effect of [false, true]) {
 	})
 }
 it('rejects untyped overrides, missing keys, mismatched helpers, and mutated definitions', () => {
-	const entry = { input: z.string(), result: z.string(), classification: 'business' }
+	const entry = { input: k.string(), result: k.string(), classification: 'business' }
 	const contract = defineDomainContract({ commands: { a: entry, b: entry } })
-	expect(() => bindDomainImplementation('a', entry, { input: z.number() })).toThrow(
+	expect(() => bindDomainImplementation('a', entry, { input: k.number() })).toThrow(
 		'cannot override input',
 	)
 	expect(() => snapshotOperations({ a: {} }, contract, 'commands', () => null)).toThrow(
@@ -138,7 +138,7 @@ it('rejects untyped overrides, missing keys, mismatched helpers, and mutated def
 	)
 	const a = bindDomainImplementation('a', entry, { handler: () => '', audit: () => null })
 	expect(() => snapshotOperations({ a, b: a }, contract, 'commands')).toThrow('own contract helper')
-	Object.assign(a, { input: z.number() })
+	Object.assign(a, { input: k.number() })
 	expect(() =>
 		snapshotOperations(
 			{ a, b: bindDomainImplementation('b', entry, {}) },
@@ -149,14 +149,14 @@ it('rejects untyped overrides, missing keys, mismatched helpers, and mutated def
 	).toThrow('own contract helper')
 })
 it('snapshots operation records while preserving validators', () => {
-	const wire = { schema: z.string(), project: (value: string) => value }
+	const wire = { schema: k.string(), project: (value: string) => value }
 	const wireSchema = wire.schema
-	const entry = { input: z.string(), result: z.string(), classification: 'business', wire }
+	const entry = { input: k.string(), result: k.string(), classification: 'business', wire }
 	const original = { ...entry, handler: () => 'original', audit: () => null }
 	const operations = { a: original }
 	const snapshot = snapshotOperations(operations, undefined, 'commands')
 	operations.a.handler = () => 'changed'
-	wire.schema = z.string().min(10)
+	wire.schema = k.string().min(10)
 	wire.project = () => 'changed'
 	// SAFETY: snapshot storage erases wire fields; this fixture owns the original schema-paired record.
 	const savedWire = snapshot.a.wire as typeof wire
@@ -171,7 +171,7 @@ for (const present of [false, true]) {
 	it(`selects the shared audit only when an optional override is absent (${present})`, async () => {
 		const events: string[] = []
 		const contract = defineDomainContract({
-			commands: { save: { input: z.string(), result: z.string(), classification: 'business' } },
+			commands: { save: { input: k.string(), result: k.string(), classification: 'business' } },
 		})
 		const override = present
 			? () => {

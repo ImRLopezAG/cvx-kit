@@ -1,5 +1,6 @@
 import type { FunctionReference, FunctionVisibility, FunctionType } from 'convex/server'
 import type { WorkflowCtx } from '@convex-dev/workflow'
+import { KValidationError, type KIssue } from '../../k/issues'
 import {
 	decodeContract,
 	type ContractInput,
@@ -222,6 +223,10 @@ export async function workflowDecode<S extends NeutralSchema>(
 	value: unknown,
 ): Promise<ContractOutput<S>> {
 	const decoded = await decodeContract(schema, value)
+	if (decoded.issues && 'parse' in schema && schema['~safeParseStrict']) {
+		// SAFETY: the strict k parser returns KIssue records unchanged through decodeContract.
+		throw new KValidationError(decoded.issues as KIssue[])
+	}
 	if (decoded.issues) throw new WorkflowBindingError('Workflow contract validation failed')
 	return decoded.value
 }

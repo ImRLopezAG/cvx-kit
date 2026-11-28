@@ -33,7 +33,6 @@ try {
 					'cvx-kit': `file:${join(temporary, `cvx-kit-${manifest.version}.tgz`)}`,
 					convex: manifest.devDependencies.convex,
 					'convex-helpers': manifest.devDependencies['convex-helpers'],
-					zod: manifest.devDependencies.zod,
 				},
 				devDependencies: { oxlint: manifest.devDependencies.oxlint },
 			}),
@@ -69,7 +68,7 @@ try {
 		)
 		writeFileSync(
 			join(fixture, 'convex/components/example/table.ts'),
-			"import { z } from 'zod'; import { zodTable } from 'cvx-kit/zod-table'; export const intents = zodTable('intents', () => ({ key: z.string() })); export const tables = { intents: intents.table.index('by_key', ['key']) }\n",
+			"import { k } from 'cvx-kit/k'; import { kTable } from 'cvx-kit/table'; export const intents = kTable('intents', { key: k.string() }); export const tables = { intents: intents.table.index('by_key', ['key']) }\n",
 		)
 		run(oxlint, ['--config', '.oxlintrc.json', 'convex/components/example'], fixture)
 		for (const guide of [
@@ -112,21 +111,21 @@ export const value = privateHelper()
 			join(fixture, 'convex/api/orders.ts'),
 			`import { mutation } from '../_generated/server'
 import { makeFunctionReference as ref } from 'convex/server'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import { createAuthFunctions } from 'cvx-kit/auth'
-import { zodTable } from 'cvx-kit/zod-table'
+import { kTable } from 'cvx-kit/table'
 import { other } from '../domain/users/commands'
 export const save = mutation({ handler: async (ctx) => {
   await ctx.db.insert('orders', { updatedAt: Date.now() })
   return ctx.db.query('orders').collect()
 }})
 export const constructors = createAuthFunctions({})
-export const state = z.enum(['draft'])
+export const state = k.enum(['draft'])
 export const target = ref('orders:save')
 export const value = other
-const orders = zodTable('orders', () => ({ name: z.string() }))
+const orders = kTable('orders', { name: k.string() })
 export const dto = { ...orders.toPublicDto(row), _id: row._id }
-export const pagination = z.object({ numItems: z.number(), cursor: z.string().nullable() })
+export const pagination = k.object({ numItems: k.number(), cursor: k.string().nullable() })
 `,
 		)
 		mkdirSync(join(fixture, 'convex/application'), { recursive: true })

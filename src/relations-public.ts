@@ -2,6 +2,7 @@
 export {
 	defineRelations,
 	verifyRelations,
+	withFieldGroups,
 	type FieldReference,
 	type BranchBuilder,
 	type ThroughReference,

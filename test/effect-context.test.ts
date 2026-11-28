@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { bindEffectCommand } from '../src/modules/effect/command'
 import { Observability } from '../src/components/foundation/modules/observability/observability'
 
@@ -27,8 +27,8 @@ it('binds arbitrary context lazily and keeps concurrent handles independent', as
 		},
 		operations: ({ command }) => ({
 			add: command({
-				input: z.number(),
-				result: z.number(),
+				input: k.number(),
+				result: k.number(),
 				classification: 'business',
 				permission: 'add',
 				audit: (_resolution, ctx) => ({
@@ -65,8 +65,8 @@ it('composes independently bound nested commands without running an inner Effect
 		context: (label: string) => ({ label }),
 		operations: ({ command }) => ({
 			label: command({
-				input: z.number(),
-				result: z.string(),
+				input: k.number(),
+				result: k.string(),
 				classification: 'business',
 				audit: () => null,
 				handler: (input, ctx) => {
@@ -80,8 +80,8 @@ it('composes independently bound nested commands without running an inner Effect
 		context: (context: { nested: ReturnType<typeof inner.withContext>; offset: number }) => context,
 		operations: ({ command }) => ({
 			run: command({
-				input: z.number(),
-				result: z.string(),
+				input: k.number(),
+				result: k.string(),
 				classification: 'business',
 				audit: () => null,
 				handler: (input, ctx) => ctx.nested.exec('label', input + ctx.offset),

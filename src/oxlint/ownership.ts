@@ -11,6 +11,7 @@ import {
 	consumerOptions,
 	appFile,
 	imported,
+	kFactory,
 	sourceVisitors,
 	isFunctionsImport,
 	typeOnlySource,
@@ -34,7 +35,7 @@ export const ownershipRules = {
 			structure: '{{file}}: {{message}}',
 		}),
 		create(context) {
-			const settings = consumerOptions.parse(context.options[0] ?? {})
+			const settings = consumerOptions['~parseStrict'](context.options[0] ?? {})
 			const root = resolve(context.cwd, settings.convexDir)
 			if (
 				(existsSync(context.filename)
@@ -200,8 +201,7 @@ export const ownershipRules = {
 				CallExpression(node) {
 					sources.CallExpression?.(node)
 					if (isDbAccess(node) || isExternalCall(context, node)) flag(node)
-					const ref = imported(context, node.callee)
-					if (ref && ['zod', 'zod/v4'].includes(ref.source)) flag(node)
+					if (kFactory(context, node)) flag(node)
 				},
 				MemberExpression(node) {
 					const path = memberPath(node)
@@ -280,7 +280,7 @@ export const ownershipRules = {
 				const path = target && appFile(context, target)
 				if (
 					assembly &&
-					source !== 'cvx-kit/zod-table' &&
+					source !== 'cvx-kit/table' &&
 					!/^domain\/[^/]+\/table(?:\.[cm]?[jt]s)?$/.test(path ?? '')
 				)
 					flag(node)
@@ -292,9 +292,12 @@ export const ownershipRules = {
 					![
 						'zod',
 						'zod/v4',
+						'zod/mini',
+						'zod/v4-mini',
 						'convex/values',
 						'cvx-kit',
-						'cvx-kit/zod-table',
+						'cvx-kit/k',
+						'cvx-kit/table',
 						'cvx-kit/errors',
 						'cvx-kit/contracts',
 					].includes(source)
@@ -328,8 +331,8 @@ export const ownershipRules = {
 					if (assembly) {
 						const ref = imported(context, node.callee)
 						const assemblyCall =
-							(ref?.source === 'cvx-kit/zod-table' && ref.name === 'createModule') ||
-							(ref?.source === 'cvx-kit/zod-table' && ref.name === 'namespaceIndex')
+							(ref?.source === 'cvx-kit/table' && ref.name === 'createModule') ||
+							(ref?.source === 'cvx-kit/table' && ref.name === 'namespaceIndex')
 						if (!assemblyCall) flag(node)
 					}
 					const method = node.callee.type === 'MemberExpression' ? propertyName(node.callee) : null

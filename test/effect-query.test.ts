@@ -1,10 +1,10 @@
 import { Context, Effect, Exit, Schema, SchemaGetter } from 'effect'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
+import { kContract } from '../src/contracts'
 import { createEffectQuery } from '../src/modules/effect/query'
 import { effectOperationFactory } from '../src/modules/effect/operation'
 import { ContractValidationError, effectSchema } from '../src/effect'
-import { zodContract } from '../src/contracts'
 
 describe('Effect query registries', () => {
 	it('provisions codec services lazily and blocks policy on invalid async input', async () => {
@@ -31,13 +31,13 @@ describe('Effect query registries', () => {
 			operations: ({ query }) => ({
 				read: query({
 					input,
-					result: z.number(),
+					result: k.number(),
 					permission: 'read',
 					handler: (value) => value.length,
 				}),
 				invalid: query({
-					input: zodContract(z.string().refine(async () => false)),
-					result: z.string(),
+					input: kContract(k.string().refine(() => false)),
+					result: k.string(),
 					permission: 'read',
 					handler: (value) => value,
 				}),
@@ -77,13 +77,11 @@ describe('Effect query registries', () => {
 			},
 			operations: ({ query }) => ({
 				read: query({
-					input: z.string().transform(async (value) => {
-						await Promise.resolve()
+					input: k.string().transform((value) => {
 						calls.push('input')
 						return value.trim()
 					}),
-					result: z.number().transform(async (value) => {
-						await Promise.resolve()
+					result: k.number().transform((value) => {
 						calls.push('result')
 						return String(value)
 					}),
@@ -116,21 +114,21 @@ describe('Effect query registries', () => {
 			},
 			operations: ({ query }) => ({
 				ordinary: query({
-					input: z.string(),
-					result: z.number(),
+					input: k.string(),
+					result: k.number(),
 					handler: async (input) => input.length,
 				}),
 				generated: query({
-					input: z.string().transform((input) => input.length),
-					result: z.number().transform(String),
+					input: k.string().transform((input) => input.length),
+					result: k.number().transform(String),
 					handler: (input) =>
 						Effect.gen(function* () {
 							return yield* Effect.succeed(input + 1)
 						}),
 				}),
 				named: query({
-					input: z.number(),
-					result: z.number(),
+					input: k.number(),
+					result: k.number(),
 					handler: Effect.fn('query.named')(function* (input: number) {
 						return yield* Effect.succeed(input + 1)
 					}),
@@ -151,8 +149,8 @@ describe('Effect query registries', () => {
 			context: (host: { actorId: string }) => host,
 			operations: () => ({
 				read: enriched.query({
-					input: z.string(),
-					result: z.number().transform((output) => {
+					input: k.string(),
+					result: k.number().transform((output) => {
 						calls.push('parse')
 						return String(output)
 					}),
@@ -177,14 +175,14 @@ describe('Effect query registries', () => {
 			context: (host: {}) => host,
 			operations: ({ query }) => ({
 				read: query({
-					input: z.object({}),
-					result: z.number(),
+					input: k.object({}),
+					result: k.number(),
 					handler: () => ++runs,
 					middleware: ({ next }) => next(),
 				}),
 				invalid: query({
-					input: z.object({}),
-					result: z.number(),
+					input: k.object({}),
+					result: k.number(),
 					handler: () => 1,
 					middleware: ({ next }) => next().pipe(Effect.flatMap(() => next())),
 				}),
@@ -200,8 +198,8 @@ describe('Effect query registries', () => {
 			context: async (host: { actorId: string }) => ({ actorId: host.actorId }),
 			operations: ({ query }) => ({
 				read: query({
-					input: z.object({}),
-					result: z.string(),
+					input: k.object({}),
+					result: k.string(),
 					handler: (_input, context) => Effect.succeed(context.actorId),
 				}),
 			}),
@@ -222,8 +220,8 @@ describe('Effect query registries', () => {
 			},
 			operations: ({ query }) => ({
 				read: query({
-					input: z.object({}),
-					result: z.number(),
+					input: k.object({}),
+					result: k.number(),
 					permission: 'read',
 					handler: () => 1,
 					middleware: () => {
@@ -252,12 +250,12 @@ describe('Effect query registries', () => {
 			},
 			operations: ({ query }) => ({
 				denied: query({
-					input: z.object({}),
-					result: z.number(),
+					input: k.object({}),
+					result: k.number(),
 					permission: 'read',
 					handler: () => 1,
 				}),
-				read: query({ input: z.object({}), result: z.number(), handler: () => 1 }),
+				read: query({ input: k.object({}), result: k.number(), handler: () => 1 }),
 			}),
 		})
 		await expect(Effect.runPromise(query.exec('denied', {}, {}))).rejects.toThrow(/permission/i)
@@ -279,8 +277,8 @@ describe('Effect query registries', () => {
 			},
 			operations: ({ query }) => ({
 				read: query({
-					input: z.object({}),
-					result: z.number().transform((output) => {
+					input: k.object({}),
+					result: k.number().transform((output) => {
 						calls.push('parse')
 						return String(output)
 					}),
@@ -309,13 +307,13 @@ describe('Effect query registries', () => {
 			},
 			operations: ({ query }) => ({
 				expected: query({
-					input: z.object({}),
-					result: z.number(),
+					input: k.object({}),
+					result: k.number(),
 					handler: () => Effect.fail(expected),
 				}),
 				defect: query({
-					input: z.object({}),
-					result: z.number(),
+					input: k.object({}),
+					result: k.number(),
 					handler: () => {
 						throw expected
 					},
@@ -333,8 +331,8 @@ it('binds query context while retaining explicit execution', async () => {
 		context: (prefix: string) => ({ prefix }),
 		operations: ({ query }) => ({
 			read: query({
-				input: z.number(),
-				result: z.string(),
+				input: k.number(),
+				result: k.string(),
 				handler: (value, ctx) => `${ctx.prefix}:${value}`,
 			}),
 		}),

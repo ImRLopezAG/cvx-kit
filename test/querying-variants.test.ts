@@ -7,10 +7,9 @@ import {
 } from './fixture-querying/variants'
 import { cursor, managed, observed } from './fixture-querying/scalar'
 import { getRelationMetadata, verifyRelations } from '../src/relations'
-import { z } from 'zod'
-import { zid } from 'convex-helpers/server/zod4'
+import { k } from '../src/k'
 import { defineRelations } from '../src/relations-public'
-import { zodTable, zodVariantTable } from '../src/zod-table'
+import { kTable, kVariantTable } from '../src/table'
 import { defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
 import { defineTestApp } from 'convex-test'
 import { createQueryEngine } from '../src/querying'
@@ -57,11 +56,11 @@ test('ordinary tables preserve variant and variants relation names', () => {
 })
 
 test('empty-string branch public pagination and engine filters agree', async () => {
-	const records = zodVariantTable(
+	const records = kVariantTable(
 		'records',
-		z.discriminatedUnion('type', [
-			z.strictObject({ type: z.literal(''), onlyEmpty: z.number() }),
-			z.strictObject({ type: z.literal('other'), onlyOther: z.number() }),
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal(''), onlyEmpty: k.number() }),
+			k.object({ type: k.literal('other'), onlyOther: k.number() }),
 		]),
 		{
 			discriminator: 'type',
@@ -102,23 +101,23 @@ test('empty-string branch public pagination and engine filters agree', async () 
 })
 
 test('branch reference keys distinguish NUL characters in table and tag', () => {
-	const first = zodVariantTable(
+	const first = kVariantTable(
 		'scope',
-		z.discriminatedUnion('type', [
-			z.strictObject({ type: z.literal('\0branch'), token: z.string() }),
-			z.strictObject({ type: z.literal('other'), token: z.string() }),
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal('\0branch'), token: k.string() }),
+			k.object({ type: k.literal('other'), token: k.string() }),
 		]),
 		{ discriminator: 'type', variants: { '\0branch': {}, other: {} } },
 	)
-	const second = zodVariantTable(
+	const second = kVariantTable(
 		'scope\0',
-		z.discriminatedUnion('type', [
-			z.strictObject({ type: z.literal('branch'), token: z.string() }),
-			z.strictObject({ type: z.literal('other'), token: z.string() }),
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal('branch'), token: k.string() }),
+			k.object({ type: k.literal('other'), token: k.string() }),
 		]),
 		{ discriminator: 'type', variants: { branch: {}, other: {} } },
 	)
-	const target = zodTable('target', () => ({ token: z.string() }))
+	const target = kTable('target', { token: k.string() })
 	target.table.index('by_token', ['token'])
 	const relations = defineRelations({ scope: first, 'scope\0': second, target }, (r, branch) => ({
 		scope: {
@@ -516,6 +515,29 @@ test('wrong-table ledger reference normalizes before fetching any target', async
 	})
 })
 
+test('invalid filters fail before reading a malformed child, which stops relation output at its first row', async () => {
+	const f = variantFixture()
+	const rows = await seedVariants(f)
+	await f.t.run(async ({ db }) => {
+		const raw = corruptVariantRow(db, rows.payments[0]._id, { type: 'unknown' })
+		const { ctx, counts } = f.context(raw)
+		const query = f.querying(ctx).clients.with({ payments: true })
+		// SAFETY: an unrecognized input key deliberately exercises runtime validation.
+		const filters = { unknown: true } as never
+		await expect(query.paginate({ cursor: null, numItems: 1, filters })).rejects.toMatchObject({
+			data: {
+				code: 'VALIDATION',
+				issues: [{ code: 'unrecognized_key', path: ['filters', 'unknown'] }],
+			},
+		})
+		expect(counts).toEqual({ next: 0, returned: 0, ranges: 0, gets: 0, closes: 0 })
+		await expect(query.paginate({ cursor: null, numItems: 1 })).rejects.toThrow(
+			'Query execution failed',
+		)
+		expect(counts).toEqual({ next: 2, returned: 2, ranges: 2, gets: 0, closes: 2 })
+	})
+})
+
 test('unknown tag and invalid required branch row fail closed without private evidence', async () => {
 	const f = variantFixture(),
 		rows = await seedVariants(f)
@@ -547,17 +569,17 @@ test.each([
 	[
 		'Zod branch',
 		(f: ReturnType<typeof variantFixture>) =>
-			Reflect.set(f.payments.schema.options[0].shape, 'draftDate', z.string()),
+			Reflect.set(f.payments.schema.options[0].shape, 'draftDate', k.string()),
 	],
 	[
 		'discriminator',
 		(f: ReturnType<typeof variantFixture>) =>
-			Reflect.set(f.payments.schema.options[0].shape, 'type', z.literal('creditor_payment')),
+			Reflect.set(f.payments.schema.options[0].shape, 'type', k.literal('creditor_payment')),
 	],
 	[
 		'public DTO',
 		(f: ReturnType<typeof variantFixture>) =>
-			Reflect.set(f.payments.publicDto.options[0].shape, 'external', z.unknown()),
+			Reflect.set(f.payments.publicDto.options[0].shape, 'external', k.any()),
 	],
 	[
 		'relation guard',
@@ -627,11 +649,11 @@ test('malicious branch scopes, wrong joins and incompatible common fields reject
 			},
 		})),
 	).toThrow()
-	const mixed = zodVariantTable(
+	const mixed = kVariantTable(
 		'mixed',
-		z.discriminatedUnion('type', [
-			z.strictObject({ type: z.literal('a'), ref: zid('clients') }),
-			z.strictObject({ type: z.literal('b'), ref: zid('creditors') }),
+		k.discriminatedUnion('type', [
+			k.object({ type: k.literal('a'), ref: k.id('clients') }),
+			k.object({ type: k.literal('b'), ref: k.id('creditors') }),
 		]),
 		{
 			discriminator: 'type',
@@ -778,16 +800,16 @@ test('attachment continuation rechecks revoked junction and target permissions',
 test.each([false, true])(
 	'generated variant contracts support scalar variants and single branch: %s',
 	async (single) => {
-		const a = z.strictObject({ type: z.literal('a'), variants: z.string(), value: z.number() })
-		const b = z.strictObject({ type: z.literal('b'), variants: z.string(), label: z.string() })
-		const records = zodVariantTable('records', z.discriminatedUnion('type', [a, b]), {
+		const a = k.object({ type: k.literal('a'), variants: k.string(), value: k.number() })
+		const b = k.object({ type: k.literal('b'), variants: k.string(), label: k.string() })
+		const records = kVariantTable('records', k.discriminatedUnion('type', [a, b]), {
 			discriminator: 'type',
 			variants: {
 				a: { publicFields: ['variants', 'value'] },
 				b: { publicFields: ['variants', 'label'] },
 			},
 		})
-		const singleRecords = zodVariantTable('records', z.discriminatedUnion('type', [a]), {
+		const singleRecords = kVariantTable('records', k.discriminatedUnion('type', [a]), {
 			discriminator: 'type',
 			variants: { a: { publicFields: ['variants', 'value'] } },
 		})

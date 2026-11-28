@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vite-plus/test'
 import { makeFunctionReference } from 'convex/server'
-import { z } from 'zod'
-import { zodContract } from '../src/contracts'
+import { k } from '../src/k'
+import { kContract } from '../src/contracts'
+
 import {
 	workflowBinding,
 	runWorkflowStep,
@@ -33,8 +34,8 @@ const metadata = {
 	contractVersion: '1',
 	bindingVersion: '1',
 }
-const args = zodContract(z.object({ value: z.number() }).strict())
-const result = zodContract(z.number())
+const args = kContract(k.object({ value: k.number() }))
+const result = kContract(k.number())
 const descriptor = () =>
 	workflowExecution({
 		...metadata,
@@ -76,14 +77,14 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 	})
 	it('keeps wire transforms inside executed native invocations, including journal replay', async () => {
 		let decoded = 0
-		const transformedArgs = zodContract(
-			z.object({ value: z.number() }).transform((value) => {
+		const transformedArgs = kContract(
+			k.object({ value: k.number() }).transform((value) => {
 				decoded++
 				return String(value.value)
 			}),
 		)
-		const transformedResult = zodContract(
-			z.number().transform((value) => {
+		const transformedResult = kContract(
+			k.number().transform((value) => {
 				decoded++
 				return String(value)
 			}),
@@ -204,8 +205,8 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 				return error === failure ? failure : undefined
 			},
 			result,
-			failure: zodContract(
-				z.object({ code: z.string(), details: z.object({ reason: z.string() }) }),
+			failure: kContract(
+				k.object({ code: k.string(), details: k.object({ reason: k.string() }).strip() }).strip(),
 			),
 		})
 		expect(await attempt(descriptor())).toEqual({ version: 1, kind: 'failed', error: failure })
@@ -219,7 +220,7 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 			},
 			terminal: () => undefined,
 			result,
-			failure: zodContract(z.string()),
+			failure: kContract(k.string()),
 		})
 		await expect(transient(descriptor())).rejects.toThrow('transient')
 	})
@@ -239,8 +240,8 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 				},
 				terminal: () => failure,
 				result,
-				failure: zodContract(
-					z.object({ code: z.string(), details: z.object({ reason: z.string() }) }),
+				failure: kContract(
+					k.object({ code: k.string(), details: k.object({ reason: k.string() }).strip() }).strip(),
 				),
 			}
 			const outcome =
@@ -264,11 +265,14 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 				},
 				terminal: () => ({ providerCode: 402, secret: 'private' }),
 				result,
-				failure: zodContract(
-					z.object({ providerCode: z.number() }).transform(() => {
-						decodes++
-						return { code: 'declined' as const, reason: 'limit' }
-					}),
+				failure: kContract(
+					k
+						.object({ providerCode: k.number() })
+						.strip()
+						.transform(() => {
+							decodes++
+							return { code: 'declined' as const, reason: 'limit' }
+						}),
 				),
 			}
 			const outcome =
@@ -293,8 +297,8 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 				},
 				terminal: () => 'declined',
 				result,
-				failure: zodContract(
-					z.string().transform(() => {
+				failure: kContract(
+					k.string().transform(() => {
 						decodes++
 						return new Date(0)
 					}),
@@ -391,8 +395,8 @@ describe('workflow transport and native dispatch (unit seams, not component acce
 		let lookups = 0
 		let allowed = true
 		const denied = { _tag: 'WorkflowAuthorityDenied' as const }
-		const replay = zodContract(
-			z.string().transform((wire) => {
+		const replay = kContract(
+			k.string().transform((wire) => {
 				decodes++
 				return Number(wire)
 			}),

@@ -15,7 +15,7 @@ writeFileSync(
 writeFileSync(join(root, 'backend/fake.ts'), 'export function Command() { return {} }')
 writeFileSync(
 	join(root, 'backend/domain/tasks/schema.ts'),
-	"import { zodTable } from 'cvx-kit'; export const tasks = zodTable({})",
+	"import { kTable } from 'cvx-kit'; export const tasks = kTable({})",
 )
 writeFileSync(
 	join(root, 'backend/domain/fake/schema.ts'),
@@ -24,7 +24,7 @@ writeFileSync(
 mkdirSync(join(root, 'backend/domain/aliases'), { recursive: true })
 writeFileSync(
 	join(root, 'backend/domain/aliases/schema.ts'),
-	"import * as kit from 'cvx-kit/zod-table'; const define = kit.zodTable; const table = define('tasks', () => ({})); export const tasks = table",
+	"import * as kit from 'cvx-kit/table'; const define = kit.kTable; const table = define('tasks', {}); export const tasks = table",
 )
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 RuleTester.describe = describe
@@ -34,12 +34,12 @@ const options = [{ convexDir: 'backend' }]
 tester.run('physical-reserved-domain-files', rules['reserved-domain-file-anatomy'], {
 	valid: [
 		...[
-			'{ queries: { get: { input: z.string(), result: z.string() } } }',
-			'() => ({ queries: { get: { input: z.string(), result: z.string() } } })',
+			'{ queries: { get: { input: k.string(), result: k.string() } } }',
+			'() => ({ queries: { get: { input: k.string(), result: k.string() } } })',
 		].map((declaration) => ({
 			filename: join(root, 'backend/domain/tasks/contracts.ts'),
 			options,
-			code: `import { defineDomainContract } from 'cvx-kit/contracts'; import { z } from 'zod'; export const contract = defineDomainContract(${declaration})`,
+			code: `import { defineDomainContract } from 'cvx-kit/contracts'; import { k } from 'cvx-kit'; export const contract = defineDomainContract(${declaration})`,
 		})),
 		{
 			filename: join(root, 'backend/domain/tasks/commands.ts'),
@@ -54,7 +54,7 @@ tester.run('physical-reserved-domain-files', rules['reserved-domain-file-anatomy
 		{
 			filename: join(root, 'backend/domain/tasks/contracts.ts'),
 			options,
-			code: "import { z } from 'zod'; export const contracts = { save: { input: z.string(), result: z.string(), classification: 'business' } }",
+			code: "import { k } from 'cvx-kit'; export const contracts = { save: { input: k.string(), result: k.string(), classification: 'business' } }",
 		},
 		{
 			filename: join(root, 'backend/domain/tasks/commands.ts'),
@@ -74,29 +74,29 @@ tester.run('physical-reserved-domain-files', rules['reserved-domain-file-anatomy
 		{
 			filename: join(root, 'backend/domain/tasks/table.ts'),
 			options,
-			code: "import { namespace } from 'cvx-kit/zod-table'; import { tasks } from './schema'; export const tables = namespace('Tasks', { tasks: tasks.table.index('by_id', ['id']) })",
+			code: "import { namespace } from 'cvx-kit/table'; import { tasks } from './schema'; export const tables = namespace('Tasks', { tasks: tasks.table.index('by_id', ['id']) })",
 		},
 		{
 			filename: join(root, 'backend/domain/tasks/table.ts'),
 			options,
-			code: "import * as kit from 'cvx-kit/zod-table'; import { tasks } from './schema'; export const tables = kit.namespace('Tasks', { tasks })",
+			code: "import * as kit from 'cvx-kit/table'; import { tasks } from './schema'; export const tables = kit.namespace('Tasks', { tasks })",
 		},
 		{
 			filename: join(root, 'backend/domain/tasks/table.ts'),
 			options,
-			code: "import { namespace } from 'cvx-kit/zod-table'; import { tasks } from './schema'; export const tables = namespace('sales', { sales_header: tasks.table.index('by_no', ['no']), sales_line: tasks.table }, { prefixed: true })",
+			code: "import { namespace } from 'cvx-kit/table'; import { tasks } from './schema'; export const tables = namespace('sales', { sales_header: tasks.table.index('by_no', ['no']), sales_line: tasks.table }, { prefixed: true })",
 		},
 		{
 			filename: join(root, 'backend/domain/table.ts'),
 			options,
-			code: "import { createModule, namespaceIndex } from 'cvx-kit/zod-table'; import { tables } from './tasks/table'; export const domainTables = createModule(tables); export const names = namespaceIndex(tables)",
+			code: "import { createModule, namespaceIndex } from 'cvx-kit/table'; import { tables } from './tasks/table'; export const domainTables = createModule(tables); export const names = namespaceIndex(tables)",
 		},
 	],
 	invalid: [
 		{
 			filename: join(root, 'backend/domain/tasks/table.ts'),
 			options,
-			code: "import { namespace } from 'cvx-kit/zod-table'; export const tables = namespace('Tasks', { foo: 1 })",
+			code: "import { namespace } from 'cvx-kit/table'; export const tables = namespace('Tasks', { foo: 1 })",
 			errors: [{ messageId: 'anatomy' }],
 		},
 		{

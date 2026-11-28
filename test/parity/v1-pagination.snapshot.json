@@ -1,0 +1,422 @@
+{
+	"contract": {
+		"describe": [
+			{
+				"field": "status",
+				"idTables": [],
+				"kind": "enum",
+				"members": [
+					{
+						"field": "status",
+						"idTables": [],
+						"kind": "enum",
+						"members": "$undefined",
+						"nullable": false,
+						"operators": ["eq", "in", "gt", "gte", "lt", "lte"],
+						"optional": false,
+						"values": ["open"]
+					},
+					{
+						"field": "status",
+						"idTables": [],
+						"kind": "enum",
+						"members": "$undefined",
+						"nullable": false,
+						"operators": ["eq", "in", "gt", "gte", "lt", "lte"],
+						"optional": false,
+						"values": ["done"]
+					}
+				],
+				"nullable": false,
+				"operators": ["eq", "in", "gt", "gte", "lt", "lte"],
+				"optional": false,
+				"values": ["open", "done"]
+			},
+			{
+				"field": "title",
+				"idTables": [],
+				"kind": "string",
+				"members": "$undefined",
+				"nullable": false,
+				"operators": ["eq", "in", "gt", "gte", "lt", "lte"],
+				"optional": false,
+				"values": "$undefined"
+			},
+			{
+				"field": "score",
+				"idTables": [],
+				"kind": "number",
+				"members": "$undefined",
+				"nullable": false,
+				"operators": ["eq", "in", "gt", "gte", "lt", "lte"],
+				"optional": false,
+				"values": "$undefined"
+			},
+			{
+				"field": "count",
+				"idTables": [],
+				"kind": "bigint",
+				"members": "$undefined",
+				"nullable": false,
+				"operators": ["eq", "in", "gt", "gte", "lt", "lte", "exists"],
+				"optional": true,
+				"values": "$undefined"
+			},
+			{
+				"field": "active",
+				"idTables": [],
+				"kind": "boolean",
+				"members": "$undefined",
+				"nullable": false,
+				"operators": ["eq", "in"],
+				"optional": false,
+				"values": "$undefined"
+			},
+			{
+				"field": "nullable",
+				"idTables": [],
+				"kind": "union",
+				"members": [
+					{
+						"field": "nullable",
+						"idTables": [],
+						"kind": "string",
+						"members": "$undefined",
+						"nullable": false,
+						"operators": ["eq", "in"],
+						"optional": false,
+						"values": "$undefined"
+					},
+					{
+						"field": "nullable",
+						"idTables": [],
+						"kind": "null",
+						"members": "$undefined",
+						"nullable": true,
+						"operators": ["eq", "in"],
+						"optional": false,
+						"values": "$undefined"
+					}
+				],
+				"nullable": true,
+				"operators": ["eq", "in"],
+				"optional": false,
+				"values": "$undefined"
+			},
+			{
+				"field": "reference",
+				"idTables": ["targets"],
+				"kind": "id",
+				"members": "$undefined",
+				"nullable": false,
+				"operators": ["eq", "in"],
+				"optional": false,
+				"values": "$undefined"
+			}
+		],
+		"native": {
+			"active": {
+				"json": {
+					"type": "boolean"
+				},
+				"optional": false
+			},
+			"count": {
+				"json": {
+					"type": "bigint"
+				},
+				"optional": true
+			},
+			"nullable": {
+				"json": {
+					"type": "union",
+					"value": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"optional": false
+			},
+			"reference": {
+				"json": {
+					"tableName": "targets",
+					"type": "id"
+				},
+				"optional": false
+			},
+			"score": {
+				"json": {
+					"type": "number"
+				},
+				"optional": false
+			},
+			"status": {
+				"json": {
+					"type": "union",
+					"value": [
+						{
+							"type": "literal",
+							"value": "open"
+						},
+						{
+							"type": "literal",
+							"value": "done"
+						}
+					]
+				},
+				"optional": false
+			},
+			"title": {
+				"json": {
+					"type": "string"
+				},
+				"optional": false
+			}
+		},
+		"registered": {
+			"args": {
+				"bytes": 826606,
+				"sha256": "919fc1b36b334edb6072ddd0f7875731ed522598fba3eaa6e782387396da7551"
+			},
+			"returns": null
+		},
+		"schema": {
+			"bytes": 826538,
+			"sha256": "111aa2a2beb4c1febc733f295dece45ec45bc0addc6bd35e77599542c4b682cd"
+		}
+	},
+	"cursors": {
+		"cc": "cc.1.current.e678f16d70f90f56ddaf08ec94cc1b76ade0a7c027c2050afa1b07a13eafe7",
+		"pc": "pc.1.current.9586b6a86e4203d332c006d9c9e7db84804017f5b600b138f20739361e3c4f389556ed1367fbac6ccc63e43d",
+		"scoped": "cc.1.current.495e63ea5794ccd494b167afddf64aa16439dcdaa5e9f2e156a01ac30f64ad7d2dc29a39e54f3a63590ac6a2358901dc44a673463ee697cf5219d54da8b0ddf96ccba396025667bd4b7aa6c99b5d4683c6041ab9f1ab7e035db00ec492f56ad587d361"
+	},
+	"paginated": {
+		"args": {
+			"args": {
+				"type": "object",
+				"value": {
+					"paginationOpts": {
+						"fieldType": {
+							"type": "object",
+							"value": {
+								"cursor": {
+									"fieldType": {
+										"type": "union",
+										"value": [
+											{
+												"type": "string"
+											},
+											{
+												"type": "null"
+											}
+										]
+									},
+									"optional": false
+								},
+								"endCursor": {
+									"fieldType": {
+										"type": "union",
+										"value": [
+											{
+												"type": "string"
+											},
+											{
+												"type": "null"
+											}
+										]
+									},
+									"optional": true
+								},
+								"id": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": true
+								},
+								"maximumBytesRead": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": true
+								},
+								"maximumRowsRead": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": true
+								},
+								"numItems": {
+									"fieldType": {
+										"type": "number"
+									},
+									"optional": false
+								}
+							}
+						},
+						"optional": false
+					}
+				}
+			},
+			"returns": null
+		},
+		"result": {
+			"type": "object",
+			"value": {
+				"completeness": {
+					"fieldType": {
+						"type": "union",
+						"value": [
+							{
+								"type": "literal",
+								"value": "complete"
+							},
+							{
+								"type": "literal",
+								"value": "row-budget"
+							},
+							{
+								"type": "literal",
+								"value": "byte-budget"
+							},
+							{
+								"type": "literal",
+								"value": "native-limit"
+							},
+							{
+								"type": "literal",
+								"value": "result-cap"
+							}
+						]
+					},
+					"optional": true
+				},
+				"continueCursor": {
+					"fieldType": {
+						"type": "string"
+					},
+					"optional": false
+				},
+				"isDone": {
+					"fieldType": {
+						"type": "boolean"
+					},
+					"optional": false
+				},
+				"page": {
+					"fieldType": {
+						"type": "array",
+						"value": {
+							"type": "object",
+							"value": {
+								"title": {
+									"fieldType": {
+										"type": "string"
+									},
+									"optional": false
+								}
+							}
+						}
+					},
+					"optional": false
+				},
+				"pageStatus": {
+					"fieldType": {
+						"type": "union",
+						"value": [
+							{
+								"type": "union",
+								"value": [
+									{
+										"type": "literal",
+										"value": "SplitRecommended"
+									},
+									{
+										"type": "literal",
+										"value": "SplitRequired"
+									}
+								]
+							},
+							{
+								"type": "null"
+							}
+						]
+					},
+					"optional": true
+				},
+				"paginationMode": {
+					"fieldType": {
+						"type": "literal",
+						"value": "native-search"
+					},
+					"optional": true
+				},
+				"splitCursor": {
+					"fieldType": {
+						"type": "union",
+						"value": [
+							{
+								"type": "string"
+							},
+							{
+								"type": "null"
+							}
+						]
+					},
+					"optional": true
+				}
+			}
+		}
+	},
+	"paginationOpts": {
+		"members": {
+			"registered": {
+				"args": {
+					"bytes": 473949,
+					"sha256": "f51bf3024e47c11c1fd5c56c97369ce2a3da039aa506ec2de89cb53fcbb1c9aa"
+				},
+				"returns": null
+			},
+			"validator": {
+				"bytes": 473949,
+				"sha256": "f51bf3024e47c11c1fd5c56c97369ce2a3da039aa506ec2de89cb53fcbb1c9aa"
+			}
+		},
+		"nested": {
+			"args": {
+				"bytes": 1131297,
+				"sha256": "38082b4f6c68b597317089ebb56f29584b4e5eda874d0f7b315331db5021baad"
+			},
+			"returns": null
+		},
+		"tasks": {
+			"registered": {
+				"args": {
+					"bytes": 1131221,
+					"sha256": "91c8fbed894a9e18ba889d79f026b756dfbd554e13a2061197f787ea7f4e1237"
+				},
+				"returns": null
+			},
+			"validator": {
+				"bytes": 1131221,
+				"sha256": "91c8fbed894a9e18ba889d79f026b756dfbd554e13a2061197f787ea7f4e1237"
+			}
+		},
+		"tasksCompact": {
+			"registered": {
+				"args": {
+					"bytes": 292799,
+					"sha256": "871b83c027dd9eadef97cf9ae18bae3bc9a23c52ae11a1acfa24792aac22092e"
+				},
+				"returns": null
+			},
+			"validator": {
+				"bytes": 1131221,
+				"sha256": "91c8fbed894a9e18ba889d79f026b756dfbd554e13a2061197f787ea7f4e1237"
+			}
+		}
+	}
+}

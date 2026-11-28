@@ -1,8 +1,11 @@
 import { Effect } from 'effect'
 import type { GenericId } from 'convex/values'
 import type { PaginationOptions, PaginationResult } from 'convex/server'
-import { z } from 'zod'
-import { paginated, zid } from '../../zod-table'
+import { k } from '../../k/index'
+import { KObject } from '../../k/object'
+import { KSchema } from '../../k/schema'
+import type { KType } from '../../k/types'
+import { paginated } from '../../table'
 import { defaultErrors } from '../../errors'
 import type { EffectFoundation, EffectFoundationOptions } from './foundation'
 // oxlint-disable-next-line cvx/component-boundaries -- SAFETY: Match the bound Foundation's concrete observability dependency without changing its lifecycle.
@@ -22,25 +25,33 @@ import {
 } from './operation'
 import type { ContractSchema, LegacyParser, StandardSchema } from '../contracts/contract'
 
-/** Table masks and branded IDs come from the same kit-owned table boundary. */
+/**
+ * Table masks and branded IDs come from the same kit-owned table boundary: a `kTable`, `createTable`
+ * or `tenantTable` result. Every mask is a strict `k` object, so unknown fields are rejected.
+ */
 export type EffectCrudTable = {
-	tableName: string
-	commandInput: z.ZodObject<Record<string, z.ZodType>>
-	storage: z.ZodObject<Record<string, z.ZodType>>
-	publicDto: z.ZodObject<Record<string, z.ZodType>>
-	tools: {
-		id: z.ZodObject<{ id: z.ZodType<GenericId<string>, string> }>
-		update: z.ZodObject<{
-			id: z.ZodType<GenericId<string>, string>
-			data: z.ZodObject<Record<string, z.ZodType>>
-		}>
+	readonly tableName: string
+	readonly commandInput: CrudSchema
+	readonly storage: CrudSchema
+	readonly publicDto: CrudSchema
+	readonly tools: {
+		readonly id: CrudSchema & { readonly _output: { readonly id: GenericId<string> } }
+		readonly update: CrudSchema & {
+			readonly _output: { readonly id: GenericId<string>; readonly data: object }
+		}
 	}
 }
-type Input<Table extends EffectCrudTable> = z.output<Table['commandInput']>
-type Storage<Table extends EffectCrudTable> = z.input<Table['storage']>
+/** A `k` schema seen as the contract it already is: a Standard Schema and a parser. */
+type CrudSchema = KType & StandardSchema<unknown, unknown> & LegacyParser
+/** Input (`k.input`) and output (`k.infer`) of one boundary schema. */
+type In<Schema extends CrudSchema> = Schema['validator']['type']
+type Input<Table extends EffectCrudTable> = Table['commandInput']['_output']
+type Storage<Table extends EffectCrudTable> = In<Table['storage']>
 type Id<Table extends EffectCrudTable> = GenericId<Table['tableName']>
-type Update<Table extends EffectCrudTable> = z.output<Table['tools']['update']>
-type IdInput<Table extends EffectCrudTable> = z.output<Table['tools']['id']>
+type Update<Table extends EffectCrudTable> = Table['tools']['update']['_output']
+type IdInput<Table extends EffectCrudTable> = Table['tools']['id']['_output']
+type PublicInput<Table extends EffectCrudTable> = In<Table['publicDto']>
+type PublicOutput<Table extends EffectCrudTable> = Table['publicDto']['_output']
 type IdContext<Table extends EffectCrudTable> = {
 	db: { normalizeId: (table: Table['tableName'], id: string) => Id<Table> | null }
 }
@@ -208,7 +219,7 @@ export function createEffectCrud<
 	Patch extends Supported<void> = never,
 	Get extends Supported<Storage<Table> | null> = never,
 	List extends Supported<EffectCrudPage<Storage<Table>>> = never,
-	Project extends Supported<z.input<Table['publicDto']>> = never,
+	Project extends Supported<PublicInput<Table>> = never,
 	Policy extends Supported<void> = never,
 	CreateGuard extends Supported<void> = never,
 	UpdateGuard extends Supported<void> = never,
@@ -248,7 +259,7 @@ export function createEffectCrud<
 		>,
 ) {
 	const { table } = config
-	if ('tenant' in table.storage.shape && !config.enrich) {
+	if (hasTenant(table.storage) && !config.enrich) {
 		return defaultErrors.throw({
 			code: 'CRUD_ENRICH_REQUIRED',
 			message: `Table "${table.tableName}" requires an enrich callback`,
@@ -260,27 +271,22 @@ export function createEffectCrud<
 	if (!Number.isSafeInteger(maximumRowsRead) || maximumRowsRead < 1)
 		throw Error('CRUD maximumRowsRead must be a positive safe integer')
 	const name: Table['tableName'] = table.tableName
-	const id = zid(name)
-	const commandInput: StandardSchema<z.input<Table['commandInput']>, Input<Table>> &
-		LegacyParser<Input<Table>> = crudSchema<Table['commandInput']>(table.commandInput)
-	const updateInput: StandardSchema<z.input<Table['tools']['update']>, Update<Table>> &
-		LegacyParser<Update<Table>> = crudSchema<Table['tools']['update']>(table.tools.update)
-	const idInput: StandardSchema<z.input<Table['tools']['id']>, IdInput<Table>> &
-		LegacyParser<IdInput<Table>> = crudSchema<Table['tools']['id']>(table.tools.id)
+	const commandInput = crudSchema<Table['commandInput']>(table.commandInput)
+	const updateInput = crudSchema<Table['tools']['update']>(table.tools.update)
+	const idInput = crudSchema<Table['tools']['id']>(table.tools.id)
 	const publicDto: Table['publicDto'] = table.publicDto
-	const createResult: StandardSchema<{ id: string }, { id: Id<Table> }> &
-		LegacyParser<{ id: Id<Table> }> = crudSchema(z.object({ id }).strict())
-	const okResult = z.object({ ok: z.literal(true) }).strict()
-	const pagination = z
-		.object({
-			numItems: z.number().int().min(1).max(config.read.maxPageSize),
-			cursor: z.string().nullable(),
-			endCursor: z.string().nullable().optional(),
-			id: z.number().optional(),
-			maximumRowsRead: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-			maximumBytesRead: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-		})
-		.strict()
+	const createResult: StandardSchema<{ id: Id<Table> }, { id: Id<Table> }> &
+		LegacyParser<{ id: Id<Table> }> = k.strictObject({ id: k.id(name) })
+	const okResult = k.strictObject({ ok: k.literal(true) })
+	const pagination = k.strictObject({
+		numItems: k.int().min(1).max(config.read.maxPageSize),
+		cursor: k.string().nullable(),
+		endCursor: k.string().nullable().optional(),
+		// Finite, as v1's Zod number required; native v.number() admits NaN and Infinity.
+		id: k.number().refine(Number.isFinite, 'Invalid input: expected a finite number').optional(),
+		maximumRowsRead: k.int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+		maximumBytesRead: k.int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
+	})
 	const pageResult = paginated(publicDto).result
 	const classification = config.classification ?? 'business'
 	const aggregate = (aggregateId: string) => ({ type: config.aggregateType, id: aggregateId })
@@ -479,11 +485,8 @@ export function createEffectCrud<
 				typeof config.foundation.Command<Resolve, typeof operations, Policy>
 			>[0],
 		)
-	const getResult: StandardSchema<
-		z.input<Table['publicDto']> | null,
-		z.output<Table['publicDto']> | null
-	> &
-		LegacyParser<z.output<Table['publicDto']> | null> = crudSchema(publicDto.nullable())
+	const getResult: StandardSchema<PublicInput<Table> | null, PublicOutput<Table> | null> &
+		LegacyParser<PublicOutput<Table> | null> = crudSchema(nullableOf(publicDto))
 	const get = (input: IdInput<Table>, context: Domain) =>
 		checkedId(context, input.id).pipe(
 			Effect.flatMap((documentId) =>
@@ -492,7 +495,7 @@ export function createEffectCrud<
 			Effect.flatMap((row) =>
 				row === null
 					? Effect.succeed(null)
-					: normalizeAs<z.input<Table['publicDto']>, Project>(() => config.read.project(row)),
+					: normalizeAs<PublicInput<Table>, Project>(() => config.read.project(row)),
 			),
 		)
 	const list = (input: EffectCrudPagination, context: Domain) =>
@@ -505,7 +508,7 @@ export function createEffectCrud<
 		).pipe(
 			Effect.flatMap((page) =>
 				Effect.forEach(page.page, (row) =>
-					normalizeAs<z.input<Table['publicDto']>, Project>(() => config.read.project(row)),
+					normalizeAs<PublicInput<Table>, Project>(() => config.read.project(row)),
 				).pipe(Effect.map((rows) => ({ ...page, page: rows }))),
 			),
 		)
@@ -597,14 +600,26 @@ function normalizeAs<Value, Returned extends Supported<Value>>(invoke: () => Ret
 		CallbackRequirements<Returned>
 	>
 }
-function crudSchema<Schema extends z.ZodType>(
+/**
+ * A boundary schema as an operation contract. A `k` schema is itself a Standard Schema and a parser;
+ * this only names its input and output types shallowly, so the registry never re-derives them.
+ */
+function crudSchema<Schema extends CrudSchema>(
 	schema: Schema,
-): StandardSchema<z.input<Schema>, z.output<Schema>> & LegacyParser<z.output<Schema>> {
-	return {
-		'~standard': schema['~standard'],
-		parse: (value) => schema.parse(value),
-		parseAsync: (value) => schema.parseAsync(value),
-	}
+): StandardSchema<In<Schema>, Schema['_output']> & LegacyParser<Schema['_output']> {
+	// SAFETY: a `k` schema's `~standard` validates input of its input-side validator's type to its
+	// `_output`, and `parse` returns that same output.
+	return schema as StandardSchema<In<Schema>, Schema['_output']> & LegacyParser<Schema['_output']>
+}
+
+function nullableOf(schema: CrudSchema): CrudSchema {
+	if (!(schema instanceof KSchema)) throw Error('CRUD table boundaries must be k schemas')
+	return schema.nullable()
+}
+
+/** Tenant-owned tables (`tenantTable`) carry a server-owned `tenant` storage field. */
+function hasTenant(storage: CrudSchema): boolean {
+	return storage instanceof KObject && Object.hasOwn(storage.shape, 'tenant')
 }
 
 function archivePatch<Table extends EffectCrudTable>(archivedAt: number): Partial<Storage<Table>> {

@@ -6,8 +6,8 @@ import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'
 import { createQueryEngine } from 'cvx-kit/querying'
 import { defineRelations } from 'cvx-kit/relations'
-import { zodTable } from 'cvx-kit/zod-table'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
+import { kTable } from 'cvx-kit/table'
 import schema from './convex/schema'
 import { tasks, labels, edges } from './convex/domain/tasks/schema'
 import { relations } from './convex/relations'
@@ -31,14 +31,22 @@ const equivalent = equivalentRegistry()
 assert.equal(equivalent.identity, relations.identity)
 // Cursor identity covers the tables and edges actually queried. Change the
 // root table's public projection, rather than an unused relation definition.
-const changedTasks = zodTable('tasks', (id) => ({
- ordinal: z.number(), tenant: z.string(), department: z.string(), status: z.string(),
- active: z.boolean(), priority: z.number(), authorized: z.boolean(), code: z.string(),
- reference: id('tasks').nullable().optional(), required: id('labels').optional(), secret: z.string(),
-}), { serverFields: ['tenant', 'authorized', 'secret'], publicFields: ['ordinal', 'code'] })
-// Keep the schema's exact native table owner while changing the public DTO fields.
-changedTasks.table = tasks.table
-const changed = defineRelations({ tasks: changedTasks, labels, edges }, (r) => ({ tasks: {
+const changedTasks = kTable('tasks', {
+ ordinal: k.number(), tenant: k.string(), department: k.string(), status: k.string(),
+ active: k.boolean(), priority: k.number(), authorized: k.boolean(), code: k.string(),
+ reference: k.id('tasks').nullable().optional(), required: k.id('labels').optional(), secret: k.string(),
+}, { serverFields: ['tenant', 'authorized', 'secret'], publicFields: ['ordinal', 'code'] })
+// Keep the schema's exact native table owner while changing the public DTO fields. v2 table
+// members are read-only accessors over private state, so a proxy answers `table` with the
+// schema's native table and binds every other member to the boundary.
+const sameNativeTasks = new Proxy(changedTasks, {
+ get: (target, key) => {
+  if (key === 'table') return tasks.table
+  const value = Reflect.get(target, key, target)
+  return typeof value === 'function' ? value.bind(target) : value
+ },
+})
+const changed = defineRelations({ tasks: sameNativeTasks, labels, edges }, (r) => ({ tasks: {
  labels: r.many.labels({ from: r.tasks._id.through(r.edges.task), to: r.labels._id.through(r.edges.label) }),
 }}))
 const eqEngine = createQueryEngine({ schema, relations: equivalent, cursor })

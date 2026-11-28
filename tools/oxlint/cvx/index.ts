@@ -41,6 +41,7 @@ export const rules: Record<RuleName, Rule> = {
 					if (
 						owner &&
 						packageName &&
+						specifier !== `${packageName}/k` &&
 						(specifier === packageName || specifier.startsWith(`${packageName}/`))
 					) {
 						context.report({ node, messageId: 'boundary' })
@@ -48,6 +49,7 @@ export const rules: Record<RuleName, Rule> = {
 					return
 				}
 				const target = resolve(dirname(context.filename), specifier)
+				if (owner && isKEntry(context.filename, target)) return
 				if (
 					owner &&
 					(relative(owner, target).startsWith(`..${sep}`) || target === dirname(owner))
@@ -179,7 +181,7 @@ export const rules: Record<RuleName, Rule> = {
 						(def) =>
 							def.type === 'ImportBinding' &&
 							def.parent?.type === 'ImportDeclaration' &&
-							['convex/server', 'cvx-kit', 'cvx-kit/zod-table'].includes(def.parent.source.value),
+							['convex/server', 'cvx-kit', 'cvx-kit/table'].includes(def.parent.source.value),
 					)
 					if (!definition) return
 					const builder =
@@ -193,7 +195,7 @@ export const rules: Record<RuleName, Rule> = {
 						context.report({ node, messageId: 'schema', data: { builder, file: 'schema.ts' } })
 					} else if (
 						(builder === 'defineTable' && !['schema.ts', 'table.ts'].includes(file)) ||
-						(['zodTable', 'tenantTable', 'zodVariantTable'].includes(builder ?? '') &&
+						(['kTable', 'tenantTable', 'kVariantTable'].includes(builder ?? '') &&
 							!['schema.ts', 'table.ts'].includes(file))
 					) {
 						context.report({
@@ -317,6 +319,18 @@ function componentRoot(filename: string) {
 		.join('/')
 		.match(/^(.*\/src\/components\/[^/]+)(?:\/|$)/)
 	return findComponentRoot(filename) ?? (match ? resolve(match[1]) : null)
+}
+
+/** The kit's own `src/k` entry (src/k.ts or src/k/index.ts): the one kit module a shipped component may import. */
+function isKEntry(filename: string, target: string) {
+	const match = filename
+		.split(sep)
+		.join('/')
+		.match(/^(.*\/src)\/components\//)
+	if (!match) return false
+	const entry = resolve(match[1], 'k')
+	const base = target.replace(/\.[cm]?[jt]s$/, '')
+	return base === entry || base === resolve(entry, 'index')
 }
 
 function staticString(node: ESTree.Node | null | undefined) {

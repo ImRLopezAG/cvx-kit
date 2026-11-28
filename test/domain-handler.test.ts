@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation } from '../src/effect'
@@ -13,19 +13,19 @@ it.each(['promise', 'effect'] as const)(
 		const contract = defineDomainContract({
 			commands: {
 				'notifications.markRead': {
-					input: z.string().transform(Number).pipe(z.number()),
-					result: z.number().transform((n) => ({ n })),
+					input: k.string().transform(Number).pipe(k.number().refine((n) => !Number.isNaN(n), 'not a number')),
+					result: k.number().transform((n) => ({ n })),
 					classification: 'business',
 				},
 				close: {
-					input: z.object({ id: z.string() }),
-					result: z.boolean(),
+					input: k.object({ id: k.string() }),
+					result: k.boolean(),
 					classification: 'business',
 				},
 			},
 			queries: {
-				get: { input: z.number(), result: z.string() },
-				handler: { input: z.boolean(), result: z.boolean() },
+				get: { input: k.number(), result: k.string() },
+				handler: { input: k.boolean(), result: k.boolean() },
 			},
 		})
 		const options = {
@@ -137,7 +137,7 @@ it.each(['promise', 'effect'] as const)(
 					contract,
 					context,
 					operations: ({ query }) => ({
-						get: query.handler(() => '3', { input: z.string() } as never),
+						get: query.handler(() => '3', { input: k.string() } as never),
 						handler: query.handler((input) => input),
 					}),
 				}),

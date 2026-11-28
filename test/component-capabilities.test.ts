@@ -14,36 +14,27 @@ import {
 	type GenericDatabaseReader,
 } from 'convex/server'
 import { NoOp } from 'convex-helpers/server/customFunctions'
-import { zCustomMutation, zCustomQuery } from 'convex-helpers/server/zod4'
 import { Effect } from 'effect'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
-import { tenantTable, zodTable, paginated } from '../src/zod-table'
-import { defineRelations } from '../src/relations-public'
+import { defineRelations, withFieldGroups } from '../src/relations-public'
+import { k } from '../src/k'
+import { kCustomMutation, kCustomQuery } from '../src/registration'
+import { kTable, paginated, tenantTable } from '../src/table'
 import { createQueryEngine } from '../src/querying'
 import { createInclude } from '../src/auth'
 import { createTenantRules, wrapDatabaseReader, wrapDatabaseWriter } from '../src/tenancy'
 import { createTriggers, timestamps, tenantOwnership, triggerContext } from '../src/triggers'
-import { createEffectFoundation, effectZodApiBuilder } from '../src/effect'
+import { createEffectFoundation, effectApiBuilder } from '../src/effect'
 import { createEffectCrud, type EffectCrudPagination } from '../src/effect'
 import { defineErrorContract, decodeFailure } from '../src/errors'
 
 // Only component-local IDs are branded; host references are opaque strings.
 const notes = tenantTable(
 	'notes',
-	(id) => ({
-		text: z.string(),
-		secret: z.string(),
-		parent: id('notes').nullable(),
-		hostRun: z.string(),
-	}),
+	{ text: k.string(), secret: k.string(), parent: k.id('notes').nullable(), hostRun: k.string() },
 	{ commandFields: ['text'], publicFields: ['text'] },
 )
-const audits = zodTable('audits', () => ({
-	actor: z.string(),
-	tenant: z.string(),
-	operation: z.string(),
-}))
+const audits = kTable('audits', { actor: k.string(), tenant: k.string(), operation: k.string() })
 const schema = defineSchema({
 	notes: notes.table.index('by_tenant', ['tenant']),
 	audits: audits.table,
@@ -53,11 +44,11 @@ type MC = GenericMutationCtx<DM>
 type QC = GenericQueryCtx<DM>
 const mutation: MutationBuilder<DM, 'public'> = mutationGeneric
 const query: QueryBuilder<DM, 'public'> = queryGeneric
-const scopeSchema = z.object({ actor: z.string(), tenant: z.string() })
-type Scope = z.output<typeof scopeSchema>
+const scopeSchema = k.object({ actor: k.string(), tenant: k.string() })
+type Scope = k.infer<typeof scopeSchema>
 type Host = Scope & { db: GenericDatabaseReader<DM>; writer?: MC['db']; failAudit?: boolean }
-type Row = z.input<typeof notes.storage>
-type NoteId = z.output<typeof notes.tools.id>['id']
+type Row = k.input<typeof notes.storage>
+type NoteId = k.infer<typeof notes.tools.id>['id']
 function requireWriter(ctx: Host) {
 	if (!ctx.writer) throw Error('Mutation context required')
 	return ctx.writer
@@ -69,12 +60,12 @@ const hostErrors = defineErrorContract({
 const triggers = createTriggers<DM>()
 timestamps(triggers, 'notes', 'audits')
 tenantOwnership(triggers, 'notes')
-const componentMutation = effectZodApiBuilder(zCustomMutation(mutation, triggerContext(triggers)), {
+const componentMutation = effectApiBuilder(kCustomMutation(mutation, triggerContext(triggers)), {
 	errors,
 })
-const componentQuery = effectZodApiBuilder(zCustomQuery(query, NoOp), { errors })
+const componentQuery = effectApiBuilder(kCustomQuery(query, NoOp), { errors })
 const relations = defineRelations(
-	{ audits, notes: { ...notes, fieldGroups: { private: ['secret'] as const } } },
+	{ audits, notes: withFieldGroups(notes, { private: ['secret'] as const }) },
 	(r) => ({
 		notes: { parentNote: r.one.notes({ from: r.notes.parent, to: r.notes._id }) },
 	}),
@@ -137,8 +128,8 @@ const crud = createEffectCrud({
 	},
 })
 const create = componentMutation({
-	args: { scope: scopeSchema, text: z.string(), failAudit: z.boolean().optional() },
-	returns: z.object({ id: notes.schema.shape._id }),
+	args: { scope: scopeSchema, text: k.string(), failAudit: k.boolean().optional() },
+	returns: k.object({ id: notes.schema.shape._id }),
 	handler: (ctx, args) =>
 		crud.commands.exec(
 			'notes.create',
@@ -191,15 +182,17 @@ function createComponentQuerying(ctx: QC, scope: Scope, key: number[]) {
 	return engine(reader)
 }
 const pageArgs = relations.tables.notes.paginationOpts({ text: true })
+const listDto = relations.tables.notes.pageDto({ parentNote: true })
+const privateDto = relations.tables.notes.pageDto({}, { fieldGroups: { private: 'required' } })
 const list = componentQuery({
-	args: { scope: scopeSchema, key: z.array(z.number()), page: pageArgs },
-	returns: relations.tables.notes.pageDto({ parentNote: true }),
+	args: { scope: scopeSchema, key: k.array(k.number()), page: pageArgs },
+	returns: listDto,
 	handler: (ctx, { scope, key, page }) =>
 		createComponentQuerying(ctx, scope, key).notes.with({ parentNote: true }).paginate(page),
 })
 const privateList = componentQuery({
-	args: { scope: scopeSchema, key: z.array(z.number()) },
-	returns: relations.tables.notes.pageDto({}, { fieldGroups: { private: 'required' } }),
+	args: { scope: scopeSchema, key: k.array(k.number()) },
+	returns: privateDto,
 	handler: (ctx, { scope, key }) =>
 		createComponentQuerying(ctx, scope, key)
 			.notes.include({ private: 'required' })
@@ -208,8 +201,8 @@ const privateList = componentQuery({
 const include = createInclude({ maxRows: 10 })
 const nativePage = paginated(notes.publicDto)
 const bounded = componentQuery({
-	args: { scope: scopeSchema, limit: z.number() },
-	returns: z.array(notes.publicDto),
+	args: { scope: scopeSchema, limit: k.number() },
+	returns: k.array(notes.publicDto),
 	handler: (ctx, { scope, limit }) =>
 		include(
 			wrapDatabaseReader({}, ctx.db, createTenantRules<DM>(scope.tenant, ['notes']), {
@@ -232,8 +225,8 @@ const native = componentQuery({
 			.paginate(paginationOpts, (rows) => rows.map((row) => notes.toPublicDto(row))),
 })
 const reassign = componentMutation({
-	args: { scope: scopeSchema, id: notes.schema.shape._id, tenant: z.string() },
-	returns: z.null(),
+	args: { scope: scopeSchema, id: notes.schema.shape._id, tenant: k.string() },
+	returns: k.null(),
 	handler: async (ctx, { scope, id, tenant }) => {
 		await requireWriter(writer(ctx, scope)).patch(id, { tenant })
 		return null
@@ -241,20 +234,20 @@ const reassign = componentMutation({
 })
 const fail = componentQuery({
 	args: {},
-	returns: z.null(),
+	returns: k.null(),
 	handler: () => Effect.fail(errors.create('DENIED', {})),
 })
 const unknown = componentQuery({
 	args: {},
-	returns: z.null(),
+	returns: k.null(),
 	handler: () => {
 		throw Error('private provider details')
 	},
 })
 // Test-only probes are registered below, never exported in a production module.
 const seed = componentMutation({
-	args: { rows: z.array(notes.insertSchema.extend({ tenant: z.string() })) },
-	returns: z.array(notes.schema.shape._id),
+	args: { rows: k.array(notes.insertSchema.extend({ tenant: k.string() })) },
+	returns: k.array(notes.schema.shape._id),
 	handler: async (ctx, { rows }) => {
 		const ids = []
 		for (const row of rows) ids.push(await ctx.db.insert('notes', row))
@@ -263,7 +256,7 @@ const seed = componentMutation({
 })
 const evidence = componentQuery({
 	args: {},
-	returns: z.array(audits.schema),
+	returns: k.array(audits.schema),
 	handler: (ctx) => ctx.db.query('audits').take(10),
 })
 // The same typed child references Convex generates for the parent component.
@@ -272,7 +265,7 @@ const evidence = componentQuery({
 const child = componentsGeneric().workflow as unknown as ReturnType<typeof workflowTest.register>
 const childPage = componentQuery({
 	args: {},
-	returns: z.number(),
+	returns: k.number(),
 	handler: async (ctx) =>
 		(
 			await ctx.runQuery(child.workflow.list, {
@@ -321,14 +314,14 @@ function setup() {
 		'./functions.ts': async () => functions,
 	})
 	const client = createClient(component)
-	const hostMutation = effectZodApiBuilder(zCustomMutation(mutationGeneric, NoOp), {
+	const hostMutation = effectApiBuilder(kCustomMutation(mutationGeneric, NoOp), {
 		errors: hostErrors,
 	})
-	const hostQuery = effectZodApiBuilder(zCustomQuery(queryGeneric, NoOp), { errors: hostErrors })
+	const hostQuery = effectApiBuilder(kCustomQuery(queryGeneric, NoOp), { errors: hostErrors })
 	const host = {
 		create: hostMutation({
-			args: { text: z.string() },
-			returns: z.object({ id: z.string() }),
+			args: { text: k.string() },
+			returns: k.object({ id: k.string() }),
 			handler: async (ctx, { text }) => {
 				const identity = await ctx.auth.getUserIdentity()
 				if (!identity) throw hostErrors.create('OMNI_DENIED', {})
@@ -338,8 +331,8 @@ function setup() {
 			},
 		}),
 		fail: hostQuery({
-			args: { privateFailure: z.boolean() },
-			returns: z.null(),
+			args: { privateFailure: k.boolean() },
+			returns: k.null(),
 			handler: (ctx, { privateFailure }) => client.fail(ctx, privateFailure),
 		}),
 	}

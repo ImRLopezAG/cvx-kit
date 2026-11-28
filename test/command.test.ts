@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 
 import { Foundation, type AuditEntryInput } from '../src/components/foundation/client'
 
@@ -35,8 +35,8 @@ function harness() {
 	const { Command, events, auditEntries } = foundationHarness()
 	const operations = {
 		'documents.rename': Command.operation({
-			command: z.object({ id: z.string(), title: z.string() }).strict(),
-			result: z.object({ ok: z.literal(true) }).strict(),
+			command: k.object({ id: k.string(), title: k.string() }),
+			result: k.object({ ok: k.literal(true) }),
 			classification: 'business',
 			audit: () => ({
 				operation: 'documents.rename',
@@ -55,13 +55,13 @@ describe('Foundation Command protocol', () => {
 		let parses = 0
 		const operations = {
 			measure: Command.withContext<Context>().operation({
-				command: z.object({
-					title: z.string().transform((value) => {
+				command: k.object({
+					title: k.string().transform((value) => {
 						parses++
 						return value.length
 					}),
 				}),
-				result: z.number(),
+				result: k.number(),
 				classification: 'business',
 				guard: (_ctx, command) => {
 					expect(command.title).toBe(5)
@@ -84,16 +84,16 @@ describe('Foundation Command protocol', () => {
 		const typed = Command.withContext<Context>()
 		const first = {
 			save: typed.operation({
-				command: z.object({ title: z.string() }),
-				result: z.string(),
+				command: k.object({ title: k.string() }),
+				result: k.string(),
 				classification: 'business',
 				audit: () => null,
 			}),
 		}
 		const second = {
 			save: typed.operation({
-				command: z.object({ count: z.number() }),
-				result: z.number(),
+				command: k.object({ count: k.number() }),
+				result: k.number(),
 				classification: 'business',
 				audit: () => null,
 			}),
@@ -120,8 +120,8 @@ describe('Foundation Command protocol', () => {
 		const contexts: unknown[] = []
 		const operations = {
 			touch: Command.withContext<Context, { traceId: string }>().operation({
-				command: z.object({}),
-				result: z.string(),
+				command: k.object({}),
+				result: k.string(),
 				classification: 'business',
 				middleware: [
 					async ({ next }) => next({ context: { traceId: 'trace' } }),
@@ -160,8 +160,8 @@ describe('Foundation Command protocol', () => {
 		const { Command } = foundationHarness()
 		const operations = {
 			transform: Command.withContext<Context>().operation({
-				command: z.object({}),
-				result: z.string().transform((value) => `parsed:${value}`),
+				command: k.object({}),
+				result: k.string().transform((value) => `parsed:${value}`),
 				classification: 'business',
 				audit: () => null,
 				middleware: [async ({ next }) => `${await next()}:middleware`],
@@ -219,8 +219,8 @@ describe('Foundation Command protocol', () => {
 		const { Command, events, auditEntries } = foundationHarness()
 		const operations = {
 			'documents.read': Command.operation({
-				command: z.object({}).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({}),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'read',
 				audit: () => null,
 			}),
@@ -260,8 +260,8 @@ describe('Foundation Command guards and permissions', () => {
 		)
 		const operations = {
 			'documents.publish': Command.operation({
-				command: z.object({ state: z.string() }).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({ state: k.string() }),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'business',
 				permission: 'documents.manage',
 				guard: async (_ctx: Context, command: { state: string }) => {
@@ -354,8 +354,8 @@ describe('Foundation Command aggregate allowlist', () => {
 		)
 		const operations = {
 			'documents.archive': Command.operation({
-				command: z.object({ id: z.string() }).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({ id: k.string() }),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'business',
 				aggregates: ['document'],
 				audit: () => ({
@@ -426,8 +426,8 @@ describe('Foundation Command middleware', () => {
 		)
 		const operations = {
 			'documents.touch': Command.operation({
-				command: z.object({}).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({}),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'business',
 				middleware: [operationLayer],
 				guard: (ctx: { vendor?: string }) => {
@@ -466,8 +466,8 @@ describe('Foundation Command middleware', () => {
 		})
 		const operations = {
 			'documents.touch': Command.operation({
-				command: z.object({}).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({}),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'business',
 				middleware: [fabricate],
 				audit: () => null,
@@ -486,8 +486,8 @@ describe('Foundation Command middleware', () => {
 		const shortCircuit = Command.middleware(async () => ({ ok: true }))
 		const operations = {
 			'documents.touch': Command.operation({
-				command: z.object({}).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({}),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'business',
 				middleware: [shortCircuit],
 				guard: () => {
@@ -516,8 +516,8 @@ describe('Foundation Command middleware', () => {
 		})
 		const operations = {
 			'documents.touch': Command.operation({
-				command: z.object({}).strict(),
-				result: z.object({ ok: z.literal(true) }).strict(),
+				command: k.object({}),
+				result: k.object({ ok: k.literal(true) }),
 				classification: 'business',
 				middleware: [double],
 				audit: () => null,

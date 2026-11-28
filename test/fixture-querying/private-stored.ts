@@ -1,32 +1,40 @@
-import { z } from 'zod'
+import { k } from '../../src/k'
 import { defineSchema } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable } from '../../src/zod-table'
+import { kTable } from '../../src/table'
 import { defineRelations } from '../../src/relations'
 import { createQueryEngine } from '../../src/querying'
 import { cursor } from './scalar'
 
+/**
+ * Stored fields that declare behaviour (normalisers, defaults, checks) the engine must never run:
+ * queries read stored values natively and only the public DTO is parsed. v2 tables reject transforms
+ * and pipes outright (KTD4), so the normalisers stand where v1 used transforms and coercion.
+ */
 export function privateStoredFixture() {
 	const calls = { transform: 0, default: 0, coercion: 0 }
-	const numeric = z.number().transform((value) => {
+	const numeric = k.number().overwrite((value) => {
 		calls.transform++
 		return value + 1000
 	})
-	const text = z.string().transform(() => {
+	const text = k.string().overwrite(() => {
 		calls.transform++
 		return 'transformed'
 	})
-	const fallback = z.string().default(() => {
-		calls.default++
-		return 'defaulted'
-	})
-	const coerced = z.coerce.number().refine(() => {
+	const fallback = k
+		.string()
+		.refine(() => {
+			calls.default++
+			return true
+		})
+		.default('defaulted')
+	const coerced = k.number().refine(() => {
 		calls.coercion++
 		return true
 	})
-	const tasks = zodTable(
+	const tasks = kTable(
 		'tasks',
-		() => ({ title: z.string(), numeric, text, fallback: fallback.optional(), coerced }),
+		{ title: k.string(), numeric, text, fallback, coerced },
 		{
 			publicFields: ['title'],
 		},
@@ -49,22 +57,24 @@ export function privateStoredFixture() {
 	}
 }
 
+/** Private stored fields whose declared checks must never run during a query (v1 used prefaults). */
 export function privatePrefaultFixture() {
 	const calls = { prefault: 0 }
-	const fallback = () => {
+	function fallback(): boolean {
 		calls.prefault++
 		throw new Error('Private prefault invoked')
 	}
-	const output = z.string().prefault(fallback)
-	// @ts-expect-error installed .pipe rejects prefault's wider input; every string is accepted at runtime.
-	const hidden = z.string().pipe<typeof output>(output)
-	const nestedOutput = z.object({ code: z.string().prefault(fallback) })
-	const nestedInput = z.object({ code: z.string() })
-	// @ts-expect-error same installed variance restriction on the nested prefault input.
-	const nested = nestedInput.pipe<typeof nestedOutput>(nestedOutput)
-	const tasks = zodTable('tasks', () => ({ title: z.string(), hidden, nested }), {
-		publicFields: ['title'],
-	})
+	const output = k.string().refine(fallback)
+	const hidden = output
+	const nestedOutput = k.object({ code: k.string().refine(fallback) })
+	const nested = nestedOutput
+	const tasks = kTable(
+		'tasks',
+		{ title: k.string(), hidden, nested },
+		{
+			publicFields: ['title'],
+		},
+	)
 	const nativeTasks = tasks.table.index('by_hidden', ['hidden'])
 	const relations = defineRelations({ tasks }, () => ({}))
 	const schema = defineSchema({ tasks: nativeTasks })

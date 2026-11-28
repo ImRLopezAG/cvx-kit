@@ -1,76 +1,199 @@
-import type {
-	ActionBuilder,
-	ArgsArrayForOptionalValidator,
-	ArgsArrayToObject,
-	DefaultArgsForOptionalValidator,
-	FunctionVisibility,
-	GenericActionCtx,
-	GenericDataModel,
-	GenericMutationCtx,
-	GenericQueryCtx,
-	MutationBuilder,
-	QueryBuilder,
-	RegisteredAction,
-	RegisteredMutation,
-	RegisteredQuery,
-	ReturnValueForOptionalValidator,
+import {
+	actionGeneric,
+	internalActionGeneric,
+	internalMutationGeneric,
+	internalQueryGeneric,
+	mutationGeneric,
+	queryGeneric,
+	type ActionBuilder,
+	type ArgsArrayToObject,
+	type DefaultFunctionArgs,
+	type FunctionVisibility,
+	type GenericActionCtx,
+	type GenericDataModel,
+	type GenericMutationCtx,
+	type GenericQueryCtx,
+	type MutationBuilder,
+	type QueryBuilder,
 } from 'convex/server'
-import type { PropertyValidators, Validator } from 'convex/values'
-import type { EffectValue } from './operation'
+import type { GenericValidator, Infer, ObjectType, PropertyValidators } from 'convex/values'
+import { NoOp, type Registration } from 'convex-helpers/server/customFunctions'
+import type { Scope } from 'effect'
+import type { KType } from '../../k/types'
+import {
+	kCustomQuery,
+	type KArgs,
+	type KArgsInput,
+	type KArgsOutput,
+	type KCustomBuilder,
+	type KReturns,
+} from '../../registration'
 import {
 	wrapEffectBuilder,
-	type CheckedApiRequirements,
 	type EffectApiOptions,
 	type EffectApiErrorProjection,
 	type EffectApiErrorContract,
 	type EffectApiServices,
 	type EffectApiHandlerValue,
 	type EffectApiContext,
+	type ProvidedServices,
 } from './api-runtime'
+import type { CallbackRequirements, EffectValue } from './operation'
 
-// Convex's optional-validator grammar, restricted to unknown instead of public any.
-type ApiValidator = PropertyValidators | Validator<unknown, 'required', string> | void
-type ApiOutput<Returns extends ApiValidator> = [Returns] extends [void]
+// The argument and result grammar of src/registration.ts: `k` schemas, native validators, or both.
+type Expand<Value> = { [Key in keyof Value]: Value[Key] }
+type Overwrite<Input, Custom> = keyof Custom extends never
+	? Input
+	: Omit<Input, keyof Custom> & Custom
+type HandlerArgs<Args, Made> = [Args] extends [void]
+	? Made extends Record<string, never>
+		? [DefaultFunctionArgs]
+		: [Expand<DefaultFunctionArgs & Made>]
+	: Made extends Record<string, never>
+		? [KArgsOutput<Args>]
+		: [Expand<KArgsOutput<Args> & Made>]
+/** A handler without declared args may still annotate its own (Convex's native rule). */
+type HandlerArgsBound<Args, Made> =
+	| HandlerArgs<Args, Made>
+	| ([Args] extends [void] ? (Made extends Record<string, never> ? [] : never) : never)
+type RawArgs<
+	Args,
+	Custom extends PropertyValidators,
+	OneOrZeroArgs extends [] | [DefaultFunctionArgs],
+> = [Args] extends [void]
+	? Custom extends Record<string, never>
+		? ArgsArrayToObject<OneOrZeroArgs>
+		: Expand<DefaultFunctionArgs & ObjectType<Custom>>
+	: Custom extends Record<string, never>
+		? KArgsInput<Args>
+		: Expand<KArgsInput<Args> & ObjectType<Custom>>
+/** The value a handler must produce: the output side of a `k` schema, which Convex validates. */
+type ResultValue<Returns> = [Returns] extends [KType]
+	? Returns['_output']
+	: [Returns] extends [GenericValidator]
+		? Infer<Returns>
+		: unknown
+/**
+ * The registered result: what the handler returns when that already satisfies `returns` (so a
+ * narrower handler value, such as a search page's required `paginationMode`, reaches callers, as
+ * the `k` custom builders do), and the `returns` output otherwise.
+ */
+type ResultOutput<Returns, Returned> = [Returns] extends [void]
+	? EffectValue<Returned>
+	: [EffectValue<Returned>] extends [ResultValue<Returns>]
+		? EffectValue<Returned>
+		: ResultValue<Returns>
+type CheckedRequirements<Returned, Services> = [
+	Exclude<CallbackRequirements<NoInfer<Returned>>, Services | Scope.Scope>,
+] extends [never]
 	? unknown
-	: ReturnValueForOptionalValidator<Returns>
+	: never
+type Reserved = 'args' | 'returns' | 'handler' | 'skipConvexValidation'
+
+/**
+ * One Effect builder over a native Convex builder or a `k` custom builder (`kCustomQuery`, the auth
+ * constructors): `args` and `returns` accept `k` schemas and native validators, and the customization's
+ * context, made args and extra options are retained.
+ */
 export type EffectApiBuilder<
-	Ctx,
-	Visibility extends FunctionVisibility,
 	Kind extends 'query' | 'mutation' | 'action',
-	Provider,
+	CustomArgs extends PropertyValidators,
+	// Native Convex context interfaces do not declare a string index signature.
+	CustomCtx extends object,
+	CustomMadeArgs extends Record<string, unknown>,
+	InputCtx,
+	Visibility extends FunctionVisibility,
+	ExtraArgs extends Record<string, unknown>,
+	Services,
+	Added = {},
 	Initialized = {},
 > = {
 	<
-		Args extends ApiValidator,
-		Returns extends ApiValidator = void,
-		Returned extends EffectApiHandlerValue<ApiOutput<Returns>> = EffectApiHandlerValue<
-			ApiOutput<Returns>
+		Args extends KArgs | void = void,
+		Returns extends KReturns | void = void,
+		Returned extends EffectApiHandlerValue<
+			ResultValue<Returns> | (null extends ResultValue<Returns> ? undefined | void : never)
+		> = EffectApiHandlerValue<
+			ResultValue<Returns> | (null extends ResultValue<Returns> ? undefined | void : never)
 		>,
-		OneOrZeroArgs extends ArgsArrayForOptionalValidator<Args> =
-			DefaultArgsForOptionalValidator<Args>,
+		OneOrZeroArgs extends HandlerArgsBound<Args, CustomMadeArgs> = HandlerArgs<
+			Args,
+			CustomMadeArgs
+		>,
 	>(
 		definition: (
-			| { args?: Args; returns?: Returns; handler: (ctx: Ctx, ...args: OneOrZeroArgs) => Returned }
-			| ((ctx: Ctx, ...args: OneOrZeroArgs) => Returned)
+			| ({
+					args?: Args
+					returns?: Returns
+					/** Export no validators to Convex; the kit then parses args fully itself (KTD3). */
+					skipConvexValidation?: boolean
+					handler: (ctx: Overwrite<InputCtx, CustomCtx> & Added, ...args: OneOrZeroArgs) => Returned
+			  } & Omit<ExtraArgs, Reserved>)
+			| ((ctx: Overwrite<InputCtx, CustomCtx> & Added, ...args: OneOrZeroArgs) => Returned)
 		) &
-			CheckedApiRequirements<Returned, Provider> &
-			CheckedApiRequirements<Initialized, Provider>,
-	): Kind extends 'query'
-		? RegisteredQuery<Visibility, ArgsArrayToObject<OneOrZeroArgs>, Promise<EffectValue<Returned>>>
-		: Kind extends 'mutation'
-			? RegisteredMutation<
-					Visibility,
-					ArgsArrayToObject<OneOrZeroArgs>,
-					Promise<EffectValue<Returned>>
-				>
-			: RegisteredAction<
-					Visibility,
-					ArgsArrayToObject<OneOrZeroArgs>,
-					Promise<EffectValue<Returned>>
-				>
+			CheckedRequirements<Returned, Services> &
+			CheckedRequirements<Initialized, Services>,
+	): Registration<
+		Kind,
+		Visibility,
+		RawArgs<Args, CustomArgs, Extract<OneOrZeroArgs, [] | [DefaultFunctionArgs]>>,
+		ResultOutput<Returns, Returned>
+	>
 }
 
+type Adapter<
+	Kind extends 'query' | 'mutation' | 'action',
+	Ctx,
+	Visibility extends FunctionVisibility,
+	Provider,
+	Added,
+> = EffectApiBuilder<
+	Kind,
+	{},
+	{},
+	{},
+	Ctx,
+	Visibility,
+	{},
+	ProvidedServices<Provider>,
+	EffectValue<Added>,
+	Added
+>
+
 /** Provision request services after the supplied builder has constructed its trusted context. */
+export function effectApiBuilder<
+	Kind extends 'query' | 'mutation' | 'action',
+	CustomArgs extends PropertyValidators,
+	CustomCtx extends Record<string, any>,
+	CustomMadeArgs extends Record<string, any>,
+	InputCtx,
+	Visibility extends FunctionVisibility,
+	ExtraArgs extends Record<string, any>,
+	Provider extends EffectApiServices = import('effect').Context.Context<never>,
+	Added extends EffectApiContext = {},
+>(
+	builder: KCustomBuilder<
+		Kind,
+		CustomArgs,
+		CustomCtx,
+		CustomMadeArgs,
+		InputCtx,
+		Visibility,
+		ExtraArgs
+	>,
+	options: EffectApiOptions<Overwrite<InputCtx, CustomCtx>, Provider, Added>,
+): EffectApiBuilder<
+	Kind,
+	CustomArgs,
+	CustomCtx,
+	CustomMadeArgs,
+	InputCtx,
+	Visibility,
+	ExtraArgs,
+	ProvidedServices<Provider>,
+	EffectValue<Added>,
+	Added
+>
 export function effectApiBuilder<
 	DM extends GenericDataModel,
 	V extends FunctionVisibility,
@@ -79,7 +202,7 @@ export function effectApiBuilder<
 >(
 	builder: QueryBuilder<DM, V>,
 	options: EffectApiOptions<GenericQueryCtx<DM>, Provider, Added>,
-): EffectApiBuilder<GenericQueryCtx<DM> & EffectValue<Added>, V, 'query', Provider, Added>
+): Adapter<'query', GenericQueryCtx<DM>, V, Provider, Added>
 export function effectApiBuilder<
 	DM extends GenericDataModel,
 	V extends FunctionVisibility,
@@ -88,7 +211,7 @@ export function effectApiBuilder<
 >(
 	builder: MutationBuilder<DM, V>,
 	options: EffectApiOptions<GenericMutationCtx<DM>, Provider, Added>,
-): EffectApiBuilder<GenericMutationCtx<DM> & EffectValue<Added>, V, 'mutation', Provider, Added>
+): Adapter<'mutation', GenericMutationCtx<DM>, V, Provider, Added>
 export function effectApiBuilder<
 	DM extends GenericDataModel,
 	V extends FunctionVisibility,
@@ -97,7 +220,7 @@ export function effectApiBuilder<
 >(
 	builder: ActionBuilder<DM, V>,
 	options: EffectApiOptions<GenericActionCtx<DM>, Provider, Added>,
-): EffectApiBuilder<GenericActionCtx<DM> & EffectValue<Added>, V, 'action', Provider, Added>
+): Adapter<'action', GenericActionCtx<DM>, V, Provider, Added>
 export function effectApiBuilder(
 	builder: Function,
 	options: {
@@ -107,5 +230,26 @@ export function effectApiBuilder(
 		errors?: EffectApiErrorContract
 	},
 ): Function {
-	return wrapEffectBuilder(builder, options)
+	return wrapEffectBuilder(nativeBuilders.has(builder) ? kBuilder(builder) : builder, options)
+}
+
+/**
+ * Convex's own registration functions; every generated `query`/`mutation`/`action` is one of them.
+ * Any other builder is a `k` custom builder, which already accepts `k` schemas and must not be
+ * wrapped twice (its made args would reach the outer parse).
+ */
+const nativeBuilders = new Set<Function>([
+	queryGeneric,
+	mutationGeneric,
+	actionGeneric,
+	internalQueryGeneric,
+	internalMutationGeneric,
+	internalActionGeneric,
+])
+
+/** A native builder behind src/registration.ts with no customization, so it accepts `k` schemas. */
+function kBuilder(builder: Function): Function {
+	// SAFETY: kCustomQuery, kCustomMutation and kCustomAction share one kind-agnostic runtime; the kind
+	// is a type-level label only, and the public overloads above carry the native builder's own kind.
+	return kCustomQuery(builder as QueryBuilder<GenericDataModel, FunctionVisibility>, NoOp)
 }

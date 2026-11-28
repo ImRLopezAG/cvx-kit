@@ -1,8 +1,8 @@
 import { expect, test } from 'vite-plus/test'
-import { defineRelations, verifyRelations } from '../src/relations'
+import { defineRelations, withFieldGroups, verifyRelations } from '../src/relations'
 import { createQueryEngine } from '../src/querying'
-import { zodTable, zodVariantTable, zodToConvex } from '../src/zod-table'
-import { z } from 'zod'
+import { kTable, kVariantTable } from '../src/table'
+import { k } from '../src/k'
 import {
 	defineSchema,
 	anyApi,
@@ -34,22 +34,22 @@ test('group registration rejects unknown, duplicate, public and overlapping fiel
 		{ finance: ['balance'], other: ['balance'] },
 	]
 	for (const fieldGroups of invalid)
-		expect(() => verified({ clients: { ...f.clients, fieldGroups } }, () => ({}))).toThrow(
-			/field groups/,
-		)
+		expect(() =>
+			verified({ clients: withFieldGroups(f.clients, fieldGroups) }, () => ({})),
+		).toThrow(/field groups/)
 })
 
 test('variant groups reject conflicting stored containers instead of guessing a schema', () => {
-	const records = zodVariantTable(
+	const records = kVariantTable(
 		'records',
-		z.discriminatedUnion('kind', [
-			z.strictObject({ kind: z.literal('one'), value: z.object({ amount: z.number() }) }),
-			z.strictObject({ kind: z.literal('two'), value: z.array(z.number()) }),
+		k.discriminatedUnion('kind', [
+			k.object({ kind: k.literal('one'), value: k.object({ amount: k.number() }) }),
+			k.object({ kind: k.literal('two'), value: k.array(k.number()) }),
 		]),
 		{ discriminator: 'kind', variants: { one: { publicFields: [] }, two: { publicFields: [] } } },
 	)
 	expect(() =>
-		verified({ records: { ...records, fieldGroups: { private: ['value'] } } }, () => ({})),
+		verified({ records: withFieldGroups(records, { private: ['value'] }) }, () => ({})),
 	).toThrow(/incompatible field groups/)
 })
 
@@ -58,7 +58,7 @@ test('captured membership, stored schema, policies and materialized validators r
 	await seedFieldGroups(f)
 	const validator = f.relations.tables.clients.pageDto({}, { fieldGroups: { finance: 'required' } })
 	Reflect.set(f.definitions.clients.fieldGroups.finance, 0, 'secret')
-	Reflect.set(f.clients.schema.shape, 'balance', z.string())
+	Reflect.set(f.clients.schema.shape, 'balance', k.string())
 	f.policies.clients.finance = async () => false
 	// Mutating a caller-owned validator cannot alter an engine's captured projection.
 	Reflect.set(validator, '_zod', { def: {} })
@@ -95,20 +95,21 @@ test('protected predicates and ordering reject before native query construction 
 
 test('group extension never runs private stored transforms or exposes unrelated private DTO fields', async () => {
 	let calls = 0
-	const records = zodTable(
+	const records = kTable(
 		'records',
-		() => ({
-			name: z.string(),
-			value: z.number().transform((n) => {
+		{
+			name: k.string(),
+			// v2 table fields cannot transform (KTD4); a normaliser is the stored behaviour that must not run.
+			value: k.number().overwrite((n) => {
 				calls++
-				return String(n + 1)
+				return n + 1
 			}),
-			secret: z.string(),
-		}),
+			secret: k.string(),
+		},
 		{ publicFields: ['name'] },
 	)
 	const relations = defineRelations(
-		{ records: { ...records, fieldGroups: { private: ['value'] } } },
+		{ records: withFieldGroups(records, { private: ['value'] }) },
 		() => ({}),
 	)
 	const schema = defineSchema({ records: records.table })
@@ -119,7 +120,6 @@ test('group extension never runs private stored transforms or exposes unrelated 
 	expect(calls).toBe(0)
 	const t = convexTest(schema, { './_generated/server.ts': async () => ({}) })
 	await t.run(async ({ db }) => {
-		// @ts-expect-error existing table types infer parser output; the captured native validator stores number
 		await db.insert('records', { name: 'test', value: 2, secret: 'never-public' })
 		const result = await engine(managed<DataModelFromSchemaDefinition<typeof schema>>(db))
 			.records.include({ private: 'required' })
@@ -156,25 +156,25 @@ test('registration rejects inherited group data and accessors without invoking g
 })
 
 function sortingGroups() {
-	const parents = zodTable('parents', () => ({ name: z.string() }))
-	const children = zodTable(
+	const parents = kTable('parents', { name: k.string() })
+	const children = kTable(
 		'children',
-		(id) => ({
-			parent: id('parents'),
-			key: z.string(),
-			name: z.string(),
-			profile: z.object({ cents: z.number() }),
-		}),
+		{
+			parent: k.id('parents'),
+			key: k.string(),
+			name: k.string(),
+			profile: k.object({ cents: k.number() }),
+		},
 		{ publicFields: ['name'] },
 	)
-	const links = zodTable(
+	const links = kTable(
 		'links',
-		(id) => ({ parent: id('parents'), child: id('children'), key: z.string(), rank: z.number() }),
+		{ parent: k.id('parents'), child: k.id('children'), key: k.string(), rank: k.number() },
 		{ publicFields: [] },
 	)
-	const grandchildren = zodTable(
+	const grandchildren = kTable(
 		'grandchildren',
-		(id) => ({ child: id('children'), name: z.string(), secret: z.string() }),
+		{ child: k.id('children'), name: k.string(), secret: k.string() },
 		{ publicFields: ['name'] },
 	)
 	const schema = defineSchema({
@@ -189,9 +189,9 @@ function sortingGroups() {
 	const relations = defineRelations(
 		{
 			parents,
-			grandchildren: { ...grandchildren, fieldGroups: { private: ['secret'] as const } },
-			children: { ...children, fieldGroups: { private: ['profile'] as const } },
-			links: { ...links, fieldGroups: { private: ['rank'] as const } },
+			grandchildren: withFieldGroups(grandchildren, { private: ['secret'] as const }),
+			children: withFieldGroups(children, { private: ['profile'] as const }),
+			links: withFieldGroups(links, { private: ['rank'] as const }),
 		},
 		(r) => ({
 			children: {
@@ -230,7 +230,7 @@ function sortingGroups() {
 		return managed(o.raw, { children: { read: async () => permission.childVisible } })
 	}
 	const page = queryGeneric({
-		args: zodToConvex(relations.tables.parents.paginationOpts({})),
+		args: relations.tables.parents.paginationOpts({}).validator,
 		handler: (ctx, args) =>
 			querying(context(ctx.db))
 				.parents.with(
@@ -247,11 +247,9 @@ function sortingGroups() {
 				.paginate(args),
 	})
 	const next = queryGeneric({
-		args: zodToConvex(
-			relations.tables.grandchildren
-				.paginationOpts({})
-				.extend({ parent: parents.schema.shape._id }),
-		),
+		args: relations.tables.grandchildren
+			.paginationOpts({})
+			.extend({ parent: parents.schema.shape._id }).validator,
 		handler: (ctx, { parent, ...args }) =>
 			querying(context(ctx.db))
 				.parents.relation(parent, 'direct.grandchildren')

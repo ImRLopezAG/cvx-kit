@@ -9,6 +9,7 @@ import type {
 	ValidationIssue,
 } from '../contracts/contract'
 import { decodeContract } from '../contracts/contract'
+import { KValidationError, type KIssue } from '../../k/issues'
 
 export class ContractValidationError {
 	readonly _tag = 'ContractValidationError'
@@ -66,9 +67,16 @@ export function decodeEffectContract<S extends ContractSchema>(
 		return Effect.promise(() => decodeContract(schema as NeutralSchema, value)).pipe(
 			Effect.flatMap((result) => {
 				if (!result.issues) return Effect.succeed(result.value)
-				const error = new ContractValidationError(result.issues)
-				// Legacy parsers have always exposed validation throws as defects.
-				return 'parse' in schema ? Effect.die(error) : Effect.fail(error)
+				// A parser's validation failure is a defect, as it has always been. A k schema's keeps
+				// the kit's own error, so the client still receives VALIDATION with the issue paths.
+				if ('parse' in schema)
+					return Effect.die(
+						schema['~safeParseStrict']
+							? // SAFETY: a k schema reports k issues.
+								new KValidationError(result.issues as KIssue[])
+							: new ContractValidationError(result.issues),
+					)
+				return Effect.fail(new ContractValidationError(result.issues))
 			}),
 		)
 	})

@@ -2,7 +2,7 @@ import { expect, test, vi } from 'vite-plus/test'
 import { relationshipFixture, seedRelationships } from './fixture-querying/relationships'
 import { createQueryEngine } from '../src/querying'
 import { verifyRelations } from '../src/relations'
-import { cursor, managed, scope } from './fixture-querying/scalar'
+import { cursor, managed, observed, scope } from './fixture-querying/scalar'
 import { ManagedReadError, MAX_DOCUMENT_BYTES } from '../src/querying/security'
 import { ConvexError, getDocumentSize, type Value } from 'convex/values'
 import { anyApi } from 'convex/server'
@@ -132,6 +132,61 @@ test('U6 one/self/named/direct/junction output is authorized and preserves edge 
 				})
 				.parse(result),
 		).toEqual(result)
+	})
+})
+
+test('child pages preserve per-parent cursors, native reads and policy isolation across requests', async () => {
+	const f = relationshipFixture()
+	const rows = await seedRelationships(f)
+	await f.t.run(async ({ db }) => {
+		async function run(tenant: string, allowedOrdinal: number) {
+			const { raw, counts } = observed(db)
+			const policyCalls: string[] = []
+			const ctx = managed(
+				raw,
+				{
+					tasks: { read: async (_, row) => row.allowed },
+					labels: {
+						read: async (_, row) => {
+							policyCalls.push(row._id)
+							return row.allowed && row.tenant === tenant && row.ordinal === allowedOrdinal
+						},
+					},
+				},
+				'allow',
+				{ ...scope, principal: tenant, tenant },
+			)
+			const result = await f.querying(ctx).tasks.with({ direct: true }).paginate({
+				numItems: 2,
+				cursor: null,
+			})
+			return { result, counts, policyCalls }
+		}
+		const first = await run('one', 1)
+		const second = await run('two', 2)
+		for (const [ordinal, run] of [
+			[1, first],
+			[2, second],
+		] as const) {
+			expect(run.result.page.map(({ _id }) => _id)).toEqual(
+				rows.tasks.slice(1, 3).map(({ _id }) => _id),
+			)
+			expect(
+				run.result.page.map(({ direct }) => direct.page.map(({ ordinal }) => ordinal)),
+			).toEqual([[ordinal], []])
+			expect(run.policyCalls).toEqual(rows.labels.map(({ _id }) => _id))
+			expect(run.counts).toEqual({ next: 13, returned: 11, ranges: 3, gets: 0, closes: 3 })
+		}
+		expect(first.result.page.map(({ direct }) => direct.continueCursor)).toEqual([
+			'pc.v1.test.57228d3912cd4c973cf76a4cce21c5963d3b876de120c5f67ef9d58bf8155e2366475b7b00550d8202fa7e7e5cb749dafbcf22e9674b',
+			'pc.v1.test.228c771c43c9ea33165c3337de5288da2a6503c24723fdc4a185e2a48b657da726222fb0f5f6b70181da50309ef938b0c3d263c38fc7',
+		])
+		await expect(
+			f
+				.querying(managed(db, {}, 'allow', { ...scope, principal: 'two', tenant: 'two' }))
+				.tasks.relation(rows.tasks[1]._id, 'direct')
+				.paginate({ numItems: 2, cursor: first.result.page[0].direct.continueCursor }),
+		).rejects.toThrow('Invalid cursor')
 	})
 })
 
@@ -829,14 +884,12 @@ for (const permitted of [false, true])
 		await f.t.run(async (ctx) => {
 			const o = f.context(ctx.db)
 			let policies = 0
-			const def = f.labels.schema.shape.ordinal._zod.def
 			const policy = managed(o.raw, {
 				tasks: { read: async (_, row) => row.allowed },
 				labels: {
 					read: async () => {
 						await Promise.resolve()
 						policies++
-						Reflect.set(def, 'type', 'string')
 						return permitted
 					},
 				},
@@ -855,7 +908,7 @@ for (const permitted of [false, true])
 				expect(policies).toBe(2)
 				expect(o.counts.closes).toBe(2)
 			} finally {
-				Reflect.set(def, 'type', 'number')
+				// v1 also mutated the Zod field definition mid-policy; k records are immutable.
 			}
 		})
 	})

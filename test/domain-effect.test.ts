@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { createEffectFoundation } from '../src/effect'
 
@@ -9,12 +9,12 @@ it('binds contracted commands and queries without running callbacks at construct
 	const domain = defineDomainContract({
 		commands: {
 			save: {
-				input: z.string().transform(Number),
-				result: z.number().transform((n) => ({ n })),
+				input: k.string().transform(Number),
+				result: k.number().transform((n) => ({ n })),
 				classification: 'business',
 			},
 		},
-		queries: { get: { input: z.number(), result: z.number() } },
+		queries: { get: { input: k.number(), result: k.number() } },
 	})
 	const { Command, Query } = createEffectFoundation({
 		observability: {

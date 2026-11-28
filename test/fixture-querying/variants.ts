@@ -1,5 +1,4 @@
-import { z } from 'zod'
-import { zid } from 'convex-helpers/server/zod4'
+import { k } from '../../src/k'
 import {
 	defineSchema,
 	type DataModelFromSchemaDefinition,
@@ -9,7 +8,7 @@ import {
 	type QueryInitializer,
 } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { zodTable, zodVariantTable } from '../../src/zod-table'
+import { kTable, kVariantTable } from '../../src/table'
 import { defineRelations } from '../../src/relations-public'
 import { createQueryEngine } from '../../src/querying'
 import { cursor, managed, observed, scope } from './scalar'
@@ -70,30 +69,38 @@ export function corruptVariantRow<Model extends GenericDataModel>(
 }
 
 export function variantDeclarations() {
-	const clients = zodTable('clients', () => ({ name: z.string(), allowed: z.boolean() }), {
-		publicFields: ['name'],
-	})
-	const creditors = zodTable('creditors', () => ({ name: z.string(), allowed: z.boolean() }), {
-		publicFields: ['name'],
-	})
-	const payments = zodVariantTable(
+	const clients = kTable(
+		'clients',
+		{ name: k.string(), allowed: k.boolean() },
+		{
+			publicFields: ['name'],
+		},
+	)
+	const creditors = kTable(
+		'creditors',
+		{ name: k.string(), allowed: k.boolean() },
+		{
+			publicFields: ['name'],
+		},
+	)
+	const payments = kVariantTable(
 		'payments',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('client_draft'),
-				clientId: zid('clients'),
-				amountCents: z.int().positive(),
-				draftDate: z.int().nonnegative(),
-				allowed: z.boolean(),
-				external: z.strictObject({ providerId: z.string() }).optional(),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('client_draft'),
+				clientId: k.id('clients'),
+				amountCents: k.int().min(1),
+				draftDate: k.int().min(0),
+				allowed: k.boolean(),
+				external: k.object({ providerId: k.string() }).optional(),
 			}),
-			z.strictObject({
-				type: z.literal('creditor_payment'),
-				clientId: zid('clients'),
-				creditorId: zid('creditors'),
-				amountCents: z.int().positive(),
-				allowed: z.boolean(),
-				external: z.strictObject({ providerId: z.string() }).optional(),
+			k.object({
+				type: k.literal('creditor_payment'),
+				clientId: k.id('clients'),
+				creditorId: k.id('creditors'),
+				amountCents: k.int().min(1),
+				allowed: k.boolean(),
+				external: k.object({ providerId: k.string() }).optional(),
 			}),
 		]),
 		{
@@ -117,16 +124,16 @@ export function variantDeclarations() {
 		.index('by_clientId', ['clientId'])
 		.index('by_type_clientId', ['type', 'clientId'])
 		.index('by_creditorId', ['creditorId'])
-	const ledger = zodVariantTable(
+	const ledger = kVariantTable(
 		'ledger',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('payment_entry'),
-				paymentId: zid('payments').optional(),
-				creditorId: zid('creditors').optional(),
-				allowed: z.boolean(),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('payment_entry'),
+				paymentId: k.id('payments').optional(),
+				creditorId: k.id('creditors').optional(),
+				allowed: k.boolean(),
 			}),
-			z.strictObject({ type: z.literal('adjustment'), amountCents: z.int(), allowed: z.boolean() }),
+			k.object({ type: k.literal('adjustment'), amountCents: k.int(), allowed: k.boolean() }),
 		]),
 		{
 			discriminator: 'type',
@@ -136,14 +143,14 @@ export function variantDeclarations() {
 			},
 		},
 	)
-	const attachments = zodTable(
+	const attachments = kTable(
 		'attachments',
-		() => ({ name: z.string(), allowed: z.boolean(), evidence: z.string() }),
+		{ name: k.string(), allowed: k.boolean(), evidence: k.string() },
 		{ publicFields: ['name'] },
 	)
-	const paymentAttachments = zodTable(
+	const paymentAttachments = kTable(
 		'paymentAttachments',
-		(id) => ({ paymentId: id('payments'), attachmentId: id('attachments'), allowed: z.boolean() }),
+		{ paymentId: k.id('payments'), attachmentId: k.id('attachments'), allowed: k.boolean() },
 		{ publicFields: [] },
 	)
 	paymentAttachments.table.index('by_paymentId', ['paymentId'])

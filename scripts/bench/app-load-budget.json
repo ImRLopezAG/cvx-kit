@@ -1,4 +1,4 @@
 {
-	"eager": { "load": 36, "retainedMB": 9.8 },
-	"getter": { "load": 26, "retainedMB": 6.9 }
+	"eager": { "load": 10, "retainedMB": 2.7, "bundleKB": 260 },
+	"getter": { "load": 7.3, "retainedMB": 2.3, "bundleKB": 260 }
 }

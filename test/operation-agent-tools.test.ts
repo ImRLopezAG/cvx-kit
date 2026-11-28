@@ -1,6 +1,6 @@
 import { ConvexError } from 'convex/values'
 import { describe, expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineErrorContract } from '../src/modules/contracts/errors'
 import {
 	bindOperationExecutor,
@@ -11,10 +11,11 @@ import {
 
 const dialect = 'https://json-schema.org/draft/2020-12/schema' as const
 const owner = Symbol('documents')
-const input = z
-	.object({ id: z.string().regex(/^doc_/), title: z.string().transform((s) => s.trim()) })
-	.strict()
-const result = z.object({ id: z.string(), title: z.string() })
+const input = k.strictObject({
+	id: k.string().regex(/^doc_/),
+	title: k.string().transform((s) => s.trim()),
+})
+const result = k.object({ id: k.string(), title: k.string() })
 const selected = selectOperation(owner, 'mutation', 'rename', { input, result })
 const converter = {
 	dialect,
@@ -29,7 +30,7 @@ const converter = {
 		additionalProperties: false,
 	}),
 }
-const native = async (raw: z.input<typeof input>) => result.parse(input.parse(raw))
+const native = async (raw: k.input<typeof input>) => result.parse(input.parse(raw))
 const executor = bindOperationExecutor(selected, { owner, key: 'rename', execute: native })
 
 function definition() {
@@ -53,17 +54,16 @@ describe('selected operation tools', () => {
 
 	it('converts raw schema without executing transformations and decodes exactly once natively', async () => {
 		let transforms = 0
-		const schema = z
-			.object({
-				title: z.string().transform((s) => {
-					transforms++
-					return `${s}!`
-				}),
-			})
-			.strict()
+		const schema = k.object({
+			title: k.string().transform((s) => {
+				transforms++
+				return `${s}!`
+			}),
+		})
+
 		const operation = selectOperation(owner, 'mutation', 'once', {
 			input: schema,
-			result: z.string(),
+			result: k.string(),
 		})
 		const bound = bindOperationExecutor(operation, {
 			owner,
@@ -189,10 +189,10 @@ describe('selected operation tools', () => {
 	})
 
 	it('returns the same bounded public query DTO produced by the native boundary', async () => {
-		const publicSchema = z.object({ id: z.string(), title: z.string() })
+		const publicSchema = k.object({ id: k.string(), title: k.string() }).strip()
 		const query = selectOperation(owner, 'query', 'get', {
-			input: z.object({ id: z.string() }),
-			result: z.object({ id: z.string(), title: z.string(), secret: z.string() }),
+			input: k.object({ id: k.string() }),
+			result: k.object({ id: k.string(), title: k.string(), secret: k.string() }),
 			wire: { schema: publicSchema },
 		})
 		const execute = async (raw: { id: string }) =>
@@ -210,7 +210,7 @@ describe('selected operation tools', () => {
 
 	it('projects only checked native transport failures after the native Promise rejects', async () => {
 		const errors = defineErrorContract({
-			Missing: { message: 'Document missing', details: { id: z.string() } },
+			Missing: { message: 'Document missing', details: { id: k.string() } },
 		})
 		let rejected = false
 		const declared = errors.project(errors.create('Missing', { id: 'doc_1' }))

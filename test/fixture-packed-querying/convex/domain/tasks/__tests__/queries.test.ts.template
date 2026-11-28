@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { convexTest } from 'convex-test'
 import { anyApi } from 'convex/server'
-import { z } from 'zod'
+import { k } from 'cvx-kit/k'
 import schema from '../../../schema'
 import { tasks } from '../schema'
 import { contract } from '../contracts'
@@ -19,8 +19,8 @@ test('domain DTO contracts and conditional false/zero/empty-string routes remain
  assert.ok(row)
  assert.deepEqual(tasks.toPublicDto(row), { ordinal: 9 })
  assert.deepEqual(tasks.toPublicDto(row, true), { ordinal: 9, _id: row._id })
- const extended = tasks.toPublicDto(row, { _id: true, extend: { url: z.string() }, values: { url: 'https://fixture.test/task' } })
- assert.deepEqual(tasks.dto({ _id: true, extend: { url: z.string() } }).parse(extended), extended)
+ const extended = tasks.toPublicDto(row, { _id: true, extend: { url: k.string() }, values: { url: 'https://fixture.test/task' } })
+ assert.deepEqual(tasks.dto({ _id: true, extend: { url: k.string() } }).parse(extended), extended)
  assert.throws(() => contract.queries.list.input.parse({ numItems: 1, cursor: null, filters: { unknown: 1 } }))
  const client = t.withIdentity({ subject: 'reader', org_id: 'a', role: 'reader' })
  for (const filters of [{ active: false }, { priority: 0 }, { code: '' }]) {

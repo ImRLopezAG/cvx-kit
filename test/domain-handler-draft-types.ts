@@ -1,7 +1,7 @@
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 const contract = defineDomainContract({
-	queries: { get: { input: z.number(), result: z.string() } },
+	queries: { get: { input: k.number(), result: k.string() } },
 })
 // Handler drafts expose implementation settings, not unbound schema fields.
 import type { DomainFactory } from '../src/modules/foundation/operation'

@@ -1,7 +1,6 @@
-import { z } from 'zod'
-import { zodTable, zodVariantTable } from 'cvx-kit/zod-table'
+import { k } from 'cvx-kit/k'
+import { kTable, kVariantTable } from 'cvx-kit/table'
 import { defineRelations } from 'cvx-kit/relations'
-import { zid } from 'convex-helpers/server/zod4'
 
 export const stages = [
 	's0',
@@ -18,31 +17,31 @@ export const stages = [
 	's11',
 	's12',
 ] as const
-export const clients = zodTable('clients', () => ({
-	status: z.string(),
-	lifecycleStage: z.enum(stages),
-	email: z.string(),
-}))
-export const users = zodTable('users', () => ({ name: z.string() }))
-export const contacts = zodTable('contacts', () => ({ email: z.string(), owner: zid('users') }))
-export const ids = zodTable('ids', () => ({
-	owner: zid('users'),
-	mixed: z.union([zid('users'), z.string()]),
-}))
-export const events = zodVariantTable(
+export const clients = kTable('clients', {
+	status: k.string(),
+	lifecycleStage: k.enum(stages),
+	email: k.string(),
+})
+export const users = kTable('users', { name: k.string() })
+export const contacts = kTable('contacts', { email: k.string(), owner: k.id('users') })
+export const ids = kTable('ids', {
+	owner: k.id('users'),
+	mixed: k.union([k.id('users'), k.string()]),
+})
+export const events = kVariantTable(
 	'events',
-	z.discriminatedUnion('kind', [
-		z.strictObject({
-			kind: z.literal('a'),
-			status: z.enum(stages),
-			contactId: zid('contacts'),
-			subject: z.string(),
+	k.discriminatedUnion('kind', [
+		k.object({
+			kind: k.literal('a'),
+			status: k.enum(stages),
+			contactId: k.id('contacts'),
+			subject: k.string(),
 		}),
-		z.strictObject({
-			kind: z.literal('b'),
-			status: z.enum(stages),
-			contactId: zid('contacts'),
-			amount: z.number(),
+		k.object({
+			kind: k.literal('b'),
+			status: k.enum(stages),
+			contactId: k.id('contacts'),
+			amount: k.number(),
 		}),
 	]),
 	{

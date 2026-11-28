@@ -1,8 +1,9 @@
 import { makeFunctionReference } from 'convex/server'
 import type { WorkflowCtx } from '@convex-dev/workflow'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
-import { zodContract } from '../src/contracts'
+import { k } from '../src/k'
+import { kContract } from '../src/contracts'
+
 import {
 	workflowBinding,
 	runWorkflowStep,
@@ -29,8 +30,8 @@ type Equal<A, B> =
 type Assert<T extends true> = T
 type ErrorOf<T> = T extends Effect.Effect<infer _A, infer E, infer _R> ? E : never
 type ServicesOf<T> = T extends Effect.Effect<infer _A, infer _E, infer R> ? R : never
-const args = zodContract(z.object({ value: z.number() }))
-const result = zodContract(z.number())
+const args = kContract(k.object({ value: k.number() }))
+const result = kContract(k.number())
 const metadata = {
 	operation: 'save',
 	operationVersion: '1',
@@ -223,7 +224,7 @@ export type RestartServices = Assert<
 		Authority | StatusReader | StatusWriter | StatusRestart
 	>
 >
-const transformedResult = zodContract(z.number().transform(String))
+const transformedResult = kContract(k.number().transform(String))
 const transformedBinding = workflowBinding({
 	...metadata,
 	kind: 'mutation',
@@ -234,8 +235,11 @@ const transformedBinding = workflowBinding({
 const wireResult = runWorkflowStep(step, transformedBinding, execution)
 export type NativeWireResult = Assert<Equal<Awaited<typeof wireResult>, number>>
 
-const safeTerminalFailure = zodContract(
-	z.object({ providerCode: z.number() }).transform(() => ({ code: 'declined' as const })),
+const safeTerminalFailure = kContract(
+	k
+		.object({ providerCode: k.number() })
+		.strip()
+		.transform(() => ({ code: 'declined' as const })),
 )
 const neutralSafeTerminal = terminalWorkflowAttempt({
 	kind: 'mutation',

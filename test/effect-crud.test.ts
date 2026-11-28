@@ -1,6 +1,5 @@
 import { Context, Effect } from 'effect'
 import { describe, expect, it, vi } from 'vite-plus/test'
-import { z } from 'zod'
 import { convexTest } from 'convex-test'
 import {
 	actionGeneric,
@@ -19,18 +18,26 @@ import {
 import { v } from 'convex/values'
 import { createAuthFunctions } from '../src/auth'
 import { createTriggers } from '../src/triggers'
-import { effectZodApiBuilder } from '../src/effect'
+import { effectApiBuilder } from '../src/effect'
 import { createEffectCrud, type EffectCrudPagination } from '../src/modules/effect/crud'
 import { createEffectFoundation } from '../src/effect'
-import { paginated, tenantTable, zodTable } from '../src/zod-table'
+import { k } from '../src/k'
+import { kTable, paginated, tenantTable } from '../src/table'
 
-const table = tenantTable('notes', () => ({ text: z.string(), secret: z.string() }), {
-	commandFields: ['text'],
-	publicFields: ['text'],
-})
-type Row = z.input<typeof table.storage>
-type Id = z.output<typeof table.tools.id>['id']
+const table = tenantTable(
+	'notes',
+	{ text: k.string(), secret: k.string() },
+	{
+		commandFields: ['text'],
+		publicFields: ['text'],
+	},
+)
+type Row = k.input<typeof table.storage>
+type Id = k.infer<typeof table.tools.id>['id']
 type Host = { tenant: string; actor: string }
+// k.id's input type is the branded ID; its parse does not check table membership, so these test
+// IDs still reach the CRUD's own checker.
+const noteId = (id: string): Id => table.tools.id.parse({ id }).id
 function harness() {
 	const rows = new Map<Id, Row>()
 	const audits: string[] = []
@@ -163,10 +170,12 @@ describe('Effect CRUD boundaries', () => {
 			'notes.archive',
 		])
 		await expect(
-			Effect.runPromise(crud.commands.exec('notes.update', { id: 'missing', data: {} }, host)),
+			Effect.runPromise(
+				crud.commands.exec('notes.update', { id: noteId('missing'), data: {} }, host),
+			),
 		).rejects.toThrow('MISSING_OR_DENIED')
 		await expect(
-			Effect.runPromise(crud.commands.exec('notes.archive', { id: 'missing' }, host)),
+			Effect.runPromise(crud.commands.exec('notes.archive', { id: noteId('missing') }, host)),
 		).rejects.toThrow('MISSING_OR_DENIED')
 	})
 	it('bounds pagination and leaves tenant authorization to the secured read repository', async () => {
@@ -209,24 +218,24 @@ describe('Effect CRUD boundaries', () => {
 				},
 			},
 		})
-		await Effect.runPromise(crud.commands.exec('notes.archive', { id: 'id_1' }, host))
+		await Effect.runPromise(crud.commands.exec('notes.archive', { id: noteId('id_1') }, host))
 		expect(h.guards).toEqual(['owner'])
 		expect(h.audits).toEqual(['notes.archive'])
 		await expect(
 			Effect.runPromise(
-				crud.commands.exec('notes.archive', { id: 'id_1' }, { ...host, actor: 'denied' }),
+				crud.commands.exec('notes.archive', { id: noteId('id_1') }, { ...host, actor: 'denied' }),
 			),
 		).rejects.toThrow('DENIED')
 		expect(h.audits).toHaveLength(1)
 	})
 	it('drops undefined create fields before repository writes', async () => {
-		const optional = zodTable(
+		const optional = kTable(
 			'optional',
-			() => ({ text: z.string(), optional: z.string().optional() }),
+			{ text: k.string(), optional: k.string().optional() },
 			{ commandFields: ['text', 'optional'], publicFields: ['text'] },
 		)
 		const h = harness()
-		let saved: z.input<typeof optional.storage> | undefined
+		let saved: k.input<typeof optional.storage> | undefined
 		const crud = createEffectCrud({
 			...h.config,
 			table: optional,
@@ -275,16 +284,16 @@ describe('retained CRUD policy and read projection', () => {
 			},
 			overrides: { archive: () => ({ ok: true as const }) },
 		})
-		await Effect.runPromise(crud.commands.exec('notes.archive', { id: 'id_1' }, host))
+		await Effect.runPromise(crud.commands.exec('notes.archive', { id: noteId('id_1') }, host))
 		expect(events).toEqual(['shared', 'local:one:id_1'])
 		await expect(
 			Effect.runPromise(
-				crud.commands.exec('notes.archive', { id: 'id_1' }, { ...host, actor: 'denied' }),
+				crud.commands.exec('notes.archive', { id: noteId('id_1') }, { ...host, actor: 'denied' }),
 			),
 		).rejects.toThrow('SHARED_DENIAL')
 		await expect(
 			Effect.runPromise(
-				crud.queries.exec('notes.get', { id: 'id_1' }, { ...host, actor: 'denied' }),
+				crud.queries.exec('notes.get', { id: noteId('id_1') }, { ...host, actor: 'denied' }),
 			),
 		).rejects.toThrow('SHARED_DENIAL')
 		expect(events).toEqual(['shared', 'local:one:id_1', 'shared', 'shared'])
@@ -416,6 +425,51 @@ describe('retained CRUD policy and read projection', () => {
 			}
 		},
 	)
+	it.each([NaN, Infinity, -Infinity])(
+		'rejects a non-finite pagination id (%s) before the read adapter runs',
+		async (id) => {
+			const h = harness()
+			let reads = 0
+			const crud = createEffectCrud({
+				...h.config,
+				read: {
+					...h.config.read,
+					list: () => {
+						reads++
+						return { page: [], isDone: true, continueCursor: '' }
+					},
+				},
+			})
+			await expect(
+				Effect.runPromise(crud.queries.exec('notes.list', { numItems: 1, cursor: null, id }, host)),
+			).rejects.toThrow()
+			expect(reads).toBe(0)
+		},
+	)
+	it('rejects client read budgets beyond the safe-integer range before the read adapter runs', async () => {
+		const h = harness()
+		let reads = 0
+		const crud = createEffectCrud({
+			...h.config,
+			read: {
+				...h.config.read,
+				list: () => {
+					reads++
+					return { page: [], isDone: true, continueCursor: '' }
+				},
+			},
+		})
+		for (const budget of [
+			{ maximumRowsRead: Number.MAX_SAFE_INTEGER + 1 },
+			{ maximumBytesRead: Number.MAX_SAFE_INTEGER + 1 },
+		])
+			await expect(
+				Effect.runPromise(
+					crud.queries.exec('notes.list', { numItems: 1, cursor: null, ...budget }, host),
+				),
+			).rejects.toThrow()
+		expect(reads).toBe(0)
+	})
 	it('defaults the server read budget to maxPageSize before calling the reader', async () => {
 		const h = harness()
 		const received: EffectCrudPagination[] = []
@@ -573,17 +627,17 @@ function securedHarness() {
 				}),
 		},
 	})
-	const mutation = effectZodApiBuilder(auth.authMutation, {
+	const mutation = effectApiBuilder(auth.authMutation, {
 		services: (ctx) => Context.make(Writer, ctx.db),
 	})
-	const query = effectZodApiBuilder(auth.authQuery, { services: () => Context.empty() })
+	const query = effectApiBuilder(auth.authQuery, { services: () => Context.empty() })
 	const create = mutation({
 		args: {
-			text: z.string(),
-			failAudit: z.boolean().optional(),
-			failOutput: z.boolean().optional(),
+			text: k.string(),
+			failAudit: k.boolean().optional(),
+			failOutput: k.boolean().optional(),
 		},
-		returns: z.object({ id: table.tools.id.shape.id }),
+		returns: k.object({ id: table.tools.id.shape.id }),
 		handler: (ctx, input) => {
 			if (input.failOutput)
 				return badOutput.commands.exec('notes.create', { text: input.text }, ctx)
@@ -594,30 +648,30 @@ function securedHarness() {
 			)
 		},
 	})
+	// Plain string bindings exercise the generated runtime boundary independently of native k.id,
+	// which Convex validates natively (a foreign-table ID would fail before the CRUD table check).
+	// tools.*.parse only brands the string: k.id does not check table membership at parse time.
 	const get = query({
-		args: table.tools.id.shape,
+		args: { id: k.string() },
 		returns: table.publicDto.nullable(),
-		handler: (ctx, args) => crud.queries.exec('notes.get', args, ctx),
+		handler: (ctx, args) => crud.queries.exec('notes.get', table.tools.id.parse(args), ctx),
 	})
+	// The page result admits engine fields (splitCursor, pageStatus); a strict k object would not.
 	const list = query({
-		args: { numItems: z.number(), cursor: z.string().nullable() },
-		returns: z.object({
-			page: z.array(table.publicDto),
-			isDone: z.boolean(),
-			continueCursor: z.string(),
-		}),
+		args: { numItems: k.number(), cursor: k.string().nullable() },
+		returns: paginated(table.publicDto).result,
 		handler: (ctx, args) => crud.queries.exec('notes.list', args, ctx),
 	})
-	// Plain string bindings exercise the generated runtime boundary independently of native zid.
 	const update = mutation({
-		args: { id: z.string(), data: z.object({ text: z.string().optional() }) },
-		returns: z.object({ ok: z.literal(true) }),
-		handler: (ctx, input) => crud.commands.exec('notes.update', input, ctx),
+		args: { id: k.string(), data: k.object({ text: k.string().optional() }) },
+		returns: k.object({ ok: k.literal(true) }),
+		handler: (ctx, input) =>
+			crud.commands.exec('notes.update', table.tools.update.parse(input), ctx),
 	})
 	const archive = mutation({
-		args: { id: z.string() },
-		returns: z.object({ ok: z.literal(true) }),
-		handler: (ctx, input) => crud.commands.exec('notes.archive', input, ctx),
+		args: { id: k.string() },
+		returns: k.object({ ok: k.literal(true) }),
+		handler: (ctx, input) => crud.commands.exec('notes.archive', table.tools.id.parse(input), ctx),
 	})
 	const t = convexTest(securedSchema, {
 		'./_generated/server.ts': async () => ({}),
@@ -690,14 +744,15 @@ describe('CRUD table membership and public projection', () => {
 		'decodes a non-idempotent public transform exactly once for %s',
 		async (verb) => {
 			let transforms = 0
-			const transformed = zodTable(
+			// k table fields cannot transform; overwrite is the type-preserving normaliser they allow.
+			const transformed = kTable(
 				'transformed',
-				() => ({
-					text: z.string().transform((value) => {
+				{
+					text: k.string().overwrite((value) => {
 						transforms++
 						return value + '!'
 					}),
-				}),
+				},
 				{ commandFields: ['text'], publicFields: ['text'] },
 			)
 			const h = harness()
@@ -719,7 +774,9 @@ describe('CRUD table membership and public projection', () => {
 			})
 			if (verb === 'get') {
 				expect(
-					await Effect.runPromise(crud.queries.exec('transformed.get', { id: 'id_1' }, host)),
+					await Effect.runPromise(
+						crud.queries.exec('transformed.get', transformed.tools.id.parse({ id: 'id_1' }), host),
+					),
 				).toEqual({ text: 'hello!' })
 			} else {
 				expect(
@@ -771,22 +828,26 @@ describe('checked CRUD callbacks and storage contracts', () => {
 					},
 				},
 			})
-			const invalidGet = crud.queries.exec('notes.get', { id: 'foreign' }, host)
+			const invalidGet = crud.queries.exec('notes.get', { id: noteId('foreign') }, host)
 			expect(checks).toBe(0)
 			expect(h.resolved()).toBe(0)
 			await expect(Effect.runPromise(invalidGet)).rejects.toMatchObject({ code: 'CRUD_INVALID_ID' })
 			await expect(
-				Effect.runPromise(crud.commands.exec('notes.update', { id: 'foreign', data: {} }, host)),
+				Effect.runPromise(
+					crud.commands.exec('notes.update', { id: noteId('foreign'), data: {} }, host),
+				),
 			).rejects.toMatchObject({ code: 'CRUD_INVALID_ID' })
 			await expect(
-				Effect.runPromise(crud.commands.exec('notes.archive', { id: 'foreign' }, host)),
+				Effect.runPromise(crud.commands.exec('notes.archive', { id: noteId('foreign') }, host)),
 			).rejects.toMatchObject({ code: 'CRUD_INVALID_ID' })
 			expect(checks).toBe(3)
 			expect(reached).toEqual([])
 			expect(h.audits).toEqual([])
-			await Effect.runPromise(crud.commands.exec('notes.update', { id: 'id_1', data: {} }, host))
-			await Effect.runPromise(crud.commands.exec('notes.archive', { id: 'id_1' }, host))
-			await Effect.runPromise(crud.queries.exec('notes.get', { id: 'id_1' }, host))
+			await Effect.runPromise(
+				crud.commands.exec('notes.update', { id: noteId('id_1'), data: {} }, host),
+			)
+			await Effect.runPromise(crud.commands.exec('notes.archive', { id: noteId('id_1') }, host))
+			await Effect.runPromise(crud.queries.exec('notes.get', { id: noteId('id_1') }, host))
 			expect(reached).toEqual(['update', 'archive', 'get'])
 			expect(h.audits).toEqual(['notes.update', 'notes.archive'])
 		},
@@ -806,7 +867,7 @@ describe('checked CRUD callbacks and storage contracts', () => {
 			},
 		})
 		await expect(
-			Effect.runPromise(crud.commands.exec('notes.archive', { id: 'id_1' }, host)),
+			Effect.runPromise(crud.commands.exec('notes.archive', { id: noteId('id_1') }, host)),
 		).rejects.toBe(failure)
 		expect(reached).toBe(false)
 		expect(h.audits).toEqual([])
@@ -828,18 +889,19 @@ describe('checked CRUD callbacks and storage contracts', () => {
 	})
 	it('writes compatible same-type command transforms once without storage reparsing', async () => {
 		let transforms = 0
-		const transformed = zodTable(
+		// k table fields cannot transform; overwrite is the type-preserving normaliser they allow.
+		const transformed = kTable(
 			'sameType',
-			() => ({
-				text: z.string().transform((value) => {
+			{
+				text: k.string().overwrite((value) => {
 					transforms++
 					return value + '!'
 				}),
-			}),
+			},
 			{ commandFields: ['text'], publicFields: ['text'] },
 		)
 		const h = harness()
-		let saved: z.input<typeof transformed.storage> | undefined
+		let saved: k.input<typeof transformed.storage> | undefined
 		const crud = createEffectCrud({
 			...h.config,
 			table: transformed,
@@ -876,30 +938,37 @@ describe('checked CRUD callbacks and storage contracts', () => {
 	})
 	it('maps incompatible decoded fields through retained-contract overrides without reparsing', async () => {
 		let transforms = 0
-		const transformed = zodTable(
-			'lengths',
-			() => ({
-				text: z.string().transform((value) => {
-					transforms++
-					return value.length
-				}),
-			}),
-			{ commandFields: ['text'], publicFields: ['text'] },
-		)
+		// k table fields cannot change type, so the incompatible boundary is composed by hand:
+		// EffectCrudTable is structural, and only the command contracts decode string -> number.
+		const lengths = kTable('lengths', { text: k.string() }, { publicFields: ['text'] })
+		const decoded = k.string().transform((value) => {
+			transforms++
+			return value.length
+		})
+		const transformed = {
+			tableName: lengths.tableName,
+			storage: lengths.storage,
+			publicDto: lengths.publicDto,
+			commandInput: k.object({ text: decoded }),
+			tools: {
+				id: lengths.tools.id,
+				update: k.object({ id: k.id('lengths'), data: k.object({ text: decoded.optional() }) }),
+			},
+		}
 		const h = harness()
-		let saved: z.input<typeof transformed.storage> | undefined
+		let saved: k.input<typeof transformed.storage> | undefined
 		const repository = {
 			insert: (
 				_ctx: ReturnType<typeof h.config.context>,
-				values: z.input<typeof transformed.storage>,
+				values: k.input<typeof transformed.storage>,
 			) => {
 				saved = values
 				return transformed.tools.id.parse({ id: 'id_1' }).id
 			},
 			patch: (
 				_ctx: ReturnType<typeof h.config.context>,
-				_id: z.output<typeof transformed.tools.id>['id'],
-				values: Partial<z.input<typeof transformed.storage>>,
+				_id: k.infer<typeof transformed.tools.id>['id'],
+				values: Partial<k.input<typeof transformed.storage>>,
 			) => {
 				saved = { ...saved!, ...values }
 			},
@@ -962,7 +1031,7 @@ it.each([1, 'yes', {}])(
 			},
 		})
 		await expect(
-			Effect.runPromise(crud.commands.exec('notes.archive', { id: 'id_1' }, host)),
+			Effect.runPromise(crud.commands.exec('notes.archive', { id: noteId('id_1') }, host)),
 		).rejects.toMatchObject({ code: 'CRUD_INVALID_ID' })
 		expect(reached).toBe(false)
 		expect(h.audits).toEqual([])

@@ -5,7 +5,6 @@ import type {
 	GenericMutationCtx,
 	GenericActionCtx,
 } from 'convex/server'
-import type { CustomBuilder } from 'convex-helpers/server/zod4'
 import {
 	createAuthFunctions,
 	type AuthFunctions,
@@ -17,7 +16,8 @@ import {
 	type ServiceQuery,
 	type ServiceMutation,
 } from '../../auth'
-import { effectZodApiBuilder, type EffectZodApiBuilder } from './api-zod'
+import type { KCustomBuilder } from '../../registration'
+import { effectApiBuilder, type EffectApiBuilder } from './api'
 import {
 	wrapEffectBuilder,
 	type EffectApiOptions,
@@ -29,7 +29,7 @@ import type { EffectValue } from './operation'
 
 // Derive the adapter from the symbolic auth contract, never from inferred native spreads.
 type Adapted<Builder, Services, Added> =
-	Builder extends CustomBuilder<
+	Builder extends KCustomBuilder<
 		infer Kind,
 		infer Args,
 		infer Ctx,
@@ -38,7 +38,7 @@ type Adapted<Builder, Services, Added> =
 		infer Visibility,
 		infer Extra
 	>
-		? EffectZodApiBuilder<
+		? EffectApiBuilder<
 				Kind,
 				Args,
 				Ctx,
@@ -187,16 +187,15 @@ export function createEffectAuthFunctions<
 	return {
 		include: auth.include,
 		authenticatedUser: auth.authenticatedUser,
-		authQuery: effectZodApiBuilder(auth.authQuery, options.query),
-		roleQuery: (...allowed) => effectZodApiBuilder(auth.roleQuery(...allowed), options.query),
-		adminQuery: effectZodApiBuilder(auth.adminQuery, options.query),
-		authMutation: effectZodApiBuilder(auth.authMutation, options.mutation),
-		roleMutation: (...allowed) =>
-			effectZodApiBuilder(auth.roleMutation(...allowed), options.mutation),
-		adminMutation: effectZodApiBuilder(auth.adminMutation, options.mutation),
-		authAction: effectZodApiBuilder(auth.authAction, options.action),
-		roleAction: (...allowed) => effectZodApiBuilder(auth.roleAction(...allowed), options.action),
-		adminAction: effectZodApiBuilder(auth.adminAction, options.action),
+		authQuery: effectApiBuilder(auth.authQuery, options.query),
+		roleQuery: (...allowed) => effectApiBuilder(auth.roleQuery(...allowed), options.query),
+		adminQuery: effectApiBuilder(auth.adminQuery, options.query),
+		authMutation: effectApiBuilder(auth.authMutation, options.mutation),
+		roleMutation: (...allowed) => effectApiBuilder(auth.roleMutation(...allowed), options.mutation),
+		adminMutation: effectApiBuilder(auth.adminMutation, options.mutation),
+		authAction: effectApiBuilder(auth.authAction, options.action),
+		roleAction: (...allowed) => effectApiBuilder(auth.roleAction(...allowed), options.action),
+		adminAction: effectApiBuilder(auth.adminAction, options.action),
 		serviceQuery: <Extra extends Record<string, unknown> = {}>(
 			principal: ServicePrincipal<GenericQueryCtx<DataModel>, Role, Extra>,
 		) =>
@@ -211,9 +210,9 @@ export function createEffectAuthFunctions<
 				auth.serviceMutation(principal),
 				options.mutation,
 			),
-		systemQuery: effectZodApiBuilder(auth.systemQuery, options.systemQuery),
-		systemMutation: effectZodApiBuilder(auth.systemMutation, options.systemMutation),
-		systemAction: effectZodApiBuilder(auth.systemAction, options.systemAction),
+		systemQuery: effectApiBuilder(auth.systemQuery, options.systemQuery),
+		systemMutation: effectApiBuilder(auth.systemMutation, options.systemMutation),
+		systemAction: effectApiBuilder(auth.systemAction, options.systemAction),
 	}
 }
 
@@ -224,6 +223,6 @@ function adaptService<Builder extends Function, Services extends EffectApiServic
 ): Adapted<Builder, Services, Added> {
 	// SAFETY: the shared policy callbacks read only the standard auth bundle, which every
 	// service ctx carries; wrapEffectBuilder swaps the handler and keeps the builder's
-	// registration kind, validation and visibility, as effectZodApiBuilder does.
+	// registration kind, validation and visibility, as effectApiBuilder does.
 	return wrapEffectBuilder(builder, options) as Adapted<Builder, Services, Added>
 }

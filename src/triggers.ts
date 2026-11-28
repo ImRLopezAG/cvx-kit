@@ -1,7 +1,7 @@
-import { z } from 'zod'
 import { Triggers, type Change, type Trigger } from 'convex-helpers/server/triggers'
 import type { GenericDataModel, GenericMutationCtx, TableNamesInDataModel } from 'convex/server'
 import { customCtx } from 'convex-helpers/server/customFunctions'
+import { k } from './k'
 
 export { Triggers }
 export type { Change, Trigger }
@@ -16,7 +16,7 @@ export function createTriggers<DataModel extends GenericDataModel>(): Triggers<D
 	return new Triggers<DataModel>()
 }
 
-/** Customize zCustomMutation/customMutation with this component's trigger registry. */
+/** Customize kCustomMutation/customMutation with this component's trigger registry. */
 export function triggerContext<DataModel extends GenericDataModel>(triggers: Triggers<DataModel>) {
 	return customCtx((ctx: GenericMutationCtx<DataModel>) => ({ db: triggers.wrapDB(ctx).db }))
 }
@@ -84,7 +84,7 @@ export function tenantOwnership<DataModel extends GenericDataModel>(
 }
 
 /**
- * Maintains zod-table's opinionated lifecycle timestamps: createdAt and
+ * Maintains the kit tables' opinionated lifecycle timestamps: createdAt and
  * updatedAt on insert, updatedAt on every update. archivedAt stays under
  * application control. Register once per table; writes made through the
  * auth constructors keep these fields correct automatically.
@@ -100,7 +100,7 @@ export function timestamps<DataModel extends GenericDataModel>(
 			if (change.operation === 'insert') {
 				const document = change.newDoc
 				if (document.createdAt === undefined) {
-					// SAFETY: registration requires zod-table lifecycle fields; Convex validates this numeric timestamp patch.
+					// SAFETY: registration requires the kit tables' lifecycle fields; Convex validates this numeric timestamp patch.
 					await ctx.innerDb.patch(change.id, {
 						createdAt: now,
 						updatedAt: now,
@@ -113,11 +113,12 @@ export function timestamps<DataModel extends GenericDataModel>(
 			// A write that already moved updatedAt (including our own patch)
 			// is left alone — this is the recursion guard.
 			if (current.updatedAt === previous.updatedAt) {
-				// SAFETY: registration requires zod-table lifecycle fields; Convex validates this numeric timestamp patch.
+				// SAFETY: registration requires the kit tables' lifecycle fields; Convex validates this numeric timestamp patch.
 				await ctx.innerDb.patch(change.id, { updatedAt: now } as never)
 			}
 		})
 	}
 }
 
-const tenantDocument = z.object({ tenant: z.string().min(1) })
+// Strip: the post-image carries every stored field; only the tenant is checked here.
+const tenantDocument = k.object({ tenant: k.string().min(1) }).strip()

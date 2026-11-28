@@ -3,12 +3,12 @@ import { Context, Effect, Schema, SchemaGetter } from 'effect'
 import { convexTest } from 'convex-test'
 import { defineSchema, defineTable, makeFunctionReference, mutationGeneric } from 'convex/server'
 import { v } from 'convex/values'
-import { z } from 'zod'
+import { k } from '../src/k'
 import {
 	decodeContract,
 	operationContract,
 	standardContract,
-	zodContract,
+	kContract,
 	convexContract,
 	type StandardSchema,
 } from '../src/contracts'
@@ -16,18 +16,23 @@ import { decodeEffectContract, effectSchema } from '../src/modules/effect/schema
 
 it('awaits async normalization once and keeps final replay and wire independent', async () => {
 	let calls = 0
-	const input = zodContract(
-		z.string().transform(async (title) => {
-			calls++
-			await Promise.resolve()
-			return title.trim()
-		}),
-	)
+	// k transforms are synchronous; async normalization is a Standard Schema with an async validate.
+	const input = standardContract<StandardSchema<string, string>>({
+		'~standard': {
+			version: 1,
+			vendor: 'async',
+			validate: async (value) => {
+				calls++
+				await Promise.resolve()
+				return { value: String(value).trim() }
+			},
+		},
+	})
 	const contract = operationContract({
 		input,
-		result: z.number().transform((count) => ({ count })),
-		replayResult: zodContract(z.object({ count: z.number() })),
-		wire: { project: (result: { count: number }) => String(result.count), schema: z.string() },
+		result: k.number().transform((count) => ({ count })),
+		replayResult: kContract(k.object({ count: k.number() })),
+		wire: { project: (result: { count: number }) => String(result.count), schema: k.string() },
 	})
 	expect(await decodeContract(contract.input, ' title ')).toEqual({ value: 'title' })
 	expect(calls).toBe(1)
@@ -64,7 +69,7 @@ it('preserves the Standard Schema validator receiver through adaptation', async 
 
 it('keeps validation issues separate from validator rejection defects', async () => {
 	const failure = new Error('private validator rejection')
-	const invalid = standardContract(z.string())
+	const invalid = standardContract(k.string())
 	expect((await decodeContract(invalid, 1)).issues).toBeDefined()
 	const rejected = standardContract({
 		'~standard': {

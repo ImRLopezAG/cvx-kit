@@ -2,14 +2,15 @@
 
 > Install the repository skill with `npx skills add ImRLopezAG/cvx-kit --skill cvx-kit`
 > for task-specific guidance. This file is an optional condensed overview. Detailed docs:
-> `architecture.md`, `conventions.md`, `zod-table.md`, `querying.md`, `auth.md`,
+> `architecture.md`, `conventions.md`, `k.md`, `table.md`, `querying.md`, `auth.md`,
 > `commands.md`, `effect.md`, `domain-operations.md`, `triggers.md`, `approvals.md`, `maintainability.md`,
 > `migration.md` (same directory).
 > Structure, file anatomy, and naming rules → `conventions.md` is
 > authoritative. Restructuring an existing raw project → `migration.md`.
-> Upgrading from 0.0.x → `upgrading.md`. New 0.1.0 helpers: `crud.md`,
-> `webhooks.md`, `agent-tools.md`; stream/relationship pagination in `querying.md`,
-> table DTO and pagination helpers in `zod-table.md`.
+> Moving from cvx-kit 0.1.x (Zod) to 2.0 → `migration-v2.md`. Older upgrades →
+> `upgrading.md`. Helpers: `crud.md`, `webhooks.md`, `agent-tools.md`;
+> stream/relationship pagination in `querying.md`, table DTO and pagination
+> helpers in `table.md`, validators in `k.md`.
 > Consumer lint configuration and coverage → `oxlint.md`. The optional
 > `cvx-kit/oxlint` plugin checks the statically detectable conventions;
 > behavioral guarantees still need architecture and runtime tests.
@@ -20,11 +21,13 @@
 > specific table, entity, field, or workflow is required by the kit. Names in
 > `<angle brackets>` are always placeholders.
 
-cvx-kit is a reusable Convex application kit: zod table boundaries, auth-aware
-function constructors, a trigger registry, an audited command protocol
-(Foundation component), and a declarative approvals component. Peer deps:
-`convex ^1.46.0`, `zod ^4.5.4`; command implementations also install
-`effect >=4.0.1 <5` and import `cvx-kit/effect`.
+cvx-kit is a reusable Convex application kit: `k` validators on native Convex
+validators, table boundaries, auth-aware function constructors, a trigger
+registry, an audited command protocol (Foundation component), and a
+declarative approvals component. Peer deps: `convex ^1.46.0`,
+`convex-helpers >=0.1.130 <0.2.0`; command implementations also install
+`effect >=4.0.1 <5` and import `cvx-kit/effect`. Zod is not required; the
+optional `cvx-kit/zod` entry converts `k` schemas to Zod.
 
 **Command API selection:** use `createEffectFoundation` and declare handlers
 inside `command({...})`. The older `Foundation.Command` Promise facade is
@@ -33,8 +36,8 @@ copy that API into new implementations.
 
 ## Non-negotiable rules
 
-1. **One `zodTable` per entity**, in `domain/<entity>/schema.ts`. Never write
-   `defineTable` inline or a second zod object for the same entity.
+1. **One `kTable` per entity**, in `domain/<entity>/schema.ts`. Never write
+   `defineTable` inline or a second object schema for the same entity.
 2. **Raw `query`/`mutation`/`action`/`internal*` builders appear only in
    `convex/functions.ts`** (the `createAuthFunctions` call). All other
    functions use `authQuery/authMutation/authAction`, `roleQuery/...`,
@@ -42,7 +45,7 @@ copy that API into new implementations.
    or `serviceQuery(principal)/serviceMutation(principal)` (internal, host-derived
    principal with row-level rules applied; see `auth.md`),
    built once with `createEffectAuthFunctions(config, policies)` from `cvx-kit/effect`
-   for shared Effect handles, or individually wrapped with `effectZodApiBuilder`.
+   for shared Effect handles, or individually wrapped with `effectApiBuilder`.
    This is what guarantees auth, triggers, and bounded reads.
 3. **Every public query returns DTOs** via `<table>.toPublicDto(row)` or the
    querying engine. For IDs use `toPublicDto(row, true)` with `dto(true)`; for
@@ -75,7 +78,7 @@ copy that API into new implementations.
    by the `timestamps` trigger; `archivedAt` is the app-controlled soft-delete
    marker.
 7. **Vocabularies are named readonly tuples in `constants.ts`** —
-   `z.enum([...])` with an inline literal is banned in kit-style codebases.
+   `k.enum([...])` with an inline literal is banned in kit-style codebases.
 8. **Components are consumed only through their client facades**
    (`Foundation`, `Approvals`) — no deep imports, no touching component
    tables, no reaching private children (`components.approvals.workflow`).
@@ -91,23 +94,27 @@ copy that API into new implementations.
 
 ## Exports map
 
-| Import                          | Provides                                                                                                                                                                                                                                                                                                                            |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `cvx-kit`                       | Non-Effect helpers and component clients; import the optional Effect facade explicitly from `cvx-kit/effect`.                                                                                                                                                                                                                       |
-| `cvx-kit/zod-table`             | `zodTable`, `tenantTable`, `createModule`, `namespace`, `namespaceIndex`, `paginated`, `zodVariantTable`, `jsonSafeZid`, `TIMESTAMP_FIELDS`                                                                                                                                                                                         |
-| `cvx-kit/effect`                | Recommended command/query/action API: `createEffectFoundation` (`Command`, `Query`, `Action`; `nestedAudit`, `auditFailure`, `writeActionAudit`), `effectErrors` (`fail`/`attempt`), `createEffectAuthFunctions`, `effectApiBuilder`, `effectZodApiBuilder`, `createEffectCrud`, idempotency/workflow adapters and operation tools. |
-| `cvx-kit/auth`                  | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap`                                                                                                                                                                                                                                     |
-| `cvx-kit/tenancy`               | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD`                                                                                                                                                                                                                                  |
-| `cvx-kit/crud`                  | Compatibility CRUD factory using the deprecated Promise command facade; use `createEffectCrud` from `cvx-kit/effect` for new domains.                                                                                                                                                                                               |
-| `cvx-kit/state-machine`         | `createStateMachine` — typed transitions from constants tuples; `assert` drops into command guards                                                                                                                                                                                                                                  |
-| `cvx-kit/middleware`            | `rateLimit` — packaged middleware over an injected rate-limiter instance; keyed by `ctx.tenant`, missing key = config error                                                                                                                                                                                                         |
-| `cvx-kit/webhooks`              | `createWebhookBoundary`, `recordWebhookEvent`, `webhookEventsTable` — raw-body verify, natural-key dedup in the mutation                                                                                                                                                                                                            |
-| `cvx-kit/agent-tools`           | `createAgentTools` — tool records from table masks; mutation handlers route through command executors                                                                                                                                                                                                                               |
-| `cvx-kit/triggers`              | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers`                                                                                                                                                                                                                                             |
-| `cvx-kit/errors`                | `KitError`, `defaultErrors`, `ErrorFactory`                                                                                                                                                                                                                                                                                         |
-| `cvx-kit/components/foundation` | Component client and types; `Foundation.Command` is deprecated. The component and other capabilities remain available. New command registries use `cvx-kit/effect`.                                                                                                                                                                 |
-| `cvx-kit/components/approvals`  | `Approvals` client; default export = component config for `app.use`                                                                                                                                                                                                                                                                 |
-| `cvx-kit/test`                  | `registerFoundation(t)`, `registerApprovals(t)` for convex-test                                                                                                                                                                                                                                                                     |
+| Import                          | Provides                                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `cvx-kit`                       | Non-Effect helpers and component clients; import the optional Effect facade explicitly from `cvx-kit/effect`.                                                                                                                                                                                                |
+| `cvx-kit/k`                     | `k` (factories, chain methods, `parse`/`safeParse`, `k.infer`/`k.input`/`k.output`), `KValidationError`                                                                                                                                                                                                      |
+| `cvx-kit/table`                 | `kTable`, `createTable`, `tenantTable`, `kVariantTable`, `createModule`, `namespace`, `namespaceIndex`, `paginated`, `TIMESTAMP_FIELDS`                                                                                                                                                                      |
+| `cvx-kit/registration`          | `kCustomQuery`, `kCustomMutation`, `kCustomAction`, `rawFunctionArgs` — custom builders over `k` schemas and native validators                                                                                                                                                                               |
+| `cvx-kit/json-schema`           | `toJsonSchema` — JSON Schema of a `k` schema (ids as strings) for agent tool inputs                                                                                                                                                                                                                          |
+| `cvx-kit/zod`                   | `toZod` and `.toZod()` — optional Zod interop (`zod/mini` schemas); requires the optional `zod` peer                                                                                                                                                                                                                              |
+| `cvx-kit/effect`                | Recommended command/query/action API: `createEffectFoundation` (`Command`, `Query`, `Action`; `nestedAudit`, `auditFailure`, `writeActionAudit`), `effectErrors` (`fail`/`attempt`), `createEffectAuthFunctions`, `effectApiBuilder`, `createEffectCrud`, idempotency/workflow adapters and operation tools. |
+| `cvx-kit/auth`                  | `createAuthFunctions` (incl. optional `security` RLS config), `createInclude`, `defaultRoleMap`                                                                                                                                                                                                              |
+| `cvx-kit/tenancy`               | `createTenantRules`, `composeRules`, `requireTenantReference`, `assertTenantOwned`, `TENANT_FIELD`                                                                                                                                                                                                           |
+| `cvx-kit/crud`                  | Compatibility CRUD factory using the deprecated Promise command facade; use `createEffectCrud` from `cvx-kit/effect` for new domains.                                                                                                                                                                        |
+| `cvx-kit/state-machine`         | `createStateMachine` — typed transitions from constants tuples; `assert` drops into command guards                                                                                                                                                                                                           |
+| `cvx-kit/middleware`            | `rateLimit` — packaged middleware over an injected rate-limiter instance; keyed by `ctx.tenant`, missing key = config error                                                                                                                                                                                  |
+| `cvx-kit/webhooks`              | `createWebhookBoundary`, `recordWebhookEvent`, `webhookEventsTable` — raw-body verify, natural-key dedup in the mutation                                                                                                                                                                                     |
+| `cvx-kit/agent-tools`           | `createAgentTools` — tool records from table masks; mutation handlers route through command executors                                                                                                                                                                                                        |
+| `cvx-kit/triggers`              | `createTriggers`, `timestamps`, `appendOnly`, `noDelete`, `tenantOwnership`, `Triggers`                                                                                                                                                                                                                      |
+| `cvx-kit/errors`                | `KitError`, `defaultErrors`, `ErrorFactory`                                                                                                                                                                                                                                                                  |
+| `cvx-kit/components/foundation` | Component client and types; `Foundation.Command` is deprecated. The component and other capabilities remain available. New command registries use `cvx-kit/effect`.                                                                                                                                          |
+| `cvx-kit/components/approvals`  | `Approvals` client; default export = component config for `app.use`                                                                                                                                                                                                                                          |
+| `cvx-kit/test`                  | `registerFoundation(t)`, `registerApprovals(t)` for convex-test                                                                                                                                                                                                                                              |
 
 ## Minimal app wiring (the five root files)
 
@@ -162,9 +169,9 @@ export const {
 })
 
 // convex/functions.ts — wrap configured auth constructors once, after auth/RLS/triggers
-// Import Context from effect and effectZodApiBuilder from cvx-kit/effect.
+// Import effectApiBuilder from cvx-kit/effect.
 // Place this after the registry declaration or import the registry from its module.
-export const authMutation = effectZodApiBuilder(baseAuthMutation, {
+export const authMutation = effectApiBuilder(baseAuthMutation, {
 	context: (ctx) => ({ commands: commands.withContext(ctx) }),
 })
 
@@ -188,13 +195,13 @@ export const approvals = new Approvals(components.approvals)
 
 ```ts
 // domain/documents/schema.ts
-export const documents = zodTable(
+export const documents = kTable(
 	'documents',
-	(id) => ({
-		title: z.string(),
-		ownerId: id('users'),
-		secretNote: z.string(),
-	}),
+	{
+		title: k.string(),
+		ownerId: k.id('users'),
+		secretNote: k.string(),
+	},
 	{
 		commandFields: ['title'], // what a command may say
 		publicFields: ['title', 'ownerId'], // the DTO allowlist
@@ -205,8 +212,8 @@ export const documents = zodTable(
 defineSchema({ documents: documents.table.index('by_owner', ['ownerId']) })
 
 // domain/documents/commands.ts
-export const renameInput = documents.commandInput.extend({ id: zid('documents') })
-export const renameResult = z.object({ ok: z.literal(true) }).strict()
+export const renameInput = documents.commandInput.extend({ id: k.id('documents') })
+export const renameResult = k.object({ ok: k.literal(true) })
 export const commands = Command({
 	context: (host: CommandHost) => host,
 	operations: ({ command }) => ({
@@ -234,8 +241,8 @@ export const rename = authMutation({
 	handler: (ctx, input) => ctx.commands.exec('documents.rename', input),
 })
 export const list = authQuery({
-	args: { limit: z.number() },
-	returns: z.array(documents.publicDto),
+	args: { limit: k.int().min(1).max(100) },
+	returns: k.array(documents.publicDto),
 	handler: (ctx, { limit }) =>
 		ctx
 			.include(ctx.db.query('documents'))

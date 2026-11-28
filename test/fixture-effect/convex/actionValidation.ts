@@ -1,17 +1,19 @@
 import { v } from 'convex/values'
 import { createEffectFoundation, effectApiBuilder } from 'cvx-kit/effect'
+import { k } from 'cvx-kit/k'
 import { Context, Effect } from 'effect'
-import { z } from 'zod'
 import { api, internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { action, internalMutation, internalQuery } from './_generated/server'
 import type { ActionCtx, MutationCtx, QueryCtx } from './_generated/server'
 
-const probeIdentity = z.object({
-	role: z.literal('owner'),
-	org_id: z.string(),
-	subject: z.string(),
-})
+const probeIdentity = k
+	.object({
+		role: k.literal('owner'),
+		org_id: k.string(),
+		subject: k.string(),
+	})
+	.strip()
 async function scopedProbeKey(ctx: MutationCtx | QueryCtx, key: string): Promise<string> {
 	const identity = probeIdentity.safeParse(await ctx.auth.getUserIdentity())
 	if (!identity.success) throw new Error('ACTION_VALIDATION_OWNER_REQUIRED')
@@ -59,8 +61,8 @@ const operations = foundation.Query({
 	context: (host: Host) => host,
 	operations: ({ query }) => ({
 		readNote: query({
-			input: z.object({ key: z.string() }).strict(),
-			result: z.object({ title: z.string() }).strict(),
+			input: k.object({ key: k.string() }),
+			result: k.object({ title: k.string() }),
 			handler: async ({ key }, host) => {
 				// Commit before the secured read, so even a later nested rejection leaves evidence.
 				await host.ctx.runMutation(internal.actionValidation.recordExecution, { key })

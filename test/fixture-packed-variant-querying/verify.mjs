@@ -462,7 +462,9 @@ for (const [axis, args, identity] of [
  ['order', { ...options(nativeRootFirst.continueCursor, nativeRootFilters), order: 'desc' }, alice],
 ]) await rejects(`issue36/root cursor rejects ${axis}`, 'taskList', args, identity)
 const nativeClientCursor = (await call('inverseClients', { ...options(), parent: native.targets.clients })).continueCursor
-await rejects('issue36/cursor rejects changed member declaration registry', 'inverseClientsDeclaration', { ...options(nativeClientCursor), parent: native.targets.clients })
+// A cursor binds only the tables and edges its query can read (scoped registry identity, since 0.1.25).
+// The changed registry differs in tasks.selectedPeers, which this page never walks, so the cursor still opens.
+await check('issue36/cursor survives a declaration change outside its scope', async () => { await call('inverseClientsDeclaration', { ...options(nativeClientCursor), parent: native.targets.clients }) })
 await rejects('issue36/cursor rejects changed policy epoch', 'inverseClientsPolicy', { ...options(nativeClientCursor), parent: native.targets.clients })
 await rejects('issue36/root cursor rejects inverse endpoint', 'inverseClients', { ...options(nativeRootFirst.continueCursor, nativeRootFilters), parent: native.targets.clients })
 await check('issue36/absent command link and explicit null have matching one absence', async () => {

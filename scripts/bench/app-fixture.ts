@@ -4,7 +4,13 @@
 // Native table definitions (indexes) live in `appSchemaTables`, which only the
 // schema module would import, mirroring how apps split `schema.ts` from
 // per-domain `table.ts` files.
-import { z } from 'zod'
+//
+// This is the v2 (`k`) app. The v1 (Zod) app it is compared with is this file
+// at commit 8d979a5, which `scripts/bench-app-load.mjs` extracts with
+// `git archive`; it is translated field for field: `z.object` and
+// `z.strictObject` become `k.object` (strict by default), `zid`/`id(...)`
+// become `k.id(...)`, `zodTable`/`zodVariantTable` become `kTable`/`kVariantTable`,
+// and Zod's `.pick({ a: true })` becomes `.pick('a')`.
 import {
 	actionGeneric,
 	internalActionGeneric,
@@ -15,7 +21,8 @@ import {
 	type GenericDataModel,
 } from 'convex/server'
 import { Triggers } from 'convex-helpers/server/triggers'
-import { zid, zodTable, zodVariantTable } from '../../src/zod-table'
+import { k, type KType } from '../../src/k'
+import { kTable, kVariantTable } from '../../src/table'
 import { defineRelations } from '../../src/relations'
 import { defineDomainContract } from '../../src/contracts'
 import { createAuthFunctions } from '../../src/auth'
@@ -23,21 +30,21 @@ import { createAuthFunctions } from '../../src/auth'
 export const DOMAIN_COUNT = 28
 
 function entity(name: string, parent: string) {
-	return zodTable(
+	return kTable(
 		name,
-		(id) => ({
-			parentId: id(parent).optional(),
-			ownerId: id('entity0').optional(),
-			ref: z.string(),
-			status: z.enum(['open', 'closed', 'archived']),
-			title: z.string().min(1).max(200),
-			description: z.string().optional(),
-			amountCents: z.number().int(),
-			active: z.boolean(),
-			tags: z.array(z.string()),
-			details: z.object({ text: z.string(), notes: z.array(z.string()).optional() }),
-			secret: z.string(),
-		}),
+		{
+			parentId: k.id(parent).optional(),
+			ownerId: k.id('entity0').optional(),
+			ref: k.string(),
+			status: k.enum(['open', 'closed', 'archived']),
+			title: k.string().min(1).max(200),
+			description: k.string().optional(),
+			amountCents: k.number().int(),
+			active: k.boolean(),
+			tags: k.array(k.string()),
+			details: k.object({ text: k.string(), notes: k.array(k.string()).optional() }),
+			secret: k.string(),
+		},
 		{
 			commandFields: ['title', 'status', 'ref', 'amountCents'],
 			publicFields: [
@@ -57,23 +64,23 @@ function entity(name: string, parent: string) {
 }
 
 function variant(name: string) {
-	return zodVariantTable(
+	return kVariantTable(
 		name,
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('client_draft'),
-				entityId: zid('entity1'),
-				amountCents: z.number().int(),
-				scheduledDate: z.string(),
-				memo: z.string().optional(),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('client_draft'),
+				entityId: k.id('entity1'),
+				amountCents: k.number().int(),
+				scheduledDate: k.string(),
+				memo: k.string().optional(),
 			}),
-			z.strictObject({
-				type: z.literal('creditor_payment'),
-				entityId: zid('entity1'),
-				creditorId: zid('entity2'),
-				debtId: zid('entity3'),
-				amountCents: z.number().int(),
-				scheduledDate: z.string(),
+			k.object({
+				type: k.literal('creditor_payment'),
+				entityId: k.id('entity1'),
+				creditorId: k.id('entity2'),
+				debtId: k.id('entity3'),
+				amountCents: k.number().int(),
+				scheduledDate: k.string(),
 			}),
 		]),
 		{
@@ -94,21 +101,24 @@ export function defineAppTables() {
 		entities[`entity${i}`] = entity(`entity${i}`, `entity${Math.max(0, i - 1)}`)
 	const payments = variant('payments')
 	const ledger = variant('ledger')
-	return { ...entities, payments, ledger }
+	return Object.assign(entities, { payments, ledger })
 }
 
 export type AppTables = ReturnType<typeof defineAppTables>
 
 /** What `schema.ts` would build; function modules never import it. */
 export function appSchemaTables(tables: AppTables) {
-	return Object.fromEntries(
-		Object.entries(tables).map(([name, boundary]) => [
-			name,
-			name === 'payments' || name === 'ledger'
-				? boundary.table.index('by_type_entityId', ['type', 'entityId'])
-				: boundary.table.index('by_parentId', ['parentId']).index('by_status', ['status']),
-		]),
-	)
+	const { payments, ledger, ...entities } = tables
+	return {
+		...Object.fromEntries(
+			Object.entries(entities).map(([name, boundary]) => [
+				name,
+				boundary.table.index('by_parentId', ['parentId']).index('by_status', ['status']),
+			]),
+		),
+		payments: payments.table.index('by_type_entityId', ['type', 'entityId']),
+		ledger: ledger.table.index('by_type_entityId', ['type', 'entityId']),
+	}
 }
 
 // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Generated table names require an erased runtime fixture adapter; public APIs remain precisely typed.
@@ -149,8 +159,8 @@ export function defineAppRelations(tables: AppTables) {
 	})
 }
 
-type Section = Record<string, { input: z.ZodType; result: z.ZodType }>
-type OperationBuilder = () => { input: z.ZodType; result: z.ZodType }
+type Section = Record<string, { input: KType; result: KType }>
+type OperationBuilder = () => { input: KType; result: KType }
 
 /**
  * Accord-shaped domain contract: commands over one entity, a detail query and
@@ -165,8 +175,8 @@ export function defineAppContract(
 	lazyOperations: boolean,
 ) {
 	const boundary = tables[domain]
-	const id = z.strictObject({ id: zid(domain) })
-	const ok = z.strictObject({ ok: z.literal(true) })
+	const id = k.object({ id: k.id(domain) })
+	const ok = k.object({ ok: k.literal(true) })
 	const commandBuilders: Record<string, OperationBuilder> = {}
 	for (const verb of [
 		'create',
@@ -183,10 +193,10 @@ export function defineAppContract(
 			input:
 				verb === 'create'
 					? boundary.commandInput
-					: z.strictObject({
-							id: zid(domain),
+					: k.object({
+							id: k.id(domain),
 							patch: boundary.updateSchema,
-							reason: z.string().max(500).optional(),
+							reason: k.string().max(500).optional(),
 						}),
 			result: verb === 'create' ? id : ok,
 		})
@@ -194,7 +204,7 @@ export function defineAppContract(
 	const queryBuilders: Record<string, OperationBuilder> = {
 		getRecord: () => ({ input: id, result: boundary.publicDto.nullable() }),
 		getPayment: () => ({
-			input: z.strictObject({ id: zid('payments') }),
+			input: k.object({ id: k.id('payments') }),
 			result: tables.payments.dto(true),
 		}),
 		listPayments: () => ({
@@ -208,8 +218,8 @@ export function defineAppContract(
 					},
 					{ validator: 'compact' },
 				)
-				.pick({ filters: true, order: true })
-				.extend({ cursor: z.string().nullable(), numItems: z.number() }),
+				.pick('filters', 'order')
+				.extend({ cursor: k.string().nullable(), numItems: k.number() }),
 			result: relations.tables.payments.pageDto({}),
 		}),
 		listLedger: () => ({
@@ -222,8 +232,8 @@ export function defineAppContract(
 					},
 					{ validator: 'compact' },
 				)
-				.pick({ filters: true, order: true })
-				.extend({ cursor: z.string().nullable(), numItems: z.number() }),
+				.pick('filters', 'order')
+				.extend({ cursor: k.string().nullable(), numItems: k.number() }),
 			result: relations.tables.ledger.pageDto({}),
 		}),
 		listRecords: () => ({

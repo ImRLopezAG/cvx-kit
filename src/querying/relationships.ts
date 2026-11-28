@@ -18,8 +18,8 @@ import {
 	type ExecutionRequest,
 } from './execution'
 import type { createCursorCodec, CursorBinding } from './cursors'
-import { CursorError } from './cursors'
-import { z } from 'zod'
+import { CursorError, prepareCursorBinding } from './cursors'
+import { k } from '../k'
 import { stream, EmptyStream, getIndexFields } from 'convex-helpers/server/stream'
 
 export interface OutputSelection {
@@ -36,13 +36,13 @@ export interface GroupAccess {
 }
 type Edge = RelationEdge<string, string, 'one' | 'many', any, any>
 const emptyGroups: ResolvedGroups = { fieldGroups: {}, relations: {} }
+const noPredicate: FilterAst = { kind: 'and', children: [] }
 export type RelationDocument = Record<string, Value> & {
 	_id: GenericId<string>
 	_creationTime: number
 }
 type Document = RelationDocument
 type Planner = ReturnType<typeof createPlanner>
-const navigation = z.object({ cursor: z.string(), ancestors: z.array(z.string()).max(3) }).strict()
 
 export class RelationshipError extends Error {
 	constructor(readonly code: 'AMBIGUOUS_RELATION' | 'INVALID_RELATION') {
@@ -69,6 +69,20 @@ export function relationshipExecutor(
 	groups?: GroupAccess,
 ) {
 	const metadata = planner.metadata
+	const childPlans = new Map<string, ReturnType<typeof prepare>>()
+	const scalarPredicates = new WeakMap<FilterAst, boolean>()
+	function scalarOnly(ast: FilterAst): boolean {
+		const cached = scalarPredicates.get(ast)
+		if (cached !== undefined) return cached
+		const result =
+			ast.kind === 'and' || ast.kind === 'or'
+				? ast.children.every(scalarOnly)
+				: ast.kind === 'not' || ast.kind === 'variant'
+					? scalarOnly(ast.child)
+					: ast.kind === 'scalar'
+		scalarPredicates.set(ast, result)
+		return result
+	}
 	const base = (leg: Edge['from']) => ('base' in leg ? leg.base : leg)
 	function edge(table: string, name: string): Edge {
 		const declared = metadata.declarations[table]?.[name]
@@ -77,11 +91,10 @@ export function relationshipExecutor(
 	}
 	const guarded = (row: Document | Record<string, Value>, guard?: RelationGuard) =>
 		!guard || row[guard.discriminator] === guard.tag
-	const memberIdSchema = z.string()
 	function memberMatches(value: Value | undefined, member: Edge['sourceMember']): boolean {
 		if (!member) return true
-		const id = memberIdSchema.safeParse(value)
-		return id.success && request.db.normalizeId(member.table, id.data) !== null
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- A stored member ID is a string Convex value.
+		return typeof value === 'string' && request.db.normalizeId(member.table, value) !== null
 	}
 	function sourceValue(declared: Edge, parent: Document | null): Value | undefined {
 		if (!parent || !guarded(parent, declared.sourceGuard)) return undefined
@@ -336,13 +349,10 @@ export function relationshipExecutor(
 	): Promise<Record<string, Value>> {
 		request.expand(depth, 0)
 		// SAFETY: the registry strictly validates this public native DTO projection.
-		const dto = planner.complete(
-			table,
-			parent,
-			true,
-			{ kind: 'and', children: [] },
-			groups?.allowed(path),
-		) as Record<string, Value>
+		const dto = planner.complete(table, parent, true, noPredicate, groups?.allowed(path)) as Record<
+			string,
+			Value
+		>
 		for (const [name, selected] of Object.entries(selection)) {
 			const declared = edge(table, name),
 				nested = selected === true ? {} : selected
@@ -355,17 +365,27 @@ export function relationshipExecutor(
 						])
 					: null
 			} else {
+				const childPath = [...path, name]
+				const childParents = [...parents, parent._id]
+				const prepared =
+					childPlans.get(JSON.stringify(childPath)) ??
+					prepare(
+						table,
+						name,
+						nested,
+						{ numItems: args.numItems, cursor: null, order: args.order },
+						[],
+						[],
+						childPath,
+					)
 				const page = await pageRelation(
-					table,
 					parent,
-					name,
 					nested,
-					{ numItems: args.numItems, cursor: null, order: args.order },
-					[],
-					[],
-					[...path, name],
+					childPath,
 					depth + 1,
-					[...parents, parent._id],
+					childParents,
+					prepared,
+					() => prepared.bind(childParents[0]),
 				)
 				// SAFETY: pageRelation projects and validates each nested DTO row.
 				dto[name] = page as Value
@@ -381,7 +401,6 @@ export function relationshipExecutor(
 		conditions: readonly IndexCondition[],
 		constraints: readonly StoredConstraint[],
 		path: readonly string[],
-		rootId: string,
 		ordering?: string,
 	) {
 		if (ordering !== undefined && conditions.some((c) => c.value !== null && c.value !== undefined))
@@ -491,29 +510,19 @@ export function relationshipExecutor(
 				}),
 			},
 			relationPath: path,
-			parent: rootId,
 		}
 		// Each child path binds the registry scope it reads. A relation route from
 		// the same root computes the same scope, so it can open this path's cursors.
-		let bound: Promise<CursorBinding> | undefined
-		function bind() {
-			bound ??= planner
-				.registryVersion({
-					root: rootBinding.table,
-					path,
-					selection,
-					groups: resolved ?? emptyGroups,
-					filters: [plan.residual],
-				})
-				.then((registryVersion) => ({ ...binding, registryVersion }))
-			return bound
-		}
-		async function open(token: string) {
-			try {
-				return navigation.parse(JSON.parse(codec.open(token, await bind())))
-			} catch {
-				throw new CursorError()
-			}
+		let version: Promise<string> | undefined
+		async function bind(rootId: string): Promise<CursorBinding> {
+			version ??= planner.registryVersion({
+				root: rootBinding.table,
+				path,
+				selection,
+				groups: resolved ?? emptyGroups,
+				filters: [plan.residual],
+			})
+			return { ...binding, parent: rootId, registryVersion: await version }
 		}
 		return {
 			declared,
@@ -524,36 +533,22 @@ export function relationshipExecutor(
 			index,
 			targetIndex,
 			bind,
-			open,
 			expansion,
 		}
 	}
 	async function pageRelation(
-		table: string,
 		parent: Document | null,
-		name: string,
 		selection: OutputSelection,
-		input: QueryInput,
-		conditions: readonly IndexCondition[] = [],
-		constraints: readonly StoredConstraint[] = [],
-		path: readonly string[] = [name],
-		depth = 1,
-		parents: readonly string[] = [],
-		prepared = prepare(
-			table,
-			name,
-			selection,
-			input,
-			conditions,
-			constraints,
-			path,
-			parents[0] ?? parent!._id,
-		),
+		path: readonly string[],
+		depth: number,
+		parents: readonly string[],
+		prepared: ReturnType<typeof prepare>,
+		bind: () => Promise<CursorBinding>,
 		opened?: { cursor: string | null; endCursor?: string | null },
 	) {
 		request.expand(depth, 0)
 		const { declared, plan, through, sourceTable, field, index, targetIndex, expansion } = prepared
-		const binding = await prepared.bind()
+		const binding = await bind()
 		const value = sourceValue(declared, parent)
 		const args = { ...plan.args, ...(opened ?? { cursor: null }) }
 		// SAFETY: declarations accept only native scalar lookup values; nullish references are absence.
@@ -611,7 +606,8 @@ export function relationshipExecutor(
 					return null
 				return output(declared.target, target, selection, plan.args, path, depth, parents)
 			},
-			(raw) => codec.seal(JSON.stringify({ cursor: raw, ancestors: parents.slice(1) }), binding),
+			(raw, bound) =>
+				codec.seal(JSON.stringify({ cursor: raw, ancestors: parents.slice(1) }), bound),
 			indexedTarget
 				? (source, db) => {
 						// SAFETY: the registry owns the native schema/index descriptors. Public
@@ -692,12 +688,27 @@ export function relationshipExecutor(
 			conditions,
 			constraints,
 			path,
-			rootId,
 			ordering,
 		)
+		let bound: Promise<CursorBinding> | undefined
+		const bind = () =>
+			(bound ??= prepared
+				.bind(rootId)
+				.then((binding) =>
+					input.cursor !== null || input.endCursor != null
+						? prepareCursorBinding(binding)
+						: binding,
+				))
+		async function open(token: string) {
+			try {
+				return navigation().parse(JSON.parse(codec.open(token, await bind())))
+			} catch {
+				throw new CursorError()
+			}
+		}
 		// Authenticate both slots and native ancestor IDs before ANY parent/traversal read.
-		const start = input.cursor === null ? null : await prepared.open(input.cursor)
-		const end = input.endCursor == null ? null : await prepared.open(input.endCursor)
+		const start = input.cursor === null ? null : await open(input.cursor)
+		const end = input.endCursor == null ? null : await open(input.endCursor)
 		const ancestors = start?.ancestors ?? end?.ancestors ?? []
 		if (
 			ancestors.length !== path.length - 1 ||
@@ -747,17 +758,13 @@ export function relationshipExecutor(
 				parent = found
 			}
 			return await pageRelation(
-				final.source,
 				parent,
-				path.at(-1)!,
 				selection,
-				input,
-				conditions,
-				constraints,
 				path,
 				path.length,
 				[rootId, ...ancestors],
 				prepared,
+				bind,
 				{ cursor: start?.cursor ?? null, endCursor: end?.cursor ?? input.endCursor },
 			)
 		} catch (error) {
@@ -775,8 +782,8 @@ export function relationshipExecutor(
 			const declared = edge(table, name)
 			const nested = selected === true ? {} : selected
 			const nestedPath = [...path, name]
-			if (declared.cardinality === 'many')
-				prepare(
+			if (declared.cardinality === 'many') {
+				const plan = prepare(
 					table,
 					name,
 					nested,
@@ -784,18 +791,22 @@ export function relationshipExecutor(
 					[],
 					[],
 					nestedPath,
-					'',
 				)
-			else checkTraversal(declared, nestedPath)
+				childPlans.set(JSON.stringify(nestedPath), plan)
+			} else checkTraversal(declared, nestedPath)
 			preflight(declared.target, nested, input, nestedPath)
 		}
 	}
 	return { matches, output, continuation, edge, preflight }
 }
 
-function scalarOnly(ast: FilterAst): boolean {
-	if (ast.kind === 'relation') return false
-	if (ast.kind === 'and' || ast.kind === 'or') return ast.children.every(scalarOnly)
-	if (ast.kind === 'not' || ast.kind === 'variant') return scalarOnly(ast.child)
-	return true
+let navigationSchema: ReturnType<typeof buildNavigation> | undefined
+
+/** The sealed relation navigation payload, built on the first nested continuation. */
+function navigation(): ReturnType<typeof buildNavigation> {
+	return (navigationSchema ??= buildNavigation())
+}
+
+function buildNavigation() {
+	return k.strictObject({ cursor: k.string(), ancestors: k.array(k.string()).max(3) })
 }

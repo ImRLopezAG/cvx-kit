@@ -24,7 +24,8 @@ const packed = resolve(process.argv[2] ?? '')
 const identity = JSON.parse(readFileSync(join(packed, 'package-identity.json'), 'utf8'))
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
 assert.equal(hash(readFileSync(identity.tarball)), identity.sha256)
-const source = join(packed, 'installed')
+// test-packed-querying retains one install per peer set; this proof runs on the minimum peers.
+const source = join(packed, 'minimum')
 assert.equal(
 	JSON.parse(readFileSync(join(source, 'node_modules/convex/package.json'), 'utf8')).version,
 	'1.46.0',
@@ -140,7 +141,7 @@ for(const order of ['asc','desc']){let cursor=null;const actual=[];for(let page=
 const first=(await call('api/tasks:list','first',{numItems:1,cursor:null})).value;
 assert.match(first.continueCursor,/^pc\\./);assert.ok(!first.continueCursor.includes(ids.tasks[5]));
 await call('api/probes:resume','equivalent-registry',{numItems:7,cursor:first.continueCursor});
-await call('api/probes:reject','changed-registry',{numItems:7,cursor:first.continueCursor},false);
+// A cursor binds only the tables and edges its query reads (scoped registry identity, since 0.1.25): the changed registry differs in tasks.aliasLabels, which this page never walks, so the cursor still opens.\nawait call('api/probes:reject','changed-registry-out-of-scope',{numItems:7,cursor:first.continueCursor});
 for(const [label,args,identity] of [['tamper',{numItems:1,cursor:first.continueCursor+'!'},who],['filter',{numItems:1,cursor:first.continueCursor,filters:{ordinal:6}},who],['order',{numItems:1,cursor:first.continueCursor,order:'desc'},who],['tenant',{numItems:1,cursor:first.continueCursor},{...who,org_id:'b'}],['principal',{numItems:1,cursor:first.continueCursor},{...who,subject:'other',tokenIdentifier:'other'}]]){const body=await call('api/tasks:list',label,args,false,identity);assert.match(body.errorMessage,/Invalid cursor/);}
 await call('api/tasks:list','no-identity',{numItems:1,cursor:null},false,null);
 await call('api/tasks:list','unsupported-role',{numItems:1,cursor:null},false,{...who,role:'unknown'});

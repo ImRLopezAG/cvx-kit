@@ -1,0 +1,17 @@
+{
+  "status": "mixed",
+  "skipped": [
+    {
+      "line": 3,
+      "code": "mixed-reference"
+    },
+    {
+      "line": 4,
+      "code": "mixed-reference"
+    },
+    {
+      "line": 6,
+      "code": "zod-consumer"
+    }
+  ]
+}

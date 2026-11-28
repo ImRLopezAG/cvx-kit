@@ -1,15 +1,3 @@
-import type { FilterContract, SharedFilters } from './filters'
-import { z } from 'zod'
-import {
-	captureDto,
-	materializeDto,
-	classifyDto,
-	ordinaryDtoConstruction,
-	type DtoBoundary,
-	type DtoRecipe,
-} from './querying/schema-snapshot'
-import { convexToZod, type ConvexValidatorFromZod } from 'convex-helpers/server/zod4'
-import { zodToConvex } from './zod-convex'
 import { defineSchema, defineTable, type TableDefinition } from 'convex/server'
 import {
 	v,
@@ -17,9 +5,12 @@ import {
 	type GenericValidator,
 	type ValidatorJSON,
 	type JSONValue,
+	type Value,
 } from 'convex/values'
-import type { EnginePaginationResult } from './zod-table'
-import { pageResult } from './querying/shared/page'
+import { k, type KSchema, type KType } from './k'
+import { KDiscriminatedUnion } from './k/kinds'
+import { KObject } from './k/object'
+import { containsTransform } from './k/parse'
 import {
 	nativePagination,
 	relationFilterSchema,
@@ -30,21 +21,45 @@ import {
 	type ScalarSelection,
 	type ScalarPredicate,
 } from './querying/filters'
-import { lazyRelationFilterSchema } from './querying/shared/filters'
+import type { FilterContract, SharedFilters } from './querying/shared/contract'
+import {
+	lazyRelationFilterSchema,
+	deferFilterField,
+	unionOf,
+	type PaginationValidatorOptions,
+} from './querying/shared/filters'
+import { canonicalNative, sameNative } from './querying/shared/native-json'
+import { pageResult } from './querying/shared/page'
+import type { EnginePaginationResult } from './table'
 
-export type PaginationFiltersInput<Schema extends z.ZodType> =
-	z.input<Schema> extends { filters?: infer Filters } ? Exclude<Filters, undefined> : never
-import type { PaginationValidatorOptions } from './querying/shared/filters'
-
-const paginationRecipe = captureDto(nativePagination)
+/**
+ * The filters a browser or untyped caller may build for `Schema`: the native filter type with ID
+ * brands relaxed to plain strings. It is deliberately broader than the native function arguments,
+ * which keep each ID's table brand.
+ */
+export type PaginationFiltersInput<Schema extends KType> = Schema['validator']['type'] extends {
+	filters?: infer Filters
+}
+	? InputView<Exclude<Filters, undefined>>
+	: never
+type InputView<T> =
+	T extends GenericId<string>
+		? string
+		: T extends readonly (infer E)[]
+			? InputView<E>[]
+			: T extends object
+				? { [K in keyof T]: InputView<T[K]> }
+				: T
 
 /** Generated object or discriminated-union boundaries. */
 export interface RelationTable {
-	tableName: string
-	schema: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
-	publicDto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
-	table: TableDefinition
-	dto(includeId: true): z.ZodType
+	readonly tableName: string
+	/** A `k.object` or `k.discriminatedUnion` of objects, checked on first use. */
+	readonly schema: KType
+	readonly publicDto: KType
+	/** Read on the table's first use, never at declaration. */
+	readonly table: TableDefinition
+	dto(includeId: true): KType
 	/** Whole stored fields; schemas are captured from the native table, never a DTO transform. */
 	fieldGroups?: Readonly<Record<string, readonly string[]>>
 }
@@ -118,7 +133,7 @@ type StoredValue<V extends GenericValidator> = GenericValidator extends V
 type GroupStoredRow<
 	T extends RelationTable,
 	Row,
-	Stored = StoredValue<ConvexValidatorFromZod<T['schema'], 'required'>>,
+	Stored = StoredValue<T['schema']['validator']>,
 > = [Tags<T>] extends [never]
 	? Stored
 	: Extract<Stored, Pick<Row, Extract<Discriminator<T>, keyof Row>>>
@@ -156,14 +171,14 @@ export interface SelectionMask {
 	[key: string]: true | SelectionMask
 }
 type DocumentFields<S> =
-	S extends z.ZodObject<infer F>
-		? F
-		: S extends z.ZodDiscriminatedUnion<infer O, string>
-			? O[number] extends infer B
-				? B extends z.ZodObject<infer F>
-					? F
-					: never
+	S extends KDiscriminatedUnion<infer _Key, infer O>
+		? O[number] extends infer B
+			? B extends KObject<infer F>
+				? F
 				: never
+			: never
+		: S extends KObject<infer F>
+			? F
 			: never
 type AllKeys<F> = F extends unknown ? keyof F : never
 type FieldAt<F, K extends PropertyKey> = F extends unknown
@@ -183,25 +198,25 @@ type NativeDomain<V> = V extends {
 			: never
 type DomainAt<F, K extends PropertyKey> = F extends unknown
 	? K extends keyof F
-		? F[K] extends z.ZodType
-			? NativeDomain<ConvexValidatorFromZod<F[K], 'required'>>
+		? F[K] extends KType
+			? NativeDomain<F[K]['validator']>
 			: never
 		: never
 	: never
 type CompatibleBranches<F, K extends keyof F, Domain = DomainAt<F, K>> = F extends unknown
 	? Same<DomainAt<F, K>, Domain>
 	: never
-type Discriminator<T extends RelationTable> =
-	T['schema'] extends z.ZodDiscriminatedUnion<any, string>
-		? T['schema']['_zod']['def']['discriminator']
-		: never
+type Discriminator<T extends RelationTable> = DiscriminatorOf<T['schema']>
+type DiscriminatorOf<S> = S extends KDiscriminatedUnion<infer Key, infer _Options> ? Key : never
 type Fields<
 	T extends RelationTable,
 	F = DocumentFields<T['schema']>,
 > = string extends T['tableName']
 	? FieldSchemas
-	: T['schema'] extends z.ZodObject<infer ObjectFields>
-		? { [K in keyof ObjectFields]: Extract<ObjectFields[K], z.ZodType> }
+	: [Discriminator<T>] extends [never]
+		? T['schema'] extends KObject<infer ObjectFields>
+			? { [K in keyof ObjectFields]: Extract<ObjectFields[K], KType> }
+			: never
 		: {
 				[
 					K in Extract<keyof F, string> as K extends Discriminator<T>
@@ -209,24 +224,20 @@ type Fields<
 						: false extends CompatibleBranches<F, K>
 							? never
 							: K
-				]: Extract<FieldAt<F, K>, z.ZodType>
+				]: Extract<FieldAt<F, K>, KType>
 			}
 type BranchFields<T extends RelationTable, Tag extends string> =
 	DocumentFields<T['schema']> extends infer F
-		? F extends Record<Discriminator<T>, z.ZodType>
-			? Tag extends z.output<F[Discriminator<T>]>
+		? F extends Record<Discriminator<T>, KType>
+			? Tag extends F[Discriminator<T>]['_output']
 				? F
 				: never
 			: never
 		: never
-type Tags<T extends RelationTable> =
-	T['schema'] extends z.ZodDiscriminatedUnion<any, string>
-		? Extract<z.output<T['schema']>[Discriminator<T>], string>
-		: never
-type Native<T extends RelationTable, K extends keyof Fields<T>> = ConvexValidatorFromZod<
-	Fields<T>[K],
-	'required'
->['type']
+type Tags<T extends RelationTable> = [Discriminator<T>] extends [never]
+	? never
+	: Extract<T['schema']['_output'][Discriminator<T>], string>
+type Native<T extends RelationTable, K extends keyof Fields<T>> = Fields<T>[K]['validator']['type']
 const fieldBrand: unique symbol = Symbol('relationField')
 const edgeBrand: unique symbol = Symbol('relationEdge')
 type Comparable<Value> = Exclude<Value, null | undefined>
@@ -352,7 +363,7 @@ export type BranchBuilder<Tables extends RelationTables> = <
 	[K in keyof BranchFields<Tables[T], Tag> & string]: FieldReference<
 		T,
 		K,
-		ConvexValidatorFromZod<Extract<BranchFields<Tables[T], Tag>[K], z.ZodType>, 'required'>['type'],
+		Extract<BranchFields<Tables[T], Tag>[K], KType>['validator']['type'],
 		Tag
 	>
 }
@@ -415,7 +426,7 @@ export type RelationSelection<
 		}
 type BranchTables<Tables extends RelationTables, T extends keyof Tables, Tag extends string> = {
 	[K in keyof Tables]: K extends T
-		? Omit<Tables[K], 'schema'> & { schema: z.ZodObject<BranchFields<Tables[T], Tag>> }
+		? Omit<Tables[K], 'schema'> & { schema: KObject<BranchFields<Tables[T], Tag>> }
 		: Tables[K]
 }
 type VariantSelections<
@@ -539,27 +550,26 @@ export type RelationFilters<
 								Side,
 								Tail<Level>
 							> | null
-						:
-								| {
-										some: RelationFilters<
-											Tables,
-											D,
-											Extract<Target, keyof Tables>,
-											S[K],
-											Side,
-											Tail<Level>
-										>
-								  }
-								| {
-										none: RelationFilters<
-											Tables,
-											D,
-											Extract<Target, keyof Tables>,
-											S[K],
-											Side,
-											Tail<Level>
-										>
-								  }
+						: | {
+									some: RelationFilters<
+										Tables,
+										D,
+										Extract<Target, keyof Tables>,
+										S[K],
+										Side,
+										Tail<Level>
+									>
+							  }
+							| {
+									none: RelationFilters<
+										Tables,
+										D,
+										Extract<Target, keyof Tables>,
+										S[K],
+										Side,
+										Tail<Level>
+									>
+							  }
 					: never
 			} & {
 				and?: readonly RelationFilters<Tables, D, T, S, Side, Tail<Level>>[]
@@ -596,7 +606,7 @@ type VariantFilters<
 					}[keyof V]
 				}
 		: {}
-type PublicRow<T extends RelationTable> = z.output<T['publicDto']> & {
+type PublicRow<T extends RelationTable> = T['publicDto']['_output'] & {
 	_id: GenericId<T['tableName']>
 }
 export type ScopedRelationRow<Row, Scope extends string, Key extends PropertyKey> = [
@@ -688,21 +698,18 @@ export interface RelationTableHelpers<
 > {
 	filters<F extends Record<string, GenericValidator>>(
 		contract: FilterContract<F>,
-	): PaginationOptionsSchema<SharedFilters<F>, SharedFilters<F, 'input'>>
+	): PaginationOptionsSchema<SharedFilters<F>>
 	paginationOpts<const S extends RelationFilterSelection<Tables, D, T>>(
 		selection: ExactFilterMask<Tables, D, T, S>,
 		options?: PaginationValidatorOptions,
-	): PaginationOptionsSchema<
-		RelationFilters<Tables, D, T, S>,
-		RelationFilters<Tables, D, T, S, 'input'>
-	>
+	): PaginationOptionsSchema<RelationFilters<Tables, D, T, S>>
 	pageDto<
 		const S extends RelationSelection<Tables, D, T>,
 		const G extends RelationGroupSelection<Tables, D, T> = {},
 	>(
 		selection: ExactOutputMask<Tables, D, T, S>,
 		groups?: ExactGroupSelection<Tables, D, T, G>,
-	): z.ZodType<EnginePaginationResult<RelationRow<Tables, D, T, S, Depth, G>>>
+	): KSchema<EnginePaginationResult<RelationRow<Tables, D, T, S, Depth, G>>>
 }
 export interface RelationRegistryIdentity {
 	readonly identity: string
@@ -743,20 +750,20 @@ export interface RelationTableMetadata {
 interface TableMetadata {
 	searchIndexes: readonly SearchIndexMetadata[]
 	fieldGroups: Readonly<Record<string, readonly string[]>>
-	groupRecipes: Readonly<Record<string, DtoRecipe>>
+	/** Stored validators of each group, by `[group, tag]`; their strict objects build on first use. */
+	groupFields: Readonly<Record<string, Readonly<Record<string, GenericValidator>>>>
+	groupSchemas: Map<string, KObject<any>>
 	fields: Record<string, GenericValidator>
 	/** Sorted by name on first read; order-free checks use `capturedIndexes`. */
 	indexes: { name: string; fields: string[] }[]
 	capturedIndexes: readonly { name: string; fields: string[] }[]
 	searchIndexList: SearchIndexMetadata[]
-	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string>
+	dto: KObject<any> | KDiscriminatedUnion<string, any>
 	branches?: {
 		discriminator: string
-		options: Record<string, { fields: Record<string, GenericValidator>; dto?: z.ZodObject }>
+		options: Record<string, { fields: Record<string, GenericValidator>; dto?: KObject<any> }>
 	}
 	allFields: ReadonlySet<string>
-	dtoRecipe: DtoRecipe
-	dtoNativeCanonical?: string
 }
 interface RegistryMetadata {
 	metadata: Record<string, TableMetadata>
@@ -788,16 +795,6 @@ const memberRefs = new WeakMap<AnyField, RelationMember>()
 const throughRefs = new WeakSet<AnyThrough>()
 const throughChecks = new WeakMap<AnyThrough, () => void>()
 const edgeRefs = new WeakSet<AnyEdge>()
-const searchIndexExport = z.object({
-	indexDescriptor: z.string(),
-	searchField: z.string(),
-	filterFields: z.array(z.string()),
-})
-const indexExport = z.object({
-	searchIndexes: z.array(searchIndexExport),
-	stagedSearchIndexes: z.array(searchIndexExport),
-	indexes: z.array(z.object({ indexDescriptor: z.string(), fields: z.array(z.string()) })),
-})
 const reservedEdgeNames = [
 	'and',
 	'or',
@@ -824,27 +821,24 @@ export function defineRelations<
 		branch: BranchBuilder<Tables>,
 	) => D & ExactDeclarations<Tables, D>,
 ): RelationRegistry<Tables, D> {
-	const sources: Record<
-		string,
-		{ table: RelationTable; native: TableDefinition; skeleton?: NativeSkeleton }
-	> = Object.create(null)
-	const nativeTables: Record<string, TableDefinition> = {}
+	// Declaration reads only each table's name. Its native table, schema and skeleton are read on
+	// the table's first use (R22); the native preflight runs before any export or conversion.
+	const sources: Record<string, TableSource> = Object.create(null)
 	for (const [name, table] of Object.entries(tables)) {
 		if (
 			table.tableName !== name ||
 			['one', 'many', '__proto__', 'constructor', 'prototype'].includes(name)
 		)
 			throw new Error(`Invalid relation table "${name}"`)
-		// The native table is captured by descriptor; its preflight runs before
-		// any export or conversion, on first use. Stored parsers never run.
-		const nativeDescriptor = Object.getOwnPropertyDescriptor(table, 'table')
-		if (!nativeDescriptor || !('value' in nativeDescriptor))
-			throw new Error('Unsupported native table accessor')
-		const native: TableDefinition = nativeDescriptor.value
-		sources[name] = { table, native, skeleton: nativeSkeleton(table, native) }
-		nativeTables[name] = native
+		sources[name] = tableSource(table)
 	}
 	const names = Object.keys(sources)
+	const nativeTables: Record<string, TableDefinition> = {}
+	for (const name of names)
+		Object.defineProperty(nativeTables, name, {
+			enumerable: true,
+			get: () => sources[name].native(),
+		})
 
 	const metadata: Record<string, TableMetadata> = {}
 	// Each table materializes at most once, in two tiers: `storedTier` (stored side,
@@ -863,7 +857,7 @@ export function defineRelations<
 		if (state.busy) throw new Error(`Cyclic relation table materialization "${name}"`)
 		state.busy = true
 		try {
-			return (state.stored = captureStoredTier(name, sources[name].table, sources[name].native))
+			return (state.stored = captureStoredTier(name, sources[name].table, sources[name].native()))
 		} catch (error) {
 			state.failure = { error }
 			throw error
@@ -882,7 +876,7 @@ export function defineRelations<
 			const { table, native } = sources[name]
 			state.data = state.stored
 				? finishTable(name, table, state.stored)
-				: materializeTable(name, table, native)
+				: materializeTable(name, table, native())
 			const checks = pending[name] ?? []
 			delete pending[name]
 			for (const check of checks) check()
@@ -962,18 +956,23 @@ export function defineRelations<
 			ownRefs.add(ref)
 			return Object.freeze(ref)
 		}
-		for (const field of fields)
-			result[field] = makeReference(
-				field,
-				once(() => fieldValidator(name, field, guard)),
+		// A table exposes every field name, but builds a field's reference on its first read.
+		for (const field of fields) {
+			const reference = once(() =>
+				makeReference(
+					field,
+					once(() => fieldValidator(name, field, guard)),
+				),
 			)
+			Object.defineProperty(result, field, { enumerable: true, get: reference })
+		}
 		return Object.freeze(result)
 	}
 	// Field names come from the native skeleton; without one, the table materializes.
 	function referencesFor(name: string) {
 		return (tableRefs[name] ??= makeReferences(
 			name,
-			sources[name].skeleton?.common ?? Object.keys(ready(name).fields),
+			sources[name].skeleton()?.common ?? Object.keys(ready(name).fields),
 		))
 	}
 	type EdgeFactory = (spec: { from: Leg; to: Leg }) => AnyEdge
@@ -997,7 +996,7 @@ export function defineRelations<
 		const key = JSON.stringify([table, tag])
 		if (!branchRefs.has(key) && names.includes(table) && !branchTables.has(table)) {
 			branchTables.add(table)
-			const skeleton = sources[table].skeleton
+			const skeleton = sources[table].skeleton()
 			// Object tables have no branches; an unknown skeleton materializes the table.
 			const branches = skeleton
 				? (skeleton.branches ?? [])
@@ -1021,7 +1020,7 @@ export function defineRelations<
 	)
 	for (const [source, declared] of Object.entries(edges)) {
 		if (!Object.hasOwn(metadata, source)) throw new Error(`Unknown source table "${source}"`)
-		const skeleton = sources[source].skeleton
+		const skeleton = sources[source].skeleton()
 		for (const [name, edge] of Object.entries(declared)) {
 			// Field-name collisions are rechecked against normalized fields on first use.
 			if (
@@ -1082,16 +1081,16 @@ export function defineRelations<
 	const helpers: Record<
 		string,
 		{
-			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>): z.ZodType
-			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): z.ZodType
-			pageDto(selection: SelectionMask, groups?: GroupSelection): z.ZodType
+			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>): KType
+			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): KType
+			pageDto(selection: SelectionMask, groups?: GroupSelection): KType
 		}
 	> = {}
 	for (const table of names) {
-		const pageRecipes = new Map<string, DtoRecipe>()
-		const paginationGrammars = new Map<string, FilterGrammarRecipe>()
-		const builtPages = new Set<string>()
-		const builtGrammars = new Set<string>()
+		// k records are immutable and their native validators memoised, so a repeated request reuses
+		// the boundary it built the first time.
+		const pages = new Map<string, KType>()
+		const options = new Map<string, KType>()
 		helpers[table] = {
 			filters<F extends Record<string, GenericValidator>>(contract: FilterContract<F>) {
 				use(table)
@@ -1106,61 +1105,40 @@ export function defineRelations<
 					)
 						throw new Error(`Shared filter field mismatch "${field}"`)
 				}
-				return materializeDto(paginationRecipe).extend({
+				return nativePagination().extend({
 					filters: contract.schema.optional(),
-					order: z.enum(['asc', 'desc']).optional(),
+					order: k.enum(['asc', 'desc']).optional(),
 				})
 			},
-			paginationOpts(selection: SelectionMask, options?: PaginationValidatorOptions): z.ZodType {
+			paginationOpts(selection: SelectionMask, settings?: PaginationValidatorOptions): KType {
 				use(table)
 				assertSelection(selection)
-				const key = JSON.stringify(selection)
-				let grammar = paginationGrammars.get(key)
-				let fresh: FilterGrammar
-				if (grammar) fresh = restoreFilterGrammar(grammar)
-				else if (!builtGrammars.has(key)) {
-					// A module usually asks for each selection once per request, so the
-					// first build is used directly; capture only pays off on repeats.
-					builtGrammars.add(key)
-					fresh = filterGrammar(internal, table, selection)
-				} else {
-					grammar = captureFilterGrammar(filterGrammar(internal, table, selection))
-					paginationGrammars.set(key, grammar)
-					fresh = restoreFilterGrammar(grammar)
+				const key = JSON.stringify([selection, settings?.validator ?? null])
+				let result = options.get(key)
+				if (!result) {
+					result = nativePagination().extend({
+						filters: relationFilterSchema(
+							filterGrammar(internal, table, selection),
+							undefined,
+							settings,
+						).optional(),
+						order: k.enum(['asc', 'desc']).optional(),
+					})
+					options.set(key, result)
 				}
-				return materializeDto(paginationRecipe).extend({
-					filters: relationFilterSchema(fresh, undefined, options).optional(),
-					order: z.enum(['asc', 'desc']).optional(),
-				})
+				return result
 			},
-			pageDto(selection: SelectionMask, groups: GroupSelection = {}): z.ZodType {
+			pageDto(selection: SelectionMask, groups: GroupSelection = {}): KType {
 				use(table)
 				assertSelection(selection)
 				assertGroups(internal, table, groups)
 				const key = JSON.stringify([selection, groups])
-				let recipe = pageRecipes.get(key)
-				if (!recipe) {
-					// Unselected ordinary rows contain only independently restored DTOs.
-					// Composed relations and groups may share validators across variant
-					// branches, so retain reconstruction to isolate every occurrence.
-					const plain =
-						!metadata[table].branches &&
-						Object.keys(selection).length === 0 &&
-						Object.keys(groups).length === 0
-					const ordinary = plain && ordinaryDtoConstruction()
-					const result = pageResult(rowSchema(internal, table, selection, 0, groups))
-					const reusable = ordinary && ordinaryDtoConstruction()
-					// The first plain build is returned without a recipe; a repeated
-					// request captures one so later calls can reconstruct from it.
-					if (reusable && !builtPages.has(key)) {
-						builtPages.add(key)
-						return result
-					}
-					recipe = captureDto(result)
-					pageRecipes.set(key, recipe)
-					if (reusable) return result
+				let result = pages.get(key)
+				if (!result) {
+					result = pageResult(rowSchema(internal, table, selection, 0, groups))
+					pages.set(key, result)
 				}
-				return materializeDto(recipe)
+				return result
 			},
 		}
 	}
@@ -1258,7 +1236,7 @@ export function defineRelations<
 						]
 					: null,
 				data.indexes,
-				data.dtoNativeCanonical ?? canonicalNative(nativeJson(zodToConvex(data.dto))),
+				canonicalNative(nativeJson(data.dto.validator)),
 				...(Object.keys(data.fieldGroups).length ? [data.fieldGroups] : []),
 				...(data.searchIndexes.length ? [{ searchIndexes: data.searchIndexes }] : []),
 			]
@@ -1315,6 +1293,33 @@ export function verifyRelations(registry: RelationRegistryIdentity): void {
 	void registry.identity
 }
 
+/**
+ * A table entry with field groups: whole stored fields a query may request beside the public DTO.
+ * Every other member reads through to `table`, so its boundaries stay lazy.
+ */
+export function withFieldGroups<
+	T extends RelationTable,
+	const G extends Readonly<Record<string, readonly string[]>>,
+>(table: T, fieldGroups: G): T & { readonly fieldGroups: G } {
+	// Copied and frozen per table: later edits to the caller's map or arrays cannot reach the engine.
+	// SAFETY: the copy has exactly the caller's keys and field-name arrays, so it is a G.
+	const groups = Object.freeze(
+		Object.fromEntries(
+			Object.entries(fieldGroups).map(([group, fields]) => [group, Object.freeze([...fields])]),
+		),
+	) as G
+	const view = new Proxy(table, {
+		get: (target, key) => (key === 'fieldGroups' ? groups : memberOf(target, key)),
+		has: (target, key) => key === 'fieldGroups' || key in target,
+		getOwnPropertyDescriptor: (target, key) =>
+			key === 'fieldGroups'
+				? { value: groups, enumerable: true, configurable: true, writable: false }
+				: Object.getOwnPropertyDescriptor(target, key),
+	})
+	// SAFETY: the proxy answers fieldGroups itself and forwards every other member to `table`.
+	return view as T & { readonly fieldGroups: G }
+}
+
 /** Internal owned executor bridge. Source ownership is checked once by each engine. */
 export function getRelationExecutor(registry: RelationRegistryIdentity) {
 	const owned = executorRegistries.get(registry)
@@ -1332,19 +1337,13 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		)
 			throw new Error('Native schema/table ownership disagrees with relation registry')
 	}
-	const branchValidators = new WeakMap<
-		object,
-		{ validator: z.ZodType; fieldKeys: readonly string[] }
-	>()
-	const projectionKeys = new WeakMap<z.ZodObject, readonly string[]>()
-	const groupDtos = new WeakMap<z.ZodObject, Map<string, z.ZodObject>>()
+	const branchValidators = new WeakMap<object, { validator: KType; fieldKeys: readonly string[] }>()
+	const projectionKeys = new WeakMap<KObject<any>, readonly string[]>()
+	const groupDtos = new WeakMap<KObject<any>, Map<string, KObject<any>>>()
 	const scalarFields = new Map<string, FieldSchemas>()
 	const grammars = new Map<string, FilterGrammar>()
-	const filterNodes = new WeakMap<FilterGrammar, Map<number, z.ZodObject>>()
-	function validateDocument(
-		table: string,
-		row: Record<string, import('convex/values').Value>,
-	): void {
+	const filterNodes = new WeakMap<FilterGrammar, Map<number, KType>>()
+	function validateDocument(table: string, row: Record<string, Value>): void {
 		owned!.use(table)
 		const data = owned!.internal.metadata[table]
 		if (!data) throw new Error('Unknown query table')
@@ -1358,16 +1357,16 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		if (!branch) throw new Error('Invalid variant document')
 		let cached = branchValidators.get(branch)
 		const fieldKeys = cached?.fieldKeys ?? Object.keys(branch.fields)
-		const entries: [string, import('convex/values').Value | undefined][] = []
+		const entries: [string, Value | undefined][] = []
 		// Snapshot ownership before reading getters, as filter().map() did.
 		for (const key of fieldKeys) if (Object.hasOwn(row, key)) entries.push([key, undefined])
 		for (const entry of entries) entry[1] = row[entry[0]]
 		const values = Object.fromEntries(entries)
 		if (!cached) {
-			cached = { validator: convexToZod(v.object(branch.fields)), fieldKeys }
+			cached = { validator: kFromNative(v.object(branch.fields)), fieldKeys }
 			branchValidators.set(branch, cached)
 		}
-		cached.validator.parse(values)
+		schemaOf(cached.validator)['~parseStrict'](values)
 	}
 	return Object.freeze({
 		streamSchema: owned.streamSchema,
@@ -1397,7 +1396,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 						// Unsupported stored containers are not scalar-queryable. No validators
 						// are reconstructed from JSON; these are the actual native validators.
 						if (scalarValidator(validator))
-							fields[name] = scalarPredicateSchema(validator).optional()
+							fields[name] = schemaOf(scalarPredicateSchema(validator)).optional()
 					}
 					scalarFields.set(cacheKey, fields)
 				}
@@ -1442,9 +1441,9 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 				}
 				return Object.freeze(relations)
 			}
-			return materializeDto(paginationRecipe).extend({
+			return nativePagination().extend({
 				filters: lazyRelationFilterSchema(grammar(table, 0), filterNodes).optional(),
-				order: z.enum(['asc', 'desc']).optional(),
+				order: k.enum(['asc', 'desc']).optional(),
 			})
 		},
 		select(table: string, selection: SelectionMask) {
@@ -1463,7 +1462,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 		},
 		project(
 			table: string,
-			row: Record<string, import('convex/values').Value>,
+			row: Record<string, Value>,
 			eligible: () => boolean,
 			groups: readonly string[] = [],
 		) {
@@ -1476,18 +1475,13 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 				: undefined
 			if (data.branches && !branch) throw new Error('Invalid variant document')
 			const projection = data.dto
-			let dto =
+			const found: KType | undefined =
 				branch?.dto ??
-				(projection instanceof z.ZodDiscriminatedUnion
-					? projection.options.find(
-							(option: z.ZodType) =>
-								option instanceof z.ZodObject &&
-								option.shape[data.branches!.discriminator] instanceof z.ZodLiteral &&
-								option.shape[data.branches!.discriminator].value ===
-									row[data.branches!.discriminator],
-						)
+				(projection instanceof KDiscriminatedUnion
+					? projectionBranch(projection, data.branches!.discriminator, row)
 					: projection)
-			if (!(dto instanceof z.ZodObject)) throw new Error('Invalid variant DTO')
+			if (!(found instanceof KObject)) throw new Error('Invalid variant DTO')
+			let dto: KObject<any> = found
 			if (groups.length) {
 				let variants = groupDtos.get(dto)
 				if (!variants) {
@@ -1497,16 +1491,14 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 				const key = JSON.stringify([...groups].sort())
 				let composed = variants.get(key)
 				if (!composed) {
-					composed = dto
-						.extend(
-							groupValidators(
-								data,
-								groups,
-								undefined,
-								data.branches ? String(row[data.branches.discriminator]) : undefined,
-							),
-						)
-						.strict()
+					composed = dto.extend(
+						groupValidators(
+							data,
+							groups,
+							undefined,
+							data.branches ? String(row[data.branches.discriminator]) : undefined,
+						),
+					)
 					variants.set(key, composed)
 				}
 				dto = composed
@@ -1519,7 +1511,7 @@ export function getRelationExecutor(registry: RelationRegistryIdentity) {
 			}
 			// The strict DTO remains the authority. Pick its fields before parsing,
 			// matching table projection without spreading any storage-only fields.
-			return dto.parse(
+			return dto['~parseStrict'](
 				Object.fromEntries(
 					keys.filter((key) => Object.hasOwn(row, key)).map((key) => [key, row[key]]),
 				),
@@ -1539,36 +1531,42 @@ interface StoredTier extends Pick<TableMetadata, 'fields' | 'branches' | 'allFie
 	capturedIndexes: readonly { name: string; fields: string[] }[]
 	searchIndexList: SearchIndexMetadata[]
 }
-/** A stored tier plus the stored schema object it inspected and normalized. */
 interface StoredCapture extends StoredTier {
 	schema: RelationTable['schema']
 }
 interface BoundaryCapture {
-	dtoRecipe: DtoRecipe
-	admission: ReturnType<typeof classifyDto>
-	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string> | undefined
+	dto: KObject<any> | KDiscriminatedUnion<string, any>
 }
 
-/** Registration-only preflight of the native table and stored schema. Stored
- * parsers and their default/pipe callbacks are never run. */
-function preflightStored(schema: RelationTable['schema'], nativeTable: TableDefinition): void {
-	// Rejects accessors before native export or conversion.
-	preflightNative(nativeTable)
-	preflightSchema(schema, 'stored')
+/** One table as declared: its native table and field-name skeleton are read on first use. */
+interface TableSource {
+	readonly table: RelationTable
+	native(): TableDefinition
+	skeleton(): NativeSkeleton | undefined
 }
 
+function tableSource(table: RelationTable): TableSource {
+	return {
+		table,
+		native: once(() => {
+			// Field-group declarations are checked first, by descriptor, before any member is read.
+			declaredGroups(table)
+			const native = table.table
+			// Rejects accessors before native export or conversion. Stored parsers never run.
+			preflightNative(native)
+			return native
+		}),
+		skeleton: once(() => schemaSkeleton(table)),
+	}
+}
+
+/** The DTO with its id: an immutable `k` object or variant union that only validates. */
 function captureBoundary(table: RelationTable): BoundaryCapture {
-	preflightSchema(table.publicDto, 'dto')
-	const sourceDto = table.dto(true)
-	if (!(sourceDto instanceof z.ZodObject) && !(sourceDto instanceof z.ZodDiscriminatedUnion))
+	const dto = table.dto(true)
+	if (!(dto instanceof KObject) && !(dto instanceof KDiscriminatedUnion))
 		throw new Error('Expected object or discriminated union DTO')
-	preflightSchema(sourceDto, 'dto')
-	const dtoRecipe = captureDto(sourceDto)
-	const admission = classifyDto(dtoRecipe)
-	const dto = admission?.boundary ? undefined : materializeDto(dtoRecipe)
-	if (dto && !(dto instanceof z.ZodObject) && !(dto instanceof z.ZodDiscriminatedUnion))
-		throw new Error('Expected object or discriminated union DTO')
-	return { dtoRecipe, admission, dto }
+	if (!valuePreserving(dto)) throw new Error('Unsupported DTO schema: DTOs only validate')
+	return { dto }
 }
 
 function exportStored(nativeTable: TableDefinition): NativeTableExport {
@@ -1580,7 +1578,7 @@ function exportStored(nativeTable: TableDefinition): NativeTableExport {
 function captureIndexes(
 	exported: NativeTableExport,
 ): Pick<StoredTier, 'capturedIndexes' | 'searchIndexList'> {
-	const captured = indexExport.parse(exported)
+	const captured = indexExport()['~parseStrict'](exported)
 	return {
 		searchIndexList: [
 			...captured.searchIndexes.map((index) => ({ ...index, staged: false })),
@@ -1615,7 +1613,6 @@ function captureStoredTier(
 	nativeTable: TableDefinition,
 ): StoredCapture {
 	const schema = table.schema
-	preflightStored(schema, nativeTable)
 	const exported = exportStored(nativeTable)
 	const tier = {
 		...normalizeStored(name, schema, exported.documentType),
@@ -1634,61 +1631,34 @@ function materializeTable(
 	nativeTable: TableDefinition,
 ): TableMetadata {
 	const schema = table.schema
-	preflightStored(schema, nativeTable)
 	const boundary = captureBoundary(table)
 	const exported = exportStored(nativeTable)
-	const normalized = normalizeTable(
-		name,
-		schema,
-		boundary.dto,
-		exported.documentType,
-		boundary.admission?.boundary,
-	)
+	const normalized = normalizeTable(name, schema, boundary.dto, exported.documentType)
 	return completeTable(table, { ...normalized, ...captureIndexes(exported) }, boundary)
 }
 
 /** Completes a table whose stored tier already passed; only DTO-side checks remain. */
 function finishTable(name: string, table: RelationTable, stored: StoredCapture): TableMetadata {
 	const boundary = captureBoundary(table)
-	// The stored schema is caller-owned and may have changed since its stored tier
-	// was captured, including during the DTO callback above: inspect it again before
-	// reading it, and use the same object the stored tier normalized.
+	// Use the same stored schema the stored tier normalized; k records are immutable.
 	const { schema, ...tier } = stored
-	preflightSchema(schema, 'stored')
-	const facts = boundary.admission?.boundary
-	const dtos = checkDtoBoundary(name, schema, boundary.dto, facts)
-	return completeTable(
-		table,
-		{ ...tier, branches: attachDtos(tier.branches, dtos, facts) },
-		boundary,
-	)
+	const dtos = checkDtoBoundary(name, schema, boundary.dto)
+	return completeTable(table, { ...tier, branches: attachDtos(tier.branches, dtos) }, boundary)
 }
 
 function completeTable(
 	table: RelationTable,
 	normalized: StoredTier,
-	{ dtoRecipe, admission, dto: captured }: BoundaryCapture,
+	{ dto }: BoundaryCapture,
 ): TableMetadata {
-	let dto = captured
-	const dtoNative = nativeJson(dto ? zodToConvex(dto) : admission!.emit())
-	assertNativeValidation(dtoNative)
-	const dtoNativeCanonical = dto ? undefined : canonicalNative(dtoNative)
+	assertNativeValidation(nativeJson(dto.validator))
 	const fieldGroups: Record<string, readonly string[]> = Object.create(null)
-	const groupRecipes: Record<string, DtoRecipe> = Object.create(null)
-	const descriptor = Object.getOwnPropertyDescriptor(table, 'fieldGroups')
-	if ((!descriptor && 'fieldGroups' in table) || (descriptor && !('value' in descriptor)))
-		throw new Error('Invalid field groups')
-	assertGroupData(descriptor?.value ?? {})
-	const definitions = z
-		.record(z.string(), z.array(z.string()).nonempty())
-		.parse(descriptor?.value ?? {})
+	const groupFields: Record<string, Readonly<Record<string, GenericValidator>>> = Object.create(
+		null,
+	)
+	const definitions = declaredGroups(table)
 	const used = new Set<string>()
-	const publicKeys = admission?.boundary
-		? admission.boundary.kind === 'object'
-			? [admission.boundary.keys]
-			: Object.values(admission.boundary.branches)
-		: undefined
-	const publicBranches = dto instanceof z.ZodObject ? [dto] : dto?.options
+	const publicBranches: readonly KType[] = dto instanceof KObject ? [dto] : dto.options
 	for (const [group, members] of Object.entries(definitions)) {
 		if (!group || ['__proto__', 'constructor', 'prototype'].includes(group))
 			throw new Error('Invalid field groups')
@@ -1697,12 +1667,9 @@ function completeTable(
 				!normalized.allFields.has(field) ||
 				field.startsWith('_') ||
 				used.has(field) ||
-				(publicKeys
-					? publicKeys.some((keys) => keys.includes(field))
-					: publicBranches!.some(
-							(branch: z.core.$ZodType) =>
-								!(branch instanceof z.ZodObject) || Object.hasOwn(branch.shape, field),
-						))
+				publicBranches.some(
+					(branch) => !(branch instanceof KObject) || Object.hasOwn(branch.shape, field),
+				)
 			)
 				throw new Error('Conflicting or incompatible field groups')
 			const validators = normalized.branches
@@ -1713,7 +1680,7 @@ function completeTable(
 			if (
 				!validators.every(
 					(validator) =>
-						canonicalNative(nativeJson(validator)) === canonicalNative(nativeJson(validators[0])) &&
+						sameNative(nativeJson(validator), nativeJson(validators[0])) &&
 						validator.isOptional === validators[0].isOptional,
 				)
 			)
@@ -1726,13 +1693,12 @@ function completeTable(
 					([tag, branch]) => [tag, branch.fields] as const,
 				)
 			: [[null, normalized.fields] as const]) {
-			const storedFields = Object.fromEntries(
-				members
-					.filter((field) => Object.hasOwn(fields, field))
-					.map((field) => [field, fields[field]]),
-			)
-			groupRecipes[JSON.stringify([group, tag])] = captureDto(
-				convexToZod(v.object(storedFields)).strict(),
+			groupFields[JSON.stringify([group, tag])] = Object.freeze(
+				Object.fromEntries(
+					members
+						.filter((field) => Object.hasOwn(fields, field))
+						.map((field) => [field, fields[field]]),
+				),
 			)
 		}
 	}
@@ -1755,19 +1721,10 @@ function completeTable(
 				[...searchIndexList].sort((a, b) => a.name.localeCompare(b.name)),
 			))
 		},
-		get dto() {
-			if (!dto) {
-				const restored = materializeDto(dtoRecipe)
-				if (!(restored instanceof z.ZodObject) && !(restored instanceof z.ZodDiscriminatedUnion))
-					throw new Error('Expected object or discriminated union DTO')
-				dto = restored
-			}
-			return dto
-		},
-		dtoNativeCanonical,
-		dtoRecipe,
+		dto,
 		fieldGroups: Object.freeze(fieldGroups),
-		groupRecipes: Object.freeze(groupRecipes),
+		groupFields: Object.freeze(groupFields),
+		groupSchemas: new Map(),
 	}
 	if (branches) metadata.branches = branches
 	return metadata
@@ -1799,72 +1756,57 @@ interface NativeSkeleton {
 	discriminator?: string
 	branches?: readonly (readonly [string, readonly string[]])[]
 }
-/** Field names of a native object or object-union table, without materializing it.
- * Object tables are read by descriptor only, so no caller accessor runs. A variant
- * table runs its native preflight first, which admits Convex's own validator JSON
- * for the common-field rule. Anything unexpected returns undefined, and the table
- * then materializes when its references are first requested.
+/** Field names of an object or variant table from its `k` schema, without building any native
+ * validator for an object table. A variant table compares its branch fields natively, as
+ * normalizeStored does, for the common-field rule. Anything unexpected returns undefined, and the
+ * table then materializes when its references are first requested.
  */
-function nativeSkeleton(table: RelationTable, native: TableDefinition): NativeSkeleton | undefined {
-	// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns -- Descriptor reads admit and return arbitrary caller values without invoking them; callers narrow each value.
-	const own = (object: unknown, key: string): unknown => {
-		if (object === null || Object(object) !== object) return undefined
-		// SAFETY: the boxing test above admits only objects.
-		const descriptor = Object.getOwnPropertyDescriptor(object as object, key)
-		return descriptor && 'value' in descriptor ? descriptor.value : undefined
-	}
-	// oxlint-disable-next-line anti-slop/no-unknown-parameters, anti-slop/no-unsafe-dictionary-type -- Field values stay unread here: only names and preflighted validators are used.
-	const objectFields = (validator: unknown): Record<string, unknown> | undefined => {
-		const fields = own(validator, 'fields')
-		if (own(validator, 'kind') !== 'object' || fields === null || Object(fields) !== fields)
-			return undefined
-		// SAFETY: the boxing test above admits only objects.
-		// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Values are unread until native preflight admits them.
-		return fields as Record<string, unknown>
-	}
+function schemaSkeleton(table: RelationTable): NativeSkeleton | undefined {
 	const system = ['_id', '_creationTime']
-	const validator = own(native, 'validator')
-	const fields = objectFields(validator)
-	if (fields) {
-		const names = [...new Set([...Object.keys(fields), ...system])]
+	const schema = table.schema
+	if (schema instanceof KObject) {
+		const names = [...new Set([...Object.keys(schema.shape), ...system])]
 		return { fields: names, common: names, variant: false }
 	}
-	const definition = own(own(table.schema, '_zod'), 'def')
-	const discriminator = own(definition, 'discriminator')
-	if (own(validator, 'kind') !== 'union' || !z.string().safeParse(discriminator).success)
-		return undefined
-	try {
-		preflightNative(native)
-	} catch {
-		return undefined
-	}
-	// SAFETY: the native graph passed preflight: plain data and trusted Convex prototypes only.
-	const members = (validator as { members: GenericValidator[] }).members.map(objectFields)
-	if (!members.length || members.some((member) => !member)) return undefined
-	// SAFETY: every member is a preflighted native object validator's fields.
-	const stored = members as Record<string, GenericValidator>[]
+	if (!(schema instanceof KDiscriminatedUnion)) return undefined
+	const discriminator = schema.discriminator
 	const branches: (readonly [string, readonly string[]])[] = []
-	for (const member of stored) {
-		const tag = member[String(discriminator)]
-		if (tag?.kind !== 'literal' || !z.string().safeParse(tag.value).success) return undefined
-		branches.push([String(tag.value), [...new Set([...Object.keys(member), ...system])]])
+	const objects: KObject<any>[] = []
+	for (const option of optionsOf(schema)) {
+		if (!(option instanceof KObject)) return undefined
+		const tag = literalOf(option.shape[discriminator])
+		if (tag === undefined) return undefined
+		objects.push(option)
+		branches.push([tag, [...new Set([...Object.keys(option.shape), ...system])]])
 	}
-	// Mirrors normalizeTable: system fields are identical in every branch.
-	const common = [
-		...Object.keys(stored[0]).filter(
-			(key) =>
-				stored.every((member) => Object.hasOwn(member, key)) &&
-				(key === discriminator ||
-					stored.every((member) => commonCompatible(member[key], stored[0][key]))),
-		),
-		...system,
-	]
+	if (!objects.length) return undefined
+	// The common fields compare branch validators natively, so they are computed only when
+	// `r.<table>` is first read; branch scopes and name checks need field names alone.
+	const common = once(() => {
+		const stored = objects.map((option) => {
+			const { _id, _creationTime, ...fields } = option.validator.fields
+			return fields
+		})
+		// Mirrors normalizeTable: system fields are identical in every branch.
+		return [
+			...new Set([
+				...Object.keys(stored[0]).filter(
+					(key) =>
+						stored.every((member) => Object.hasOwn(member, key)) &&
+						(key === discriminator ||
+							stored.every((member) => commonCompatible(member[key], stored[0][key]))),
+				),
+				...system,
+			]),
+		]
+	})
 	return {
 		fields: [...new Set(branches.flatMap(([, fields]) => fields))],
-		common: [...new Set(common)],
+		get common() {
+			return common()
+		},
 		variant: true,
-		// SAFETY: the safeParse above admitted a string.
-		discriminator: String(discriminator),
+		discriminator,
 		branches,
 	}
 }
@@ -1883,7 +1825,7 @@ function once<T>(compute: () => T): () => T {
 	}
 }
 
-// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Registration preflight inspects descriptors before Zod can invoke caller getters; typed parsing follows immediately.
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Registration preflight inspects descriptors before parsing can invoke caller getters; typed parsing follows immediately.
 function assertGroupData(value: unknown, depth = 0): void {
 	if (depth > 16) throw new Error('Invalid field groups')
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Descriptor preflight must distinguish primitive leaves without invoking caller-owned accessors.
@@ -1893,8 +1835,8 @@ function assertGroupData(value: unknown, depth = 0): void {
 		throw new Error('Invalid field groups')
 	for (const key of Reflect.ownKeys(value)) {
 		const descriptor = Object.getOwnPropertyDescriptor(value, key)!
-		if (!z.string().safeParse(key).success || !('value' in descriptor))
-			throw new Error('Invalid field groups')
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Own keys are classified by representation before any value is read.
+		if (typeof key !== 'string' || !('value' in descriptor)) throw new Error('Invalid field groups')
 		assertGroupData(descriptor.value, depth + 1)
 	}
 }
@@ -1906,13 +1848,7 @@ function assertGroups(
 ): GroupSelection {
 	assertGroupData(input)
 	function visit(table: string, input: GroupSelection, depth: number): GroupSelection {
-		const parsed = z
-			.object({
-				fieldGroups: z.record(z.string(), z.enum(['required', 'if-permitted'])).optional(),
-				relations: z.record(z.string(), z.unknown()).optional(),
-			})
-			.strict()
-			.parse(input)
+		const parsed = groupSelection()['~parseStrict'](input)
 		const data = registry.metadata[table]
 		if (!data) throw new Error('Unknown query table')
 		for (const name of Object.keys(parsed.fieldGroups ?? {}))
@@ -1941,11 +1877,14 @@ function groupValidators(
 	const fields: FieldSchemas = {}
 	for (const name of groups) {
 		const key = JSON.stringify([name, tag ?? null])
-		if (!Object.hasOwn(data.groupRecipes, key)) throw new Error('Unknown field group')
-		const schema = materializeDto(data.groupRecipes[key])
-		if (!(schema instanceof z.ZodObject)) throw new Error('Invalid field group schema')
-		for (const [field, validator] of Object.entries(schema.shape))
-			fields[field] = modes?.[name] === 'if-permitted' ? validator.optional() : validator
+		if (!Object.hasOwn(data.groupFields, key)) throw new Error('Unknown field group')
+		let schema = data.groupSchemas.get(key)
+		if (!schema) {
+			schema = kObjectFromNative(data.groupFields[key])
+			data.groupSchemas.set(key, schema)
+		}
+		for (const [field, validator] of Object.entries<KType>(schema.shape))
+			fields[field] = modes?.[name] === 'if-permitted' ? schemaOf(validator).optional() : validator
 	}
 	return fields
 }
@@ -2090,7 +2029,12 @@ function requireIndex(
 			)
 		})
 	)
-		throw new Error(`No active index begins with or has a guarded prefix for "${table}.${field}"`)
+		throw new Error(
+			`No active index begins with or has a guarded prefix for "${table}.${field}"` +
+				(data.capturedIndexes.length
+					? `; "${table}" has ${data.capturedIndexes.map((index) => `${index.name}(${index.fields})`).join(', ')} in this bundle`
+					: `: table "${table}" has no indexes registered in this bundle; the module declaring them may not be imported`),
+		)
 }
 function legTables(leg: Leg): string[] {
 	return 'base' in leg ? [leg.base.table, leg.junction.table] : [leg.table]
@@ -2109,62 +2053,12 @@ function serializeLeg(leg: Leg): unknown[] {
 			? [leg.table, leg.field, leg.guard ?? null, memberRefs.get(leg)]
 			: [leg.table, leg.field, leg.guard ?? null]
 }
-interface FilterGrammarRecipe {
-	fields: DtoRecipe<z.ZodObject>
-	relations: Record<string, { cardinality: 'one' | 'many'; target: FilterGrammarRecipe }>
-	variants?: { discriminator: string; options: Record<string, FilterGrammarRecipe> }
-}
-
-function captureFilterGrammar(grammar: FilterGrammar): FilterGrammarRecipe {
-	return {
-		fields: captureDto(z.object(grammar.fields)),
-		relations: Object.fromEntries(
-			Object.entries(grammar.relations).map(([name, relation]) => [
-				name,
-				{
-					cardinality: relation.cardinality,
-					target: captureFilterGrammar(relation.target),
-				},
-			]),
-		),
-		variants: grammar.variants
-			? {
-					discriminator: grammar.variants.discriminator,
-					options: Object.fromEntries(
-						Object.entries(grammar.variants.options).map(([tag, branch]) => [
-							tag,
-							captureFilterGrammar(branch),
-						]),
-					),
-				}
-			: undefined,
-	}
-}
-
-function restoreFilterGrammar(recipe: FilterGrammarRecipe): FilterGrammar {
-	return {
-		fields: materializeDto(recipe.fields).shape,
-		relations: Object.fromEntries(
-			Object.entries(recipe.relations).map(([name, relation]) => [
-				name,
-				{
-					cardinality: relation.cardinality,
-					target: restoreFilterGrammar(relation.target),
-				},
-			]),
-		),
-		variants: recipe.variants
-			? {
-					discriminator: recipe.variants.discriminator,
-					options: Object.fromEntries(
-						Object.entries(recipe.variants.options).map(([tag, branch]) => [
-							tag,
-							restoreFilterGrammar(branch),
-						]),
-					),
-				}
-			: undefined,
-	}
+/** Validate selected scalar kinds now, in the same order the predicate compiler visits them. */
+function assertFilterScalar(validator: GenericValidator): void {
+	if (validator.kind === 'union') {
+		for (const member of validator.members) assertFilterScalar(member)
+	} else if (!scalarValidator(validator))
+		throw new Error(`Unsupported scalar filter kind "${validator.kind}"`)
 }
 
 function filterGrammar(
@@ -2193,8 +2087,10 @@ function filterGrammar(
 		}
 		const validator = (tag === undefined ? data.fields : data.branches!.options[tag].fields)[key]
 		const edge = registry.declarations[table]?.[key]
-		if (mask === true && validator) fields[key] = scalarPredicateSchema(validator).optional()
-		else if (mask !== true && edge && depth < 4)
+		if (mask === true && validator) {
+			assertFilterScalar(validator)
+			deferFilterField(fields, key, () => schemaOf(scalarPredicateSchema(validator)).optional())
+		} else if (mask !== true && edge && depth < 4)
 			relations[key] = {
 				cardinality: edge.cardinality,
 				target: filterGrammar(registry, edge.target, mask, depth + 1),
@@ -2216,8 +2112,8 @@ function rowSchema(
 	selection: SelectionMask,
 	depth: number = 0,
 	groups: GroupSelection = {},
-): z.ZodType {
-	const relationFields: FieldSchemas = {}
+): KType {
+	const relationFields: Record<string, KType> = {}
 	for (const [name, mask] of Object.entries(selection)) {
 		const edge = registry.declarations[table]?.[name]
 		if (!edge || depth >= 4) throw new Error(`Unknown or too deep relation "${table}.${name}"`)
@@ -2229,123 +2125,96 @@ function rowSchema(
 			groups.relations?.[name],
 		)
 		if (edge.targetGuard) {
-			if (!(target instanceof z.ZodDiscriminatedUnion)) throw new Error('Invalid target scope')
-			target = target.options
-				.filter((option): option is z.ZodObject => option instanceof z.ZodObject)
-				.find(
-					(option: z.ZodObject) =>
-						option.shape[edge.targetGuard!.discriminator] instanceof z.ZodLiteral &&
-						option.shape[edge.targetGuard!.discriminator].value === edge.targetGuard!.tag,
-				)!
+			if (!(target instanceof KDiscriminatedUnion)) throw new Error('Invalid target scope')
+			const guard = edge.targetGuard
+			target = optionsOf(target).find(
+				(option) =>
+					option instanceof KObject && literalOf(option.shape[guard.discriminator]) === guard.tag,
+			)!
 		}
-		relationFields[name] = edge.cardinality === 'one' ? target.nullable() : pageResult(target)
+		relationFields[name] =
+			edge.cardinality === 'one' ? schemaOf(target).nullable() : pageResult(target)
 	}
 	const data = registry.metadata[table]
-	const dto = materializeDto(data.dtoRecipe)
-	function compose(dto: z.ZodObject, tag?: string) {
+	const dto = data.dto
+	function compose(dto: KObject<any>, tag?: string) {
 		const selected = { ...relationFields }
 		for (const name of Object.keys(selected)) {
 			const edge = registry.declarations[table][name]
 			if (edge.sourceGuard && tag !== edge.sourceGuard.tag && edge.cardinality === 'one')
-				selected[name] = z.null()
+				selected[name] = k.null()
 		}
-		return dto
-			.extend({
-				...groupValidators(data, Object.keys(groups.fieldGroups ?? {}), groups.fieldGroups, tag),
-				...selected,
-			})
-			.strict()
+		return dto.extend({
+			...groupValidators(data, Object.keys(groups.fieldGroups ?? {}), groups.fieldGroups, tag),
+			...selected,
+		})
 	}
 	if (data.branches) {
-		if (!(dto instanceof z.ZodDiscriminatedUnion)) throw new Error('Invalid variant DTO')
-		const options = dto.options.map((option) => {
-			if (!(option instanceof z.ZodObject)) throw new Error('Invalid variant DTO')
-			const tag = option.shape[data.branches!.discriminator]
-			if (!(tag instanceof z.ZodLiteral)) throw new Error('Invalid variant tag')
-			return compose(option, String(tag.value))
+		if (!(dto instanceof KDiscriminatedUnion)) throw new Error('Invalid variant DTO')
+		const options = optionsOf(dto).map((option) => {
+			if (!(option instanceof KObject)) throw new Error('Invalid variant DTO')
+			const tag = literalOf(option.shape[data.branches!.discriminator])
+			if (tag === undefined) throw new Error('Invalid variant tag')
+			return compose(option, tag)
 		})
-		return z.discriminatedUnion(data.branches.discriminator, [options[0], ...options.slice(1)])
+		const [first, ...rest] = options
+		return k.discriminatedUnion(data.branches.discriminator, [first, ...rest])
 	}
-	if (!(dto instanceof z.ZodObject)) throw new Error('Expected object DTO')
+	if (!(dto instanceof KObject)) throw new Error('Expected object DTO')
 	return compose(dto)
 }
 
 function normalizeTable(
 	name: string,
 	schema: RelationTable['schema'],
-	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string> | undefined,
+	dto: BoundaryCapture['dto'],
 	document: ValidatorJSON,
-	facts?: DtoBoundary,
 ): Pick<TableMetadata, 'fields' | 'branches' | 'allFields'> {
-	const dtos = checkDtoBoundary(name, schema, dto, facts)
+	const dtos = checkDtoBoundary(name, schema, dto)
 	const stored = normalizeStored(name, schema, document)
-	return { ...stored, branches: attachDtos(stored.branches, dtos, facts) }
+	return { ...stored, branches: attachDtos(stored.branches, dtos) }
 }
 /** Boundary-kind agreement between the stored schema and the DTO. Returns the
  * DTO variant branches, which normalization attaches to the stored branches. */
 function checkDtoBoundary(
 	name: string,
 	schema: RelationTable['schema'],
-	dto: z.ZodObject | z.ZodDiscriminatedUnion<any, string> | undefined,
-	facts?: DtoBoundary,
+	dto: BoundaryCapture['dto'],
 ): VariantBranches | undefined {
-	if (schema instanceof z.ZodObject && (facts?.kind === 'object' || dto instanceof z.ZodObject))
-		return undefined
-	if (
-		!(schema instanceof z.ZodDiscriminatedUnion) ||
-		!(facts?.kind === 'variant' || dto instanceof z.ZodDiscriminatedUnion)
-	)
+	if (schema instanceof KObject && dto instanceof KObject) return undefined
+	if (!(schema instanceof KDiscriminatedUnion) || !(dto instanceof KDiscriminatedUnion))
 		throw new Error(`Expected matching discriminated union boundaries "${name}"`)
-	const discriminator = schema._zod.def.discriminator
-	if (
-		(facts?.kind === 'variant'
-			? facts.discriminator
-			: dto instanceof z.ZodDiscriminatedUnion
-				? dto._zod.def.discriminator
-				: undefined) !== discriminator
-	)
-		throw new Error('DTO discriminator mismatch')
+	const discriminator = schema.discriminator
+	if (dto.discriminator !== discriminator) throw new Error('DTO discriminator mismatch')
 	const documents = variantOptions(schema, discriminator),
-		dtos =
-			facts?.kind === 'variant'
-				? facts.branches
-				: variantOptions(dto instanceof z.ZodDiscriminatedUnion ? dto : schema, discriminator)
+		dtos = variantOptions(dto, discriminator)
 	if (Object.keys(documents).sort().join('\0') !== Object.keys(dtos).sort().join('\0'))
 		throw new Error('DTO variant tags mismatch')
 	return dtos
 }
-/** Captured DTO branch objects, or the admitted boundary's public keys per tag. */
-type VariantBranches = Readonly<Record<string, z.ZodObject | readonly string[]>>
+/** Captured DTO branch objects by tag. */
+type VariantBranches = Readonly<Record<string, KObject<any>>>
 function attachDtos(
 	branches: TableMetadata['branches'],
 	dtos: VariantBranches | undefined,
-	facts?: DtoBoundary,
 ): TableMetadata['branches'] {
 	if (!branches) return undefined
 	const options: NonNullable<TableMetadata['branches']>['options'] = Object.create(null)
-	for (const [tag, branch] of Object.entries(branches.options)) {
-		const dto = dtos?.[tag]
-		options[tag] = {
-			fields: branch.fields,
-			dto: facts ? undefined : dto instanceof z.ZodObject ? dto : undefined,
-		}
-	}
+	for (const [tag, branch] of Object.entries(branches.options))
+		options[tag] = { fields: branch.fields, dto: dtos?.[tag] }
 	return { discriminator: branches.discriminator, options }
 }
 function variantOptions(
-	union: z.ZodDiscriminatedUnion<any, string>,
+	union: KDiscriminatedUnion<string, any>,
 	discriminator: string,
-): Record<string, z.ZodObject> {
-	const result: Record<string, z.ZodObject> = Object.create(null)
-	for (const option of union.options) {
-		if (!(option instanceof z.ZodObject)) throw new Error('Variant branches must be objects')
-		const tag = option.shape[discriminator]
-		if (!(tag instanceof z.ZodLiteral) || tag.values.size !== 1)
+): Record<string, KObject<any>> {
+	const result: Record<string, KObject<any>> = Object.create(null)
+	for (const option of optionsOf(union)) {
+		if (!(option instanceof KObject)) throw new Error('Variant branches must be objects')
+		const tag = literalOf(option.shape[discriminator])
+		if (tag === undefined || Object.hasOwn(result, tag))
 			throw new Error('Variant tags must be unique required string literals')
-		const literal = z.string().safeParse(tag.value)
-		if (!literal.success || Object.hasOwn(result, literal.data))
-			throw new Error('Variant tags must be unique required string literals')
-		result[literal.data] = option
+		result[tag] = option
 	}
 	if (Object.keys(result).length === 0) throw new Error('Expected at least one variant branch')
 	return result
@@ -2356,14 +2225,14 @@ function normalizeStored(
 	schema: RelationTable['schema'],
 	document: ValidatorJSON,
 ): Pick<TableMetadata, 'fields' | 'branches' | 'allFields'> {
-	if (schema instanceof z.ZodObject) {
-		const fields = zodToConvex(schema).fields
+	if (schema instanceof KObject) {
+		const fields = schema.validator.fields
 		assertStoredDocument(name, fields, document)
 		return { fields, allFields: new Set(Object.keys(fields)) }
 	}
-	if (!(schema instanceof z.ZodDiscriminatedUnion))
+	if (!(schema instanceof KDiscriminatedUnion))
 		throw new Error(`Expected matching discriminated union boundaries "${name}"`)
-	const discriminator = schema._zod.def.discriminator
+	const discriminator = schema.discriminator
 	const documents = variantOptions(schema, discriminator)
 	const branches: NonNullable<TableMetadata['branches']> = {
 		discriminator,
@@ -2371,14 +2240,14 @@ function normalizeStored(
 	}
 	const stored: GenericValidator[] = []
 	for (const [tag, object] of Object.entries(documents)) {
-		const fields = zodToConvex(object).fields
+		const fields = object.validator.fields
 		const { _id, _creationTime, ...storage } = fields
 		// The union comparison below checks each branch's stored fields.
 		assertSystemFields(name, fields)
 		stored.push(v.object(storage))
 		branches.options[tag] = { fields }
 	}
-	if (canonicalNative(document) !== canonicalNative(nativeJson(v.union(...stored))))
+	if (!sameNative(document, nativeJson(v.union(...stored))))
 		throw new Error(`Native stored document disagrees with boundary "${name}"`)
 	const members = Object.values(branches.options).map((branch) => branch.fields)
 	const fields: Record<string, GenericValidator> = {}
@@ -2405,7 +2274,7 @@ function commonCompatible(left: GenericValidator, right: GenericValidator): bool
 	try {
 		return compatible(left, right)
 	} catch {
-		return canonicalNative(nativeJson(left)) === canonicalNative(nativeJson(right))
+		return sameNative(nativeJson(left), nativeJson(right))
 	}
 }
 
@@ -2509,22 +2378,6 @@ function nativeJson(validator: GenericValidator): ValidatorJSON {
 	return (validator as GenericValidator & { json: ValidatorJSON }).json
 }
 
-function canonicalNative(value: JSONValue): string {
-	if (Array.isArray(value)) return `[${value.map(canonicalNative).join(',')}]`
-	if (value !== null && Object(value) === value) {
-		// SAFETY: native JSON contains only JSON objects, arrays and primitives.
-		const object = value as { [key: string]: JSONValue }
-		let encoded = '{'
-		let separator = ''
-		for (const key of Object.keys(object).sort()) {
-			encoded += `${separator}${JSON.stringify(key)}:${canonicalNative(object[key])}`
-			separator = ','
-		}
-		return `${encoded}}`
-	}
-	return JSON.stringify(value)
-}
-
 function assertNativeValidation(value: JSONValue): void {
 	if (value === null || Object(value) !== value) return
 	// SAFETY: native converter metadata contains only JSON containers and primitives.
@@ -2540,7 +2393,7 @@ function assertStoredDocument(
 ): void {
 	const { _id, _creationTime, ...stored } = fields
 	assertSystemFields(table, fields)
-	if (canonicalNative(document) !== canonicalNative(nativeJson(v.object(stored))))
+	if (!sameNative(document, nativeJson(v.object(stored))))
 		throw new Error(`Native stored document disagrees with boundary "${table}"`)
 }
 function assertSystemFields(table: string, fields: Record<string, GenericValidator>): void {
@@ -2548,180 +2401,12 @@ function assertSystemFields(table: string, fields: Record<string, GenericValidat
 	if (
 		!_id ||
 		!_creationTime ||
-		canonicalNative(nativeJson(_id)) !== canonicalNative(nativeJson(v.id(table))) ||
-		canonicalNative(nativeJson(_creationTime)) !== canonicalNative(nativeJson(v.number())) ||
+		!sameNative(nativeJson(_id), nativeJson(v.id(table))) ||
+		!sameNative(nativeJson(_creationTime), nativeJson(v.number())) ||
 		_id.isOptional !== 'required' ||
 		_creationTime.isOptional !== 'required'
 	)
 		throw new Error(`Native stored document disagrees with boundary "${table}"`)
-}
-
-// Duplicate Zod copies in one bundle receive renamed module identifiers
-// (esbuild: `util_exports2.shallowClone`), so the built-in getter text is
-// compared with its single-identifier namespace receiver normalized. Anything
-// else — a dotted receiver, another call — stays a foreign accessor.
-function normalizeAccessorSource(text: string): string {
-	return text
-		.replace(/\s+/g, ' ')
-		.replace(/(?<![\w$.])[\w$]+\.shallowClone\b/g, 'namespace.shallowClone')
-		.trim()
-}
-
-// Compare against this peer's own built-in accessor, using the intrinsic rather
-// than a caller-provided toString. Older Zod clones retain this accessor even
-// after reading shape, because it caches on the original definition.
-const objectAccessorSample = z.object({ field: z.string() })
-const builtinObjectGetters = new Set(
-	[
-		objectAccessorSample,
-		objectAccessorSample.pick({ field: true }),
-		objectAccessorSample.omit({ field: true }),
-		objectAccessorSample.extend({ other: z.string() }),
-		objectAccessorSample.safeExtend({ other: z.string() }),
-		objectAccessorSample.merge(z.object({ other: z.string() })),
-		objectAccessorSample.partial(),
-		objectAccessorSample.required(),
-	].flatMap((schema) => {
-		const getter = Object.getOwnPropertyDescriptor(schema._zod.def, 'shape')?.get
-		return getter ? [normalizeAccessorSource(Function.prototype.toString.call(getter))] : []
-	}),
-)
-
-// Stored schemas already passed the native input boundary. Track their graph
-// independently of public DTO admissibility, without running any stored parser.
-const builtinDefaultGetter = normalizeAccessorSource(
-	Function.prototype.toString.call(
-		Object.getOwnPropertyDescriptor(z.string().default('')._zod.def, 'defaultValue')!.get!,
-	),
-)
-const builtinPrefaultGetter = normalizeAccessorSource(
-	Function.prototype.toString.call(
-		Object.getOwnPropertyDescriptor(z.string().prefault('')._zod.def, 'defaultValue')!.get!,
-	),
-)
-
-/** Registration-only admissibility traversal; never runs a stored parser. */
-function preflightSchema(dto: z.ZodType, boundary: 'dto' | 'stored'): void {
-	const fallbackDefinitions = new Set<object>()
-	const seen = new Set<object>()
-	const active = new Set<object>()
-	const objectDefinitions = new Set<object>()
-	// oxlint-disable-next-line anti-slop/no-object-parameters -- Registration must inspect descriptors before trusting a Zod semantic node.
-	function visit(value: object, depth: number): void {
-		if (active.has(value)) throw new Error('Unsupported cyclic DTO schema')
-		if (seen.has(value)) return
-		if (depth > 32 || seen.size >= 4096) throw new Error('DTO schema graph budget exceeded')
-		seen.add(value)
-		active.add(value)
-		try {
-			const internals = Object.getOwnPropertyDescriptor(value, '_zod')
-			if (internals) {
-				if (!('value' in internals)) throw new Error('Unsupported DTO schema accessor')
-				const definition = Object.getOwnPropertyDescriptor(internals.value, 'def')
-				if (!definition || !('value' in definition))
-					throw new Error('Unsupported DTO schema accessor')
-			}
-			if (value instanceof z.core.$ZodCheck && !(value instanceof z.core.$ZodType)) {
-				if (boundary === 'dto' && value._zod.def.check === 'overwrite')
-					throw new Error('Unsupported DTO overwrite check')
-				visit(value._zod.def, depth + 1)
-
-				return
-			}
-			if (value instanceof z.core.$ZodType) {
-				// SAFETY: built-in Zod definitions form a discriminated union.
-				const def = (value as z.core.$ZodTypes)._zod.def
-				if (
-					boundary === 'dto' &&
-					(![
-						'object',
-						'array',
-						'optional',
-						'nullable',
-						'nonoptional',
-						'union',
-						'intersection',
-						'tuple',
-						'record',
-						'string',
-						'number',
-						'boolean',
-						'bigint',
-						'null',
-						'never',
-						'custom',
-						'literal',
-						'enum',
-					].includes(def.type) ||
-						('coerce' in def && def.coerce))
-				)
-					throw new Error(`Unsupported DTO schema "${def.type}"`)
-				if (boundary === 'stored' && (def.type === 'default' || def.type === 'prefault')) {
-					const descriptor = Object.getOwnPropertyDescriptor(def, 'defaultValue')
-					if (descriptor?.get) {
-						if (
-							descriptor.set ||
-							normalizeAccessorSource(Function.prototype.toString.call(descriptor.get)) !==
-								(def.type === 'default' ? builtinDefaultGetter : builtinPrefaultGetter)
-						)
-							throw new Error('Unsupported stored schema accessor')
-						// Admit only the installed fallback accessor without evaluating it.
-						fallbackDefinitions.add(def)
-					}
-				}
-				if (value instanceof z.ZodUnion) {
-					visit(value.options, depth + 1)
-				}
-				if (def.type === 'object') {
-					const descriptor = Object.getOwnPropertyDescriptor(def, 'shape')
-					if (descriptor?.get) {
-						if (
-							descriptor.set ||
-							!builtinObjectGetters.has(
-								normalizeAccessorSource(Function.prototype.toString.call(descriptor.get)),
-							)
-						)
-							throw new Error('Unsupported DTO schema accessor')
-						const fields = def.shape
-						visit(fields, depth + 1)
-						objectDefinitions.add(def)
-					}
-					if (value instanceof z.ZodObject) {
-						const publicFields = Object.getOwnPropertyDescriptor(value, 'shape')
-						if (publicFields && !('value' in publicFields))
-							throw new Error('Unsupported DTO schema accessor')
-						visit(value.shape, depth + 1)
-					}
-				}
-				visit(def, depth + 1)
-
-				return
-			}
-			const keys = Reflect.ownKeys(value)
-			const values = keys.map((key) => Object.getOwnPropertyDescriptor(value, key)!)
-			if (
-				values.some(
-					(property, i) =>
-						!('value' in property) &&
-						!(objectDefinitions.has(value) && keys[i] === 'shape') &&
-						!(fallbackDefinitions.has(value) && keys[i] === 'defaultValue'),
-				)
-			)
-				throw new Error('Unsupported DTO schema accessor')
-
-			for (const property of values) {
-				if (
-					property.value !== null &&
-					Object(property.value) === property.value &&
-					!(property.value instanceof Function)
-				)
-					visit(property.value, depth + 1)
-			}
-		} finally {
-			active.delete(value)
-		}
-	}
-	visit(dto, 0)
 }
 
 function snapshotTable(data: TableMetadata): RelationTableMetadata {
@@ -2778,4 +2463,186 @@ function frozenNative(native: ValidatorJSON): Readonly<ValidatorJSON> {
 		pending.push(...Object.values(container))
 	}
 	return snapshot
+}
+
+// oxlint-disable-next-line anti-slop/no-unknown-returns -- The field-group view forwards any member unchanged.
+function memberOf(target: RelationTable, key: PropertyKey): unknown {
+	// oxlint-disable-next-line anti-slop/no-reflect-get -- The table itself is the receiver, so its private state stays reachable.
+	return Reflect.get(target, key, target)
+}
+
+/** The options of a discriminated union schema, as `k` records. */
+function optionsOf(union: KType): readonly KType[] {
+	// SAFETY: callers pass k.discriminatedUnion records, whose options are k schemas.
+	return (union as KDiscriminatedUnion<string, readonly KType[]>).options
+}
+
+/** A table export's index lists, read with unknown export keys stripped. */
+const indexExport = once(() => {
+	const searchIndex = k
+		.object({
+			indexDescriptor: k.string(),
+			searchField: k.string(),
+			filterFields: k.array(k.string()),
+		})
+		.strip()
+	return k
+		.object({
+			searchIndexes: k.array(searchIndex),
+			stagedSearchIndexes: k.array(searchIndex),
+			indexes: k.array(
+				k.object({ indexDescriptor: k.string(), fields: k.array(k.string()) }).strip(),
+			),
+		})
+		.strip()
+})
+
+const groupDefinitions = once(() => k.record(k.string(), k.array(k.string()).min(1)))
+
+/** A table's own field-group data, read by descriptor so no caller accessor runs. */
+function declaredGroups(table: RelationTable): Readonly<Record<string, string[]>> {
+	const descriptor = Object.getOwnPropertyDescriptor(table, 'fieldGroups')
+	if ((!descriptor && 'fieldGroups' in table) || (descriptor && !('value' in descriptor)))
+		throw new Error('Invalid field groups')
+	const declared: unknown = descriptor?.value ?? {}
+	assertGroupData(declared)
+	return groupDefinitions()['~parseStrict'](declared)
+}
+
+const groupSelection = once(() =>
+	k.strictObject({
+		fieldGroups: k.record(k.string(), k.enum(['required', 'if-permitted'])).optional(),
+		relations: k.record(k.string(), k.any()).optional(),
+	}),
+)
+
+/** Ops that change a value; a DTO only validates. */
+const VALUE_CHANGING_OPS: ReadonlySet<string> = new Set([
+	'default',
+	'trim',
+	'lower',
+	'upper',
+	'overwrite',
+	'transform',
+	'pipe',
+	'catch',
+	'strip',
+])
+
+/** Whether a schema only validates, at every depth. */
+function valuePreserving(schema: KType): boolean {
+	// The same transform, pipe and catch detection ordinary table fields use, at any depth.
+	if (containsTransform(schema)) return false
+	let current = schema
+	while (current.prev !== null) {
+		if (VALUE_CHANGING_OPS.has(current.op)) return false
+		current = schemaOf(current.prev)
+	}
+	switch (current.op) {
+		case 'object':
+			return Object.values(objectFieldsOf(current)).every(valuePreserving)
+		case 'array':
+			return valuePreserving(schemaOf(current.arg))
+		case 'record':
+		case 'union':
+			return membersOf(current).every(valuePreserving)
+		case 'discriminatedUnion':
+			return optionsOf(schemaOf(current)).every(valuePreserving)
+		default:
+			return true
+	}
+}
+
+/** The string value of a bare `k.literal('...')` field (a description may sit on it). */
+function literalOf(field: KType | undefined): string | undefined {
+	let current = field
+	while (current && current.prev !== null) {
+		if (current.op !== 'describe') return undefined
+		current = schemaOf(current.prev)
+	}
+	if (current?.op !== 'literal') return undefined
+	const value = current.arg
+	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- A literal root stores its value as the record argument.
+	return typeof value === 'string' ? value : undefined
+}
+
+/** The DTO branch whose literal tag equals the row's discriminator. */
+function projectionBranch(
+	projection: KDiscriminatedUnion<string, any>,
+	discriminator: string,
+	row: Record<string, Value>,
+): KType | undefined {
+	return optionsOf(projection).find(
+		(option) =>
+			option instanceof KObject && literalOf(option.shape[discriminator]) === row[discriminator],
+	)
+}
+
+/**
+ * The `k` schema a stored native validator describes, for whole stored fields (field groups and
+ * variant branch documents). Numbers are finite, as v1's conversion required.
+ */
+function kFromNative(validator: GenericValidator): KType {
+	const required = requiredFromNative(validator)
+	return validator.isOptional === 'optional' ? schemaOf(required).optional() : required
+}
+
+function requiredFromNative(validator: GenericValidator): KType {
+	switch (validator.kind) {
+		case 'id':
+			return k.id(validator.tableName)
+		case 'string':
+			return k.string()
+		case 'float64':
+			return k.number().refine(Number.isFinite, 'Invalid input: expected a finite number')
+		case 'int64':
+			return k.int64()
+		case 'boolean':
+			return k.boolean()
+		case 'null':
+			return k.null()
+		case 'bytes':
+			return k.bytes()
+		case 'any':
+			return k.any()
+		case 'literal':
+			return k.literal(validator.value)
+		case 'array':
+			return k.array(kFromNative(validator.element))
+		case 'record':
+			return k.record(
+				// SAFETY: a native record key validator is a string kind, so its k schema is a record key.
+				schemaOf(kFromNative(validator.key)) as KObjectKey,
+				kFromNative(validator.value),
+			)
+		case 'object':
+			return kObjectFromNative(validator.fields)
+		case 'union':
+			return unionOf(validator.members.map(kFromNative))
+		default:
+			throw new Error(`Unsupported stored field kind "${validator.kind}"`)
+	}
+}
+
+function kObjectFromNative(fields: Readonly<Record<string, GenericValidator>>): KObject<any> {
+	const out: Record<string, KType> = {}
+	for (const [key, validator] of Object.entries(fields)) out[key] = kFromNative(validator)
+	return k.strictObject(out)
+}
+
+type KObjectKey = Parameters<typeof k.record>[0]
+
+function objectFieldsOf(root: KType): Readonly<Record<string, KType>> {
+	// SAFETY: k.object stores its field map as the root argument.
+	return root.arg as Readonly<Record<string, KType>>
+}
+
+function membersOf(root: KType): readonly KType[] {
+	// SAFETY: k.record stores its key and value schemas, and k.union its members, as the root argument.
+	return root.arg as readonly KType[]
+}
+
+function schemaOf(schema: KType | KType['prev'] | KType['arg']): KSchema<any, any, any, any, any> {
+	// SAFETY: every KType at runtime is a KSchema record created by a k factory.
+	return schema as KSchema<any, any, any, any, any>
 }

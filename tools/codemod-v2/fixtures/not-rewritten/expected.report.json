@@ -1,0 +1,93 @@
+{
+	"status": "kept",
+	"skipped": [
+		{
+			"line": 3,
+			"code": "catchall"
+		},
+		{
+			"line": 4,
+			"code": "recursive"
+		},
+		{
+			"line": 5,
+			"code": "tuple-optionality"
+		},
+		{
+			"line": 6,
+			"code": "custom"
+		},
+		{
+			"line": 7,
+			"code": "custom"
+		},
+		{
+			"line": 10,
+			"code": "super-refine"
+		},
+		{
+			"line": 11,
+			"code": "meta"
+		},
+		{
+			"line": 12,
+			"code": "coerce"
+		},
+		{
+			"line": 13,
+			"code": "preprocess"
+		},
+		{
+			"line": 14,
+			"code": "codec"
+		},
+		{
+			"line": 15,
+			"code": "brand"
+		},
+		{
+			"line": 16,
+			"code": "readonly"
+		},
+		{
+			"line": 17,
+			"code": "file"
+		},
+		{
+			"line": 18,
+			"code": "template-literal"
+		},
+		{
+			"line": 19,
+			"code": "string-format"
+		},
+		{
+			"line": 20,
+			"code": "string-format"
+		},
+		{
+			"line": 21,
+			"code": "string-format"
+		},
+		{
+			"line": 22,
+			"code": "json-schema"
+		},
+		{
+			"line": 23,
+			"code": "zod-type"
+		},
+		{
+			"line": 24,
+			"code": "zod-type"
+		},
+		{
+			"line": 25,
+			"code": "unknown-factory"
+		},
+		{
+			"line": 26,
+			"code": "zod-introspection"
+		}
+	]
+}

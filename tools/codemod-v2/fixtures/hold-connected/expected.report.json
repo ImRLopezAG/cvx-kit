@@ -1,0 +1,13 @@
+{
+  "status": "mixed",
+  "skipped": [
+    {
+      "line": 2,
+      "code": "mixed-reference"
+    },
+    {
+      "line": 3,
+      "code": "brand"
+    }
+  ]
+}

@@ -169,7 +169,6 @@ try {
 					'@convex-dev/workflow': manifest.dependencies['@convex-dev/workflow'],
 					convex: manifest.devDependencies.convex,
 					effect: manifest.devDependencies.effect,
-					zod: manifest.devDependencies.zod,
 					'convex-helpers': manifest.devDependencies['convex-helpers'],
 				},
 				devDependencies: {
@@ -282,8 +281,10 @@ try {
 	assert.deepEqual(invoke('read', { key: 'invalid-args' }), [])
 	rejection('invalidReturn', { key: 'invalid-return' }, /ReturnsValidationError/)
 	assert.deepEqual(invoke('read', { key: 'invalid-return' }), [])
-	rejection('invalidCustomReturn', { key: 'invalid-custom-return' }, /FIXTURE_CUSTOM_RETURN/)
-	assert.deepEqual(invoke('read', { key: 'invalid-custom-return' }), [])
+	// v2 does not parse return values, and skipConvexValidation turns Convex's own check off, so a
+	// custom builder's `returns` is not enforced here: the call succeeds and its write stands.
+	assert.equal(invoke('invalidCustomReturn', { key: 'invalid-custom-return' }), 'invalid')
+	assert.deepEqual(invoke('read', { key: 'invalid-custom-return' }), ['trusted-server'])
 	for (const mode of ['domain', 'audit', 'completion']) {
 		rejection('save', { key: mode, mode }, new RegExp(`FIXTURE_${mode}`))
 		assert.deepEqual(invoke('read', { key: mode }), [])

@@ -1,6 +1,6 @@
 /* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, anti-slop/no-chained-type-assertions, anti-slop/no-known-value-widening -- Runtime-failure fixture deliberately erases helper and host types to reach the binding checks a typed caller cannot. */
 import { expect, it } from 'vite-plus/test'
-import { z } from 'zod'
+import { k } from '../src/k'
 import { defineDomainContract } from '../src/contracts'
 import { createFoundation } from '../src/index'
 import { createEffectFoundation } from '../src/effect'
@@ -20,8 +20,8 @@ function lazyContract(track: <Value>(name: string, value: Value) => Value) {
 		commands: {
 			get save() {
 				return track('save', {
-					input: z.string().transform(Number),
-					result: z.number(),
+					input: k.string().transform(Number),
+					result: k.number(),
 					classification: 'business',
 				})
 			},
@@ -30,15 +30,15 @@ function lazyContract(track: <Value>(name: string, value: Value) => Value) {
 			get a() {
 				return track('a', {
 					get input() {
-						return track('a.input', z.number())
+						return track('a.input', k.number())
 					},
 					get result() {
-						return track('a.result', z.number())
+						return track('a.result', k.number())
 					},
 				})
 			},
 			get b() {
-				return track('b', { input: z.string(), result: z.string() })
+				return track('b', { input: k.string(), result: k.string() })
 			},
 		},
 	}
@@ -153,7 +153,7 @@ it('surfaces a protected-field override on first execution with the eager messag
 		operations: ({ query }) => ({
 			a: query.handler((input) => input),
 			// SAFETY: the protected override is the runtime failure under test.
-			b: query.b({ handler: (input: string) => input, input: z.string() } as never),
+			b: query.b({ handler: (input: string) => input, input: k.string() } as never),
 		}),
 	})
 	expect(await queries.exec('a', 1, {} as never)).toBe(1)
@@ -191,7 +191,7 @@ it('validates a lazy helper result registered without a contract, like a data-de
 	const { track } = counted()
 	const data = lazyContract(track)
 	const eager = defineDomainContract({
-		queries: { a: { input: z.number(), result: z.number() }, b: data.queries.b },
+		queries: { a: { input: k.number(), result: k.number() }, b: data.queries.b },
 	})
 	const lazy = defineDomainContract(lazyContract(track))
 	const outcomes = []
@@ -256,13 +256,13 @@ it('builds getter fields of a data-declared operation only when that operation r
 	const { reads, track } = counted()
 	const contract = defineDomainContract({
 		queries: {
-			plain: { input: z.number(), result: z.number() },
+			plain: { input: k.number(), result: k.number() },
 			fields: {
 				get input() {
-					return track('fields.input', z.string().transform(Number))
+					return track('fields.input', k.string().transform(Number))
 				},
 				get result() {
-					return track('fields.result', z.number())
+					return track('fields.result', k.number())
 				},
 			},
 		},
@@ -287,7 +287,7 @@ it('builds getter fields of a data-declared operation only when that operation r
 		operations: ({ query }) => ({
 			plain: query.handler((input) => input),
 			// SAFETY: the protected override is the runtime failure under test.
-			fields: query.fields({ handler: (input: number) => input, input: z.number() } as never),
+			fields: query.fields({ handler: (input: number) => input, input: k.number() } as never),
 		}),
 	})
 	await expect(overriding.exec('fields', '1' as never, {} as never)).rejects.toThrow(

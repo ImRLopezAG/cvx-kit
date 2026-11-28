@@ -1,12 +1,12 @@
 import { Context, Effect, Schema, SchemaGetter } from 'effect'
-import { z } from 'zod'
+import { k } from '../src/k'
+import { kContract } from '../src/contracts'
 import { effectTransactionalIdempotency, effectSchema, createEffectFoundation } from '../src/effect'
 import {
 	IdempotencyError,
 	transactionalIdempotency,
 	type IdempotencyInvocation,
 } from '../src/idempotency'
-import { zodContract } from '../src/contracts'
 
 type Equal<A, B> =
 	(<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -113,8 +113,8 @@ const commands = create({
 	context: (host: { receipt: IdempotencyInvocation }) => host,
 	operations: ({ command }) => ({
 		save: command({
-			input: z.string(),
-			result: z.number().transform(String),
+			input: k.string(),
+			result: k.number().transform(String),
 			replayResult: adapter.replayResult,
 			prepare: (context): ReturnType<typeof adapter.prepare> => adapter.prepare(context.receipt),
 			classification: 'business',
@@ -165,9 +165,9 @@ adapter.prepare({
 	versions: { operation: '1', contract: '1', binding: '1', fingerprintPolicy: '1' },
 })
 const mismatchedReplay = {
-	input: z.string(),
-	result: z.number().transform(String),
-	replayResult: z.number(),
+	input: k.string(),
+	result: k.number().transform(String),
+	replayResult: k.number(),
 	classification: 'business',
 	handler: (input: string) => input.length,
 	audit: () => null,
@@ -183,7 +183,7 @@ void invalidFinal
 
 const neutral = transactionalIdempotency({
 	final: {
-		replayResult: zodContract(z.string().transform(Number)),
+		replayResult: kContract(k.string().transform(Number)),
 		encode: (result: number) => String(result),
 	},
 	authorize: async () => undefined,
@@ -206,7 +206,7 @@ const neutralAssertion: NeutralFinal = true
 void neutralAssertion
 transactionalIdempotency({
 	final: {
-		replayResult: zodContract(z.string().transform(Number)),
+		replayResult: kContract(k.string().transform(Number)),
 		// @ts-expect-error paired codec must encode the final number to the decoder's string wire input
 		encode: (result: number) => result,
 	},

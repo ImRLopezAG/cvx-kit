@@ -1,5 +1,4 @@
 import { WorkflowManager, type WorkflowId } from '@convex-dev/workflow'
-import { zodToConvex } from 'convex-helpers/server/zod4'
 import { paginator } from 'convex-helpers/server/pagination'
 import { paginationOptsValidator, paginationResultValidator } from 'convex/server'
 import { v } from 'convex/values'
@@ -22,12 +21,12 @@ import {
 
 export const start = mutation({
 	args: {
-		scopeRef: zodToConvex(approvalReference),
-		resourceType: zodToConvex(approvalReference),
-		resourceRef: zodToConvex(approvalReference),
-		requester: zodToConvex(approvalActor),
-		metadata: v.optional(zodToConvex(approvalMetadata)),
-		workflow: zodToConvex(approvalWorkflowDescriptor),
+		scopeRef: approvalReference.validator,
+		resourceType: approvalReference.validator,
+		resourceRef: approvalReference.validator,
+		requester: approvalActor.validator,
+		metadata: v.optional(approvalMetadata.validator),
+		workflow: approvalWorkflowDescriptor.validator,
 	},
 	returns: v.object({ runId: v.id('approvalRuns') }),
 	handler: async (ctx, input) => {
@@ -60,7 +59,7 @@ export const start = mutation({
 export const cancel = mutation({
 	args: {
 		runId: v.id('approvalRuns'),
-		actor: zodToConvex(approvalActor),
+		actor: approvalActor.validator,
 		compatibilityKey: v.string(),
 	},
 	returns: v.object({ state: v.literal(APPROVAL_RUN_STATES[4]) }),
@@ -133,8 +132,8 @@ export const status = query({
 
 export const list = query({
 	args: {
-		scopeRef: zodToConvex(approvalReference),
-		state: v.optional(zodToConvex(approvalRunState)),
+		scopeRef: approvalReference.validator,
+		state: v.optional(approvalRunState.validator),
 		paginationOpts: paginationOptsValidator,
 	},
 	returns: paginationResultValidator(approvalRunValidator()),
@@ -163,7 +162,7 @@ export const recordExecutionTerminal = internalMutation({
 			v.literal(APPROVAL_EXECUTION_STATES[1]),
 			v.literal(APPROVAL_EXECUTION_STATES[3]),
 		),
-		failedStepKey: v.optional(zodToConvex(approvalName)),
+		failedStepKey: v.optional(approvalName.validator),
 	},
 	returns: v.null(),
 	handler: async (ctx, input) => {
@@ -205,7 +204,7 @@ function approvalRunValidator() {
 	return v.object({
 		_id: v.id('approvalRuns'),
 		_creationTime: v.number(),
-		...zodToConvex(approvalRunDocument).fields,
+		...approvalRunDocument.validator.fields,
 	})
 }
 

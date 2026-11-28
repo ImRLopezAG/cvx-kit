@@ -1,0 +1,5 @@
+{
+	"status": "mixed",
+	"skipped": [{ "line": 5, "code": "tuple-optionality" }],
+	"declarations": { "rewritten": 2, "left": 1 }
+}

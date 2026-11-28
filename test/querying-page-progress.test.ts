@@ -1,8 +1,8 @@
 import { expect, test } from 'vite-plus/test'
 import { anyApi, defineSchema, type DataModelFromSchemaDefinition } from 'convex/server'
 import { defineTestApp } from 'convex-test'
-import { z } from 'zod'
-import { zodTable } from '../src/zod-table'
+import { k } from '../src/k'
+import { kTable } from '../src/table'
 import { defineRelations } from '../src/relations'
 import { getDocumentSize } from 'convex/values'
 import { createQueryEngine } from '../src/querying'
@@ -165,9 +165,13 @@ test('U3 opt-in cannot turn zero progress, unfinished policy or DTO failure into
 		).rejects.toThrow('MANAGED_READ_BUDGET')
 		expect(o.counts.closes).toBe(1)
 	})
-	const items = zodTable('items', () => ({ ordinal: z.number().refine((value) => value !== 1) }), {
-		publicFields: ['ordinal'],
-	})
+	const items = kTable(
+		'items',
+		{ ordinal: k.number().refine((value) => value !== 1) },
+		{
+			publicFields: ['ordinal'],
+		},
+	)
 	const schema = defineSchema({ items: items.table })
 	const relations = defineRelations({ items }, () => ({}))
 	const engine = createQueryEngine({ schema, relations, cursor })

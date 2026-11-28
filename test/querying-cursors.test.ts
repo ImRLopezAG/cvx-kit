@@ -1,14 +1,15 @@
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type, anti-slop/no-known-value-widening -- Negative fixtures deliberately build cyclic and unsupported values. */
-import { z } from 'zod'
-import type { Value } from 'convex/values'
+import { k } from '../src/k'
 import { createQueryEngine } from '../src/querying'
 import { harness, managed, scope, seed } from './fixture-querying/scalar'
 import { expect, it } from 'vite-plus/test'
 import {
 	createCursorCodec,
+	prepareCursorBinding,
 	CursorError,
 	CursorConfigurationError,
 	type CursorBinding,
+	type KCursorSchema,
 } from '../src/querying/cursors'
 
 const key = () => new Uint8Array(64).fill(31)
@@ -102,6 +103,24 @@ it('binds every query and immutable security field, excluding page size', () => 
 		),
 	).toBe('')
 })
+it('reuses prepared binding bytes across navigation slots and keeps rotated keys and scopes separate', () => {
+	const old = createCursorCodec(config())
+	const rotated = createCursorCodec({
+		...config(),
+		currentKeyId: 'next',
+		keys: { current: key(), next: new Uint8Array(64).fill(12) },
+	})
+	const operation = prepareCursorBinding(binding())
+	const oldToken = old.seal('opaque', binding())
+	expect(rotated.open(oldToken, operation)).toBe('opaque')
+	expect(rotated.seal('opaque', operation)).toBe(rotated.seal('opaque', binding()))
+	expect(rotated.open(oldToken, operation)).toBe('opaque')
+	const next = rotated.seal('boundary', operation)
+	expect(rotated.open(next, operation)).toBe('boundary')
+	expect(old.seal('opaque', operation)).toBe(oldToken)
+	invalid(() => rotated.open(next, prepareCursorBinding({ ...binding(), tenant: 'other' })))
+})
+
 it('rejects tamper, tag changes, truncation, noncanonical transport, unknown version/key and oversized input uniformly', () => {
 	const codec = createCursorCodec(config()),
 		token = codec.seal('opaque', binding()),
@@ -271,7 +290,7 @@ it('binds the public facade to every managed scope field, domain, bind and centr
 		const opts = {
 			domain: 'native-v1',
 			bind: { filters: { status: 'open' }, sort: 'asc' },
-			schema: z.strictObject({ native: z.string().nullable(), seen: z.bigint() }),
+			schema: k.object({ native: k.string().nullable(), seen: k.int64() }),
 		}
 		const codec = engine.cursorCodec(ctx, opts)
 		const token = codec.seal({ native: 'private-native-position', seen: 9n })
@@ -306,7 +325,7 @@ it('rotates the shared keys and rejects removed, malformed, oversized and tamper
 	const f = harness()
 	await f.t.run(async ({ db }) => {
 		const ctx = managed(db)
-		const opts = { domain: 'native', bind: null, schema: z.string() }
+		const opts = { domain: 'native', bind: null, schema: k.string() }
 		const old = createQueryEngine(f, { cursor: config() }).cursorCodec(ctx, opts)
 		const oldToken = old.seal('native')
 		const rotatedConfig = {
@@ -339,7 +358,7 @@ it('validates bounded Convex input and synchronous schema output on both seal an
 	await f.t.run(async ({ db }) => {
 		const engine = createQueryEngine(f, { cursor: config() })
 		const ctx = managed(db)
-		const opts = { domain: 'native', bind: null, schema: z.any() }
+		const opts = { domain: 'native', bind: null, schema: k.any() }
 		const codec = engine.cursorCodec(ctx, opts)
 		const good = {
 			native: null,
@@ -389,21 +408,21 @@ it('validates bounded Convex input and synchronous schema output on both seal an
 		const token = codec.seal({ seen: 'secret schema failure' })
 		const strict = engine.cursorCodec(ctx, {
 			...opts,
-			schema: z.strictObject({ seen: z.bigint() }),
+			schema: k.object({ seen: k.int64() }),
 		})
 		invalid(() => strict.open(token))
 		// SAFETY: malformed JS callers deliberately bypass the schema's static input type.
 		invalid(() => strict.seal({ seen: 'secret schema failure' } as never))
 		for (const schema of [
-			z.any().transform(() => {
+			k.any().transform(() => {
 				throw new Error('secret validation detail')
 			}),
-			z.any().transform(() => new Date()),
-			z.any().transform(() => getter),
-			z.any().transform(async () => 'async result'),
+			k.any().transform(() => new Date()),
+			k.any().transform(() => getter),
+			k.any().transform(async () => 'async result'),
 		]) {
 			// SAFETY: runtime rejection must also protect untyped JS consumers and invalid transform outputs.
-			const bad = engine.cursorCodec(ctx, { ...opts, schema: schema as z.ZodType<Value> })
+			const bad = engine.cursorCodec(ctx, { ...opts, schema: schema as KCursorSchema })
 			for (const run of [() => bad.seal(null), () => bad.open(token)]) {
 				try {
 					run()
@@ -424,7 +443,7 @@ it('separates public and engine tokens in both directions even with rewritten pr
 	await seed(f, 3)
 	await f.t.run(async ({ db }) => {
 		const ctx = managed(db)
-		const codec = f.querying.cursorCodec(ctx, { domain: 'native', bind: null, schema: z.string() })
+		const codec = f.querying.cursorCodec(ctx, { domain: 'native', bind: null, schema: k.string() })
 		const page = await f.querying(ctx).tasks.paginate({ cursor: null, numItems: 1 })
 		const token = codec.seal('native')
 		for (const engineToken of [page.continueCursor, page.continueCursor.replace(/^pc\./, 'cc.')])
@@ -442,7 +461,7 @@ it('roundtrips synchronous schema transforms with distinct input and output type
 		const codec = f.querying.cursorCodec(managed(db), {
 			domain: 'transformed',
 			bind: null,
-			schema: z.string().transform((value) => value.length),
+			schema: k.string().transform((value) => value.length),
 		})
 		expect(codec.open(codec.seal('native'))).toBe(6)
 	})
@@ -467,7 +486,7 @@ it('accepts only the configured trusted query adapter and captures its scope wit
 					: null
 			},
 		})
-		const options = { domain: 'native', bind: null, schema: z.string() }
+		const options = { domain: 'native', bind: null, schema: k.string() }
 		const codec = engine.cursorCodec({ db: reader }, options)
 		const token = codec.seal('native')
 		expect(codec.open(token)).toBe('native')
@@ -482,22 +501,23 @@ it('preserves nested synchronous validation and leaves consumer schema callbacks
 	let transforms = 0
 	let refinements = 0
 	let checks = 0
-	const nested = z.string().transform((value) => {
+	const nested = k.string().transform((value) => {
 		transforms++
 		return value.length
 	})
-	const schema = z
-		.object({ native: z.lazy(() => nested) })
+	// v1 wrapped the field in z.lazy; k has no lazy kind, so the field schema is referenced directly.
+	const schema = k
+		.object({ native: nested })
 		.refine((value) => {
 			refinements++
 			return value.native > 0
 		})
-		.superRefine((value, ctx) => {
+		.check((value, ctx) => {
 			checks++
 			if (value.native > 10) ctx.addIssue({ code: 'custom', message: 'private-sync-check' })
 		})
-	const definition = schema._zod.def
-	const transform = nested._zod.def.out._zod.def.transform
+	const definition = schema.prev
+	const transform = nested.arg
 	await f.t.run(async ({ db }) => {
 		const codec = f.querying.cursorCodec(managed(db), { domain: 'nested-sync', bind: null, schema })
 		const token = codec.seal({ native: 'native' })
@@ -511,19 +531,18 @@ it('preserves nested synchronous validation and leaves consumer schema callbacks
 		invalid(() => codec.seal({ native: '' }))
 		invalid(() => codec.seal({ native: 'longer than ten' }))
 	})
-	expect(schema._zod.def).toBe(definition)
-	expect(nested._zod.def.out._zod.def.transform).toBe(transform)
+	expect(schema.prev).toBe(definition)
+	expect(nested.arg).toBe(transform)
 	expect(schema.parse({ native: 'ok' })).toEqual({ native: 2 })
 })
 
-it('keeps synchronous default callbacks lazy and applies them independently on seal and open', async () => {
+it('applies defaults independently on seal and open', async () => {
 	const f = harness()
+	// v1 counted calls of a Zod default callback; a k default is a value, so a check counts the parses.
 	let calls = 0
-	const schema = z.object({
-		native: z.string().default(() => {
-			calls++
-			return 'default'
-		}),
+	const schema = k.object({ native: k.string().default('default') }).refine(() => {
+		calls++
+		return true
 	})
 	await f.t.run(async ({ db }) => {
 		const codec = f.querying.cursorCodec(managed(db), {

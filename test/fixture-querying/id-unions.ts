@@ -1,5 +1,4 @@
-import { z } from 'zod'
-import { zid } from 'convex-helpers/server/zod4'
+import { k } from '../../src/k'
 import {
 	defineSchema,
 	type DataModelFromSchemaDefinition,
@@ -7,7 +6,7 @@ import {
 } from 'convex/server'
 import { defineTestApp } from 'convex-test'
 import { v } from 'convex/values'
-import { zodTable, zodVariantTable, zodToConvex } from '../../src/zod-table'
+import { kTable, kVariantTable } from '../../src/table'
 import { defineRelations } from '../../src/relations-public'
 import { createQueryEngine } from '../../src/querying'
 import type {
@@ -29,58 +28,62 @@ export const members = [
 	'ledger',
 ] as const
 export function idUnionTables() {
-	const tasks = zodTable(
+	const tasks = kTable(
 		'tasks',
-		(id) => ({
-			ordinal: z.number(),
-			status: z.string(),
-			allowed: z.boolean(),
-			department: z.string(),
-			secret: z.string(),
-			rel: z
+		{
+			ordinal: k.number(),
+			status: k.string(),
+			allowed: k.boolean(),
+			department: k.string(),
+			secret: k.string(),
+			rel: k
 				.union([
-					id('tasks'),
-					id('leads'),
-					id('contacts'),
-					id('clients'),
-					id('creditors'),
-					id('deals'),
-					id('payments'),
-					id('ledger'),
+					k.id('tasks'),
+					k.id('leads'),
+					k.id('contacts'),
+					k.id('clients'),
+					k.id('creditors'),
+					k.id('deals'),
+					k.id('payments'),
+					k.id('ledger'),
 				])
 				.nullable()
 				.optional(),
-		}),
+		},
 		{ publicFields: ['ordinal', 'status', 'rel'] },
 	)
 	tasks.table.index('by_rel', ['rel']).index('by_rel_status', ['rel', 'status'])
 	const fields = () => ({
-		name: z.string(),
-		allowed: z.boolean(),
-		department: z.string(),
-		secret: z.string(),
+		name: k.string(),
+		allowed: k.boolean(),
+		department: k.string(),
+		secret: k.string(),
 	})
-	const leads = zodTable('leads', fields, { publicFields: ['name'] })
-	const contacts = zodTable('contacts', fields, { publicFields: ['name'] })
-	const clients = zodTable('clients', fields, { publicFields: ['name'] })
-	const creditors = zodTable('creditors', fields, { publicFields: ['name'] })
-	const deals = zodTable('deals', (id) => ({ ...fields(), clientId: id('clients') }), {
-		publicFields: ['name'],
-	})
-	const payments = zodVariantTable(
+	const leads = kTable('leads', fields(), { publicFields: ['name'] })
+	const contacts = kTable('contacts', fields(), { publicFields: ['name'] })
+	const clients = kTable('clients', fields(), { publicFields: ['name'] })
+	const creditors = kTable('creditors', fields(), { publicFields: ['name'] })
+	const deals = kTable(
+		'deals',
+		{ ...fields(), clientId: k.id('clients') },
+		{
+			publicFields: ['name'],
+		},
+	)
+	const payments = kVariantTable(
 		'payments',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('posted'),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('posted'),
 				...fields(),
-				clientId: zid('clients'),
-				amount: z.number(),
+				clientId: k.id('clients'),
+				amount: k.number(),
 			}),
-			z.strictObject({
-				type: z.literal('draft'),
+			k.object({
+				type: k.literal('draft'),
 				...fields(),
-				clientId: zid('clients'),
-				memo: z.string(),
+				clientId: k.id('clients'),
+				memo: k.string(),
 			}),
 		]),
 		{
@@ -91,20 +94,20 @@ export function idUnionTables() {
 			},
 		},
 	)
-	const ledger = zodVariantTable(
+	const ledger = kVariantTable(
 		'ledger',
-		z.discriminatedUnion('type', [
-			z.strictObject({
-				type: z.literal('debit'),
+		k.discriminatedUnion('type', [
+			k.object({
+				type: k.literal('debit'),
 				...fields(),
-				clientId: zid('clients'),
-				amount: z.number(),
+				clientId: k.id('clients'),
+				amount: k.number(),
 			}),
-			z.strictObject({
-				type: z.literal('credit'),
+			k.object({
+				type: k.literal('credit'),
 				...fields(),
-				clientId: zid('clients'),
-				reason: z.string(),
+				clientId: k.id('clients'),
+				reason: k.string(),
 			}),
 		]),
 		{
@@ -236,33 +239,31 @@ export function idUnionFixture(budgets?: Partial<ManagedBudgets>) {
 		functions: {
 			page: base.query({
 				args: {
-					input: zodToConvex(
-						relations.tables.tasks.paginationOpts({
-							ordinal: true,
-							referenceTask: { status: true },
-							client: { name: true },
-						}),
-					),
+					input: relations.tables.tasks.paginationOpts({
+						ordinal: true,
+						referenceTask: { status: true },
+						client: { name: true },
+					}).validator,
 				},
-				returns: zodToConvex(relations.tables.tasks.pageDto(selection)),
+				returns: relations.tables.tasks.pageDto(selection).validator,
 				handler: (ctx, { input }) =>
 					querying(context(ctx.db).ctx).tasks.with(selection).paginate(input),
 			}),
 			nextTasks: base.query({
 				args: {
 					parent: v.id('tasks'),
-					input: zodToConvex(relations.tables.tasks.paginationOpts({ status: true })),
+					input: relations.tables.tasks.paginationOpts({ status: true }).validator,
 				},
-				returns: zodToConvex(relations.tables.tasks.pageDto({})),
+				returns: relations.tables.tasks.pageDto({}).validator,
 				handler: (ctx, { parent, input }) =>
 					querying(context(ctx.db).ctx).tasks.relation(parent, 'client.tasks').paginate(input),
 			}),
 			nextClients: base.query({
 				args: {
 					parent: v.id('clients'),
-					input: zodToConvex(relations.tables.tasks.paginationOpts({ status: true })),
+					input: relations.tables.tasks.paginationOpts({ status: true }).validator,
 				},
-				returns: zodToConvex(relations.tables.tasks.pageDto({})),
+				returns: relations.tables.tasks.pageDto({}).validator,
 				handler: (ctx, { parent, input }) =>
 					querying(context(ctx.db).ctx).clients.relation(parent, 'tasks').paginate(input),
 			}),

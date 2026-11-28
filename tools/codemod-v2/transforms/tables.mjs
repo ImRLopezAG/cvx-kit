@@ -1,7 +1,8 @@
 // Kit table boundaries: `zodTable('t', (id) => ({ … }), opts)` becomes
 // `kTable('t', { … }, opts)` with `id(…)` → `k.id(…)`, for every table form
 // whose callback has that same shape.
-import { isReference, isShadowed, resolveBinding, unwrap, walk } from './ast.mjs'
+import { chainOf, isReference, isShadowed, resolveBinding, unwrap, walk } from './ast.mjs'
+import { isSchemaExpression } from './schema.mjs'
 import { addEdit, addSkip } from './sites.mjs'
 
 const TABLE_FUNCTIONS = new Set(['zodTable', 'zodVariantTable', 'tenantTable'])
@@ -62,31 +63,104 @@ function convertCallback(ctx, unit, arrow) {
 		addEdit(unit, { start: body.end, end: arrow.end }, '')
 		return true
 	}
-	const fields = callbackObject(arrow.body)
+	const block = body.type === 'BlockStatement' && body.body.length > 1
+	if (
+		block &&
+		!body.body
+			.slice(0, -1)
+			.every(
+				(statement) =>
+					statement.type === 'VariableDeclaration' &&
+					statement.kind === 'const' &&
+					statement.declarations.every(
+						(declaration) => declaration.id.type === 'Identifier' && declaration.init,
+					),
+			)
+	)
+		return false
+	const last = block ? body.body.at(-1) : null
+	const fields =
+		block && last?.type === 'ReturnStatement' ? unwrap(last.argument) : callbackObject(arrow.body)
 	if (!fields) return false
 	const calls = []
 	let complex = false
 	if (param) {
 		walk(
-			fields,
+			body,
 			(node, parent) => {
 				if (node.type !== 'Identifier' || node.name !== param.name) return
 				if (!isReference(node, parent ?? arrow)) return
-				if (parent?.type === 'CallExpression' && parent.callee === node) calls.push(node)
+				if (resolveBinding(node, ctx.parents)?.node !== param) return
+				if (
+					parent?.type === 'CallExpression' &&
+					parent.callee === node &&
+					parent.arguments.length === 1 &&
+					parent.arguments[0].type === 'Literal' &&
+					parent.arguments[0].value === String(parent.arguments[0].value)
+				)
+					calls.push(node)
 				else complex = true
 			},
 			arrow,
 		)
 	}
 	if (complex) return false
-	if (calls.some((node) => isShadowed(node, 'k', ctx.parents))) {
+	if (
+		isShadowed(fields, 'k', ctx.parents) ||
+		calls.some((node) => isShadowed(node, 'k', ctx.parents))
+	) {
 		addSkip(ctx, unit, arrow, 'k-shadowed')
 		return true
 	}
-	addEdit(unit, { start: arrow.start, end: fields.start }, '')
-	addEdit(unit, { start: fields.end, end: arrow.end }, '')
+	if (block && !fieldObject(ctx, fields, param)) return false
+	if (block) {
+		addEdit(unit, { start: arrow.start, end: body.start }, '(() => ')
+		addEdit(unit, { start: body.end, end: arrow.end }, ')()')
+	} else {
+		addEdit(unit, { start: arrow.start, end: fields.start }, '')
+		addEdit(unit, { start: fields.end, end: arrow.end }, '')
+	}
 	for (const node of calls) addEdit(unit, node, 'k.id', true)
 	return true
+}
+
+function fieldObject(ctx, expression, param, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return false
+	seen = new Set(seen).add(node)
+	if (node.type === 'Identifier') {
+		const binding = resolveBinding(node, ctx.parents)
+		return (
+			binding?.kind === 'const' &&
+			binding.path?.length === 0 &&
+			fieldObject(ctx, binding.init, param, seen)
+		)
+	}
+	return (
+		node.type === 'ObjectExpression' &&
+		node.properties.every(
+			(property) =>
+				property.type === 'Property' &&
+				property.kind === 'init' &&
+				!property.computed &&
+				schemaValue(ctx, property.value, param, seen),
+		)
+	)
+}
+
+function schemaValue(ctx, expression, param, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return false
+	const { root, steps } = chainOf(node)
+	if (root.type === 'Identifier' && param && resolveBinding(root, ctx.parents)?.node === param)
+		return steps[0]?.kind === 'call'
+	if (isSchemaExpression(ctx, node)) return true
+	if (node.type === 'Identifier') {
+		const binding = resolveBinding(node, ctx.parents)
+		if (binding?.kind === 'const' && binding.path?.length === 0)
+			return schemaValue(ctx, binding.init, param, new Set(seen).add(node))
+	}
+	return false
 }
 
 function callbackObject(body) {

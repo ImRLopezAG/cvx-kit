@@ -23,7 +23,7 @@ import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-
 import { transformSource } from './transform.mjs'
 import { parentMap, parseSource, unwrap } from './transforms/ast.mjs'
 import { consumerOrigin as expressionConsumerOrigin } from './transforms/consumer.mjs'
-import { constantMaskKeys, stringEnumArgument } from './transforms/schema.mjs'
+import { constantMaskKeys, stringEnumArgument, tupleSlot } from './transforms/schema.mjs'
 
 export const HELP = `Usage: cvx-kit-codemod-v2 <path…> [options]
 
@@ -366,6 +366,65 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 	})
 	return {
 		resolveSource: resolve,
+		tupleSlot(from, specifier, name, seen = new Set()) {
+			const target = resolve(from, specifier)
+			if (!target || !this.isK(from, specifier, name) || seen.has(`${target}:${name}`))
+				return 'unknown'
+			seen = new Set(seen).add(`${target}:${name}`)
+			const program = programOf(target)
+			const parents = parentMap(program)
+			const zodNamespaces = new Set()
+			let hasK = false
+			for (const statement of program.body) {
+				if (statement.type !== 'ImportDeclaration') continue
+				for (const spec of statement.specifiers) {
+					if (
+						/^zod(?:\/|$)/.test(statement.source.value) &&
+						(spec.type !== 'ImportSpecifier' || spec.imported.name === 'z')
+					)
+						zodNamespaces.add(spec.local.name)
+					if (spec.local.name === 'k' && /^cvx-kit(?:\/k)?$/.test(statement.source.value))
+						hasK = true
+				}
+			}
+			for (const statement of program.body) {
+				if (statement.type === 'ExportNamedDeclaration') {
+					for (const spec of statement.specifiers) {
+						if ((spec.exported.name ?? spec.exported.value) !== name) continue
+						if (statement.source)
+							return this.tupleSlot(
+								target,
+								statement.source.value,
+								spec.local.name ?? spec.local.value,
+								seen,
+							)
+						name = spec.local.name
+					}
+				}
+			}
+			for (const statement of program.body) {
+				const declaration = statement.declaration ?? statement
+				if (declaration.type !== 'VariableDeclaration' || declaration.kind !== 'const') continue
+				const item = declaration.declarations.find((item) => item.id.name === name)
+				if (item?.init)
+					return tupleSlot(
+						{
+							parents,
+							zodNamespaces,
+							hasK,
+							path: target,
+							options: {
+								run: {
+									tupleSlot: (path, source, exported) =>
+										this.tupleSlot(path, source, exported, seen),
+								},
+							},
+						},
+						item.init,
+					)
+			}
+			return 'unknown'
+		},
 		schemaPaths(from, specifier, name, seen = new Set()) {
 			const target = resolve(from, specifier)
 			if (!target || !kExports.has(target) || seen.has(`${target}:${name}`)) return []
@@ -530,9 +589,28 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 			}
 			return 'unproven'
 		},
-		isTable(fromPath, specifier, name) {
+		isTable(fromPath, specifier, name, seen = new Set()) {
 			const target = resolve(fromPath, specifier)
-			return target !== null && tableExports.get(target)?.has(name) === true
+			if (!target || !tableExports.has(target) || seen.has(`${target}:${name}`)) return false
+			if (tableExports.get(target).has(name)) return true
+			seen = new Set(seen).add(`${target}:${name}`)
+			const [head, ...members] = name.split('.')
+			for (const statement of programOf(target).body) {
+				if (statement.type !== 'ExportNamedDeclaration' || !statement.source) continue
+				for (const spec of statement.specifiers) {
+					if (
+						(spec.exported.name ?? spec.exported.value) === head &&
+						this.isTable(
+							target,
+							statement.source.value,
+							[spec.local.name ?? spec.local.value, ...members].join('.'),
+							seen,
+						)
+					)
+						return true
+				}
+			}
+			return false
 		},
 		isK(fromPath, specifier, name) {
 			return this.schemaPaths(fromPath, specifier, name).includes('')

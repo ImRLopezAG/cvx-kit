@@ -24,6 +24,7 @@ import {
 import {
 	carriesObjectChecks,
 	isSchemaExpression,
+	isTableExpression,
 	processBoundChain,
 	processZodChain,
 	SCHEMA_METHODS,
@@ -191,6 +192,7 @@ function createContext(path, source, program, options) {
 		numberBindings: new Set(),
 		integerBindings: new Set(),
 		tableBindings: new Set(),
+		tablePaths: new Set(),
 		tableFactories: new Set(),
 		objectConsts: new Set(),
 		owners: new Map(),
@@ -407,6 +409,11 @@ function factsOf(ctx, units, isLeft) {
 	const tableExports = [...exports]
 		.filter(([, local]) => kLocals.has(local) && ctx.tableBindings.has(local))
 		.map(([name]) => name)
+	for (const [exported, local] of exports) {
+		if (ctx.owners.get(local)?.some(isLeft)) continue
+		for (const path of ctx.tablePaths)
+			if (path.startsWith(`${local}.`)) tableExports.push(exported + path.slice(local.length))
+	}
 	return { kExports, tableExports }
 }
 
@@ -495,6 +502,7 @@ function classifyBindings(ctx, units) {
 		ctx.schemaFactories,
 		ctx.schemaPaths,
 		ctx.tableBindings,
+		ctx.tablePaths,
 		ctx.tableFactories,
 		ctx.refinedBindings,
 		ctx.numberBindings,
@@ -522,6 +530,24 @@ function classifyBindings(ctx, units) {
 				if (declarator.id.type !== 'Identifier' || !declarator.init) continue
 				const name = declarator.id.name
 				const init = unwrap(declarator.init)
+				if (isTableExpression(ctx, init)) ctx.tableBindings.add(name)
+				if (init.type === 'CallExpression' && init.callee.type === 'Identifier') {
+					const imported = ctx.imported.get(init.callee.name)
+					const fields = unwrap(init.arguments[0])
+					if (
+						imported?.imported === 'defineRelations' &&
+						['cvx-kit', 'cvx-kit/relations'].includes(imported.source) &&
+						fields?.type === 'ObjectExpression'
+					) {
+						for (const property of fields.properties)
+							if (
+								property.type === 'Property' &&
+								!property.computed &&
+								isTableExpression(ctx, property.value)
+							)
+								ctx.tablePaths.add(`${name}.tables.${property.key.name ?? property.key.value}`)
+					}
+				}
 				collectSchemaPaths(ctx, init, name)
 				if (init.type === 'ObjectExpression' && unit.declaration.kind === 'const') {
 					ctx.objectConsts.add(name)

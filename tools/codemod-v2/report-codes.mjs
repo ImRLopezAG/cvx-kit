@@ -2,8 +2,12 @@
 export const REPORT_FIXES = {
 	catchall: 'Decide per site; see [No v2 form](#constructs-with-no-v2-form).',
 	catch: 'Read `input` and `issues` instead; `k` passes `{ issues, input }`.',
-	recursive: 'Restructure the data.',
-	tuple: 'Use an object or a checked array.',
+	recursive:
+		'Spell out finite levels, or use `k.json()` for a JSON value and check application rules explicitly.',
+	'tuple-optionality':
+		'Use required tuple positions; optional and void positions need an explicit data model change.',
+	'tuple-arguments': 'Use a literal array of proven schemas and at most one proven rest schema.',
+	'multiple-of-divisor': 'Use a positive finite divisor for `.multipleOf()`.',
 	custom: 'A structural schema plus `.refine`, or `k.custom<T>(guard)`.',
 	coerce: 'An input-position `.transform`.',
 	'super-refine': 'Rewrite as `.check((value, ctx) => ctx.addIssue({ message, path }))`.',

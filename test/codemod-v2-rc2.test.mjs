@@ -107,9 +107,11 @@ describe('codemod migration corrections', () => {
 		},
 	)
 	it('prints fix text once per code and includes it in JSON', () => {
-		const report = buildReport([convert('const a = z.tuple([]); const b = z.tuple([])')])
-		expect(report.codes.tuple).toBeTruthy()
-		expect(formatSummary(report, false).split(report.codes.tuple)).toHaveLength(2)
+		const report = buildReport([
+			convert('const a = z.lazy(() => z.string()); const b = z.lazy(() => z.string())'),
+		])
+		expect(report.codes.recursive).toBeTruthy()
+		expect(formatSummary(report, false).split(report.codes.recursive)).toHaveLength(2)
 	})
 	it('removes a mask constant only when all references were rewritten', () => {
 		const result = convert(
@@ -137,7 +139,8 @@ describe('codemod migration corrections', () => {
 		tree(
 			{
 				'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
-				'src/a.ts': "import { z } from 'zod'\nconst a = z.string(); const b = z.tuple([])",
+				'src/a.ts':
+					"import { z } from 'zod'\nconst a = z.string(); const b = z.lazy(() => z.string())",
 			},
 			(root) => {
 				const before = run(['src', '--write'], root)
@@ -214,7 +217,7 @@ it('maps a generic object constraint when its shape is unconstrained', () => {
 })
 it('holds a helper together with a caller passing a held schema', () => {
 	const result = convert(
-		'function page<T extends z.ZodType>(row: T) { return z.array(row) }\nconst row = z.tuple([]); const result = page(row)',
+		'function page<T extends z.ZodType>(row: T) { return z.array(row) }\nconst row = z.lazy(() => z.string()); const result = page(row)',
 	)
 	expect(result.output).toContain('T extends z.ZodType')
 	expect(result.output).not.toContain('AnyKSchema')
@@ -294,7 +297,7 @@ it('does not classify generated normalization callbacks as held Zod on a rerun',
 
 it('keeps Zod-only classification stable after moving a held zid import', () => {
 	const first = convert(
-		"import { zid } from 'cvx-kit/zod-table'\nconst input = z.object({ id: zid('rows'), pair: z.tuple([]) })",
+		"import { zid } from 'cvx-kit/zod-table'\nconst input = z.object({ id: zid('rows'), pair: z.lazy(() => z.string()) })",
 	)
 	const second = transformSource('sample.ts', first.output)
 	expect(first.status).toBe('kept')

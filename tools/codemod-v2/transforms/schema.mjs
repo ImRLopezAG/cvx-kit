@@ -30,6 +30,11 @@ const FACTORIES = new Map([
 	['custom', 'custom'],
 	['void', 'void'],
 	['instanceof', 'bytes'],
+	['ipv4', 'ipv4'],
+	['ipv6', 'ipv6'],
+	['uuid', 'uuid'],
+	['never', 'never'],
+	['tuple', 'tuple'],
 ])
 
 const ISO_FACTORIES = new Map([
@@ -39,7 +44,6 @@ const ISO_FACTORIES = new Map([
 
 const STRING_FORMATS = new Set([
 	'httpUrl',
-	'uuid',
 	'uuidv4',
 	'uuidv6',
 	'uuidv7',
@@ -50,8 +54,6 @@ const STRING_FORMATS = new Set([
 	'xid',
 	'ksuid',
 	'nanoid',
-	'ipv4',
-	'ipv6',
 	'cidrv4',
 	'cidrv6',
 	'mac',
@@ -69,6 +71,9 @@ const STRING_FORMATS = new Set([
 // `k.email()` / `k.url()` take a message, or these option keys; any other option (Zod's `pattern`,
 // `normalize`, `abort`) has no `k` form.
 const FORMAT_OPTIONS = new Map([
+	['ipv4', new Set(['message', 'error'])],
+	['ipv6', new Set(['message', 'error'])],
+	['uuid', new Set(['message', 'error'])],
 	['email', new Set(['message', 'error'])],
 	['url', new Set(['message', 'error', 'protocol', 'hostname'])],
 ])
@@ -108,7 +113,6 @@ const REPORTED_FACTORIES = new Map([
 	['lazy', 'recursive'],
 	['file', 'file'],
 	['templateLiteral', 'template-literal'],
-	['tuple', 'tuple'],
 	['coerce', 'coerce'],
 	['preprocess', 'preprocess'],
 	['codec', 'codec'],
@@ -153,6 +157,13 @@ const KEPT_METHODS = new Set([
 	'email',
 	'url',
 	'loose',
+	'ipv4',
+	'ipv6',
+	'uuid',
+	'gt',
+	'lt',
+	'multipleOf',
+	'rest',
 ])
 
 /** Steps that build a new object from an object. */
@@ -221,14 +232,7 @@ export function isSchemaExpression(ctx, expression, seen = new Set()) {
 	if (ctx.kit.get(root.name)?.imported === 'zid' && steps[0]?.kind === 'call')
 		return schemaTail(steps, 1)
 	if (ctx.schemaFactories.has(root.name) && steps[0]?.kind === 'call') return schemaTail(steps, 1)
-	if (ctx.tableBindings.has(root.name)) return tableSchemaSteps(steps) > 0
-	const tableImport = ctx.imported.get(root.name)
-	if (
-		tableImport &&
-		!ctx.owners.get(root.name)?.some((owner) => !owner.isType) &&
-		ctx.options.run?.isTable(ctx.path, tableImport.source, tableImport.imported)
-	)
-		return tableSchemaSteps(steps) > 0
+	if (tableSchemaPrefix(ctx, root, steps) > 0) return true
 	const prefix = schemaMemberSteps(ctx, root, steps)
 	if (prefix >= 0) return schemaTail(steps, prefix)
 	return false
@@ -297,13 +301,48 @@ const TABLE_SCHEMA_MEMBERS = new Set([
 	'commandInput',
 	'publicDto',
 ])
-const TABLE_SCHEMA_CALLS = new Set(['insert', 'update', 'dto'])
+const TABLE_SCHEMA_CALLS = new Set(['insert', 'update', 'dto', 'paginationOpts', 'pageDto'])
+
+/** Resolve a table binding or selected relation table by its proven path. */
+export function isTableExpression(ctx, expression) {
+	const { root, steps } = chainOf(unwrap(expression))
+	if (
+		root.type !== 'Identifier' ||
+		steps.some((step) => step.kind !== 'member' || step.name === null)
+	)
+		return false
+	const path = [root.name, ...steps.map((step) => step.name)].join('.')
+	const binding = resolveBinding(root, ctx.parents)
+	if (binding && binding.scope.type !== 'Program') return false
+	if (ctx.tableBindings.has(path) || ctx.tablePaths?.has(path)) return true
+	if (binding?.kind !== 'import') return false
+	const imported = [
+		binding.imported === '*' ? '' : binding.imported,
+		...steps.map((step) => step.name),
+	]
+		.filter(Boolean)
+		.join('.')
+	return ctx.options.run?.isTable(ctx.path, binding.source, imported) === true
+}
+
+function tableSchemaPrefix(ctx, root, steps) {
+	for (let index = 0; index < steps.length; index++) {
+		const expression = index === 0 ? root : steps[index - 1].node
+		if (isTableExpression(ctx, expression)) {
+			const count = tableSchemaSteps(steps.slice(index))
+			if (count > 0) return index + count
+		}
+		if (steps[index].kind !== 'member') break
+	}
+	return 0
+}
 
 /** How many leading steps of a table-rooted chain select a schema, or 0 when none do. */
 export function tableSchemaSteps(steps) {
 	const first = steps[0]
 	if (first?.kind !== 'member') return 0
 	if (TABLE_SCHEMA_MEMBERS.has(first.name)) return 1
+	if (first.name === 'shape' && steps[1]?.kind === 'member') return 2
 	return TABLE_SCHEMA_CALLS.has(first.name) && steps[1]?.kind === 'call' ? 2 : 0
 }
 
@@ -375,13 +414,47 @@ export function processZodChain(ctx, unit, id) {
 		return
 	}
 	if (
-		['string', 'number', 'boolean', 'null', 'int', 'bigint', 'any', 'unknown', 'json'].includes(
-			first.name,
-		) &&
+		[
+			'string',
+			'number',
+			'boolean',
+			'null',
+			'int',
+			'bigint',
+			'any',
+			'unknown',
+			'json',
+			'ipv4',
+			'ipv6',
+			'uuid',
+			'never',
+		].includes(first.name) &&
 		call.arguments.length > 0
 	) {
 		addSkip(ctx, unit, span(next), 'factory-params')
 		return
+	}
+	if (first.name === 'tuple') {
+		const items = unwrap(call.arguments[0])
+		if (
+			call.arguments.length > 2 ||
+			items?.type !== 'ArrayExpression' ||
+			items.elements.some(
+				(item) => !item || item.type === 'SpreadElement' || !isSchemaExpression(ctx, item),
+			) ||
+			(call.arguments[1] && !isSchemaExpression(ctx, call.arguments[1]))
+		) {
+			addSkip(ctx, unit, span(next), 'tuple-arguments')
+			return
+		}
+		if (
+			[...items.elements, ...call.arguments.slice(1)].some(
+				(item) => tupleSlot(ctx, item) !== 'required',
+			)
+		) {
+			addSkip(ctx, unit, span(next), 'tuple-optionality')
+			return
+		}
 	}
 	if (first.name === 'literal' && unwrap(call.arguments[0])?.type === 'ArrayExpression') {
 		const values = unwrap(call.arguments[0]).elements
@@ -519,6 +592,39 @@ function recordKeyKind(ctx, argument) {
 	return null
 }
 
+/** Only proven required tuple positions can be represented by the kit. */
+export function tupleSlot(ctx, expression, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return 'unknown'
+	seen = new Set(seen).add(node)
+	const { root, steps } = chainOf(node)
+	if (root.type !== 'Identifier') return 'unknown'
+	const binding = resolveBinding(root, ctx.parents)
+	let state = 'unknown'
+	let from = 0
+	if (
+		(ctx.zodNamespaces.has(root.name) || (root.name === 'k' && ctx.hasK)) &&
+		steps[1]?.kind === 'call'
+	) {
+		state = steps[0].name === 'void' ? 'void' : 'required'
+		from = 2
+	} else if (ctx.kit?.get(root.name)?.imported === 'zid' && steps[0]?.kind === 'call') {
+		state = 'required'
+		from = 1
+	} else if (binding?.kind === 'const' && binding.path?.length === 0) {
+		state = tupleSlot(ctx, binding.init, seen)
+	} else if (binding?.kind === 'import') {
+		state = ctx.options.run?.tupleSlot?.(ctx.path, binding.source, binding.imported) ?? 'unknown'
+	}
+	for (let index = from; index < steps.length; index += 2) {
+		const step = steps[index]
+		if (step.kind !== 'member' || steps[index + 1]?.kind !== 'call') return 'unknown'
+		if (['optional', 'nullish'].includes(step.name)) state = 'optional'
+		else if (step.name === 'default' && state !== 'void') state = 'required'
+	}
+	return state
+}
+
 /** Keep Zod's finite numbers; integers are already safe by default in k. */
 function numberBounds(ctx, unit, steps, next, factory, site) {
 	const numericSteps = []
@@ -556,7 +662,8 @@ function numberBounds(ctx, unit, steps, next, factory, site) {
 export function processBoundChain(ctx, unit, id, table) {
 	const outer = outerChain(id, ctx.parents)
 	const { steps } = chainOf(outer)
-	let from = table ? tableSchemaSteps(steps) : schemaMemberSteps(ctx, id, steps)
+	const tableFrom = tableSchemaPrefix(ctx, id, steps)
+	let from = tableFrom > 0 ? tableFrom : table ? 0 : schemaMemberSteps(ctx, id, steps)
 	if (id.name === 'k' && ctx.hasK && steps[0]?.kind === 'member' && steps[1]?.kind === 'call')
 		from = 2
 	while (from >= 0 && steps[from]?.kind === 'member') {
@@ -684,6 +791,19 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 			const bound = call.arguments[0]
 			addEdit(unit, { start: bound.start, end: call.arguments[1]?.start ?? bound.end }, '')
 			checkOptions(ctx, unit, call.arguments[1])
+		} else if (step.name === 'rest') {
+			if (
+				call.arguments.length !== 1 ||
+				!isSchemaExpression(ctx, call.arguments[0]) ||
+				!uncheckedTuple(ctx, step.node.object)
+			)
+				addSkip(ctx, unit, site, 'tuple-arguments')
+			else if (tupleSlot(ctx, call.arguments[0]) !== 'required')
+				addSkip(ctx, unit, site, 'tuple-optionality')
+		} else if (['gt', 'lt', 'multipleOf'].includes(step.name) && !numberChain(ctx, chain)) {
+			addSkip(ctx, unit, site, 'unknown-method')
+		} else if (step.name === 'multipleOf' && invalidDivisor(call.arguments[0])) {
+			addSkip(ctx, unit, site, 'multiple-of-divisor')
 		} else if (BOUND_ALIASES.has(step.name) && call.arguments.length <= 1) {
 			const [method, bound] = BOUND_ALIASES.get(step.name)
 			addEdit(unit, step.node.property, method)
@@ -751,8 +871,55 @@ function isZero(argument) {
 	return node.type === 'Literal' && (node.value === 0 || node.bigint === '0')
 }
 
+function numberChain(ctx, { root, steps }, seen = new Set()) {
+	if (root.type !== 'Identifier' || seen.has(root)) return false
+	seen = new Set(seen).add(root)
+	if (ctx.numberBindings.has(root.name)) return true
+	if (
+		(ctx.zodNamespaces.has(root.name) || (root.name === 'k' && ctx.hasK)) &&
+		['number', 'int'].includes(steps[0]?.name)
+	)
+		return true
+	const binding = resolveBinding(root, ctx.parents)
+	return (
+		binding?.kind === 'const' &&
+		binding.path?.length === 0 &&
+		binding.init &&
+		numberChain(ctx, chainOf(unwrap(binding.init)), seen)
+	)
+}
+
+function uncheckedTuple(ctx, expression, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return false
+	seen = new Set(seen).add(node)
+	const { root, steps } = chainOf(node)
+	if (root.type !== 'Identifier') return false
+	if (
+		(ctx.zodNamespaces.has(root.name) || (root.name === 'k' && ctx.hasK)) &&
+		steps[0]?.name === 'tuple' &&
+		steps[1]?.kind === 'call'
+	)
+		return steps
+			.slice(2)
+			.every((step, index) => (index % 2 === 0 ? step.name === 'rest' : step.kind === 'call'))
+	const binding = resolveBinding(root, ctx.parents)
+	return (
+		steps.length === 0 &&
+		binding?.kind === 'const' &&
+		binding.path?.length === 0 &&
+		uncheckedTuple(ctx, binding.init, seen)
+	)
+}
+
 /** The argument index of a check's message or options object. */
 const OPTIONS_ARGUMENT = new Map([
+	['gt', 1],
+	['lt', 1],
+	['multipleOf', 1],
+	['ipv4', 0],
+	['ipv6', 0],
+	['uuid', 0],
 	['refine', 1],
 	['min', 1],
 	['max', 1],
@@ -766,6 +933,21 @@ const OPTIONS_ARGUMENT = new Map([
 	['finite', 0],
 	['safe', 0],
 ])
+
+function invalidDivisor(argument) {
+	const node = unwrap(argument)
+	if (!node) return true
+	if (node.type === 'Literal' && node.value !== Object(node.value))
+		return !(Number.isFinite(node.value) && node.value > 0)
+	if (node.type === 'Identifier' && ['NaN', 'Infinity'].includes(node.name)) return true
+	if (node.type === 'UnaryExpression' && ['-', '+'].includes(node.operator)) {
+		const value = unwrap(node.argument)
+		if (value.type === 'Literal')
+			return !(node.operator === '+' && Number.isFinite(value.value) && value.value > 0)
+		return value.type === 'Identifier' && ['NaN', 'Infinity'].includes(value.name)
+	}
+	return false
+}
 
 /**
  * Zod 4 spells a check's message `error`; `k` reads `message` (and accepts `error` as a string

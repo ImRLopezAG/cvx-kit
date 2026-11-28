@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const Catchall = z.strictObject({ a: z.string() }).catchall(z.string())
 export const Recursive = z.lazy(() => z.string())
-export const Pair = z.tuple([z.string(), z.number()])
+export const Pair = z.tuple([z.string().optional(), z.number()])
 export const Custom = z.custom<string>((value) => value === 'x', { abort: true })
 export const Instance = z.instanceof(Date)
 export const Super = z

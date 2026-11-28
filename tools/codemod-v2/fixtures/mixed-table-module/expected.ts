@@ -5,6 +5,6 @@ import { k } from 'cvx-kit'
 
 export const good = kTable('good', { name: k.string() })
 
-export const bad = zodTable('bad', () => ({ pair: z.tuple([z.string()]) }))
+export const bad = zodTable('bad', () => ({ pair: z.tuple([z.string().optional()]) }))
 
 export default createModule([good.table, bad.table])

@@ -244,7 +244,7 @@ describe('codemod-v2 CLI', () => {
 				error: 1,
 			})
 			expect(report.files.find((file) => file.path.endsWith('broken.ts')).status).toBe('error')
-			expect(report.totals).toEqual({ 'keep-zod-marker': 1, tuple: 1 })
+			expect(report.totals).toEqual({ 'keep-zod-marker': 1, 'tuple-optionality': 1 })
 			expect(report.declarations).toEqual({ rewritten: 4, left: 2 })
 			expect(report.mechanicalShare).toBe(0.6667)
 		})
@@ -330,10 +330,10 @@ import { z } from 'zod'
 const a = kTable('a', fields)
 const b = kVariantTable('b', schemas.fields)
 const c = tenantTable('c', fields, opts)
-const Held = z.tuple([])
+const Held = z.lazy(() => z.string())
 `
 		const outcome = transformSource('tables.ts', source)
-		expect(outcome.skipped.map(({ code }) => code)).toEqual(['tuple'])
+		expect(outcome.skipped.map(({ code }) => code)).toEqual(['recursive'])
 		expect(outcome.output).toBe(source)
 		expect(outcome.declarations.rewritten).toBe(0)
 	})
@@ -341,13 +341,13 @@ const Held = z.tuple([])
 	it('removes obsolete zid imports and reports every held reference', () => {
 		const source = `import { z } from 'zod'
 import { zid, zodTable } from 'cvx-kit/zod-table'
-const Held = z.tuple([zid('a'), zid('b')])
+const Held = z.tuple([zid('a').optional(), zid('b')])
 const Good = zodTable('good', () => ({ id: zid('a') }))
 `
 		const outcome = transformSource('ids.ts', source)
 		expect(outcome.output).not.toContain('cvx-kit/zod-table')
 		expect(outcome.output).toContain("import { kTable } from 'cvx-kit/table'")
-		expect(outcome.output).toContain("const Held = z.tuple([zid('a'), zid('b')])")
+		expect(outcome.output).toContain("const Held = z.tuple([zid('a').optional(), zid('b')])")
 		expect(
 			outcome.skipped.filter(({ code }) => code === 'zid-in-zod-statement').map(({ line }) => line),
 		).toEqual([3, 3])

@@ -16,6 +16,6 @@ export const Patterned = z.object({ email: z.email({ pattern: /@corp\.test$/ }) 
 
 export const Normalised = z.object({ site: z.url({ normalize: true }) })
 
-export const Uuid = z.object({ id: z.uuid() })
+export const Uuid = k.object({ id: k.uuid() })
 
 export const Instance = z.object({ at: z.instanceof(Date) })

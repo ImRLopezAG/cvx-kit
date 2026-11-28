@@ -22,3 +22,5 @@ export type {
 	DomainQueryContract,
 	DomainAuditInput,
 } from './modules/contracts/domain'
+
+export { componentResult } from './modules/contracts/component-result'

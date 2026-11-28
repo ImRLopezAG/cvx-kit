@@ -1,10 +1,13 @@
 /* oxlint-disable anti-slop/no-runtime-typeof, anti-slop/no-unknown-parameters, anti-slop/no-unknown-returns, anti-slop/no-unsafe-dictionary-type -- This module is the decoding boundary: it receives undecoded values, narrows them by representation and hands them back as the schema's output, which the typed callers in schema.ts name. */
-import { membersOf } from './compile'
+import { membersOf, tupleMembers } from './compile'
 import { copyFill } from './fills'
 import { isFieldName } from './names'
 import {
 	KConversionFailure,
 	isEmail,
+	ipv4Pattern,
+	isIpv6,
+	uuidPattern,
 	isIsoDate,
 	isIsoDateTime,
 	isTimestamp,
@@ -29,6 +32,7 @@ import type {
 	KPath,
 	KRefineOptions,
 	KType,
+	KTupleArg,
 } from './types'
 
 /**
@@ -134,11 +138,16 @@ function pathBelow(schema: KNode): string | undefined {
 			? Object.entries(fieldsOf(root)).map(([key, field]) => [`.${key}`, field])
 			: op === 'array'
 				? [['[]', argSchema(root)]]
-				: op === 'record'
-					? [['[value]', recordOf(root)[1]]]
-					: op === 'union' || op === 'discriminatedUnion'
-						? membersOf(root).map((member, index) => [`|${index}`, member])
-						: []
+				: op === 'tuple'
+					? tupleMembers(root).map((member, index) => [
+							index < tupleOf(root).items.length ? `[${index}]` : '[rest]',
+							member,
+						])
+					: op === 'record'
+						? [['[value]', recordOf(root)[1]]]
+						: op === 'union' || op === 'discriminatedUnion'
+							? membersOf(root).map((member, index) => [`|${index}`, member])
+							: []
 	for (const [step, child] of steps) {
 		const path = pathBelow(child)
 		if (path !== undefined) return step + path
@@ -164,6 +173,15 @@ function idBelow(schema: KNode): string | undefined {
 		case 'array': {
 			const below = idBelow(argSchema(root))
 			return below === undefined ? undefined : `[]${below}`
+		}
+		case 'tuple': {
+			const members = tupleMembers(root)
+			for (let index = 0; index < members.length; index++) {
+				const below = idBelow(members[index])
+				if (below !== undefined)
+					return (index < tupleOf(root).items.length ? `[${index}]` : '[rest]') + below
+			}
+			return undefined
 		}
 		case 'record': {
 			const [key, value] = recordOf(root)
@@ -278,6 +296,13 @@ function rootPlan(root: KNode): KPlan {
 		case 'isoDateTime':
 		case 'timestamp':
 			return checkedPlan
+		case 'never':
+			return checkedPlan
+		case 'tuple': {
+			let transform = false
+			for (const member of tupleMembers(root)) transform = planOf(member).transform || transform
+			return combined(true, transform)
+		}
 		case 'array':
 			return planOf(argSchema(root))
 		case 'object': {
@@ -487,6 +512,13 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 			if (format.kind === 'email') {
 				if (!isEmail(text))
 					context.add('invalid_format', messageOf(record, 'Invalid email address'), undefined)
+			} else if (format.kind !== 'url') {
+				const valid =
+					format.kind === 'ipv6'
+						? isIpv6(text)
+						: (format.kind === 'ipv4' ? ipv4Pattern : uuidPattern).test(text)
+				if (!valid)
+					context.add('invalid_format', messageOf(record, `Invalid ${format.kind}`), undefined)
 			} else if (!isUrl(text, format.protocol, format.hostname))
 				context.add('invalid_format', messageOf(record, 'Invalid URL'), undefined)
 			return
@@ -511,6 +543,22 @@ function runCheck(record: KNode, value: unknown, context: WalkContext): void {
 				context.add(
 					'too_big',
 					messageOf(record, `Too big: expected ${unitOf(value, limit, '<')}`),
+					undefined,
+				)
+			return
+		}
+		case 'multipleOf': {
+			const quotient = Number(value) / Number(record.arg)
+			if (
+				!Number.isFinite(quotient) ||
+				!(
+					Math.abs(quotient - Math.round(quotient)) <
+					4 * Number.EPSILON * Math.max(Math.abs(quotient), 1)
+				)
+			)
+				context.add(
+					'invalid_value',
+					messageOf(record, `Expected a multiple of ${record.arg}`),
 					undefined,
 				)
 			return
@@ -579,6 +627,10 @@ function walkRoot(
 	strip: Keys | undefined,
 ): unknown {
 	switch (root.op) {
+		case 'never':
+			return invalidType(context, 'never', value)
+		case 'tuple':
+			return walkTuple(root, value, context)
 		case 'array':
 			if (full && !Array.isArray(value)) return invalidType(context, 'array', value)
 			// SAFETY: checked above, or already validated natively at a function boundary.
@@ -1068,6 +1120,7 @@ function isRunOp(record: KNode): boolean {
 		case 'gt':
 		case 'lt':
 		case 'finite':
+		case 'multipleOf':
 		case 'safe':
 		case 'refine':
 		case 'check':
@@ -1141,4 +1194,45 @@ function stringOf(value: unknown): string {
 function callbackOf(record: KNode): (value: any, context?: CheckContext) => unknown {
 	// SAFETY: refine, check, overwrite, transform and a catch fallback store their callback as the record argument.
 	return record.arg as (value: any, context?: CheckContext) => unknown
+}
+
+function tupleOf(root: KNode): KTupleArg {
+	// SAFETY: tuple roots store the positional schemas and optional rest.
+	return root.arg as KTupleArg
+}
+
+function walkTuple(root: KNode, value: unknown, context: WalkContext): unknown {
+	planOf(root)
+	if (!Array.isArray(value)) return invalidType(context, 'array', value)
+	const { items, rest } = tupleOf(root)
+	if (value.length < items.length || (rest === undefined && value.length > items.length)) {
+		context.add(
+			value.length < items.length ? 'too_small' : 'too_big',
+			`Expected ${rest === undefined ? 'exactly' : 'at least'} ${items.length} tuple items`,
+			undefined,
+		)
+		return FAIL
+	}
+	let out: unknown[] | undefined
+	let failed = false
+	for (let index = 0; index < value.length; index++) {
+		const input = value[index]
+		context.path.push(index)
+		// SAFETY: the length check guarantees a positional or rest schema for every index.
+		const member = (items[index] ?? rest) as KType
+		// Convex checked only the member union, so positional shapes must always run in full.
+		const output =
+			input === undefined
+				? invalidType(context, 'a tuple value', input)
+				: walk(member, input, context, true, undefined)
+		if (output === undefined) invalidType(context, 'a tuple value', output)
+		context.path.pop()
+		if (output === FAIL || output === undefined) failed = true
+		else {
+			if (out === undefined && output !== input) out = value.slice(0, index)
+			out?.push(output)
+		}
+	}
+	if (failed) return FAIL
+	return out ?? value
 }

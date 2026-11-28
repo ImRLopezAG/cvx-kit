@@ -8,6 +8,7 @@ import type {
 	KNode,
 	KRequiredValidator,
 	KType,
+	KTupleArg,
 } from './types'
 
 /** Native validators are immutable, so every nullable shares one null member and every transform one any. */
@@ -58,6 +59,27 @@ export function membersOf(root: KNode): readonly KNode[] {
 	// SAFETY: k.discriminatedUnion stores its key and object options as the root argument.
 	const arg = root.arg as KDiscriminated
 	return arg.options
+}
+
+/** Validates positional optionality lazily, shared by native and parse compilation. */
+export function tupleMembers(node: KNode): readonly KType[] {
+	// SAFETY: tuple roots store the copied positional array and optional rest schema.
+	const { items, rest } = node.arg as KTupleArg
+	const members = rest === undefined ? items : [...items, rest]
+	for (const member of members) {
+		let optional = false
+		let resolved = false
+		let root: KNode = member
+		for (; root.prev !== null; root = root.prev) {
+			if (!resolved && (root.op === 'optional' || root.op === 'partial' || root.op === 'default')) {
+				optional = root.op !== 'default'
+				resolved = true
+			}
+		}
+		if (optional || root.op === 'void')
+			throw new TypeError('k.tuple() does not support optional or void slots')
+	}
+	return members
 }
 
 function outputOf(node: KNode, required: boolean): GenericValidator {
@@ -117,6 +139,8 @@ function compileRootOutput(root: KNode): GenericValidator {
 			}
 			return differs ? v.object(out) : root.validator
 		}
+		case 'tuple':
+			return tupleNative(root, true)
 		case 'array': {
 			// SAFETY: k.array stores its element schema as the root argument.
 			const element = root.arg as KNode
@@ -186,6 +210,10 @@ function compileRoot(node: KNode): KRequiredValidator {
 		case 'enum':
 			// SAFETY: k.enum stores its non-empty value list as the root argument.
 			return compileEnum(node.arg as readonly string[])
+		case 'never':
+			return v.union()
+		case 'tuple':
+			return tupleNative(node, false)
 		case 'array':
 			// SAFETY: k.array stores its element schema as the root argument.
 			return v.array(requiredOf(node.arg as KNode))
@@ -250,4 +278,11 @@ function compileFields(fields: KFields): PropertyValidators {
 		setOwn(out, key, fields[key].validator)
 	}
 	return out
+}
+
+/** Tuple positions are application checks; Convex validates an array of the member union. */
+function tupleNative(node: KNode, output: boolean): KRequiredValidator {
+	const members = tupleMembers(node)
+	const validators = members.map(output ? requiredOutput : requiredOf)
+	return v.array(validators.length === 1 ? validators[0] : v.union(...validators))
 }

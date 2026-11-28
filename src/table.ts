@@ -25,9 +25,10 @@ import {
 	type KType,
 } from './k'
 import { copyFill } from './k/fills'
+import { tupleMembers } from './k/compile'
 import { containsTransform } from './k/parse'
 import { setOwn } from './k/names'
-import type { KDiscriminated } from './k/types'
+import type { KDiscriminated, KTupleArg } from './k/types'
 import {
 	convexPaginationOptions,
 	paginationSchemaOf,
@@ -37,6 +38,8 @@ import {
 } from './querying/filters'
 import type { PaginationValidatorOptions } from './querying/shared/filters'
 import { pageResult } from './querying/shared/page'
+
+export { convexPaginationOptions } from './querying/filters'
 
 export {
 	createModule,
@@ -1073,6 +1076,8 @@ function childrenOf(root: KType): readonly KType[] {
 	switch (root.op) {
 		case 'object':
 			return Object.values(fieldsOf(root))
+		case 'tuple':
+			return tupleMembers(root)
 		case 'array':
 			return [schemaOf(root.arg)]
 		case 'record':
@@ -1198,6 +1203,25 @@ function projectRoot(
 			}
 			return failed ? FAIL : out
 		}
+		case 'tuple': {
+			if (!Array.isArray(value)) return mismatch(issues, path, 'array')
+			// SAFETY: tuple roots carry positional schemas and an optional rest.
+			const { items, rest } = root.arg as KTupleArg
+			if (value.length < items.length || (rest === undefined && value.length !== items.length))
+				return mismatch(issues, path, 'tuple length')
+			const out: Value[] = []
+			let failed = false
+			for (let index = 0; index < value.length; index++) {
+				// SAFETY: the length check guarantees a positional or rest schema.
+				const member = (items[index] ?? rest) as KType
+				const child = project(member, value[index], [...path, index], issues)
+				if (child === FAIL || child === undefined || value[index] === undefined) {
+					if (child !== FAIL) mismatch(issues, [...path, index], 'tuple value')
+					failed = true
+				} else out.push(child)
+			}
+			return failed ? FAIL : out
+		}
 		case 'array': {
 			if (!Array.isArray(value)) return mismatch(issues, path, 'array')
 			const element = schemaOf(root.arg)
@@ -1245,6 +1269,8 @@ function projectRoot(
 /* oxlint-disable anti-slop/no-runtime-typeof -- A stored row reaches toPublicDto as Convex values; this is the structural re-check (R16) that decodes each one by representation. */
 function leafMatches(root: KType, value: Value | undefined): boolean {
 	switch (root.op) {
+		case 'never':
+			return false
 		case 'string':
 		case 'id':
 		case 'isoDate':

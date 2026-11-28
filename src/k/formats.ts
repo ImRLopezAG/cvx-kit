@@ -98,6 +98,27 @@ export function isUrl(
 	return true
 }
 
+/** Zod 4.6.7 (MIT), src/v4/core/regexes.ts. */
+export const ipv4Pattern =
+	/^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/
+
+/** Zod 4.6.7 (MIT), UUID versions 1 to 8, nil and lowercase max. */
+export const uuidPattern =
+	/^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/
+
+/** Zod 4.6.7 (MIT), src/v4/core/schemas.ts: alphabet guard, then URL host parsing. */
+export function isIpv6(value: string): boolean {
+	if (!/^[0-9a-fA-F:.]+$/.test(value)) return false
+	const scope: { readonly URL?: new (input: string) => ParsedUrl } = globalThis
+	try {
+		if (scope.URL === undefined) return false
+		new scope.URL(`http://[${value}]`)
+		return true
+	} catch {
+		return false
+	}
+}
+
 function inRange(time: number): number | KConversionFailure {
 	return isTimestamp(time) ? time : outOfRange
 }

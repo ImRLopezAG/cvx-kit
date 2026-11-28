@@ -29,6 +29,7 @@ import type {
 	KOutputRequired,
 	KRefineOptions,
 	KType,
+	KTupleArg,
 	KUrlOptions,
 } from './types'
 
@@ -72,6 +73,18 @@ export class KString extends KSchema<string, VString<string>> {
 		)
 	}
 
+	ipv4(message?: KCheckMessage): this {
+		return this.link('format', ipv4Format, checkMessage(message, 'ipv4'))
+	}
+
+	ipv6(message?: KCheckMessage): this {
+		return this.link('format', ipv6Format, checkMessage(message, 'ipv6'))
+	}
+
+	uuid(message?: KCheckMessage): this {
+		return this.link('format', uuidFormat, checkMessage(message, 'uuid'))
+	}
+
 	trim(): this {
 		return this.link('trim', undefined, undefined)
 	}
@@ -92,6 +105,20 @@ export class KNumber extends KSchema<number, VFloat64<number>> {
 
 	max(value: number, message?: KCheckMessage): this {
 		return this.link('max', numberBound(value), checkMessage(message, 'max'))
+	}
+
+	gt(value: number, message?: KCheckMessage): this {
+		return this.link('gt', numberBound(value), checkMessage(message, 'gt'))
+	}
+
+	lt(value: number, message?: KCheckMessage): this {
+		return this.link('lt', numberBound(value), checkMessage(message, 'lt'))
+	}
+
+	multipleOf(divisor: number, message?: KCheckMessage): this {
+		if (!(divisor > 0) || !Number.isFinite(divisor))
+			throw new TypeError('k.number().multipleOf() expects a positive finite divisor')
+		return this.link('multipleOf', divisor, checkMessage(message, 'multipleOf'))
 	}
 
 	int(message?: KCheckMessage): this {
@@ -161,6 +188,8 @@ export class KInt64 extends KSchema<bigint, VInt64<bigint>> {
 		return this.link('max', 0n, checkMessage(message, 'nonpositive'))
 	}
 }
+
+export class KNever extends KSchema<never, VUnion<never, []>> {}
 
 export class KBoolean extends KSchema<boolean, VBoolean<boolean>> {}
 
@@ -279,6 +308,49 @@ export class KArray<E extends KType> extends KSchema<
 	}
 }
 
+/** Positional input and output types stay local to tuple schemas. */
+export type KTupleInput<T extends readonly KType[], R extends KType = KNever> = R extends KNever
+	? { -readonly [I in keyof T]: T[I]['_req']['type'] }
+	: [...{ -readonly [I in keyof T]: T[I]['_req']['type'] }, ...R['_req']['type'][]]
+export type KTupleOutput<T extends readonly KType[], R extends KType = KNever> = R extends KNever
+	? { -readonly [I in keyof T]: T[I]['_output'] }
+	: [...{ -readonly [I in keyof T]: T[I]['_output'] }, ...R['_output'][]]
+type TupleValidators<T extends readonly KType[], R extends KType> = [
+	...{ -readonly [I in keyof T]: T[I]['_req'] },
+	...R['_req'][],
+]
+type TupleOutputValidators<T extends readonly KType[], R extends KType> = [
+	...{ -readonly [I in keyof T]: KOutputRequired<T[I]> },
+	...KOutputRequired<R>[],
+]
+type TupleNative<T extends readonly KType[], R extends KType> = VArray<
+	KTupleInput<T, R>,
+	VUnion<(T[number] | R)['_req']['type'], TupleValidators<T, R>>
+>
+type TupleOutputNative<T extends readonly KType[], R extends KType> = VArray<
+	KTupleOutput<T, R>,
+	VUnion<(T[number] | R)['_output'], TupleOutputValidators<T, R>>
+>
+
+export class KTuple<T extends readonly KType[], R extends KType = KNever> extends KSchema<
+	KTupleOutput<T, R>,
+	TupleNative<T, R>,
+	true extends (T[number] | R)['_d'] ? true : false,
+	TupleNative<T, R>,
+	true extends (T[number] | R)['_t'] ? true : false
+> {
+	declare readonly _or: TupleOutputNative<T, R>
+	declare readonly _oo: TupleOutputNative<T, R>
+
+	rest<S extends KType>(schema: S): KTuple<T, S> {
+		if (this.prev !== null) throw new TypeError('k.tuple().rest() must be called before checks')
+		// SAFETY: a tuple root stores its items and optional rest schema.
+		const arg = this.arg as KTupleArg
+		// SAFETY: the new tuple preserves the same positional schemas T.
+		return tuple(arg.items as T, schema)
+	}
+}
+
 /** Key validators a Convex record accepts at push: a string, an id, or a union of those. */
 type KNativeKeyValidator =
 	| VString<any, 'required'>
@@ -356,6 +428,7 @@ const nullRoot = new KNull(null, 'null', undefined, undefined)
 const voidRoot = new KVoid(null, 'void', undefined, undefined)
 const bytesRoot = new KBytes(null, 'bytes', undefined, undefined)
 const anyRoot = new KAny(null, 'any', undefined, undefined)
+const neverRoot = new KNever(null, 'never', undefined, undefined)
 const jsonRoot = new KJson(null, 'json', undefined, undefined)
 
 // Scalar roots wrap one native value. Containers and parameterised leaves stay lazy.
@@ -369,6 +442,9 @@ voidRoot.native = nullRoot.native
 bytesRoot.native = v.bytes()
 anyRoot.native = v.any()
 
+const ipv4Format: KFormat = Object.freeze({ kind: 'ipv4' })
+const ipv6Format: KFormat = Object.freeze({ kind: 'ipv6' })
+const uuidFormat: KFormat = Object.freeze({ kind: 'uuid' })
 const emailFormat: KFormat = Object.freeze({ kind: 'email' })
 
 /**
@@ -420,6 +496,22 @@ export function custom<T = unknown>(
 
 /** The schema of `k.custom<T>()`: a `v.any()` whose value is typed `T`. */
 export type KCustom<T> = KSchema<T, VAny<T>>
+
+export function ipv4(message?: KCheckMessage): KString {
+	return stringRoot.ipv4(message)
+}
+
+export function ipv6(message?: KCheckMessage): KString {
+	return stringRoot.ipv6(message)
+}
+
+export function uuid(message?: KCheckMessage): KString {
+	return stringRoot.uuid(message)
+}
+
+export function never(): KNever {
+	return neverRoot
+}
 
 export function number(): KNumber {
 	return numberRoot
@@ -496,6 +588,20 @@ export function id<T extends string>(table: T): KId<T> {
 export function array<E extends KType>(element: E): KArray<E> {
 	assertSchema(element, 'array element')
 	return new KArray<E>(null, 'array', element, undefined)
+}
+
+export function tuple<const T extends readonly KType[], R extends KType = KNever>(
+	items: T,
+	rest?: R,
+): KTuple<T, R> {
+	for (const [index, item] of items.entries()) assertSchema(item, `tuple item ${index}`)
+	if (rest !== undefined) assertSchema(rest, 'tuple rest')
+	return new KTuple<T, R>(
+		null,
+		'tuple',
+		Object.freeze({ items: Object.freeze([...items]), rest }),
+		undefined,
+	)
 }
 
 /** The native record root; `k.record` (in object.ts) decides between this and an object. */

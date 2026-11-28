@@ -11,6 +11,10 @@ export {
 export type {
 	KAny,
 	KArray,
+	KNever,
+	KTuple,
+	KTupleInput,
+	KTupleOutput,
 	KBoolean,
 	KBytes,
 	KCustom,

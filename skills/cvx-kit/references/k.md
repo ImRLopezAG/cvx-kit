@@ -143,30 +143,30 @@ A shared array or field object therefore becomes read-only: a later `push` or pr
 
 Every method returns a new immutable schema. Reusing a schema in several places is safe.
 
-| Method                                          | On                           | Effect                                                                                                                                                                                                                         |
-| ----------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.optional()`                                   | all                          | may be `undefined`; natively `v.optional(...)`                                                                                                                                                                                 |
-| `.nullable()`                                   | all                          | may be `null`; natively `v.union(T, v.null())`                                                                                                                                                                                 |
-| `.default(value)`                               | all                          | fills `value` when the input is `undefined`; see [Defaults](#defaults)                                                                                                                                                         |
-| `.min(n, message?)` / `.max(n, message?)`       | string, number, int64, array | inclusive length or value bound                                                                                                                                                                                                |
-| `.length(n, message?)`                          | string, array                | exact length                                                                                                                                                                                                                   |
-| `.regex(pattern, message?)`                     | string                       | the pattern must match                                                                                                                                                                                                         |
-| `.email(message?)` / `.url(options?)`           | string                       | `invalid_format`; JSON Schema `format: 'email'` / `'uri'`                                                                                                                                                                      |
-| `.int(message?)`                                | number                       | `Number.isSafeInteger` must hold; `not_integer` for non-integers, `too_small`/`too_big` outside the safe range                                                                                                                 |
-| `.positive()` / `.negative()`                   | number, int64                | `> 0` (`too_small`) / `< 0` (`too_big`)                                                                                                                                                                                        |
-| `.nonnegative()` / `.nonpositive()`             | number, int64                | `.min(0)` / `.max(0)`                                                                                                                                                                                                          |
-| `.finite()`                                     | number                       | rejects `NaN` and `±Infinity` (`invalid_type`)                                                                                                                                                                                 |
-| `.safe()`                                       | number                       | a safe integer; redundant on `k.int()` and after `.int()`                                                                                                                                                                      |
-| `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                       | type-preserving normalisers                                                                                                                                                                                                    |
-| `.overwrite(fn)`                                | all                          | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                                                                                   |
+| Method                                          | On                           | Effect                                                                                                                                                                                                                                 |
+| ----------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.optional()`                                   | all                          | may be `undefined`; natively `v.optional(...)`                                                                                                                                                                                         |
+| `.nullable()`                                   | all                          | may be `null`; natively `v.union(T, v.null())`                                                                                                                                                                                         |
+| `.default(value)`                               | all                          | fills `value` when the input is `undefined`; see [Defaults](#defaults)                                                                                                                                                                 |
+| `.min(n, message?)` / `.max(n, message?)`       | string, number, int64, array | inclusive length or value bound                                                                                                                                                                                                        |
+| `.length(n, message?)`                          | string, array                | exact length                                                                                                                                                                                                                           |
+| `.regex(pattern, message?)`                     | string                       | the pattern must match                                                                                                                                                                                                                 |
+| `.email(message?)` / `.url(options?)`           | string                       | `invalid_format`; JSON Schema `format: 'email'` / `'uri'`                                                                                                                                                                              |
+| `.int(message?)`                                | number                       | `Number.isSafeInteger` must hold; `not_integer` for non-integers, `too_small`/`too_big` outside the safe range                                                                                                                         |
+| `.positive()` / `.negative()`                   | number, int64                | `> 0` (`too_small`) / `< 0` (`too_big`)                                                                                                                                                                                                |
+| `.nonnegative()` / `.nonpositive()`             | number, int64                | `.min(0)` / `.max(0)`                                                                                                                                                                                                                  |
+| `.finite()`                                     | number                       | rejects `NaN` and `±Infinity` (`invalid_type`)                                                                                                                                                                                         |
+| `.safe()`                                       | number                       | a safe integer; redundant on `k.int()` and after `.int()`                                                                                                                                                                              |
+| `.trim()` / `.toLowerCase()` / `.toUpperCase()` | string                       | type-preserving normalisers                                                                                                                                                                                                            |
+| `.overwrite(fn)`                                | all                          | a type-preserving normaliser: `fn(value)` replaces the value                                                                                                                                                                           |
 | `.refine(fn, message?)`                         | all                          | `fn(value)` must return a truthy value; `message` is a string or `{ message, path }` (`error` is accepted as a string alias of `message`); a type guard `(v) => v is U` narrows the output (and the input, without a transform) to `U` |
-| `.check((value, ctx) => …)`                     | all                          | adds any number of issues with `ctx.addIssue({ message, path?, code? })`                                                                                                                                                       |
-| `.transform(fn)`                                | all                          | a type-changing step; `fn(value, context)` may call `context.addIssue(...)`; see [Transforms](#transforms)                                                                                                                     |
-| `.pipe(schema)`                                 | all                          | parse this schema's output with `schema`; a transform kind                                                                                                                                                                     |
-| `.describe(text)`                               | all                          | a description for JSON Schema and tooling; `.description` reads it                                                                                                                                                             |
-| `.unwrap()`                                     | optional, nullable, default  | the schema below the wrapper; `.removeDefault()` is the same on a default                                                                                                                                                      |
-| `.strip()`                                      | object                       | explicit stripping, including in the kit's full parse; input JSON Schema omits `additionalProperties: false`                                                                                                                   |
-| `.strict()`                                     | object                       | application parse reports unknown keys as `unrecognized_key`; nested objects keep their own policy                                                                                                                             |
+| `.check((value, ctx) => …)`                     | all                          | adds any number of issues with `ctx.addIssue({ message, path?, code? })`                                                                                                                                                               |
+| `.transform(fn)`                                | all                          | a type-changing step; `fn(value, context)` may call `context.addIssue(...)`; see [Transforms](#transforms)                                                                                                                             |
+| `.pipe(schema)`                                 | all                          | parse this schema's output with `schema`; a transform kind                                                                                                                                                                             |
+| `.describe(text)`                               | all                          | a description for JSON Schema and tooling; `.description` reads it                                                                                                                                                                     |
+| `.unwrap()`                                     | optional, nullable, default  | the schema below the wrapper; `.removeDefault()` is the same on a default                                                                                                                                                              |
+| `.strip()`                                      | object                       | explicit stripping, including in the kit's full parse; input JSON Schema omits `additionalProperties: false`                                                                                                                           |
+| `.strict()`                                     | object                       | application parse reports unknown keys as `unrecognized_key`; nested objects keep their own policy                                                                                                                                     |
 
 Normalisers run before checks regardless of chain order, after the structure is valid. Within each group they run in declaration order. Messages are optional; each check has a default message.
 
@@ -495,3 +495,86 @@ export const getDocument = authQuery({
 ```
 
 Measured results are in `docs/benchmarks/validators.md` in the repository.
+
+## IP addresses, UUIDs and numeric steps
+
+`k.ipv4()`, `k.ipv6()` and `k.uuid()` return string schemas. The same checks are available as `.ipv4()`, `.ipv6()` and `.uuid()` on a string chain, with an optional message. They match the Zod 4.6.7 constructors without importing Zod. Normalisers run first. Invalid strings report `invalid_format`; messages do not include the input.
+
+IPv4 rejects leading zeros, whitespace, ports and CIDR suffixes. IPv6 accepts compressed and full hexadecimal addresses, mixed case and embedded dotted IPv4 suffixes. It checks the address alphabet before parsing a bracketed URL host, and rejects zone identifiers, supplied brackets, ports, CIDR and whitespace. UUID accepts versions 1 to 8 with valid variant bits, nil and lowercase max UUID. There is no UUID version option or combined `k.ip()` factory.
+
+```ts
+const endpoint = k.object({ address: k.union([k.ipv4(), k.ipv6()]) })
+const price = k.number().gt(0).lt(100).multipleOf(0.05)
+```
+
+`.gt(value, message?)` and `.lt(value, message?)` are exclusive number bounds. A `NaN` bound throws; infinite bounds keep the existing number-bound behavior. `.multipleOf(divisor, message?)` requires a positive finite divisor at declaration. It rejects nonfinite values and quotient overflow. For finite quotients it uses Zod's floating-point tolerance, so ordinary decimal prices such as `0.3` are multiples of `0.05`. JSON Schema validators can use different floating-point arithmetic.
+
+Native validators remain `v.string()` and `v.number()`. JSON Schema publishes IPv4 and UUID with their patterns and formats. IPv6 has only `format: 'ipv6'`, because the hexadecimal-only regex would reject dotted suffixes the constructor accepts. Format enforcement depends on the JSON Schema validator.
+
+## Tuples
+
+```ts
+const pair = k.tuple([k.string(), k.number()]) // [string, number]
+const row = k.tuple([pair]).rest(k.boolean()) // [[string, number], ...boolean[]]
+const equivalent = k.tuple([pair], k.boolean())
+const empty = k.tuple([]) // []
+```
+
+A tuple requires every declared position. Without rest it requires the exact length; with rest it accepts additional values of the rest schema. Parsing checks length before visiting positions and reports numeric paths. Holes, explicit `undefined` and outputs that become `undefined` are rejected. A defaulted position is still required and does not fill a missing position. Defaults inside an object position work normally and are copied for each parse.
+
+Optional and void positions, including rest, are unsupported. The first native validator or parse-plan request rejects them. A default outside an optional member makes that member required again; a default-only member is allowed. `.rest(schema)` returns a new tuple and may replace existing rest. Call it immediately after construction, before checks or wrappers. Items are copied and frozen, so changing the caller's array does not change the tuple.
+
+Outer `.optional()`, `.nullable()` and `.default()` work normally. Object `partial`, `pick` and `omit` preserve tuple fields. There is no tuple pick/omit or deep partial. Transforms, pipes and catches inside any position or rest are rejected by table and return declarations under the existing rules.
+
+Convex receives an array whose element validator is the union of positional and rest validators. With one member it uses that validator directly; with zero members it uses an empty union. The input and output validators use the corresponding sides of every member. Storage is an ordinary array. Convex cannot enforce tuple positions or length: kit argument parsing, writes and reads enforce them. A direct `ctx.db` write can store an out-of-order tuple that the kit later rejects. Return declarations likewise export the broader native array validator; callers that need position checks on results must decode them explicitly.
+
+## Never
+
+`k.never()` rejects every value with `invalid_type`. `.optional()` accepts absence and `.nullable()` accepts `null`. It is separate from the `k.NEVER` transform sentinel. Its native validator is `v.union()` with zero members, not `v.any()`. A required never table field makes insertion impossible; `k.array(k.never())` accepts only an empty array in application parsing. The SDK serializes an empty union and convex-test enforces it; real server acceptance must be checked before shipping.
+
+## Boundary helpers
+
+`convexPaginationOptions()` is exported from `cvx-kit/table` and root. It returns the cached six-field Convex pagination options schema used by `paginated(dto)`, including nullable `cursor` and optional `endCursor`, `id`, `maximumRowsRead` and `maximumBytesRead`. It strips unknown fields. It is distinct from `nativePagination`, which adds limits and `onEmptyBudget`.
+
+```ts
+import { convexPaginationOptions } from 'cvx-kit/table'
+const input = k.object({
+	paginationOpts: convexPaginationOptions(),
+	unreadOnly: k.boolean().optional(),
+})
+```
+
+`componentResult(schema)` from `cvx-kit/contracts` returns a synchronous strict decoder. Creating it does not compile the schema. Await the component call explicitly, then pass its result to the decoder:
+
+```ts
+import { componentResult } from 'cvx-kit/contracts'
+const decodeDelivery = componentResult(deliveryResultSchema)
+const result = decodeDelivery(await ctx.runQuery(components.mail.getDelivery, args))
+```
+
+The decoder checks complete structure and rejects unknown fields unless the schema explicitly strips or keeps them. Nested `k.any()` and custom schemas keep their existing limits. An id brand describes the component's contract; it does not prove table membership or authorize access to a host table. Host `db.normalizeId` cannot validate another component's database ids.
+
+`asId(table, value)` is available only from `cvx-kit/test`, whose component registration helpers require a vitest-compatible `import.meta.glob` environment. It returns the same string branded with the literal table name. It does not validate an id. Use actual inserted ids for convex-test database references; fixture strings are not real storage references.
+
+## Optional JSON Schema installation
+
+Standard validation is available from the core alone. Standard JSON Schema support requires a runtime import:
+
+```ts
+import { k } from 'cvx-kit/k'
+import 'cvx-kit/json-schema'
+const toolSchema = k.object({ query: k.string() })
+// Read toolSchema['~standard'].jsonSchema after installation.
+```
+
+A type-only import does not install the converter. A `~standard` object captured before installation stays without `jsonSchema`; read the getter again. Separate physical package copies have separate installers. Explicit `toJsonSchema(schema)` is the most predictable export API. The converter is already excluded from core-only bundles.
+
+## Recursion and wire formats
+
+There is no `k.lazy()` in rc.2. Keep finite rule-tree levels individually inferred, or retain an application parser whose output is explicitly typed for recursive data. `k.json()` checks JSON recursively but is not a general recursive-schema facility. Its native array and record members contain `any`. Existing JSON Schema refs deduplicate finite repeated schemas and do not create recursion. A bounded string refinement on recursive JSON is not faithfully represented in its current JSON Schema export.
+
+A diagnostic mentioning `_req`, `_d` or `_t` means that position requires a `k` schema. Use `k.object({ name: k.string() })` or the documented explicit foreign-schema bridge. No diagnostic brand or conditional foreign-schema detection is added to the shared types.
+
+`k.bytes()` parses `ArrayBuffer`; native validation uses `v.bytes()`. `toZod` keeps an ArrayBuffer custom validator, so Zod JSON Schema export may throw. The kit's `contentEncoding: 'base64'` JSON Schema convention is descriptive; it does not decode a string.
+
+`k.int64()` parses bigint and uses `v.int64()`. Its JSON Schema remains `{ type: 'integer' }` for compatibility, but plain JSON cannot carry bigint, and numbers outside the safe range lose precision. Convex has its own transport encoding. For HTTP JSON, declare a separate string or number wire schema and an explicit codec. Neither helper changes storage or implicitly decodes a wire value.

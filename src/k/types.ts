@@ -20,6 +20,9 @@ export type KOp =
 	| 'literal'
 	| 'enum'
 	| 'id'
+	| 'never'
+	| 'tuple'
+	| 'multipleOf'
 	| 'array'
 	| 'object'
 	| 'record'
@@ -111,6 +114,8 @@ export type KDiscriminated = {
 	readonly dispatch: ReadonlyMap<KLiteralValue, KNode>
 }
 
+export type KTupleArg = { readonly items: readonly KType[]; readonly rest?: KType }
+
 export type KArg =
 	| Value
 	| undefined
@@ -121,10 +126,12 @@ export type KArg =
 	| KFields
 	| KCallback
 	| KDiscriminated
+	| KTupleArg
 	| KFormat
 
-/** A string format check: `k.email()`, or `k.url()` with its optional protocol and hostname patterns. */
+/** A string format check; URL optionally carries protocol and hostname patterns. */
 export type KFormat =
+	| { readonly kind: 'ipv4' | 'ipv6' | 'uuid' }
 	| { readonly kind: 'email' }
 	| { readonly kind: 'url'; readonly protocol?: RegExp; readonly hostname?: RegExp }
 

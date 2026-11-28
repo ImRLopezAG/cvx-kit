@@ -2,6 +2,7 @@ export { defaultErrors, KitError, type ErrorFactory } from './errors'
 export {
 	createModule,
 	createTable,
+	convexPaginationOptions,
 	kTable,
 	kVariantTable,
 	memberName,

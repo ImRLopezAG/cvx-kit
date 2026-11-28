@@ -545,7 +545,7 @@ In a file that keeps Zod, import it as a namespace:
 import * as z from 'zod' // not: import { z } from 'zod'
 ```
 
-The named `{ z }` import keeps Zod's whole namespace object in the bundle, locale tables and JSON Schema converters included. Measured in the Accord trial of this release, not by the kit's own benchmarks, a function bundle held 737 KB of Zod with `import { z }` and 194 KB with `import * as z`. One `import { z }` anywhere in a bundle, including in a dependency, keeps the whole namespace, which cost about 520 KB per bundle there. The `import { z } from 'zod'` lines elsewhere in this guide show v1 code.
+The named `{ z }` import keeps Zod's whole namespace object in the bundle, locale tables and JSON Schema converters included. Measured in the Accord trial of this release, not by the kit's own benchmarks: one service file bundled alone held 733 KB of Zod with `import { z }` and 194 KB with `import * as z`. One `import { z }` anywhere in a bundle, including in a dependency, keeps the whole namespace, which cost about 520 KB per function bundle there (737 KB against 213 KB). Check dependencies too: Accord's bundles stayed at 737 KB after its own files were changed, because one dependency still imports `{ z }`. The `import { z } from 'zod'` lines elsewhere in this guide show v1 code.
 
 ## The codemod
 

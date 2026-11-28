@@ -66,6 +66,412 @@ describe('toZod', () => {
 	describe.each(['mini', 'classic'] as const)('%s output', (output) => {
 		const options = output === 'classic' ? { zod: z } : undefined
 
+		// Expected JSON Schema captured from the beta.6 converter (ffac0b7), using the same Zod.
+		describe.each([
+			{
+				name: 'optional string',
+				schema: k.object({ f: k.string().optional() }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } } },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'optional url',
+				schema: k.object({ f: k.string().url().optional() }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } } },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'optional object',
+				schema: k.object({ f: k.object({ x: k.string() }).optional() }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: {
+							f: { type: 'object', properties: { x: { type: 'string' } }, required: ['x'] },
+						},
+					},
+					output: {
+						type: 'object',
+						properties: {
+							f: {
+								type: 'object',
+								properties: { x: { type: 'string' } },
+								required: ['x'],
+								additionalProperties: false,
+							},
+						},
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'optional array',
+				schema: k.object({ f: k.array(k.string()).optional() }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: { f: { type: 'array', items: { type: 'string' } } },
+					},
+					output: {
+						type: 'object',
+						properties: { f: { type: 'array', items: { type: 'string' } } },
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'nullable',
+				schema: k.object({ f: k.string().nullable() }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: { f: { type: ['string', 'null'] } },
+						required: ['f'],
+					},
+					output: {
+						type: 'object',
+						properties: { f: { type: ['string', 'null'] } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'default',
+				schema: k.object({ f: k.string().default('a') }),
+				expected: {
+					input: { type: 'object', properties: { f: { default: 'a', type: 'string' } } },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'refine',
+				schema: k.object({ f: k.number().refine((n) => n > 0) }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'number' } }, required: ['f'] },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'number' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'check',
+				schema: k.object({ f: k.string().check(() => {}) }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } }, required: ['f'] },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'trim',
+				schema: k.object({ f: k.string().trim() }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } }, required: ['f'] },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'lower',
+				schema: k.object({ f: k.string().toLowerCase() }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } }, required: ['f'] },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'upper',
+				schema: k.object({ f: k.string().toUpperCase() }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } }, required: ['f'] },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'overwrite',
+				schema: k.object({ f: k.string().overwrite((s) => s.trim()) }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } }, required: ['f'] },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'bounds',
+				schema: k.object({
+					f: k
+						.string()
+						.min(2)
+						.max(8)
+						.regex(/^[a-z]+$/),
+				}),
+				expected: {
+					input: {
+						type: 'object',
+						properties: { f: { type: 'string', minLength: 2, maxLength: 8, pattern: '^[a-z]+$' } },
+						required: ['f'],
+					},
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string', minLength: 2, maxLength: 8, pattern: '^[a-z]+$' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'email',
+				schema: k.object({ f: k.string().email() }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: {
+							f: {
+								type: 'string',
+								pattern:
+									"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\\.)+[A-Za-z]{2,}$",
+							},
+						},
+						required: ['f'],
+					},
+					output: {
+						type: 'object',
+						properties: {
+							f: {
+								type: 'string',
+								pattern:
+									"^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\\.)+[A-Za-z]{2,}$",
+							},
+						},
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'enum',
+				schema: k.object({ f: k.enum(['a', 'b']) }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: { f: { type: 'string', enum: ['a', 'b'] } },
+						required: ['f'],
+					},
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string', enum: ['a', 'b'] } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'literal union',
+				schema: k.object({ f: k.union([k.literal('a'), k.literal('b')]) }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: {
+							f: {
+								anyOf: [
+									{ type: 'string', const: 'a' },
+									{ type: 'string', const: 'b' },
+								],
+							},
+						},
+						required: ['f'],
+					},
+					output: {
+						type: 'object',
+						properties: {
+							f: {
+								anyOf: [
+									{ type: 'string', const: 'a' },
+									{ type: 'string', const: 'b' },
+								],
+							},
+						},
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'nested',
+				schema: k.object({ f: k.object({ x: k.number() }) }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: {
+							f: { type: 'object', properties: { x: { type: 'number' } }, required: ['x'] },
+						},
+						required: ['f'],
+					},
+					output: {
+						type: 'object',
+						properties: {
+							f: {
+								type: 'object',
+								properties: { x: { type: 'number' } },
+								required: ['x'],
+								additionalProperties: false,
+							},
+						},
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'integer',
+				schema: k.object({ f: k.int() }),
+				expected: {
+					input: {
+						type: 'object',
+						properties: {
+							f: { type: 'integer', minimum: -9007199254740991, maximum: 9007199254740991 },
+						},
+						required: ['f'],
+					},
+					output: {
+						type: 'object',
+						properties: {
+							f: { type: 'integer', minimum: -9007199254740991, maximum: 9007199254740991 },
+						},
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'strict',
+				schema: k.object({ f: k.string() }).strict(),
+				expected: {
+					input: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'loose',
+				schema: k.object({ f: k.string() }).loose(),
+				expected: {
+					input: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: {},
+					},
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						required: ['f'],
+						additionalProperties: {},
+					},
+				},
+			},
+			{
+				name: 'optional refine',
+				schema: k.object({
+					f: k
+						.string()
+						.refine((s) => s.length > 0)
+						.optional(),
+				}),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } } },
+					output: {
+						type: 'object',
+						properties: { f: { type: 'string' } },
+						additionalProperties: false,
+					},
+				},
+			},
+			{
+				name: 'transform',
+				schema: k.object({ f: k.string().transform((s) => s.length) }),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } }, required: ['f'] },
+				},
+			},
+			{
+				name: 'pipe',
+				schema: k.object({
+					f: k
+						.string()
+						.transform((s) => s.length)
+						.pipe(k.number()),
+				}),
+				expected: {
+					input: { type: 'object', properties: { f: { type: 'string' } }, required: ['f'] },
+				},
+			},
+		])('JSON Schema parity: $name', ({ schema, expected }) => {
+			for (const io of ['input', 'output'] as const) {
+				if (!(io in expected)) continue
+				it(`preserves beta.6 ${io} JSON Schema`, () => {
+					const converted = toZod(schema, options)
+					const actual = z.toJSONSchema(converted, { io })
+					expect(actual).toEqual({
+						$schema: 'https://json-schema.org/draft/2020-12/schema',
+						...expected[io],
+					})
+				})
+			}
+		})
+
 		it('carries refine messages and relative paths', () => {
 			const schema = k.object({ name: k.string() }).refine((value) => value.name === 'yes', {
 				message: 'use yes',
@@ -113,6 +519,20 @@ describe('toZod', () => {
 				expect(toZod(schema, options).safeParse(value).success).toBe(
 					schema.safeParse(value).success,
 				)
+		})
+
+		it('does not encode undefined defaults', () => {
+			const transformed = k
+				.any()
+				.transform((value) => (value === undefined ? 'absent' : value))
+				.default(undefined)
+			for (const schema of [k.any().default(undefined), transformed]) {
+				const converted = toZod(schema, options)
+				for (const io of ['input', 'output'] as const)
+					expect(() => z.toJSONSchema(converted, { io, unrepresentable: 'any' })).not.toThrow()
+			}
+			for (const input of [undefined, 'present'])
+				expect(toZod(transformed, options).safeParse(input)).toEqual(transformed.safeParse(input))
 		})
 
 		it('preserves defaults around transforms', () => {
@@ -190,6 +610,7 @@ describe('toZod', () => {
 			]) {
 				expect(toZod(schema, options).safeParse(undefined)).toEqual(schema.safeParse(undefined))
 				expect(toZod(schema, options).safeParse('abc')).toEqual(schema.safeParse('abc'))
+				expect(() => z.toJSONSchema(toZod(schema, options), { io: 'input' })).not.toThrow()
 				const object = k.object({ value: schema })
 				expect(toZod(object, options).safeParse({})).toEqual(object.safeParse({}))
 			}

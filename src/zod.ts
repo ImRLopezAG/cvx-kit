@@ -168,8 +168,12 @@ function convert(node: KNode, z: Factory): Mini {
 				transformed = true
 				break
 			case 'optional':
-				// An output-side undefined default prevents Zod from reaching a hidden inner default.
-				out = z.optional(defaultsBelow(record.prev) ? out : z._default(out, undefined))
+				if (hiddenDefaultBelow(record.prev)) {
+					// This freshly converted chain belongs only to this optional. A default hidden
+					// behind a pipe must not advertise substitution to Zod's optional parser.
+					Object.defineProperty(out._zod, 'optin', { value: 'optional', configurable: true })
+				}
+				out = z.optional(out)
 				break
 			case 'partial':
 				out = z.optional(out)
@@ -270,14 +274,24 @@ function rootSchema(root: KNode, policy: 'strip' | 'strict' | 'loose', z: Factor
 	}
 }
 
-/** A pipe skips this run when its base failed; checks within the run still accumulate issues. */
+/** Keep checks on the base type, but skip the whole run if its wrapped base failed. */
 function applyRun(base: Mini, run: readonly KNode[], z: Factory): Mini {
 	if (run.length === 0) return base
 	const kind = kindOf(base)
-	let out: Mini = base._zod.optout === 'optional' ? z.optional(z.any()) : z.any()
+	const enabled = new WeakSet<z.core.ParsePayload>()
+	const gate = z.check((payload) => {
+		if (payload.issues.length === 0) enabled.add(payload)
+		else enabled.delete(payload)
+	})
+	let out = base.check(gate)
 	for (const record of run) if (isNormaliser(record)) out = applyNormaliser(out, record, kind, z)
 	for (const record of run) if (!isNormaliser(record)) out = applyCheck(out, record, kind, z)
-	return z.pipe(base, out)
+	const checks = out._zod.def.checks ?? []
+	for (const check of checks.slice((base._zod.def.checks?.length ?? 0) + 1)) {
+		const when = check._zod.def.when
+		check._zod.def.when = (payload) => enabled.has(payload) && (when?.(payload) ?? true)
+	}
+	return out
 }
 
 /** The Zod definition kind: a string format is a `string`, a number format a `number`. */
@@ -366,6 +380,12 @@ function applyCheck(base: Mini, record: KNode, kind: string, z: Factory): Mini {
  * A default feeds the wrapped chain unless that chain transforms; then it supplies parsed output.
  */
 function withDefault(base: Mini, record: KNode, transformed: boolean, z: Factory): Mini {
+	if (record.arg === undefined) {
+		if (!transformed) return base
+		// An undefined output default only short-circuits absent input; do not serialize it.
+		Object.defineProperty(base._zod, 'optin', { value: 'optional', configurable: true })
+		return z.optional(base)
+	}
 	// SAFETY: the default's type is the chain's input, or its output when a transform sits below it.
 	return transformed ? z._default(base, record.arg as never) : z.prefault(base, record.arg as never)
 }
@@ -414,11 +434,12 @@ function isPartial(record: KNode): boolean {
 	return record.op === 'partial'
 }
 
-/** Optional sees defaults only until a transform or pipe changes the wrapped output. */
-function defaultsBelow(node: KNode | null): boolean {
+/** A visible default substitutes; only a default hidden by a transform/pipe must be skipped. */
+function hiddenDefaultBelow(node: KNode | null): boolean {
+	let hidden = false
 	for (let current = node; current !== null; current = current.prev) {
-		if (current.op === 'default') return true
-		if (current.op === 'transform' || current.op === 'pipe') return false
+		if (current.op === 'default') return hidden
+		if (current.op === 'transform' || current.op === 'pipe') hidden = true
 	}
 	return false
 }

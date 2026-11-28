@@ -403,9 +403,13 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 			const { items, rest } = root.arg as KTupleArg
 			const slots = items.map((item) => convert(item, output))
 			const tail = rest === undefined ? false : convert(rest, output)
-			const out: JsonSchema = context.draft07
-				? { type: 'array', items: slots, additionalItems: tail, minItems: items.length }
-				: { type: 'array', prefixItems: slots, items: tail, minItems: items.length }
+			// Both dialects require a non-empty positional list, so a tuple without positions states only its tail.
+			const out: JsonSchema =
+				slots.length === 0
+					? { type: 'array', items: tail, minItems: 0 }
+					: context.draft07
+						? { type: 'array', items: slots, additionalItems: tail, minItems: items.length }
+						: { type: 'array', prefixItems: slots, items: tail, minItems: items.length }
 			if (rest === undefined) out.maxItems = items.length
 			return out
 		}
@@ -535,7 +539,10 @@ function applyCheck(out: JsonSchema, record: KNode): void {
 function applyBound(out: JsonSchema, op: KNode['op'], arg: KNode['arg']): void {
 	if (op === 'multipleOf') {
 		// SAFETY: multipleOf stores its positive finite divisor.
-		out.multipleOf = arg as number
+		const divisor = arg as number
+		// JSON Schema holds one divisor per schema; a second one is a further constraint.
+		if (out.multipleOf === undefined || out.multipleOf === divisor) out.multipleOf = divisor
+		else (out.allOf ??= []).push({ multipleOf: divisor })
 		return
 	}
 	if (op === 'gt' || op === 'lt') {

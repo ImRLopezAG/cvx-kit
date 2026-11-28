@@ -215,7 +215,10 @@ export abstract class KSchema<
 
 /** Check only the immediate declaration, without compiling or visiting children. */
 export function assertSchema(value: KNode, location: string): void {
-	if (!(value instanceof KSchema)) throw new TypeError(`k: ${location} must be a k schema`)
+	// A schema from a second installed copy of the package is another class with the same record shape.
+	if (value instanceof KSchema || (value?.op !== undefined && 'prev' in value && 'native' in value))
+		return
+	throw new TypeError(`k: ${location} must be a k schema`)
 }
 
 /**

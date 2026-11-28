@@ -25,7 +25,7 @@ describe('JSON Schema converter forms', () => {
 		})
 		expect(toJsonSchema(k.tuple([], k.boolean()))).toEqual({
 			type: 'array',
-			prefixItems: [],
+
 			minItems: 0,
 			items: { type: 'boolean' },
 		})
@@ -137,5 +137,29 @@ describe('JSON Schema converter forms', () => {
 		expect(toJsonSchema(k.int64())).toEqual({ type: 'integer' })
 		expect(k.int64().safeParse(1).success).toBe(false)
 		expect(k.int64().safeParse(1n).success).toBe(true)
+	})
+})
+
+describe('tuple and multiple edge cases', () => {
+	it('never emits an empty positional list', () => {
+		expect(toJsonSchema(k.tuple([]))).toEqual({
+			type: 'array',
+			items: false,
+			minItems: 0,
+			maxItems: 0,
+		})
+		expect(toJsonSchema(k.tuple([], k.string()))).toEqual({
+			type: 'array',
+			items: { type: 'string' },
+			minItems: 0,
+		})
+	})
+
+	it('keeps every divisor of a number with two multiples', () => {
+		expect(toJsonSchema(k.number().multipleOf(2).multipleOf(3))).toEqual({
+			type: 'number',
+			multipleOf: 2,
+			allOf: [{ multipleOf: 3 }],
+		})
 	})
 })

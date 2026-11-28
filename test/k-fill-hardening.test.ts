@@ -174,3 +174,24 @@ function retyped<T>(value: { isConvexFunction: true }): T {
 	// SAFETY: the runtime Convex builder carries its internal handler method.
 	return value as T
 }
+
+describe('fills and declaration guards across copies and cycles', () => {
+	it('copies a default that contains itself without recursing forever', () => {
+		// oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- the test builds a self-referencing value.
+		const value: Record<string, unknown> = {}
+		value.self = value
+		const filled = k.any().default(value).parse(undefined)
+		expect(filled).not.toBe(value)
+		expect(filled.self).toBe(filled)
+	})
+
+	it('accepts a schema record from another copy of the package as a field', () => {
+		// SAFETY: the declaration guard takes any value at runtime; these stand in for untyped callers.
+		const field = (value: unknown) => () => k.object({ a: value as never })
+		// A second installed copy builds records of another class with the same shape.
+		expect(field({ op: 'string', prev: undefined, native: undefined })).not.toThrow()
+		expect(field(k.string())).not.toThrow()
+		expect(field('oops')).toThrow('must be a k schema')
+		expect(field({ parse() {} })).toThrow('must be a k schema')
+	})
+})

@@ -5,8 +5,6 @@ import { join } from 'node:path'
 import { describe, it, expect } from 'vite-plus/test'
 import { transformSource } from '../tools/codemod-v2/transform.mjs'
 import { run } from '../tools/codemod-v2/index.mjs'
-import { k } from '../src/k.ts'
-import { kTable } from '../src/table.ts'
 const convert = (body) => transformSource('sample.ts', `import { z } from 'zod'\n${body}`)
 const codes = (outcome) => outcome.skipped.map((site) => site.code)
 
@@ -48,7 +46,7 @@ const f = z.never(); const g = z.number().gt(0).lt(0);`)
 	it('maps fixed, empty, nested and rest tuples with required aliases', () => {
 		const result = convert(`const member = z.string(); const a = z.tuple([member, z.number()]);
 const b = z.tuple([]); const c = z.tuple([z.tuple([member])], z.boolean());
-const d = z.tuple([member]).rest(z.string()); const e = z.tuple([z.string().default('x')]);
+const d = z.tuple([member]).rest(z.string());
 const f = z.tuple([z.object({ label: z.string() }).partial()]);`)
 		expect(codes(result)).toEqual([])
 		expect(result.output).toContain('k.tuple([member, k.number().finite()])')
@@ -110,24 +108,22 @@ describe('codemod scoped table callbacks', () => {
 		expect(result.output).toContain('.refine((id) => id.length > 0)')
 		expect(result.output).toContain("owner: k.id('owners')")
 	})
-	it('evaluates the migrated fields before table options and produces usable schemas', () => {
+	it('holds callbacks with side-effecting options', () => {
 		const result = table(
-			`(id) => { const limit = (mark('limit'), 1); const nested = z.string().min(limit).refine(mark('nested')); return { nested, owner: id('owners') } }, mark('options')`,
+			`(id) => { const limit = (mark('limit'), 1); const nested = z.string().min(limit); return { nested, owner: id('owners') } }, mark('options')`,
 		)
-		expect(codes(result)).toEqual([])
-		const events = []
-		const mark = (name) => {
-			events.push(name)
-			return name === 'options' ? {} : () => true
-		}
-		const source = result.output.replace(/^import .*$/gm, '')
-		const migrated = new Function('k', 'kTable', 'mark', `${source}; return t`)(k, kTable, mark)
-		expect(events).toEqual(['limit', 'nested', 'options'])
-		expect(migrated.insertSchema.parse({ nested: 'label', owner: 'fixture-owner' })).toEqual({
-			nested: 'label',
-			owner: 'fixture-owner',
-		})
+		expect(codes(result)).toContain('table-callback-complex')
+		expect(result.output).toContain("mark('options')")
 	})
+
+	it('moves a callback past options that only spread plain references', () => {
+		const result = table(
+			`(id) => { const nested = z.string(); return { nested, owner: id('owners') } }, { indexes: [...base.indexes, ['byOwner', ['owner']]], ...shared }`,
+		)
+		expect(codes(result)).not.toContain('table-callback-complex')
+		expect(result.output).toContain("owner: k.id('owners')")
+	})
+
 	it.each([
 		`(id) => { const alias = id; return { x: alias('x') } }`,
 		`(id) => { const x = id(variable); return { x } }`,

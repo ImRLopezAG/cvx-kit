@@ -44,7 +44,12 @@ export function processTableCall(ctx, unit, call) {
 	unit.contexts.push(call)
 	const fields = call.arguments[1]
 	if (!fields || !isFunction(fields)) return
-	if (fields.type === 'ArrowFunctionExpression' && convertCallback(ctx, unit, fields)) return
+	if (
+		call.arguments.slice(2).every(sideEffectFree) &&
+		fields.type === 'ArrowFunctionExpression' &&
+		convertCallback(ctx, unit, fields)
+	)
+		return
 	addSkip(ctx, unit, fields, 'table-callback-complex')
 }
 
@@ -203,4 +208,33 @@ function keyArrayQuery(ctx, expression) {
 		value?.type === 'ArrayExpression' &&
 		value.elements.every((item) => item?.type === 'Literal' && item.value === String(item.value))
 	)
+}
+
+/** Moving the field callback before later arguments must not move past an effect. */
+function sideEffectFree(expression) {
+	const node = unwrap(expression)
+	if (!node) return false
+	// Spreading a plain reference copies it; only a custom iterator or getter could observe the order.
+	if (node.type === 'SpreadElement') return sideEffectFree(node.argument)
+	if (
+		['Identifier', 'Literal', 'ArrowFunctionExpression', 'FunctionExpression'].includes(node.type)
+	)
+		return true
+	if (node.type === 'MemberExpression')
+		return (
+			!node.computed &&
+			sideEffectFree(node.object) &&
+			['Identifier', 'MemberExpression'].includes(node.object.type)
+		)
+	if (node.type === 'ObjectExpression')
+		return node.properties.every((property) =>
+			property.type === 'SpreadElement'
+				? sideEffectFree(property.argument)
+				: property.type === 'Property' &&
+					!property.computed &&
+					property.kind === 'init' &&
+					sideEffectFree(property.value),
+		)
+	if (node.type === 'ArrayExpression') return node.elements.every(sideEffectFree)
+	return false
 }

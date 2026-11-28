@@ -5,7 +5,7 @@
 // same run that exports it as `k`. Any other type argument stays Zod and is
 // reported, because `k.infer` of a Zod schema is silently `unknown`. Every other
 // type reached through the Zod binding stays and is reported.
-import { isReference, resolveBinding, walk } from './ast.mjs'
+import { chainOf, isReference, resolveBinding, unwrap, walk } from './ast.mjs'
 import { isSchemaExpression } from './schema.mjs'
 import { addEdit, addSkip } from './sites.mjs'
 
@@ -117,10 +117,18 @@ export function prepareGenericHelpers(ctx, units) {
 			),
 		)
 		if (positions.some((index) => index < 0)) continue
+		if (!genericMembersMap(ctx, fn, constraints)) continue
 		let calls = 0
 		let safe = true
 		walk(ctx.program, (node, parent) => {
-			if (node.type !== 'Identifier' || node.name !== fn.id.name || !isReference(node, parent))
+			if (
+				node.type !== 'Identifier' ||
+				node.name !== fn.id.name ||
+				!(
+					isReference(node, parent) ||
+					(parent?.type === 'ExportSpecifier' && parent.local === node)
+				)
+			)
 				return
 			if (parent?.type !== 'CallExpression' || parent.callee !== node) {
 				safe = false
@@ -149,4 +157,31 @@ export function prepareGenericHelpers(ctx, units) {
 				param.constraint.typeName.right.name === 'ZodObject' ? 'KObject<KFields>' : 'AnyKSchema',
 			)
 	}
+}
+
+/** Generic values only use members whose spelling and arguments already map directly. */
+function genericMembersMap(ctx, fn, constraints) {
+	const names = new Set(constraints.map((param) => param.name.name))
+	const members = new Set(['parse', 'optional', 'nullable', 'unwrap', 'shape', 'element'])
+	let safe = true
+	walk(fn.body, (node) => {
+		if (node.type !== 'MemberExpression') return
+		const { root } = chainOf(node)
+		if (root.type !== 'Identifier') return
+		if (!genericValue(ctx, root, names)) return
+		if (node.computed || !members.has(node.property.name)) safe = false
+	})
+	return safe
+}
+
+function genericValue(ctx, expression, names, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return false
+	const { root } = chainOf(node)
+	if (root.type !== 'Identifier') return false
+	const binding = resolveBinding(root, ctx.parents)
+	const declaration = binding?.node
+	const annotation = (declaration?.id ?? declaration)?.typeAnnotation?.typeAnnotation
+	if (annotation?.type === 'TSTypeReference' && names.has(annotation.typeName?.name)) return true
+	return Boolean(binding?.init && genericValue(ctx, binding.init, names, new Set(seen).add(node)))
 }

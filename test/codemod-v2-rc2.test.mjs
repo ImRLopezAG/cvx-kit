@@ -304,3 +304,110 @@ it('keeps Zod-only classification stable after moving a held zid import', () => 
 	expect(second.status).toBe(first.status)
 	expect(second.output).toBe(first.output)
 })
+
+describe('codemod conservative alias and helper handling', () => {
+	it.each([
+		'export { mask }',
+		'export { mask as x }',
+		'export default mask',
+		'type Mask = typeof mask',
+	])('preserves masks referenced by %s', (reference) => {
+		const result = convert(
+			`const mask={a:true} as const; const a=z.object({a:z.string()}).pick(mask); ${reference}`,
+		)
+		expect(result.output).toContain('const mask=')
+	})
+	it.each([
+		'schema.isOptional()',
+		'schema.parseAsync("x")',
+		'value.isOptional()',
+		'schema.optional().parseAsync("x")',
+	])('holds generic helper with unsupported member %s', (body) => {
+		const result = convert(
+			`function helper<T extends z.ZodType>(schema:T) { const value:T = schema; return ${body} }; helper(z.string())`,
+		)
+		expect(codes(result)).toContain('zod-type')
+		expect(result.output).toContain('T extends z.ZodType')
+	})
+	it('holds unsupported members on inferred generic aliases', () => {
+		const result = convert(
+			`function helper<T extends z.ZodType>(schema:T) { const value = schema; return value.isOptional() }; helper(z.string())`,
+		)
+		expect(codes(result)).toContain('zod-type')
+	})
+	it('allows tuple members proved to be kit schemas when their structure is unresolved', () => {
+		tree(
+			{
+				'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+				'member.ts': "import { k } from 'cvx-kit'; export const member=k.array(k.string()).element",
+				'use.ts':
+					"import { z } from 'zod'; import { member } from './member'; const a=z.tuple([member])",
+			},
+			(root) => {
+				const result = run(['use.ts', 'member.ts', '--write'], root)
+				const use = result.report.files.find((file) => file.path.endsWith('use.ts'))
+				expect(codes(use)).not.toContain('tuple-optionality')
+				expect(readFileSync(join(root, 'use.ts'), 'utf8')).toContain('k.tuple([member])')
+			},
+		)
+	})
+	it('resolves constant literal arrays and scalar constants', () => {
+		const result = convert(
+			`const values=['a','b'] as const; const scalar='a'; const a=z.literal(values); const b=z.literal(scalar)`,
+		)
+		expect(result.output).toContain('k.enum(values)')
+		expect(result.output).toContain('k.literal(scalar)')
+	})
+	it.each(['unknownValue', 'values', '[dynamic]'])('holds unproven literal values %s', (value) => {
+		expect(codes(convert(`const values=[1,'b'] as const; const a=z.literal(${value})`))).toContain(
+			'literal-array',
+		)
+	})
+	it('holds foreign schemas reached through local aliases', () => {
+		const result = convert(
+			`import { foreign } from './foreign'; const alias = foreign; const a=z.object({ a: alias })`,
+		)
+		expect(codes(result)).toContain('mixed-reference')
+		expect(result.output).toContain('z.object({ a: alias })')
+	})
+	it.each(['args', 'returns'])(
+		'holds foreign schemas in a registration %s field map',
+		(property) => {
+			const result = convert(
+				`import { foreign } from './foreign'; const alias = foreign; const a=query({ ${property}: { a: alias }, handler })`,
+			)
+			expect(codes(result)).toContain('zod-foreign-schema')
+			expect(result.output).toContain(`${property}: { a: alias }`)
+		},
+	)
+	it('holds table callbacks when later arguments change evaluation order', () => {
+		const result = convert(
+			`import { zodTable } from 'cvx-kit/zod-table'; const t=zodTable('t', () => { const s = z.string().min(minimum); return { s } }, (minimum = 5, {}))`,
+		)
+		expect(codes(result)).toContain('table-callback-complex')
+		expect(result.output).toContain('const s = z.string().min(minimum)')
+	})
+	it.each(['export { helper }', 'export { helper as other }', 'export default helper'])(
+		'holds a generic helper exported with %s',
+		(exported) => {
+			const result = convert(
+				`function helper<T extends z.ZodType>(schema:T) { return z.array(schema) }; helper(z.string()); ${exported}`,
+			)
+			expect(codes(result)).toContain('zod-type')
+		},
+	)
+	it.each(["z.string().default('x')", 'member'])('holds defaulted tuple member %s', (member) => {
+		const result = convert(`const member=z.string().default('x'); const a=z.tuple([${member}])`)
+		expect(codes(result)).toContain('tuple-optionality')
+	})
+	it('reports normalization after checks through constant aliases', () => {
+		const result = convert(`const base=z.string().min(1); const alias=base; const a=alias.trim()`)
+		expect(result.info.map((site) => site.code)).toContain('normalise-before-check')
+	})
+	it('reports object union ordering through a constant array', () => {
+		const result = convert(
+			`const members=[z.object({a:z.string()}),z.object({b:z.string()})] as const; const a=z.union(members)`,
+		)
+		expect(result.info.map((site) => site.code)).toContain('union-member-order')
+	})
+})

@@ -970,12 +970,19 @@ function keptByMarker(path, source, program, options) {
 /** Imported values in schema positions must be proved by the run before becoming k fields. */
 function scanForeignSchemas(ctx, unit) {
 	if (ctx.options.deferForeign) return
-	const foreign = (expression) => {
+	const foreign = (expression, seen = new Set()) => {
 		const node = unwrap(expression)
-		if (!node) return false
+		if (!node || seen.has(node)) return false
+		seen = new Set(seen).add(node)
+		if (node.type === 'ObjectExpression')
+			return node.properties.some(
+				(property) => property.type === 'Property' && foreign(property.value, seen),
+			)
 		const { root } = chainOf(node)
 		if (root.type !== 'Identifier') return false
 		const binding = resolveBinding(root, ctx.parents)
+		if (binding?.kind === 'const' && binding.path?.length === 0 && !isSchemaExpression(ctx, node))
+			return foreign(binding.init, seen)
 		return (
 			binding?.kind === 'import' &&
 			!/^(?:zod|cvx-kit|convex)(?:[-/]|$)/.test(binding.source) &&
@@ -1030,7 +1037,8 @@ function removeUsedMasks(ctx, units, edits) {
 			if (
 				node.type === 'Identifier' &&
 				node.name === declaration.id.name &&
-				isReference(node, parent) &&
+				(isReference(node, parent) ||
+					(parent?.type === 'ExportSpecifier' && parent.local === node)) &&
 				resolveBinding(node, ctx.parents)?.init === declaration.init
 			)
 				references.push(node)

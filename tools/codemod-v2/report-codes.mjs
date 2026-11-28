@@ -5,7 +5,7 @@ export const REPORT_FIXES = {
 	recursive:
 		'Spell out finite levels, or use `k.json()` for a JSON value and check application rules explicitly.',
 	'tuple-optionality':
-		'Use required tuple positions; optional and void positions need an explicit data model change.',
+		'Use required tuple positions; defaults, optional and void positions need an explicit data model change.',
 	'tuple-arguments': 'Use a literal array of proven schemas and at most one proven rest schema.',
 	'multiple-of-divisor': 'Use a positive finite divisor for `.multipleOf()`.',
 	custom: 'A structural schema plus `.refine`, or `k.custom<T>(guard)`.',

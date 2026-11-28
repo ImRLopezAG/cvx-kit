@@ -456,24 +456,33 @@ export function processZodChain(ctx, unit, id) {
 			return
 		}
 	}
-	if (first.name === 'literal' && unwrap(call.arguments[0])?.type === 'ArrayExpression') {
-		const values = unwrap(call.arguments[0]).elements
+	if (first.name === 'literal') {
+		const value = localConstant(ctx, call.arguments[0])
 		if (
-			call.arguments.length !== 1 ||
-			values.length === 0 ||
-			!values.every((value) => value?.type === 'Literal' && value.value === String(value.value))
+			value?.type === 'ArrayExpression' &&
+			value.elements.length > 0 &&
+			value.elements.every((item) => item?.type === 'Literal' && item.value === String(item.value))
+		)
+			target = 'enum'
+		else if (
+			!(
+				value?.type === 'Literal' ||
+				(value?.type === 'UnaryExpression' &&
+					['-', '+'].includes(value.operator) &&
+					value.argument.type === 'Literal') ||
+				(value?.type === 'TemplateLiteral' && value.expressions.length === 0)
+			)
 		) {
 			addSkip(ctx, unit, span(next), 'literal-array')
 			return
 		}
-		target = 'enum'
 	}
 	if (first.name === 'iso' && factory.name === 'datetime' && call.arguments.length === 0)
 		addInfo(ctx, unit, span(next), 'iso-datetime-offset')
 	if (first.name === 'record' || first.name === 'partialRecord')
 		addInfo(ctx, unit, span(next), 'record-key-rule')
-	if (first.name === 'union' && unwrap(call.arguments[0])?.type === 'ArrayExpression') {
-		const members = unwrap(call.arguments[0]).elements
+	if (first.name === 'union' && localConstant(ctx, call.arguments[0])?.type === 'ArrayExpression') {
+		const members = localConstant(ctx, call.arguments[0]).elements
 		if (members.length >= 2 && members.every((member) => isObjectSchema(ctx, member)))
 			addInfo(ctx, unit, span(next), 'union-member-order')
 	}
@@ -615,12 +624,14 @@ export function tupleSlot(ctx, expression, seen = new Set()) {
 		state = tupleSlot(ctx, binding.init, seen)
 	} else if (binding?.kind === 'import') {
 		state = ctx.options.run?.tupleSlot?.(ctx.path, binding.source, binding.imported) ?? 'unknown'
+		if (state === 'unknown' && ctx.options.run?.isK?.(ctx.path, binding.source, binding.imported))
+			state = 'required'
 	}
 	for (let index = from; index < steps.length; index += 2) {
 		const step = steps[index]
 		if (step.kind !== 'member' || steps[index + 1]?.kind !== 'call') return 'unknown'
 		if (['optional', 'nullish'].includes(step.name)) state = 'optional'
-		else if (step.name === 'default' && state !== 'void') state = 'required'
+		else if (step.name === 'default') state = 'defaulted'
 	}
 	return state
 }
@@ -771,12 +782,7 @@ function processSteps(ctx, unit, steps, from, outer, number, integer = false) {
 		}
 		if (
 			['trim', 'toLowerCase', 'toUpperCase'].includes(step.name) &&
-			steps
-				.slice(0, index)
-				.some(
-					(prior) =>
-						prior.kind === 'member' && ['min', 'max', 'length', 'regex'].includes(prior.name),
-				)
+			hasStringCheck(ctx, { root: chain.root, steps: steps.slice(0, index) })
 		)
 			addInfo(ctx, unit, site, 'normalise-before-check')
 		if (step.name === 'nullish' && call.arguments.length === 0) {
@@ -1345,4 +1351,33 @@ function isObjectSchema(ctx, expression, seen = new Set()) {
 		return ['object', 'strictObject', 'looseObject'].includes(steps[0]?.name)
 	const binding = resolveBinding(root, ctx.parents)
 	return Boolean(binding?.init && isObjectSchema(ctx, binding.init, seen))
+}
+
+/** Follow lexical constant aliases without evaluating arbitrary expressions. */
+function localConstant(ctx, expression, seen = new Set()) {
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return null
+	if (node.type !== 'Identifier') return node
+	const binding = resolveBinding(node, ctx.parents)
+	return binding?.kind === 'const' && binding.path?.length === 0
+		? localConstant(ctx, binding.init, new Set(seen).add(node))
+		: node
+}
+
+function hasStringCheck(ctx, chain, seen = new Set()) {
+	if (
+		chain.steps.some(
+			(step) => step.kind === 'member' && ['min', 'max', 'length', 'regex'].includes(step.name),
+		)
+	)
+		return true
+	if (chain.root.type !== 'Identifier' || seen.has(chain.root)) return false
+	const binding = resolveBinding(chain.root, ctx.parents)
+	if (
+		binding?.kind !== 'const' ||
+		binding.path?.length !== 0 ||
+		!isSchemaExpression(ctx, binding.init)
+	)
+		return false
+	return hasStringCheck(ctx, chainOf(unwrap(binding.init)), new Set(seen).add(chain.root))
 }

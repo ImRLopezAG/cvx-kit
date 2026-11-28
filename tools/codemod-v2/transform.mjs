@@ -26,6 +26,7 @@ import {
 	isSchemaExpression,
 	processBoundChain,
 	processZodChain,
+	SCHEMA_METHODS,
 } from './transforms/schema.mjs'
 import { consumerOrigin, isRegistrationCallee } from './transforms/consumer.mjs'
 import { getterEdits, isFunctionDefinition } from './transforms/getters.mjs'
@@ -602,23 +603,18 @@ function decideComponents(ctx, units) {
 function scanConsumers(ctx, unit) {
 	walk(unit.node, (call) => {
 		if (call.type !== 'CallExpression' || isRegistrationCallee(ctx, call.callee)) return
+		const { root } = chainOf(unwrap(call.callee))
+		if (
+			root.type === 'Identifier' &&
+			/^(?:expect|assert|describe|it|test|vi|jest|console)$/.test(root.name)
+		)
+			return
 		const origin = consumerOrigin(ctx, call.callee)
 		if (!origin) return
 		for (const argument of call.arguments) {
 			if (isFunctionDefinition(argument, call)) continue
-			let local = false
-			let imported = false
-			walk(argument, (node, parent) => {
-				if (node.type !== 'Identifier' || !isReference(node, parent)) return
-				const declaration = resolveBinding(node, ctx.parents)
-				if (declaration?.kind === 'import' && ctx.zodNamespaces.has(node.name)) local = true
-				if (declaration?.init && isSchemaExpression(ctx, declaration.init)) local = true
-				if (
-					declaration?.kind === 'import' &&
-					ctx.options.run?.isK(ctx.path, declaration.source, declaration.imported)
-				)
-					imported = true
-			})
+			const { local, imported, callback } = consumedSchemas(ctx, argument)
+			if (callback) addManual(ctx, unit, argument, 'zod-consumer-unproven')
 			if (origin === 'unproven') {
 				if (local) {
 					unit.contexts.push(argument)
@@ -634,6 +630,82 @@ function scanConsumers(ctx, unit) {
 			if (imported) addManual(ctx, unit, argument, 'zod-consumer-import')
 		}
 	})
+}
+
+/** Inspect values crossing the call boundary, without treating callback bodies as arguments. */
+function consumedSchemas(ctx, expression, seen = new Set()) {
+	const result = { local: false, imported: false, callback: false }
+	const merge = (value) => {
+		const found = consumedSchemas(ctx, value, nextSeen)
+		for (const key of Object.keys(result)) result[key] ||= found[key]
+	}
+	const node = unwrap(expression)
+	if (!node || seen.has(node)) return result
+	const nextSeen = new Set(seen).add(node)
+	if (['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type)) {
+		const returned = []
+		if (node.body.type !== 'BlockStatement') returned.push(node.body)
+		else
+			walk(node.body, (item) => {
+				if (item.type !== 'ReturnStatement' || !item.argument) return
+				let owner = ctx.parents.get(item)
+				while (
+					owner &&
+					!['ArrowFunctionExpression', 'FunctionExpression', 'FunctionDeclaration'].includes(
+						owner.type,
+					)
+				)
+					owner = ctx.parents.get(owner)
+				if (owner === node) returned.push(item.argument)
+			})
+		result.callback = returned.some((value) => {
+			const found = consumedSchemas(ctx, value, nextSeen)
+			return found.local || found.imported
+		})
+		return result
+	}
+	if (node.type === 'ObjectExpression') {
+		for (const property of node.properties) {
+			if (property.type === 'SpreadElement') merge(property.argument)
+			else if (property.type === 'Property' && property.kind === 'init') merge(property.value)
+		}
+		return result
+	}
+	if (node.type === 'ArrayExpression') {
+		for (const element of node.elements)
+			merge(element?.type === 'SpreadElement' ? element.argument : element)
+		return result
+	}
+	const { root, steps } = chainOf(node)
+	if (root.type !== 'Identifier') return result
+	const binding = resolveBinding(root, ctx.parents)
+	const namespace = binding?.kind === 'import' && ctx.zodNamespaces.has(root.name)
+	let index = namespace ? 2 : 0
+	if (namespace && (steps[0]?.kind !== 'member' || steps[1]?.kind !== 'call')) return result
+	for (; index < steps.length; index++) {
+		const step = steps[index]
+		if (step.kind !== 'member') return result
+		if (step.name === 'shape') {
+			if (steps[index + 1]?.kind === 'member') index++
+			continue
+		}
+		if (
+			!SCHEMA_METHODS.has(step.name) ||
+			/^(?:parse|safeParse)(?:Async)?$/.test(step.name) ||
+			steps[index + 1]?.kind !== 'call'
+		)
+			return result
+		index++
+	}
+	result.local = namespace
+	if (binding?.kind === 'const' && binding.path?.length === 0 && binding.init) merge(binding.init)
+	result.imported ||=
+		binding?.kind === 'import' &&
+		Boolean(ctx.options.run?.isK(ctx.path, binding.source, binding.imported))
+	if (result.local || result.imported)
+		for (const step of steps)
+			if (step.kind === 'call') for (const argument of step.node.arguments) merge(argument)
+	return result
 }
 
 /** A file marker only counts actual held Zod declarations, rather than type-only uses. */

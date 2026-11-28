@@ -871,10 +871,28 @@ function trackSafeParse(ctx, unit, steps, index, outer) {
 }
 
 /** Only enum values proven to be strings can use the kit's enum object form. */
-export function stringEnumArgument(ctx, argument) {
+export function stringEnumArgument(ctx, argument, seen = new Set(), arrayOnly = false) {
 	const node = unwrap(argument)
-	if (!node) return false
-	if (node.type === 'ArrayExpression') return true
+	if (!node || seen.has(node)) return false
+	const nextSeen = new Set(seen).add(node)
+	if (node.type === 'ArrayExpression')
+		return node.elements.every((element) =>
+			element?.type === 'SpreadElement'
+				? stringEnumArgument(ctx, element.argument, nextSeen, true)
+				: unwrap(element)?.type === 'Literal' &&
+					unwrap(element).value === String(unwrap(element).value),
+		)
+	if (
+		node.type === 'CallExpression' &&
+		node.callee.type === 'MemberExpression' &&
+		!node.callee.computed &&
+		node.callee.object.name === 'Object' &&
+		node.callee.property.name === 'freeze' &&
+		node.arguments.length === 1 &&
+		!resolveBinding(node.callee.object, ctx.parents)
+	)
+		return stringEnumArgument(ctx, node.arguments[0], nextSeen, arrayOnly)
+	if (arrayOnly && node.type === 'ObjectExpression') return false
 	if (node.type === 'ObjectExpression')
 		return node.properties.every(
 			(property) =>
@@ -883,26 +901,42 @@ export function stringEnumArgument(ctx, argument) {
 				property.value.type === 'Literal' &&
 				property.value.value === String(property.value.value),
 		)
-	if (node.type !== 'Identifier' || (ctx.parents && isShadowed(node, node.name, ctx.parents)))
+	if (node.type !== 'Identifier') return false
+	const binding = ctx.parents ? resolveBinding(node, ctx.parents) : null
+	if (binding) {
+		if (binding.kind === 'enum') return !arrayOnly && stringEnumMembers(binding.node)
+		if (binding.kind === 'const' && binding.path?.length === 0)
+			return stringEnumArgument(ctx, binding.init, nextSeen, arrayOnly)
+		if (binding.kind === 'import')
+			return (
+				ctx.options.run?.isStringEnum(ctx.path, binding.source, binding.imported, arrayOnly) ===
+				true
+			)
 		return false
+	}
 	for (const statement of ctx.program.body) {
 		const declaration = statement.declaration ?? statement
 		if (declaration.type === 'TSEnumDeclaration' && declaration.id.name === node.name) {
-			return (declaration.body?.members ?? declaration.members).every(
-				(member) =>
-					member.initializer?.type === 'Literal' &&
-					member.initializer.value === String(member.initializer.value),
-			)
+			if (arrayOnly) return false
+			return stringEnumMembers(declaration)
 		}
 		if (declaration.type !== 'VariableDeclaration' || declaration.kind !== 'const') continue
 		const found = declaration.declarations.find((item) => item.id.name === node.name)
-		if (found && unwrap(found.init)?.type === 'ObjectExpression')
-			return stringEnumArgument(ctx, found.init)
+		if (found) return stringEnumArgument(ctx, found.init, nextSeen, arrayOnly)
 	}
 	const imported = ctx.imported.get(node.name)
 	return imported
-		? ctx.options.run?.isStringEnum(ctx.path, imported.source, imported.imported) === true
+		? ctx.options.run?.isStringEnum(ctx.path, imported.source, imported.imported, arrayOnly) ===
+				true
 		: false
+}
+
+function stringEnumMembers(declaration) {
+	return (declaration.body?.members ?? declaration.members).every(
+		(member) =>
+			member.initializer?.type === 'Literal' &&
+			member.initializer.value === String(member.initializer.value),
+	)
 }
 
 /** A returns field belongs to a function definition or resolved contract factory call. */

@@ -262,12 +262,12 @@ export function run(argv, cwd = process.cwd()) {
 		if (options.write && outcome.output !== source) writeFileSync(file, outcome.output)
 		results.push(outcome)
 	}
-	const projectRoot = reportRoot(cwd)
+	const projectRoot = realpathSync(reportRoot(cwd))
 	const report = {
 		...buildReport(
 			results.map((outcome) => ({
 				...outcome,
-				path: relative(projectRoot, resolve(cwd, outcome.path)),
+				path: relative(projectRoot, realpathSync(resolve(cwd, outcome.path))),
 			})),
 		),
 		outsideRoots: outside,
@@ -355,11 +355,39 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 	})
 	return {
 		resolveSource: resolve,
-		isStringEnum(from, specifier, name, seen = new Set()) {
+		isStringEnum(from, specifier, name, arrayOnly = false, seen = new Set()) {
 			const target = resolve(from, specifier)
 			if (!target || seen.has(`${target}:${name}`)) return false
-			seen.add(`${target}:${name}`)
+			seen = new Set(seen).add(`${target}:${name}`)
 			const program = programOf(target)
+			const explicit = program.body.some(
+				(statement) =>
+					statement.type === 'ExportNamedDeclaration' &&
+					(statement.declaration?.id?.name === name ||
+						statement.declaration?.declarations?.some((item) => item.id.name === name) ||
+						statement.specifiers.some(
+							(spec) => (spec.exported.name ?? spec.exported.value) === name,
+						)),
+			)
+			for (const statement of program.body) {
+				if (statement.type !== 'ExportNamedDeclaration') continue
+				for (const spec of statement.specifiers) {
+					if ((spec.exported.name ?? spec.exported.value) !== name) continue
+					const local = spec.local.name ?? spec.local.value
+					if (statement.source)
+						return this.isStringEnum(target, statement.source.value, local, arrayOnly, seen)
+					name = local
+				}
+			}
+			if (!explicit)
+				for (const statement of program.body) {
+					if (
+						statement.type === 'ExportAllDeclaration' &&
+						!statement.exported &&
+						this.isStringEnum(target, statement.source.value, name, arrayOnly, new Set(seen))
+					)
+						return true
+				}
 			const imported = new Map()
 			for (const statement of program.body) {
 				if (statement.type !== 'ImportDeclaration') continue
@@ -374,15 +402,19 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 			return stringEnumArgument(
 				{
 					program,
+					parents: parentMap(program),
 					imported,
 					path: target,
 					options: {
 						run: {
-							isStringEnum: (from, source, name) => this.isStringEnum(from, source, name, seen),
+							isStringEnum: (from, source, name, arrays) =>
+								this.isStringEnum(from, source, name, arrays, seen),
 						},
 					},
 				},
 				{ type: 'Identifier', name },
+				new Set(),
+				arrayOnly,
 			)
 		},
 		consumerOrigin(from, specifier, name, path = [], seen = new Set()) {

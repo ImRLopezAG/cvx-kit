@@ -506,6 +506,114 @@ describe('codemod-v2 cross-file knowledge', () => {
 		expect(result.skipped.map((site) => site.code)).toContain('zod-consumer-unproven')
 	})
 
+	it.each([
+		['tuple', "const Values = ['x', 'y'] as const"],
+		['frozen', "const Values = Object.freeze(['x', 'y'])"],
+		['satisfies', "const Values = (['x', 'y'] satisfies readonly string[])"],
+		['spread', "const A = ['x'] as const; const B = ['y']; const Values = [...A, ...B] as const"],
+		['object', "const Values = { X: 'x', Y: 'y' }"],
+		['const object', "const Values = { X: 'x', Y: 'y' } as const"],
+		['string enum', "enum Values { X = 'x', Y = 'y' }"],
+		[
+			'local string enum',
+			"function build() { enum Values { X = 'x', Y = 'y' }; return z.enum(Values) }",
+		],
+		[
+			'local tuple',
+			"function build() { const Values = ['x', 'y'] as const; return z.enum(Values) }",
+		],
+	])('proves %s enum values and remains idempotent', (_name, declaration) => {
+		const source = `import { z } from 'zod'; ${declaration}; ${_name.startsWith('local ') ? '' : 'export const S = z.enum(Values)'}`
+		const result = transformSource('enum.ts', source)
+		expect(result.skipped.filter((site) => site.code === 'enum-unproven')).toHaveLength(0)
+		expect(result.output).toContain('k.enum(Values)')
+		expect(transformSource('enum.ts', result.output).output).toBe(result.output)
+	})
+
+	it.each([
+		'enum Values { X, Y }',
+		"const Values = { X: 'x', Y: 1 }",
+		"const Values = ['x', 1] as const",
+		'const Values: string[] = [external]',
+		"const Values = ['x'].map(x => x)",
+		'const Values = makeValues()',
+		"import { Values } from 'external-package'",
+		"const Values = ['x']; function build(Values: any) { return z.enum(Values) }",
+	])('keeps unproven enum values: %s', (declaration) => {
+		const source = `import { z } from 'zod'; ${declaration}; ${declaration.includes('function build') ? '' : 'export const S = z.enum(Values)'}`
+		const result = transformSource('enum.ts', source)
+		expect(result.skipped.filter((site) => site.code === 'enum-unproven')).toHaveLength(1)
+		expect(result.output).toBe(source)
+	})
+
+	it.each([
+		"expect(z.string().parse(line)).toBe('a')",
+		"Effect.gen(function* () { return S.parse(yield* Effect.succeed({ id: '1' })) })",
+		'library(S.parse(line))',
+		'library(S.safeParse(line))',
+		'library(S.parseAsync(line))',
+		'library(S.safeParseAsync(line))',
+		'library(S.encode(line))',
+		'library(S.decode(line))',
+		'library(S.safeEncodeAsync(line))',
+		'library(S.safeDecodeAsync(line))',
+		'library(S.is(line))',
+		'library(S._zod)',
+		'const value = S._zod; library(value)',
+		"library(S['~standard'].validate(line))",
+		'library(() => S.parse(line))',
+		'library(class { method() { return S.parse(line) } })',
+		'expect(S).toBeDefined(); assert(S); console.log(S); vi.fn(S); jest.fn(S)',
+	])('rewrites schemas used only in values or callbacks: %s', (use) => {
+		const source = `import { z } from 'zod'; import { Effect } from 'effect'; import { library } from 'external'; const S = z.object({ id: z.string() }); ${use}`
+		const result = transformSource('consumer.ts', source)
+		expect(result.skipped.filter((site) => site.code.startsWith('zod-consumer'))).toEqual([])
+		if (/S\.(?:encode|decode|safeEncodeAsync|safeDecodeAsync|is)\(/.test(use))
+			expect(result.skipped.map((site) => site.code)).toContain('unknown-method')
+		else expect(result.output).toContain('S = k.object(')
+		expect(transformSource('consumer.ts', result.output).output).toBe(result.output)
+	})
+
+	it('does not prove a barrel star over an explicit non-string export', () => {
+		tree(
+			{
+				'good.ts': "export const Values = ['x'] as const",
+				'barrel.ts': "export * from './good'; export const Values = [1]",
+				'use.ts':
+					"import { z } from 'zod'; import { Values } from './barrel'; const S = z.enum(Values)",
+			},
+			(root) => {
+				const result = run(['.', '--write'], root)
+				expect(result.report.totals['enum-unproven']).toBe(1)
+			},
+		)
+	})
+
+	it('reports a callback returning a schema without holding it', () => {
+		const result = transformSource(
+			'callback.ts',
+			"import { z } from 'zod'; import { library } from 'external'; const S = z.string(); library(() => S)",
+		)
+		expect(result.output).toContain('S = k.string()')
+		expect(result.skipped.filter((site) => site.code === 'zod-consumer-unproven')).toHaveLength(1)
+	})
+
+	it.each([
+		'S.optional()',
+		'z.array(S)',
+		'z.object({ ...S.shape })',
+		'S.shape.id',
+		'({ input: S } as const)',
+		'[S]',
+	])('holds a schema value wrapper %s', (argument) => {
+		const result = transformSource(
+			'consumer.ts',
+			`import { z } from 'zod'; import { library } from 'external'; const S = z.object({ id: z.string() }); library(${argument})`,
+		)
+		expect(result.output).toContain('S = z.object(')
+		expect(result.skipped.filter((site) => site.code === 'zod-consumer')).toHaveLength(1)
+	})
+
 	it('holds the outer dependencies of a function-local consumed schema', () => {
 		const source =
 			"import { z } from 'zod'; import { os } from '@orpc/server'; const Base = z.string(); export function build() { const S = z.object({ base: Base }); return os.input(S) }"
@@ -673,6 +781,49 @@ describe('codemod-v2 cross-file knowledge', () => {
 				expect(readFileSync(join(root, 'packages/app/src/use.ts'), 'utf8')).toContain(
 					'k.enum(Status)',
 				)
+			},
+		)
+	})
+
+	it('proves enum constants through relative, alias, workspace and barrel imports', () => {
+		tree(
+			{
+				'package.json': JSON.stringify({
+					workspaces: ['packages/*'],
+					dependencies: { 'cvx-kit': '*' },
+				}),
+				'tsconfig.json': JSON.stringify({ compilerOptions: { paths: { '@app/*': ['./*'] } } }),
+				'constants.ts': "export const Values = ['x', 'y'] as const",
+				'spread.ts':
+					"import { Values } from './constants'; export const Repeated = [...Values, ...Values] as const",
+				'barrel.ts': "export { Values as Statuses } from './constants'",
+				'star.ts': "export * from './barrel'",
+				'packages/shared/package.json': JSON.stringify({ name: '@shared/values' }),
+				'packages/shared/src/index.ts': "export * from '../../../constants'",
+				'use.ts':
+					"import { z } from 'zod'; import { Values as A } from './constants'; import { Values as B } from '@app/constants'; import { Values as C } from '@shared/values'; import { Statuses as D } from './star'; import { Repeated as E } from './spread'; export const SA = z.enum(A); export const SB = z.enum(B); export const SC = z.enum(C); export const SD = z.enum(D); export const SE = z.enum(E)",
+			},
+			(root) => {
+				const result = run(['.', '--write'], root)
+				expect(result.report.totals['enum-unproven'] ?? 0).toBe(0)
+				const output = readFileSync(join(root, 'use.ts'), 'utf8')
+				for (const name of ['A', 'B', 'C', 'D', 'E']) expect(output).toContain(`k.enum(${name})`)
+				expect(run(['.', '--write'], root).report.summary.rewritten).toBe(0)
+				expect(readFileSync(join(root, 'use.ts'), 'utf8')).toBe(output)
+			},
+		)
+	})
+
+	it('reports paths relative to a symlinked project root', () => {
+		tree(
+			{
+				'project/package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+				'project/src/enums.ts': "import { z } from 'zod'; export const S = z.enum(Unknown)",
+			},
+			(root) => {
+				symlinkSync(join(root, 'project'), join(root, 'alias'))
+				const result = run([join(root, 'alias/src')], join(root, 'project'))
+				expect(result.report.files.map((file) => file.path)).toEqual(['src/enums.ts'])
 			},
 		)
 	})

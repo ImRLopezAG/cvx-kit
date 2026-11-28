@@ -187,11 +187,18 @@ export function resolveBinding(node, parents, name = node.name) {
 					}
 			}
 			if (
-				['FunctionDeclaration', 'ClassDeclaration'].includes(declaration.type) &&
+				['FunctionDeclaration', 'ClassDeclaration', 'TSEnumDeclaration'].includes(
+					declaration.type,
+				) &&
 				declaration.id?.name === name
 			)
 				return {
-					kind: declaration.type === 'FunctionDeclaration' ? 'function' : 'class',
+					kind:
+						declaration.type === 'FunctionDeclaration'
+							? 'function'
+							: declaration.type === 'TSEnumDeclaration'
+								? 'enum'
+								: 'class',
 					node: declaration,
 					scope,
 				}

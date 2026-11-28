@@ -187,6 +187,7 @@ describe('fills and declaration guards across copies and cycles', () => {
 
 	it('accepts a schema record from another copy of the package as a field', () => {
 		// SAFETY: the declaration guard takes any value at runtime; these stand in for untyped callers.
+		// oxlint-disable-next-line anti-slop/no-unknown-parameters -- the guard under test is what decides whether the value is a schema.
 		const field = (value: unknown) => () => k.object({ a: value as never })
 		// A second installed copy builds records of another class with the same shape.
 		expect(field({ op: 'string', prev: undefined, native: undefined })).not.toThrow()

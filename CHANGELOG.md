@@ -10,9 +10,9 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
-## [Unreleased]
+## [2.0.0-rc.2]
 
-Planned as 2.0.0-rc.2. From the full reviews both consumer apps wrote on rc.1.
+From the full reviews both consumer apps wrote on rc.1.
 
 ### Fixed
 
@@ -37,6 +37,7 @@ Planned as 2.0.0-rc.2. From the full reviews both consumer apps wrote on rc.1.
 - String `min`, `max` and `length` count Unicode code points, as Zod 4 and JSON Schema do. They counted UTF-16 units, so `'😀'` failed `.max(1)`.
 - Codemod report codes renamed where they named the wrong thing (`.readonly()`, `z.preprocess`, `.catchall()`, `z.file()`, `z.templateLiteral`). Every code carries a one-sentence fix in the JSON report and the summary.
 - The `zod/mini` interop entry pulls 83,324 bytes of Zod (rc.1: 79,065); the added bytes are Zod's tuple and never constructors.
+- The app-load bundle budget is 260 KB (rc.1: 255 KB); the measured bundle is 259.4 KB with the new forms.
 
 ### Added
 

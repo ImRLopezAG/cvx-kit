@@ -94,10 +94,11 @@ describe('v2 bundles', () => {
 
 	it('build the interop entry on zod/mini, well under the classic bundle', async () => {
 		const inputs = await bundleInputs('interop-size', ['src/k.ts'], ['src/zod.ts'])
-		// Classic Zod is over 700 KB here; zod/mini alone is 79,065 bytes.
+		// Classic Zod is over 700 KB here; zod/mini alone is 83,324 bytes, of which the tuple and never
+		// constructors are about 4,300.
 		const zodBytes = bytesMatching(inputs, [zodInputs[0]])
 		console.info(`Zod interop entry: ${zodBytes} bytes`)
-		expect(zodBytes).toBeLessThan(80_000)
+		expect(zodBytes).toBeLessThan(85_000)
 		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/classic\//])).toBe(0)
 		expect(bytesMatching(inputs, [/node_modules\/convex-helpers\//])).toBe(0)
 		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/mini\//])).toBeGreaterThan(0)
@@ -140,11 +141,19 @@ describe('v2 bundles', () => {
 		expect(bytesMatching(inputs, [/src\/zod\.ts$/])).toBeGreaterThan(0)
 	})
 
-	it('keep src/json-schema.ts out of a module that imports only cvx-kit/k', async () => {
-		const inputs = await bundleInputs('k-only', ['src/k.ts'])
-		expect(bytesMatching(inputs, [/src\/json-schema\.ts$/])).toBe(0)
-		expect(bytesMatching(inputs, [/src\/k\//])).toBeGreaterThan(0)
-	})
+	it.each(['src/index.ts', 'src/k.ts', 'dist/index.mjs', 'dist/k.mjs'])(
+		'keeps JSON Schema converter bytes out of k-only imports from %s',
+		async (entry) => {
+			const inputs = await bundleInputs(
+				entry.replaceAll('/', '_'),
+				[],
+				[],
+				false,
+				`import { k } from '${join(checkout, entry)}'; export const schema = k.object({ x: k.string() });`,
+			)
+			expect(bytesMatching(inputs, [/(?:src|dist)\/json-schema\.(?:ts|mjs)$/])).toBe(0)
+		},
+	)
 
 	it('keep server code and Zod out of the browser-safe cvx-kit/filters entry', async () => {
 		const inputs = await bundleInputs('filters', ['src/filters.ts'])

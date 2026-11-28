@@ -10,7 +10,15 @@ import type * as classic from 'zod'
 import * as z from 'zod/mini'
 import { copyFill } from './k/fills'
 import { membersOf } from './k/compile'
-import { emailPattern, isUrl, KConversionFailure, maxTimestamp } from './k/formats'
+import {
+	emailPattern,
+	ipv4Pattern,
+	uuidPattern,
+	isIpv6,
+	isUrl,
+	KConversionFailure,
+	maxTimestamp,
+} from './k/formats'
 import { NEVER } from './k/issues'
 import { setOwn } from './k/names'
 import { containsTransform } from './k/parse'
@@ -23,6 +31,7 @@ import type {
 	KMessage,
 	KNode,
 	KType,
+	KTupleArg,
 } from './k/types'
 
 /** The converted schema preserves the kit schema's parsed output and accepted input types. */
@@ -105,6 +114,8 @@ const miniFunctions = {
 	undefined: z.undefined,
 	instanceof: z.instanceof,
 	any: z.any,
+	never: z.never,
+	tuple: z.tuple,
 	json: z.json,
 	record: z.record,
 	literal: z.literal,
@@ -218,6 +229,8 @@ const fieldName = /^[ -#%-~][ -~]{0,1023}$/
 
 function rootSchema(root: KNode, policy: 'strip' | 'strict' | 'loose', z: Factory): Mini {
 	switch (root.op) {
+		case 'never':
+			return z.never()
 		case 'string':
 			return z.string()
 		case 'isoDate':
@@ -259,6 +272,46 @@ function rootSchema(root: KNode, policy: 'strip' | 'strict' | 'loose', z: Factor
 		case 'array':
 			// SAFETY: k.array stores its element schema as the root argument.
 			return z.array(convert(root.arg as KType, z))
+		case 'tuple': {
+			// SAFETY: tuple roots store positional schemas and an optional rest schema.
+			const { items, rest } = root.arg as KTupleArg
+			// SAFETY: Zod supports empty tuples with rest at runtime; its overloads omit that combination.
+			const makeTuple = retyped<(items: Mini[], rest?: Mini) => Mini>(z.tuple)
+			const tuple = makeTuple(
+				items.map((item) => convert(item, z)),
+				rest === undefined ? undefined : convert(rest, z),
+			)
+			// Zod's any slots allow undefined and holes; kit tuples require stored values before and after parsing.
+			const present = z.check((payload) => {
+				if (Array.isArray(payload.value))
+					for (let index = 0; index < payload.value.length; index++)
+						if (payload.value[index] === undefined)
+							payload.issues.push({
+								code: 'custom',
+								message: 'Tuple slots must be defined',
+								path: [index],
+								input: undefined,
+							})
+			})
+			// Reattach the input precheck whenever Zod clones the tuple for another check or description.
+			present._zod.onattach.push((schema) => {
+				;(schema._zod.deferred ??= []).push(() => {
+					const parse = schema._zod.parse
+					schema._zod.parse = (payload, ctx) => {
+						const issueCount = payload.issues.length
+						if (Array.isArray(payload.value) && payload.value.length < items.length)
+							payload.issues.push({
+								code: 'custom',
+								message: 'Missing tuple positions',
+								input: payload.value,
+							})
+						present._zod.check(payload)
+						return payload.issues.length > issueCount ? payload : parse(payload, ctx)
+					}
+				})
+			})
+			return tuple.check(present)
+		}
 		case 'object': {
 			// SAFETY: k.object stores its field map as the root argument.
 			const fields = root.arg as KFields
@@ -362,17 +415,49 @@ function applyCheck(base: Mini, record: KNode, kind: string, z: Factory): Mini {
 		// SAFETY: .email and .url store their format as the record argument.
 		const format = record.arg as KFormat
 		const check =
-			format.kind === 'email'
-				? z.regex(emailPattern, message ?? 'Invalid email address')
-				: z.refine(
-						// SAFETY: the base is a string schema, so the refinement receives a string.
+			format.kind === 'url'
+				? z.refine(
+						// SAFETY: the base is a string schema.
 						(value) => isUrl(value as string, format.protocol, format.hostname),
 						message ?? 'Invalid URL',
 					)
+				: format.kind === 'ipv6'
+					? z.refine(
+							// SAFETY: the base is a string schema.
+							(value) => isIpv6(value as string),
+							message ?? 'Invalid IPv6 address',
+						)
+					: z.regex(
+							format.kind === 'email'
+								? emailPattern
+								: format.kind === 'ipv4'
+									? ipv4Pattern
+									: uuidPattern,
+							message ??
+								(format.kind === 'email' ? 'Invalid email address' : `Invalid ${format.kind}`),
+						)
 		// JSON Schema reads string_format from the check definition. Keep the existing
 		// check function so format metadata cannot change the kit's accepted strings.
 		Object.assign(check._zod.def, { check: 'string_format', format: format.kind })
 		return base.check(check)
+	}
+	if (record.op === 'multipleOf' && kind === 'number') {
+		// SAFETY: multipleOf stores a positive finite divisor.
+		const divisor = record.arg as number
+		return base.check(
+			z.refine(
+				(value) => {
+					// SAFETY: the base is a number schema.
+					const quotient = (value as number) / divisor
+					return (
+						Number.isFinite(quotient) &&
+						Math.abs(quotient - Math.round(quotient)) <
+							4 * Number.EPSILON * Math.max(Math.abs(quotient), 1)
+					)
+				},
+				message ?? `Expected a multiple of ${divisor}`,
+			),
+		)
 	}
 	if (record.op === 'int') return kind === 'number' ? base.check(z.int(message)) : base
 	if ((kind === 'number' || kind === 'bigint') && (record.op === 'gt' || record.op === 'lt')) {
@@ -437,6 +522,7 @@ function isRunOp(record: KNode): boolean {
 		case 'int':
 		case 'gt':
 		case 'lt':
+		case 'multipleOf':
 		case 'finite':
 		case 'safe':
 		case 'trim':

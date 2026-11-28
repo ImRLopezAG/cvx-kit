@@ -33,7 +33,12 @@ function valid(schema: JsonSchema, value: unknown, root: JsonSchema = schema): b
 		if (schema.minItems !== undefined && value.length < schema.minItems) return false
 		if (schema.maxItems !== undefined && value.length > schema.maxItems) return false
 		const items = schema.items
-		if (items !== undefined && !value.every((item) => valid(items, item, root))) return false
+		if (
+			typeof items === 'object' &&
+			!Array.isArray(items) &&
+			!value.every((item) => valid(items, item, root))
+		)
+			return false
 	}
 	if (isObject(value)) {
 		const keys = Object.keys(value)

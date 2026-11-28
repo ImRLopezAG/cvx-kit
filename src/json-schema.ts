@@ -2,10 +2,18 @@
 import type { StandardJSONSchemaV1 } from '@standard-schema/spec'
 import type { JSONValue, Value } from 'convex/values'
 import { membersOf } from './k/compile'
-import { maxTimestamp } from './k/formats'
+import { ipv4Pattern, uuidPattern, maxTimestamp } from './k/formats'
 import { setOwn } from './k/names'
 import { installJsonSchemaConverter } from './k/standard'
-import type { KDiscriminated, KFields, KFormat, KLiteralValue, KNode, KType } from './k/types'
+import type {
+	KDiscriminated,
+	KFields,
+	KFormat,
+	KLiteralValue,
+	KNode,
+	KTupleArg,
+	KType,
+} from './k/types'
 
 /** The JSON Schema (draft 2020-12) subset `toJsonSchema` emits. */
 export type JsonSchema = {
@@ -14,7 +22,7 @@ export type JsonSchema = {
 	$defs?: Record<string, JsonSchema>
 	definitions?: Record<string, JsonSchema>
 	type?: 'string' | 'number' | 'integer' | 'boolean' | 'null' | 'array' | 'object'
-	format?: 'date' | 'date-time' | 'email' | 'uri'
+	format?: 'date' | 'date-time' | 'email' | 'uri' | 'ipv4' | 'ipv6' | 'uuid'
 	contentEncoding?: 'base64'
 	description?: string
 	const?: JSONValue
@@ -29,7 +37,11 @@ export type JsonSchema = {
 	exclusiveMaximum?: number
 	minItems?: number
 	maxItems?: number
-	items?: JsonSchema
+	items?: JsonSchema | JsonSchema[] | boolean
+	prefixItems?: JsonSchema[]
+	additionalItems?: JsonSchema | boolean
+	multipleOf?: number
+	not?: JsonSchema
 	properties?: Record<string, JsonSchema>
 	required?: string[]
 	additionalProperties?: boolean | JsonSchema
@@ -54,6 +66,8 @@ export type JsonSchemaOptions = {
 	 * inline output stays as before; turn it on for large contracts that repeat a filter or DTO schema.
 	 */
 	readonly refs?: boolean
+	/** Describe application parsing of unknown object keys instead of the native boundary. */
+	readonly unknownKeys?: 'boundary' | 'parse'
 }
 
 /** The JSON Schema dialects `~standard.jsonSchema` produces; others throw, as the spec asks. */
@@ -70,14 +84,16 @@ declare global {
 	}
 }
 
-/** Repeated sub-schemas of the conversion in progress, when `refs` is on. */
-let shared: { names: Map<KNode, string>; defs: Record<string, JsonSchema> } | null = null
+/** Per-document state, restored after nested conversions and failures. */
+type ConversionContext = {
+	shared: { names: Map<KNode, string>; defs: Record<string, JsonSchema> } | null
+	/** Catch outputs promise shape only, without checks. */
+	unchecked: number
+	parseKeys: boolean
+	draft07: boolean
+}
 
-/**
- * Above zero while converting the output side below a `.catch`: the fallback is not validated, so only
- * the type-level shape is promised (no length, range, pattern or format checks).
- */
-let unchecked = 0
+let context: ConversionContext = { shared: null, unchecked: 0, parseKeys: false, draft07: false }
 
 /**
  * The input-side JSON Schema of a `k` schema, for agent tool inputs and forms: optional and defaulted
@@ -105,9 +121,12 @@ function standardDocument(
 			`cvx-kit: JSON Schema target '${options.target}' is not supported; use 'draft-2020-12' or 'draft-07'`,
 		)
 	const refs = options.libraryOptions?.refs === true
+	const unknownKeys = options.libraryOptions?.unknownKeys
+	if (unknownKeys !== undefined && unknownKeys !== 'boundary' && unknownKeys !== 'parse')
+		throw new Error("toJsonSchema: unknownKeys must be 'boundary' or 'parse'")
 	return document(
 		schema,
-		{ $schema: true, io, refs },
+		{ $schema: true, io, refs, unknownKeys },
 		draft07 ? DRAFT_07 : DRAFT_2020_12,
 		draft07 ? 'definitions' : '$defs',
 	)
@@ -120,17 +139,22 @@ function document(
 	defsKey: '$defs' | 'definitions',
 ): JsonSchema {
 	const output = options?.io === 'output'
-	const previous = shared
-	shared = options?.refs === true ? { names: repeated(schema, output, defsKey), defs: {} } : null
+	const previous = context
+	context = {
+		shared: options?.refs === true ? { names: repeated(schema, output, defsKey), defs: {} } : null,
+		unchecked: 0,
+		parseKeys: options?.unknownKeys === 'parse',
+		draft07: dialect === DRAFT_07,
+	}
 	try {
 		const out = convert(schema, output)
 		const head: JsonSchema = options?.$schema === true ? { $schema: dialect } : {}
-		const defs = shared?.defs
+		const defs = context.shared?.defs
 		return defs !== undefined && Object.keys(defs).length > 0
 			? { ...head, ...out, [defsKey]: defs }
 			: { ...head, ...out }
 	} finally {
-		shared = previous
+		context = previous
 	}
 }
 
@@ -162,12 +186,17 @@ function repeated(schema: KNode, output: boolean, defsKey: string): Map<KNode, s
  */
 const FIELD_NAME_PATTERN = '^[ -#%-~][ -~]{0,1023}$'
 
-const CONTAINERS = new Set(['object', 'array', 'record', 'union', 'discriminatedUnion'])
+const CONTAINERS = new Set(['object', 'array', 'tuple', 'record', 'union', 'discriminatedUnion'])
 
 function childrenOf(root: KNode): readonly KNode[] {
 	switch (root.op) {
 		case 'array':
 			return [argNode(root.arg)]
+		case 'tuple': {
+			// SAFETY: tuple roots store positional schemas and an optional rest schema.
+			const { items, rest } = root.arg as KTupleArg
+			return rest === undefined ? items : [...items, rest]
+		}
 		case 'object':
 			return Object.values(fieldsOf(root))
 		case 'record':
@@ -182,11 +211,11 @@ function childrenOf(root: KNode): readonly KNode[] {
 }
 
 function convert(node: KNode, output: boolean): JsonSchema {
-	const ref = shared?.names.get(node)
-	if (ref === undefined || shared === null) return convertNode(node, output)
+	const ref = context.shared?.names.get(node)
+	if (ref === undefined || context.shared === null) return convertNode(node, output)
 	const name = ref.slice(ref.lastIndexOf('/') + 1)
-	if (!(name in shared.defs)) {
-		const defs = shared.defs
+	if (!(name in context.shared.defs)) {
+		const defs = context.shared.defs
 		// Reserve the name first so a nested repeat of a different schema numbers after it.
 		defs[name] = {}
 		defs[name] = convertNode(node, output)
@@ -266,8 +295,13 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 			case 'int':
 			case 'gt':
 			case 'lt':
+			case 'multipleOf':
 			case 'safe':
-				if (!transformed && unchecked === 0 && rawHolds(record, output ? 'none' : normalised)) {
+				if (
+					!transformed &&
+					context.unchecked === 0 &&
+					rawHolds(record, output ? 'none' : normalised)
+				) {
 					applyCheck(out, record)
 					dropWeakerBounds(out)
 				}
@@ -292,14 +326,14 @@ function convertNode(node: KNode, output: boolean): JsonSchema {
 
 /** The output-side shape of the schema below a `.catch`, with no checks and no shared `$ref`s. */
 function uncheckedOutput(node: KNode): JsonSchema {
-	const previous = shared
-	shared = null
-	unchecked++
+	const previous = context.shared
+	context.shared = null
+	context.unchecked++
 	try {
 		return convertNode(node, true)
 	} finally {
-		unchecked--
-		shared = previous
+		context.unchecked--
+		context.shared = previous
 	}
 }
 
@@ -309,7 +343,7 @@ function rawHolds(record: KNode, normalised: 'none' | 'trim' | 'other'): boolean
 }
 
 function rootSchema(root: KNode, output: boolean): JsonSchema {
-	if (unchecked > 0)
+	if (context.unchecked > 0)
 		switch (root.op) {
 			case 'isoDate':
 			case 'isoDateTime':
@@ -321,6 +355,8 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 				break
 		}
 	switch (root.op) {
+		case 'never':
+			return { not: {} }
 		case 'string':
 		case 'id':
 			return { type: 'string' }
@@ -362,6 +398,17 @@ function rootSchema(root: KNode, output: boolean): JsonSchema {
 			return { type: 'string', enum: [...(root.arg as readonly string[])] }
 		case 'array':
 			return { type: 'array', items: convert(argNode(root.arg), output) }
+		case 'tuple': {
+			// SAFETY: tuple roots store positional schemas and an optional rest schema.
+			const { items, rest } = root.arg as KTupleArg
+			const slots = items.map((item) => convert(item, output))
+			const tail = rest === undefined ? false : convert(rest, output)
+			const out: JsonSchema = context.draft07
+				? { type: 'array', items: slots, additionalItems: tail, minItems: items.length }
+				: { type: 'array', prefixItems: slots, items: tail, minItems: items.length }
+			if (rest === undefined) out.maxItems = items.length
+			return out
+		}
 		case 'object':
 			return objectSchema(fieldsOf(root), output)
 		case 'record': {
@@ -398,7 +445,8 @@ function objectSchema(fields: KFields, output: boolean): JsonSchema {
 		setOwn(properties, key, convert(fields[key], output))
 		if (output ? isRequiredOutput(fields[key]) : isRequired(fields[key])) required.push(key)
 	}
-	const out: JsonSchema = { type: 'object', properties, additionalProperties: false }
+	const out: JsonSchema = { type: 'object', properties }
+	if (output || !context.parseKeys) out.additionalProperties = false
 	if (required.length > 0) out.required = required
 	return out
 }
@@ -466,8 +514,11 @@ function applyCheck(out: JsonSchema, record: KNode): void {
 		return
 	}
 	if (record.op === 'format') {
-		// SAFETY: .email and .url store their format as the record argument.
-		out.format = (record.arg as KFormat).kind === 'email' ? 'email' : 'uri'
+		// SAFETY: format records store a supported string format.
+		const { kind } = record.arg as KFormat
+		out.format = kind === 'url' ? 'uri' : kind
+		if (kind === 'ipv4' || kind === 'uuid')
+			applyBound(out, 'regex', kind === 'ipv4' ? ipv4Pattern : uuidPattern)
 		return
 	}
 	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- a bound is a number, or a bigint on k.int64.
@@ -482,6 +533,11 @@ function applyCheck(out: JsonSchema, record: KNode): void {
 }
 
 function applyBound(out: JsonSchema, op: KNode['op'], arg: KNode['arg']): void {
+	if (op === 'multipleOf') {
+		// SAFETY: multipleOf stores its positive finite divisor.
+		out.multipleOf = arg as number
+		return
+	}
 	if (op === 'gt' || op === 'lt') {
 		// SAFETY: gt and lt store their numeric limit as the record argument.
 		const bound = arg as number

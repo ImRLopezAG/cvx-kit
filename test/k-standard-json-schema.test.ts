@@ -40,7 +40,9 @@ describe('Standard JSON Schema on ~standard', () => {
 	})
 
 	it('is typed through the spec interfaces', () => {
-		expectTypeOf(input).toMatchTypeOf<StandardJSONSchemaV1<unknown, { city: string; days: number }>>()
+		expectTypeOf(input).toMatchTypeOf<
+			StandardJSONSchemaV1<unknown, { city: string; days: number }>
+		>()
 		expectTypeOf(input['~standard'].jsonSchema).toEqualTypeOf<StandardJSONSchemaV1.Converter>()
 	})
 })
@@ -80,5 +82,20 @@ describe('$defs reuse', () => {
 		})
 		expect(Object.keys(out)).toContain('definitions')
 		expect(JSON.stringify(out)).toContain('#/definitions/s0')
+	})
+})
+
+describe('Standard JSON Schema installation timing', () => {
+	it('installs only after an explicit converter import and leaves captured props unchanged', async () => {
+		const { vi } = await import('vitest')
+		vi.resetModules()
+		const { k: isolated } = await import('../src/k')
+		const schema = isolated.object({ query: isolated.string() })
+		const before = schema['~standard']
+		expect(before).not.toHaveProperty('jsonSchema')
+		expect(before.validate({ query: 'x' })).toEqual({ value: { query: 'x' } })
+		await import('../src/json-schema')
+		expect(schema['~standard']).toHaveProperty('jsonSchema')
+		expect(before).not.toHaveProperty('jsonSchema')
 	})
 })

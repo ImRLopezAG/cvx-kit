@@ -17,6 +17,11 @@ are this file's matching section.
 - `toZod` carries email and URL formats into JSON Schema in the Mini and classic entries without changing parsing.
 - `domain-file-responsibilities` allows `zod/mini` and `zod/v4-mini` wherever it allows Zod.
 - Migration guide: the oRPC OpenAPI example uses `converters` and handles routes with no input in its schema guard.
+- Codemod: a contract declared with a callback (`defineDomainContract(() => ({ … }))`) is understood, and a schema reached across files through a re-export alias, destructuring or a member path (`contract.commands.create.input`) is known to be `k` after the run. Type helpers, `zodToConvex` and masks on such schemas are rewritten.
+- Codemod: a mask held in a constant (`const scoped = { tenant: true } as const`) becomes a key list; `result: z.void()` in a contract becomes `k.void()`; `z.enum(list.map(…))` is rewritten and listed as `enum-runtime-checked`.
+- Codemod: a call on a JavaScript global (`Object.keys(schema.shape)`) is no longer reported as a schema consumer, and an import from `cvx-kit/zod-table` is never left behind without a report (`paginated` moves to `cvx-kit/table`).
+
+On one consumer app's pre-migration source the codemod now rewrites 96.7% of declarations (beta.8: 94.1%).
 
 ## [2.0.0-beta.8]
 

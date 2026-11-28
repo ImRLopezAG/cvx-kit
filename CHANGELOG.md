@@ -10,9 +10,13 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
-## [Unreleased]
+## [2.0.0-rc.3]
 
-- Codemod: foreign schema fields are reported without holding the surrounding object, contract, function or shared locals; replace the reported field with a local `k` schema without rerunning.
+Codemod only; the kit is unchanged from rc.2.
+
+### Fixed
+
+- Codemod: a Zod schema from a package the run cannot prove is `k` is left in place and reported as `zod-foreign-schema`, and the object, contract, function and shared locals around it are rewritten. In rc.2 one such field held the whole contract statement and its file, while the files using the contract were still rewritten and failed to compile at lines the report did not name. Replace the reported field with a local `k` schema (for pagination options, `convexPaginationOptions()`); no rerun is needed.
 
 ## [2.0.0-rc.2]
 

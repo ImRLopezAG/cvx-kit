@@ -1,13 +1,4 @@
 {
-	"status": "mixed",
-	"skipped": [
-		{
-			"line": 15,
-			"code": "zod-foreign-schema"
-		},
-		{
-			"line": 16,
-			"code": "zod-foreign-schema"
-		}
-	]
+	"status": "rewritten",
+	"skipped": []
 }

@@ -169,7 +169,7 @@ describe('codemod kit table schema provenance', () => {
 				'src/tuples.ts':
 					"import { z } from 'zod'; import { required, maybe } from './barrel'; export const a = z.tuple([required]); export const b = z.tuple([maybe]); export const c = z.tuple([]).rest(maybe)",
 				'src/use.ts':
-					"import { offices, relations } from './barrel'; import { other } from './external'; export const a = query({ args: offices.paginationOpts({}), returns: relations.tables.offices.pageDto({}), handler }); export const b = query({ args: offices.schema, returns: offices.dto({}), handler }); export const c = query({ args: other.paginationOpts({}), handler })",
+					"import { effectZodApiBuilder } from 'cvx-kit/effect'; const query = effectZodApiBuilder(base, {}); import { offices, relations } from './barrel'; import { other } from './external'; export const a = query({ args: offices.paginationOpts({}), returns: relations.tables.offices.pageDto({}), handler }); export const b = query({ args: offices.schema, returns: offices.dto({}), handler }); export const c = query({ args: other.paginationOpts({}), handler })",
 			}))
 				writeFileSync(join(root, name), source)
 			const result = run(['src'], root)

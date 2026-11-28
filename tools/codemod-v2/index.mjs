@@ -21,8 +21,11 @@ import { buildReport, formatSummary } from './report.mjs'
 import { createSourceResolver, KIT_OR_ZOD_MODULE } from './resolve.mjs'
 import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
 import { transformSource } from './transform.mjs'
-import { parentMap, parseSource, unwrap } from './transforms/ast.mjs'
-import { consumerOrigin as expressionConsumerOrigin } from './transforms/consumer.mjs'
+import { parentMap, parseSource, unwrap, walk } from './transforms/ast.mjs'
+import {
+	consumerOrigin as expressionConsumerOrigin,
+	registrationImportKind,
+} from './transforms/consumer.mjs'
 import { constantMaskKeys, stringEnumArgument, tupleSlot } from './transforms/schema.mjs'
 
 export const HELP = `Usage: cvx-kit-codemod-v2 <path…> [options]
@@ -544,8 +547,16 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 				arrayOnly,
 			)
 		},
-		consumerOrigin(from, specifier, name, path = [], seen = new Set()) {
+		registrationKind(from, specifier, name, path = []) {
+			return this.consumerOrigin(from, specifier, name, path, new Set(), true)
+		},
+		consumerOrigin(from, specifier, name, path = [], seen = new Set(), builder = false) {
+			if (builder) {
+				const kind = registrationImportKind(specifier, name)
+				if (kind) return kind
+			}
 			const target = resolve(from, specifier)
+			if (builder && !kExports.has(target)) return 'unproven'
 			if (!target && (specifier.startsWith('.') || specifier.startsWith('/'))) return 'unproven'
 			if (!target) return !KIT_OR_ZOD_MODULE.test(specifier)
 			const key = `${target}:${name}:${path.join('.')}`
@@ -562,6 +573,9 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 					},
 				},
 			}
+			if (builder)
+				context.importOrigin = (source, imported, members) =>
+					this.consumerOrigin(target, source, imported, members, seen, true)
 			for (const statement of program.body) {
 				if (statement.type === 'ExportDefaultDeclaration' && name === 'default')
 					return expressionConsumerOrigin(context, statement.declaration, path)
@@ -575,6 +589,7 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 							spec.local.name ?? spec.local.value,
 							path,
 							seen,
+							builder,
 						)
 					return expressionConsumerOrigin(context, spec.local, path)
 				}
@@ -585,6 +600,13 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 				for (const item of declaration.declarations) {
 					if (item.id.type === 'Identifier' && item.id.name === name && item.init)
 						return expressionConsumerOrigin(context, item.init, path)
+					if (builder && item.id.type === 'ObjectPattern') {
+						let identifier
+						walk(item.id, (node) => {
+							if (node.type === 'Identifier' && node.name === name) identifier = node
+						})
+						if (identifier) return expressionConsumerOrigin(context, identifier, path)
+					}
 				}
 			}
 			return 'unproven'

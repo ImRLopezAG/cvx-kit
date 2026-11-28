@@ -24,7 +24,7 @@ Planned as 2.0.0-rc.2. From the full reviews both consumer apps wrote on rc.1.
 - `k.enum(['a', 'a'])` exports the literal once.
 - `toZod` carries the `k.record` key rule in both entries.
 - A `KValidationError` thrown by an application `parse` is named `KValidationError` and has a stack. Failures at kit boundaries stay without frames.
-- Codemod: a Zod schema from a package the run cannot prove is `k` is reported as `zod-foreign-schema` when used as `args` or `returns` (directly, through a local alias or inside a field map), and holds the object it is a field of. It used to be rewritten around, which did not compile.
+- Codemod: a Zod schema from a package the run cannot prove is `k` is reported as `zod-foreign-schema` when used as `args` or `returns` (directly, through a local alias or inside a field map), and holds the object it is a field of. It used to be rewritten around, which did not compile. The report covers only positions that become `k` (a migrated function's `args` or `returns`, a contract entry, a field of a rewritten object), one entry per property, and those sites are not counted as declarations left.
 - Codemod: a mask after `.shape.<field>`, `.element` or `.unwrap()` is rewritten; a mask constant whose every use was rewritten is removed unless it is exported or used as a type.
 - Codemod: explicit table type arguments written as `typeof keys` become `(typeof keys)[number]`.
 - Codemod: a private helper typed `T extends z.ZodType` is rewritten to `AnyKSchema` when every caller passes a rewritten schema and its body uses only members `k` has.

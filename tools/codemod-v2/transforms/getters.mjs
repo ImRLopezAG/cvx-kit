@@ -52,11 +52,12 @@ export function isFunctionDefinition(node, parent) {
 }
 
 /** Edits turning eligible `args` / `returns` properties in `root` into getters. */
-export function getterEdits(root) {
+export function getterEdits(root, canWrap = () => true) {
 	const edits = []
 	walk(root, (node, parent) => {
 		if (!isFunctionDefinition(node, parent)) return
 		for (const property of node.properties) {
+			if (!canWrap(property)) continue
 			if (!isDataProperty(property)) continue
 			const name = keyName(property)
 			if (!KEYS.has(name)) continue

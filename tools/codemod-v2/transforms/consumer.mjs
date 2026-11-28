@@ -39,6 +39,7 @@ export function consumerOrigin(ctx, expression, path = [], seen = new Set()) {
 	if (binding.kind === 'function') return false
 	if (binding.kind === 'class') return fieldOrigin(ctx, binding.node.body, path, seen)
 	if (binding.kind === 'import') {
+		if (ctx.importOrigin) return ctx.importOrigin(binding.source, binding.imported, path)
 		if (ctx.options.run?.consumerOrigin) {
 			const imported = binding.imported === '*' && path.length ? path[0] : binding.imported
 			return ctx.options.run.consumerOrigin(
@@ -54,6 +55,36 @@ export function consumerOrigin(ctx, expression, path = [], seen = new Set()) {
 	}
 	if (binding.kind !== 'const' || !binding.init || binding.path === null) return 'unproven'
 	return consumerOrigin(ctx, binding.init, [...binding.path, ...path], seen)
+}
+
+/** Builder provenance after this run, using the same lexical paths as consumers. */
+export function registrationKind(ctx, expression) {
+	return consumerOrigin(
+		{
+			...ctx,
+			importOrigin(source, name, path) {
+				return (
+					registrationImportKind(source, name === '*' ? path[0] : name) ??
+					ctx.options.run?.registrationKind?.(ctx.path, source, name, path) ??
+					'unproven'
+				)
+			},
+		},
+		expression,
+	)
+}
+
+export function registrationImportKind(source, name) {
+	if (source === 'cvx-kit/effect' && name === 'effectApiBuilder') return 'native'
+	if (
+		/^cvx-kit(?:\/|$)/.test(source) &&
+		/(?:Builder|Functions|Contract|Custom(?:Query|Mutation|Action))$/.test(name)
+	)
+		return 'kit'
+	// These imports are renamed to kCustom* by this run.
+	if (/^convex-helpers\/server\/zod4?$/.test(source))
+		return /^zCustom(?:Query|Mutation|Action)$/.test(name) ? 'kit' : 'zod'
+	return null
 }
 
 function fieldOrigin(ctx, body, path, seen) {

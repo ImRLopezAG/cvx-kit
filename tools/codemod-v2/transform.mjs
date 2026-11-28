@@ -34,6 +34,7 @@ import {
 	contractDefinition,
 	isDomainContractCallee,
 	isRegistrationCallee,
+	registrationKind,
 } from './transforms/consumer.mjs'
 import { getterEdits, isFunctionDefinition } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
@@ -260,7 +261,12 @@ function rewrite(path, source, program, options) {
 		const unit = units.find((item) => item.node.start <= node.start && node.end <= item.node.end)
 		if (unit) addManual(ctx, unit, node, 'v1-entry-string')
 	})
-	if (options.getters) for (const unit of units) unit.getterEdits = getterEdits(unit.node)
+	if (options.getters)
+		for (const unit of units)
+			unit.getterEdits = getterEdits(
+				unit.node,
+				(property) => !unit.foreignProperties?.has(property),
+			)
 	const left = decideComponents(ctx, units)
 	if (ctx.kConflict && units.some((unit) => unit.edits.length > 0)) {
 		const skipped = [{ ...siteAt(ctx, ctx.kConflict), code: 'k-conflict' }]
@@ -973,6 +979,14 @@ function scanForeignSchemas(ctx, unit) {
 	const foreign = (expression, seen = new Set()) => {
 		const node = unwrap(expression)
 		if (!node || seen.has(node)) return false
+		if (
+			isSchemaExpression(ctx, node) ||
+			(node.type === 'MemberExpression' &&
+				!node.computed &&
+				node.property.name === 'shape' &&
+				isSchemaExpression(ctx, node.object))
+		)
+			return false
 		seen = new Set(seen).add(node)
 		if (node.type === 'ObjectExpression')
 			return node.properties.some(
@@ -989,6 +1003,13 @@ function scanForeignSchemas(ctx, unit) {
 			!isSchemaExpression(ctx, node)
 		)
 	}
+	unit.foreignProperties = new Set()
+	const report = (property, hold = true) => {
+		if (unit.foreignProperties.has(property)) return
+		unit.foreignProperties.add(property)
+		if (hold) addSkip(ctx, unit, property.value, 'zod-foreign-schema')
+		else addManual(ctx, unit, property.value, 'zod-foreign-schema')
+	}
 	walk(unit.node, (node, parent) => {
 		if (
 			node.type === 'Property' &&
@@ -997,10 +1018,53 @@ function scanForeignSchemas(ctx, unit) {
 			isFunctionDefinition(parent, ctx.parents.get(parent)) &&
 			foreign(node.value)
 		) {
-			unit.zodValue = true
-			addSkip(ctx, unit, node.value, 'zod-foreign-schema')
+			const kind = registrationKind(ctx, ctx.parents.get(parent).callee)
+			const rewrittenSibling = parent.properties.some((property) => {
+				if (
+					property.type !== 'Property' ||
+					!['args', 'returns'].includes(property.key.name ?? property.key.value)
+				)
+					return false
+				const schemas = consumedSchemas(ctx, property.value)
+				return schemas.local || schemas.imported
+			})
+			if (kind === 'kit' || (kind === 'unproven' && rewrittenSibling)) report(node)
+			else unit.foreignProperties.add(node)
 		}
 		if (node.type !== 'CallExpression') return
+		if (isRegistrationCallee(ctx, node.callee) && registrationKind(ctx, node.callee) === 'kit') {
+			const definition = unwrap(node.arguments[0])
+			if (definition?.type === 'ObjectExpression' && !isFunctionDefinition(definition, node))
+				for (const property of definition.properties)
+					if (
+						property.type === 'Property' &&
+						['args', 'returns'].includes(property.key.name ?? property.key.value) &&
+						foreign(property.value)
+					)
+						report(property, false)
+		}
+		if (isDomainContractCallee(ctx, node.callee)) {
+			const definition = contractDefinition(node.arguments[0])
+			if (definition?.type === 'ObjectExpression')
+				for (const group of definition.properties) {
+					if (
+						group.type !== 'Property' ||
+						!['commands', 'queries', 'actions'].includes(group.key.name ?? group.key.value) ||
+						group.value.type !== 'ObjectExpression'
+					)
+						continue
+					for (const entry of group.value.properties) {
+						if (entry.type !== 'Property' || entry.value.type !== 'ObjectExpression') continue
+						for (const property of entry.value.properties)
+							if (
+								property.type === 'Property' &&
+								['input', 'result'].includes(property.key.name ?? property.key.value) &&
+								foreign(property.value)
+							)
+								report(property, false)
+					}
+				}
+		}
 		const { root, steps } = chainOf(node.callee)
 		if (
 			root.type !== 'Identifier' ||

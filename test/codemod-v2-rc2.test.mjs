@@ -26,7 +26,7 @@ describe('codemod migration corrections', () => {
 	it('reports foreign registration schemas and holds foreign object fields', () => {
 		const result = transformSource(
 			'foreign.ts',
-			"import { credentialInput, paginationOpts } from '@x/pkg'\nimport { z } from 'zod'\nexport const get = query({ args: credentialInput, returns: credentialInput.nullable(), handler })\nconst input = z.object({ paginationOpts, unreadOnly: z.boolean().optional() })",
+			"import { effectZodApiBuilder } from 'cvx-kit/effect'; const query = effectZodApiBuilder(base, {}); import { credentialInput, paginationOpts } from '@x/pkg'\nimport { z } from 'zod'\nexport const get = query({ args: credentialInput, returns: credentialInput.nullable(), handler })\nconst input = z.object({ paginationOpts, unreadOnly: z.boolean().optional() })",
 		)
 		expect(codes(result)).toContain('zod-foreign-schema')
 		expect(codes(result)).toContain('mixed-reference')
@@ -374,7 +374,7 @@ describe('codemod conservative alias and helper handling', () => {
 		'holds foreign schemas in a registration %s field map',
 		(property) => {
 			const result = convert(
-				`import { foreign } from './foreign'; const alias = foreign; const a=query({ ${property}: { a: alias }, handler })`,
+				`import { effectZodApiBuilder } from 'cvx-kit/effect'; const query = effectZodApiBuilder(base, {}); import { foreign } from './foreign'; const alias = foreign; const a=query({ ${property}: { a: alias }, handler })`,
 			)
 			expect(codes(result)).toContain('zod-foreign-schema')
 			expect(result.output).toContain(`${property}: { a: alias }`)
@@ -411,3 +411,89 @@ describe('codemod conservative alias and helper handling', () => {
 		expect(result.info.map((site) => site.code)).toContain('union-member-order')
 	})
 })
+
+describe('foreign schema report boundaries', () => {
+	it('leaves an unmigrated local builder alone without foreign reports or getters', () => {
+		const source =
+			"import { query } from './functions'; import { foreign } from '@sdk/contracts'; export const get = query({ args: foreign, returns: foreign.nullable(), handler })"
+		const result = transformSource('api.ts', source)
+		expect(codes(result)).not.toContain('zod-foreign-schema')
+		expect(result.output).toBe(source)
+		expect(result.declarations.left).toBe(0)
+	})
+	it('reports a mixed unknown registration once per property without counting foreign declarations', () => {
+		const result = convert(
+			"import { foreign } from '@sdk/contracts'; export const get = query({ args: { a: foreign, b: foreign.shape.b }, returns: z.string(), handler })",
+		)
+		expect(result.skipped.filter((site) => site.code === 'zod-foreign-schema')).toHaveLength(1)
+		const onlyForeign = transformSource(
+			'api.ts',
+			"import { effectZodApiBuilder } from 'cvx-kit/effect'; import { foreign } from '@sdk/contracts'; const query = effectZodApiBuilder(base, {}); export const get = query({ args: foreign, returns: foreign.nullable(), handler })",
+		)
+		expect(onlyForeign.skipped.filter((site) => site.code === 'zod-foreign-schema')).toHaveLength(2)
+		expect(onlyForeign.declarations.left).toBe(0)
+		expect(onlyForeign.output).toContain('returns: foreign.nullable()')
+	})
+	it('proves migrated local shape maps and computed member schemas across the run', () =>
+		tree(
+			{
+				'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+				'src/fields.ts':
+					"import { z } from 'zod'; export const input = z.object({ name: z.string() }); export const other = z.object({ name: input['shape'].name.optional() })",
+				'src/functions.ts':
+					"import { effectZodApiBuilder } from 'cvx-kit/effect'; export const query = effectZodApiBuilder(base, {})",
+				'src/api.ts':
+					"import { query } from './functions'; import { input, other } from './fields'; export const get = query({ args: input.shape, returns: other, handler })",
+			},
+			(root) => {
+				const result = run(['src', '--write'], root)
+				expect(result.report.totals['zod-foreign-schema']).toBeUndefined()
+				expect(result.report.totals['mixed-reference']).toBeUndefined()
+				expect(readFileSync(join(root, 'src/fields.ts'), 'utf8')).toContain(
+					"input['shape'].name.optional()",
+				)
+				expect(readFileSync(join(root, 'src/fields.ts'), 'utf8')).toContain('k.object')
+			},
+		))
+	it('reports a foreign kit contract entry once and ignores ordinary schema uses', () => {
+		const result = transformSource(
+			'contract.ts',
+			"import { defineDomainContract } from 'cvx-kit/contracts'; import { foreign } from '@sdk/contracts'; const contract = defineDomainContract({ queries: { list: { input: foreign, result: foreign.nullable() } } }); foreign.parse(value); foreign.safeParse(value); consume(foreign); type Value = typeof foreign",
+		)
+		expect(result.skipped.filter((site) => site.code === 'zod-foreign-schema')).toHaveLength(2)
+		expect(result.declarations.left).toBe(0)
+	})
+})
+
+it('reports migrated namespace builders and contract wrappers without handlers', () => {
+	const result = transformSource(
+		'api.ts',
+		"import * as kit from 'cvx-kit/effect'; import { zodContract } from 'cvx-kit/contracts'; import { foreign } from '@sdk/contracts'; const query = kit.effectZodApiBuilder(base, {}); export const get = query({ args: foreign, handler }); const contract = zodContract({ args: foreign, returns: foreign })",
+	)
+	expect(result.skipped.filter((site) => site.code === 'zod-foreign-schema')).toHaveLength(3)
+})
+
+it('does not report schemas on native effect builders that the run leaves native', () =>
+	tree(
+		{
+			'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+			'src/functions.ts':
+				"import { effectApiBuilder } from 'cvx-kit/effect'; export const action = effectApiBuilder(base, {})",
+			'src/native.ts': "import { v } from 'convex/values'; export const result = v.string()",
+			'src/api.ts':
+				"import { action } from './functions'; import { result } from './native'; export const run = action({ returns: result, handler })",
+		},
+		(root) => expect(run(['src'], root).report.totals['zod-foreign-schema']).toBeUndefined(),
+	))
+
+it('follows exported destructured kit builders through a local module', () =>
+	tree(
+		{
+			'package.json': JSON.stringify({ dependencies: { 'cvx-kit': '*' } }),
+			'src/functions.ts':
+				"import { createEffectAuthFunctions } from 'cvx-kit/effect'; export const { query } = createEffectAuthFunctions(config, {})",
+			'src/api.ts':
+				"import { query } from './functions'; import { foreign } from '@sdk/contracts'; export const get = query({ args: { a: foreign }, handler })",
+		},
+		(root) => expect(run(['src'], root).report.totals['zod-foreign-schema']).toBe(1),
+	))

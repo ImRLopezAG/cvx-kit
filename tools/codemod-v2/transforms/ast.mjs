@@ -49,8 +49,16 @@ export function chainOf(node) {
 	let current = node
 	for (;;) {
 		if (current.type === 'MemberExpression') {
-			const name = !current.computed && current.property.type === 'Identifier'
-			steps.unshift({ kind: 'member', node: current, name: name ? current.property.name : null })
+			const name =
+				!current.computed && current.property.type === 'Identifier'
+					? current.property.name
+					: current.computed &&
+						  current.property.type === 'Literal' &&
+						  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Only string literals name schema members in the parser's Literal union.
+						  typeof current.property.value === 'string'
+						? current.property.value
+						: null
+			steps.unshift({ kind: 'member', node: current, name })
 			current = current.object
 		} else if (current.type === 'CallExpression') {
 			steps.unshift({ kind: 'call', node: current })

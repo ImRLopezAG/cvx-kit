@@ -48,7 +48,7 @@ export type Document = k.infer<typeof documentInput> // status required
 | `k.int64()`                              | bigint                                                                                                                                 | `v.int64()`                                                         |
 | `k.boolean()`                            | boolean                                                                                                                                | `v.boolean()`                                                       |
 | `k.null()`                               | `null`                                                                                                                                 | `v.null()`                                                          |
-| `k.void()`                               | `undefined` or `null`; for `returns` only, see [Void returns](#void-returns)                                                           | `v.null()`                                                          |
+| `k.void()`                               | `undefined` or `null`; for `returns` or a contract `result`, see [Void returns](#void-returns)                                         | `v.null()`                                                          |
 | `k.bytes()`                              | `ArrayBuffer`                                                                                                                          | `v.bytes()`                                                         |
 | `k.any()`                                | any value except `undefined`                                                                                                           | `v.any()`                                                           |
 | `k.custom<T>(guard?, message?)`          | any value except `undefined`, typed `T`; `guard` (when given) must return a truthy value, issue `custom`                               | `v.any()`                                                           |
@@ -98,7 +98,7 @@ Every option must be a `k.object` whose discriminator field is a literal, an enu
 
 ### Enums
 
-`k.enum` takes a non-empty array of strings, or an object whose values are all strings (an `as const` object or a TypeScript string enum). Both forms build the same schema, and parse accepts the values, not the keys:
+`k.enum` accepts three argument forms: a literal tuple of strings, a plain `readonly string[]` (including a mapped array), or an object whose values are all strings (an `as const` object or a TypeScript string enum). Every form requires at least one value at runtime. Tuples preserve their literal union; `string[]` infers `string`, and `('a' | 'b')[]` infers `'a' | 'b'`. Parse accepts the values, not the keys:
 
 ```ts
 const Status = { Open: 'open', Done: 'done' } as const
@@ -106,11 +106,11 @@ k.enum(Status) // the same schema as k.enum(['open', 'done'])
 k.enum(Status).parse('open') // 'open'; 'Open' fails
 ```
 
-`.options` returns the value tuple, `.enum` a value-to-value record, and `.exclude([...])`/`.extract([...])` a new enum. A string, an empty array or object, a non-string value, `null`, or an object that is not a plain object (a `Date`, a class instance) throws a `TypeError` at definition. A numeric TypeScript enum is refused the same way, because its object also maps each number back to its name; use `k.union([k.literal(0), k.literal(1)])` for numeric values.
+`.options` returns the value array (a tuple for tuple input), `.enum` a value-to-value record, and `.exclude([...])`/`.extract([...])` a new enum. A string, an empty array or object, a non-string value, `null`, or an object that is not a plain object (a `Date`, a class instance) throws a `TypeError` at definition. A numeric TypeScript enum is refused the same way, because its object also maps each number back to its name; use `k.union([k.literal(0), k.literal(1)])` for numeric values.
 
 ### Void returns
 
-`k.void()` declares a function that returns nothing. Use it for `returns` only. Its native validator is `v.null()`, because Convex sends a missing result as `null`, so clients receive `null`. The handler may return nothing, `undefined` or `null`. Parse accepts `undefined` and `null`.
+`k.void()` declares a function that returns nothing. Use it for `returns` or a command/query contract `result`, in Foundation and Effect registries. Its native validator is `v.null()`, because Convex sends a missing result as `null`, so clients receive `null`. The handler may return nothing, `undefined` or `null`. Application parse accepts `undefined` and `null`; registry result decoding normalises either to `null`. Effect handlers may use `Effect.void`, `Effect.succeed(undefined)` or a generator with no return statement.
 
 ```ts
 export const touch = authMutation({

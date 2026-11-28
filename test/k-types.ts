@@ -370,3 +370,18 @@ const goodEnumRule: EnumRule = { field: 'name', value: 'x' }
 // @ts-expect-error an unknown field name must be rejected
 const badEnumRule: EnumRule = { field: 'nope', value: 'x' }
 void [goodEnumRule, badEnumRule]
+
+const dynamicStrings: string[] = ['a', 'b']
+const dynamicUnion: ('a' | 'b')[] = ['a', 'b']
+const readonlyStrings: readonly string[] = dynamicStrings
+const mappedEnum = k.enum([{ slug: 'a' }].map((row) => row.slug))
+const dynamicStringEnum = k.enum(dynamicStrings)
+const dynamicUnionEnum = k.enum(dynamicUnion)
+const readonlyStringEnum = k.enum(readonlyStrings)
+const dynamicEnumAssertions: [
+	Assert<Equal<k.infer<typeof dynamicStringEnum>, string>>,
+	Assert<Equal<k.infer<typeof dynamicUnionEnum>, 'a' | 'b'>>,
+	Assert<Equal<k.infer<typeof readonlyStringEnum>, string>>,
+	Assert<Equal<k.infer<typeof mappedEnum>, string>>,
+] = [true, true, true, true]
+void dynamicEnumAssertions

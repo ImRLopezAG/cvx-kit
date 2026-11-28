@@ -40,8 +40,9 @@ export type NeutralSchema =
 	| (Decoder<unknown, unknown, ValidationResult<unknown> | Promise<ValidationResult<unknown>>> & {
 			readonly kind: 'contract'
 	  })
-export type ContractInput<S> =
-	S extends Decoder<infer Input, unknown, unknown>
+export type ContractInput<S> = S extends { readonly _void: true }
+	? void | null
+	: S extends Decoder<infer Input, unknown, unknown>
 		? Input
 		: S extends StandardSchema<infer Input, unknown>
 			? Input
@@ -50,8 +51,9 @@ export type ContractInput<S> =
 				: S extends LegacyParser<infer Output>
 					? Awaited<Output>
 					: never
-export type ContractOutput<S> =
-	S extends Decoder<unknown, infer Output, unknown>
+export type ContractOutput<S> = S extends { readonly _void: true }
+	? null
+	: S extends Decoder<unknown, infer Output, unknown>
 		? Output
 		: S extends StandardSchema<unknown, infer Output>
 			? Output

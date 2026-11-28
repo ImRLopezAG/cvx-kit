@@ -381,7 +381,7 @@ const id = ctx.db.normalizeId('documents', raw) // Id<'documents'> | null
 
 What to do: normalise external strings with `ctx.db.normalizeId('table', raw)` on the server, or type client values as `Id<'table'>` from the generated data model.
 
-Across a component boundary, a host holds a component's ids as plain strings: they are not ids of any host table, so `k.id('approvals')` in a host function or table would fail Convex's check. In the host, declare them as `k.string()` and pass them to the component's functions as strings; `k.id('table')` belongs inside the component, where the table exists.
+Across a component boundary, a host may declare `k.id('deliveries')` in a function even when `deliveries` belongs to a component and is absent from the root schema. A local backend trial pushed that declaration with `convex dev --once`; `convex function-spec` reported `{ "type": "id", "tableName": "deliveries" }`, as in v1. The migration work is branding the plain strings returned by the component for the host's typed callers. Use the component's return contract to establish the table, then brand that trusted result as `Id<'deliveries'>`; do not use the host's `ctx.db.normalizeId` for a table outside its generated data model. Keeping a reference as `k.string()` is also valid when the host does not need the brand.
 
 ```ts
 // host
@@ -517,7 +517,7 @@ App code that parses external data with Zod (JWT claims, webhook payloads, third
 
 ### Schemas shared with Zod libraries
 
-A workspace package often holds schemas that both Convex code and Zod libraries use: oRPC procedures, form resolvers, AI SDK tools. Write each such schema once, in `k`, in the shared package. Give each Zod consumer a converted copy at the point of use:
+A workspace package often holds schemas that both Convex code and Zod libraries use: form resolvers and AI SDK tools. Write each such schema once, in `k`, in the shared package. Give each Zod consumer a converted copy at the point of use:
 
 ```ts
 // packages/shared/src/invoice.ts
@@ -537,7 +537,34 @@ The classic entry imports named constructors: the one-field bundle test measures
 
 Refinements, checks, normalisers, transforms and pipes are carried, so the Zod copy runs the same callbacks as the `k` schema; [Zod interop](#zod-interop) lists the three differences that remain. `.catch` is not carried. There is no conversion from Zod to `k`, which is why the `k` schema is the source. Keep `cvx-kit/zod` out of Convex function modules; it belongs where the Zod library is called.
 
-The codemod follows this pattern. When a file passes a schema to a third-party library (a call whose callee chain starts at an import that is not `zod`, `cvx-kit`, `convex` or `convex-helpers`), it leaves that schema and everything it references in Zod and reports `zod-consumer`. When the schema comes from another file of the run, it rewrites the schema there and reports the consumer site as `zod-consumer-import`: wrap the argument in `toZod(schema)`, or `toZod(schema)` from `cvx-kit/zod/classic` for a library that needs classic Zod.
+The codemod follows this pattern. When a file passes a schema to a third-party library (a call whose callee chain starts at an import that is not `zod`, `cvx-kit`, `convex` or `convex-helpers`), it leaves that schema and everything it references in Zod and reports `zod-consumer`. When the schema comes from another file of the run, it rewrites the schema there and reports the consumer site as `zod-consumer-import`: use the schema directly for a Standard Schema consumer, or wrap the argument in `toZod(schema)` from `cvx-kit/zod/classic` for a library that needs classic Zod.
+
+#### oRPC validation and OpenAPI
+
+oRPC accepts `k` schemas directly because they implement Standard Schema. Pass the schema to `.input()` or `.output()` without converting it to Zod. For the OpenAPI document, register a converter that calls the kit's `toJsonSchema`:
+
+```ts
+import type { StandardSchemaV1 } from '@standard-schema/spec'
+import { OpenAPIGenerator } from '@orpc/openapi'
+import type { KSchema } from 'cvx-kit/k'
+import { toJsonSchema } from 'cvx-kit/json-schema'
+
+function isKSchema(schema: StandardSchemaV1): schema is KSchema {
+	return schema['~standard'].vendor === 'cvx-kit'
+}
+
+const generator = new OpenAPIGenerator({
+	schemaConverters: [
+		{
+			condition: isKSchema,
+			// The generator selects this converter only after isKSchema succeeds.
+			convert: (schema) => [toJsonSchema(schema as KSchema), false],
+		},
+	],
+})
+```
+
+`KSchema` is a public type export, so the predicate uses the Standard Schema vendor rather than `instanceof`. This converter preserves the kit's patterns, numeric minimums, enum values and optional parameters in the OpenAPI document. `z.file()` has no `k` form: routes with file uploads keep Zod and its OpenAPI converter alongside this one.
 
 ### Files that keep Zod: use the namespace import
 

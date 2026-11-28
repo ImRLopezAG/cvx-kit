@@ -19,6 +19,7 @@ import { discriminatorDispatch } from './dispatch'
 import { checkMessage } from './messages'
 import { setOwn } from './names'
 import { KSchema } from './schema'
+import type { KSafeParseResult } from './issues'
 import type {
 	KCheckMessage,
 	KDiscriminated,
@@ -168,6 +169,13 @@ export class KNull extends KSchema<null, VNull<null>> {}
 /** Return declarations only: Convex serializes a missing handler result as null. */
 export class KVoid extends KSchema<null | undefined, VNull<null>> {
 	declare readonly _void: true
+
+	/** Contract boundaries use the same null wire result as Convex registration. */
+	// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Contract results are undecoded handler values.
+	override '~safeParseStrict'(input: unknown): KSafeParseResult<null> {
+		const parsed = super['~safeParseStrict'](input)
+		return parsed.success ? { success: true, data: parsed.data ?? null } : parsed
+	}
 }
 
 export class KBytes extends KSchema<ArrayBuffer, VBytes<ArrayBuffer>> {}
@@ -195,12 +203,12 @@ export class KJson extends KSchema<
 
 export class KLiteral<V extends KLiteralValue> extends KSchema<V, VLiteral<V>> {}
 
-export class KEnum<V extends readonly [string, ...string[]]> extends KSchema<
+export class KEnum<V extends readonly string[]> extends KSchema<
 	V[number],
 	VUnion<V[number], { -readonly [I in keyof V]: VLiteral<V[I]> }>
 > {
 	get options(): V {
-		// SAFETY: k.enum stores its value tuple as the root argument.
+		// SAFETY: k.enum stores its string array or tuple as the root argument.
 		return rootOf(this).arg as V
 	}
 
@@ -434,7 +442,7 @@ export function nullValue(): KNull {
 	return nullRoot
 }
 
-/** For `returns` only; clients receive null when the handler returns nothing. */
+/** For `returns` or contract results; clients receive null when the handler returns nothing. */
 export function voidValue(): KVoid {
 	return voidRoot
 }
@@ -463,18 +471,22 @@ export function literal<const V extends KLiteralValue>(value: V): KLiteral<V> {
 export function enumOf<const V extends Readonly<Record<string, string>> | readonly unknown[]>(
 	values: V & (V extends readonly unknown[] ? never : unknown),
 ): KEnum<KEnumValues<Extract<V[keyof V], string>>>
-export function enumOf<const V extends readonly [string, ...string[]]>(values: V): KEnum<V>
+export function enumOf<const V extends readonly string[]>(values: V): KEnum<V>
 export function enumOf(
-	values: readonly [string, ...string[]] | Readonly<Record<string, string>>,
+	values: readonly string[] | Readonly<Record<string, string>>,
 ): KEnum<KEnumValues<string>> {
-	const entries = Array.isArray(values)
-		? values
-		: values !== null &&
-			  (Object.getPrototypeOf(values) === Object.prototype ||
-					Object.getPrototypeOf(values) === null)
-			? Object.values(values)
-			: []
-	return enumValues<KEnumValues<string>>(entries)
+	if (Array.isArray(values)) return enumValues<KEnumValues<string>>(values)
+	if (
+		values === null ||
+		(Object.getPrototypeOf(values) !== Object.prototype && Object.getPrototypeOf(values) !== null)
+	)
+		throw new TypeError('k.enum() expects a string array or an object of string values')
+	for (const [key, value] of Object.entries(values)) {
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Untyped callers can supply non-string enum values.
+		if (typeof value !== 'string')
+			throw new TypeError(`k.enum() value at key "${key}" must be a string`)
+	}
+	return enumValues<KEnumValues<string>>(Object.values(values))
 }
 
 export function id<T extends string>(table: T): KId<T> {
@@ -520,11 +532,12 @@ function rootOf(node: KNode): KNode {
 }
 
 function enumValues<T extends readonly [string, ...string[]]>(values: readonly string[]): KEnum<T> {
-	// oxlint-disable-next-line anti-slop/no-runtime-typeof -- enum definitions can come from untyped JavaScript callers.
-	if (values.length === 0 || !values.every((value) => typeof value === 'string'))
-		throw new TypeError(
-			'k.enum() needs at least one value: a string array or an object of string values',
-		)
+	if (values.length === 0) throw new TypeError('k.enum() needs at least one value')
+	for (const [index, value] of values.entries()) {
+		// oxlint-disable-next-line anti-slop/no-runtime-typeof -- Enum definitions can come from untyped callers.
+		if (typeof value !== 'string')
+			throw new TypeError(`k.enum() value at index ${index} must be a string`)
+	}
 	return new KEnum<T>(null, 'enum', Object.freeze(values), undefined)
 }
 

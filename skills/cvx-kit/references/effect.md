@@ -29,6 +29,10 @@ The optional peer range is `>=4.0.1 <5`. Existing imports and Promise-based
 Foundation consumers work without Effect installed. Use the public facade;
 the internal module paths are not supported imports.
 
+## Operations with no result
+
+Use `result: k.void()` for a command or query whose handler returns nothing. The handler may return `Effect.void`, `Effect.succeed(undefined)`, an `Effect.gen` generator with no return statement, or `null`. Ordinary callbacks returning nothing or `undefined` work too. Registry result decoding normalises both `undefined` and `null` to `null`, so `exec` and clients receive `null`; the wire validator is `v.null()`.
+
 ## A complete domain-to-API example
 
 These four TypeScript sections form one module and are compiled together

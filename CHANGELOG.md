@@ -24,6 +24,9 @@ are this file's matching section.
 
 Three regressions in beta.7, found by the Accord trial:
 
+- `k.void()` works as a command/query contract result in Foundation and Effect registries: handlers may return nothing, `undefined` or `null`, and decoded results are `null`.
+- `k.enum` distinguishes an invalid argument container, empty values and a non-string value, naming its key or index.
+- `k.enum` accepts plain readonly string arrays, including mapped arrays, and infers their element union while retaining tuple and object inference.
 - `k.enum(values)` infers again when `values` is a type parameter of the calling function. The conditional return type added with the object form stayed deferred there, so the enum was not assignable to a schema.
 - A converted schema works with `z.toJSONSchema` again: an `.optional()` field made it throw, and a field with a refinement or a normaliser lost its type in output mode.
 

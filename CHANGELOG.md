@@ -22,13 +22,21 @@ are this file's matching section.
 
 ### Fixed
 
-Three regressions in beta.7, found by the Accord trial:
+Regressions in beta.7, found by the Accord and one-office trials:
 
-- `k.void()` works as a command/query contract result in Foundation and Effect registries: handlers may return nothing, `undefined` or `null`, and decoded results are `null`.
-- `k.enum` distinguishes an invalid argument container, empty values and a non-string value, naming its key or index.
-- `k.enum` accepts plain readonly string arrays, including mapped arrays, and infers their element union while retaining tuple and object inference.
 - `k.enum(values)` infers again when `values` is a type parameter of the calling function. The conditional return type added with the object form stayed deferred there, so the enum was not assignable to a schema.
 - A converted schema works with `z.toJSONSchema` again: an `.optional()` field made it throw, and a field with a refinement or a normaliser lost its type in output mode.
+- Codemod: `z.enum(CONSTANT)` is rewritten again when the constant is a list of string literals, an object of string values or a string enum, declared in the file or imported from the run (through barrels, aliases and workspace packages). beta.7 held every enum that was not an inline literal.
+- Codemod: a schema is reported as consumed by a third-party library only when the schema itself is passed. A parsed value (`expect(schema.parse(x))`), a schema used inside a callback (`Effect.gen(function* () { … })`) and assertion or logging calls no longer hold it.
+
+On one consumer app's pre-migration source the codemod rewrites 94.1% of declarations (beta.6: 92.9%, beta.7: 49.2%).
+
+Also fixed:
+
+- `k.void()` works as a command or query contract result in Foundation and Effect registries: a handler may return nothing, `undefined` or `null`, and the client receives `null`.
+- `k.enum` accepts a plain readonly string array, including a mapped one, and infers its element union.
+- `k.enum` gives a separate message for an argument that is not a list or object, for empty values, and for a non-string value, naming its key or index.
+- Codemod: report paths are correct when the project is reached through a symlink, and a `tsconfig.json` whose `extends` is not installed no longer stops relative imports from resolving.
 
 ## [2.0.0-beta.7]
 

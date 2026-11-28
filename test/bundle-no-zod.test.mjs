@@ -12,7 +12,7 @@ const dir = mkdtempSync(join(tmpdir(), 'cvx-bundle-no-zod-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 /**
- * Every package entry except the opt-in `./zod` interop entry, as its `src/` file: the export's
+ * Every package entry except the opt-in `./zod` and `./zod/classic` interop entries, as its `src/` file: the export's
  * built target with `dist/` mapped back to `src/`. Skipped: `./package.json`, the type-only component
  * `_generated` exports (no runtime target) and `./test`, the vitest-only helper that ships as source
  * and loads the built components from `dist/`, so it never reaches a Convex bundle.
@@ -20,7 +20,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 const coreEntries = [
 	...new Set(
 		Object.entries(manifest.exports)
-			.filter(([path]) => !['./package.json', './zod', './test'].includes(path))
+			.filter(([path]) => !['./package.json', './zod', './zod/classic', './test'].includes(path))
 			// A string export is its own target; a conditional one runs its `import` target.
 			.flatMap(([, target]) => (target.types === undefined ? [target] : (target.import ?? [])))
 			.map((target) => target.replace(/^\.\/dist\//, 'src/').replace(/\.(mjs|js)$/, '.ts')),
@@ -31,14 +31,15 @@ const nodeOnly = new Set(['src/oxlint.ts'])
 const zodInputs = [/node_modules\/zod\//, /node_modules\/convex-helpers\/(dist\/)?server\/zod/]
 
 /** Bundle a module that re-exports `entries` like Convex does, and return the input bytes by path. */
-async function bundleInputs(name, entries, imports = [], node = false) {
+async function bundleInputs(name, entries, imports = [], node = false, source = undefined) {
 	const entry = join(dir, `${name}.ts`)
 	writeFileSync(
 		entry,
-		[
-			...imports.map((file) => `import '${join(checkout, file)}'\n`),
-			...entries.map((file) => `export * from '${join(checkout, file)}'\n`),
-		].join(''),
+		source ??
+			[
+				...imports.map((file) => `import '${join(checkout, file)}'\n`),
+				...entries.map((file) => `export * from '${join(checkout, file)}'\n`),
+			].join(''),
 	)
 	const result = await esbuild.build({
 		absWorkingDir: checkout,
@@ -72,6 +73,7 @@ describe('v2 bundles', () => {
 		expect(coreEntries).toContain('src/k.ts')
 		expect(coreEntries).toContain('src/components/foundation/convex.config.ts')
 		expect(coreEntries).not.toContain('src/zod.ts')
+		expect(coreEntries).not.toContain('src/zod-classic.ts')
 		expect(coreEntries.length).toBeGreaterThan(25)
 	})
 
@@ -92,14 +94,44 @@ describe('v2 bundles', () => {
 
 	it('build the interop entry on zod/mini, well under the classic bundle', async () => {
 		const inputs = await bundleInputs('interop-size', ['src/k.ts'], ['src/zod.ts'])
-		// Classic Zod is over 700 KB here; zod/mini alone is about 73 KB.
+		// Classic Zod is over 700 KB here; zod/mini alone is 79,065 bytes.
 		const zodBytes = bytesMatching(inputs, [zodInputs[0]])
 		console.info(`Zod interop entry: ${zodBytes} bytes`)
 		expect(zodBytes).toBeLessThan(80_000)
 		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/classic\//])).toBe(0)
 		expect(bytesMatching(inputs, [/node_modules\/convex-helpers\//])).toBe(0)
 		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/mini\//])).toBeGreaterThan(0)
-		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/locales\/(?!en\.)/])).toBe(0)
+		expect(bytesMatching(inputs, [/node_modules\/zod\/v4\/locales\//])).toBe(0)
+	})
+
+	it('tree-shakes classic output with zero non-English locale bytes', async () => {
+		const base = `import { k } from '${join(checkout, 'src/k.ts')}';\n`
+		const classic = await bundleInputs(
+			'classic-entry',
+			[],
+			[],
+			false,
+			base +
+				`import { toZod } from '${join(checkout, 'src/zod-classic.ts')}';\nexport const schema = toZod(k.object({ name: k.string() }));`,
+		)
+		const injected = await bundleInputs(
+			'classic-namespace',
+			[],
+			[],
+			false,
+			base +
+				`import { toZod } from '${join(checkout, 'src/zod.ts')}';\nimport * as z from '${join(checkout, 'node_modules/zod/index.js')}';\nexport const schema = toZod(k.object({ name: k.string() }), { zod: z });`,
+		)
+		const classicBytes = bytesMatching(classic, [zodInputs[0]])
+		const injectedBytes = bytesMatching(injected, [zodInputs[0]])
+		console.info(
+			`Classic entry: ${classicBytes} Zod bytes; namespace option: ${injectedBytes} Zod bytes`,
+		)
+		// Classic Zod's own schemas import English; every other locale must be removed.
+		expect(bytesMatching(classic, [/node_modules\/zod\/v4\/locales\/(?!en\.)/])).toBe(0)
+		expect(classicBytes).toBeLessThan(injectedBytes)
+		// Measured 219,220 Zod bytes; allow about 10% for dependency changes.
+		expect(classicBytes).toBeLessThan(242_000)
 	})
 
 	it('keep the interop entry when it is imported only for its side effect', async () => {
@@ -141,11 +173,18 @@ describe('v1 removal', () => {
 	const zodImport =
 		/(?:from|import)\s*\(?\s*['"](?:zod(?:\/[^'"]*)?|convex-helpers\/server\/zod4)['"]/
 
-	it('leaves src/zod.ts as the only source file importing zod or convex-helpers zod4', () => {
+	it('limits Zod imports to the two opt-in entries', () => {
 		const importing = sourceFiles().filter((file) =>
 			zodImport.test(readFileSync(join(checkout, file), 'utf8')),
 		)
-		expect(importing).toEqual(['src/zod.ts'])
+		expect(importing.sort()).toEqual(['src/zod-classic.ts', 'src/zod.ts'])
+		const mini = readFileSync(join(checkout, 'src/zod.ts'), 'utf8')
+		expect(mini).toMatch(/import type \* as classic from 'zod'/)
+		expect(mini).not.toMatch(/import (?!type)[^\n]+ from 'zod'/)
+		const classic = readFileSync(join(checkout, 'src/zod-classic.ts'), 'utf8')
+		expect(classic).toMatch(/import \{[^}]+\} from 'zod'/s)
+		expect(classic).not.toMatch(/import (?:\*|[\w]+[, ])[^\n]*from 'zod'/)
+		expect(classic).not.toContain('zod/mini')
 	})
 
 	it('publishes no ./zod-table entry and keeps zod an optional peer', () => {

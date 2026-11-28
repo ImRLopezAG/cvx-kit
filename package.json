@@ -120,6 +120,10 @@
 			"types": "./dist/json-schema.d.mts",
 			"import": "./dist/json-schema.mjs"
 		},
+		"./zod/classic": {
+			"types": "./dist/zod-classic.d.mts",
+			"import": "./dist/zod-classic.mjs"
+		},
 		"./zod": {
 			"types": "./dist/zod.d.mts",
 			"import": "./dist/zod.mjs"

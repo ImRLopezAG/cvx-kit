@@ -52,7 +52,7 @@ import { readFileSync } from 'node:fs'
 const manifest = JSON.parse(readFileSync('node_modules/cvx-kit/package.json', 'utf8'))
 // Entries that need an optional peer this project does not install.
 const needsPeer = { './effect': 'effect', './react': 'react' }
-const skipped = new Set(['./package.json', './test', './zod'])
+const skipped = new Set(['./package.json', './test', './zod', './zod/classic'])
 // Component configs are bundled by Convex, not imported by Node (their component
 // dependencies use extensionless ESM imports); the script bundles them instead.
 const bundled = (key) => key.includes('convex.config')

@@ -107,6 +107,12 @@ describe('packed Convex components', () => {
 			expect(packedFiles).toContain(`dist/${stem}.mjs`)
 			expect(packedFiles).toContain(`dist/${stem}.d.mts`)
 		}
+		expect(manifest.exports['./zod/classic']).toEqual({
+			types: './dist/zod-classic.d.mts',
+			import: './dist/zod-classic.mjs',
+		})
+		expect(packedFiles).toContain('dist/zod-classic.mjs')
+		expect(packedFiles).toContain('dist/zod-classic.d.mts')
 		expect(manifest.exports['./zod-table']).toBeUndefined()
 		expect(
 			packedFiles.filter((file) =>

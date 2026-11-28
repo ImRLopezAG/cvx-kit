@@ -465,7 +465,7 @@ returns: k.object({ ok: k.literal(true) }),
 
 ### Zod interop
 
-`toZod(schema)` carries `refine`, `check`, `overwrite`, `transform` and `pipe`, so the Zod schema runs the same callbacks as `k` `parse`. Three differences come from Zod itself and remain: Zod's number rejects `NaN` and `Infinity` where `k.number()` accepts them unless `.finite()` is declared, `z.any()` (the converted `k.custom`) accepts `undefined` where `k` refuses it, and a Zod union takes its first matching member where `k` prefers a member that accepts every key. `toZod(schema, { zod: z })`, given the app's classic namespace (`import * as z from 'zod'`), returns a classic Zod schema with the chain methods; without it the result is `zod/mini`. `.catch` is not carried and throws. `toZod` maps a `k` default to Zod's `prefault`, so the default runs through the rest of the chain (normalisers and checks) as it does in `k`; Zod's `default` would skip them. A default declared above a transform or pipe supplies parsed output, so it converts to Zod's `default`. A `partial()` field converts without its default, matching `k`, where a partial field stays omitted.
+`toZod(schema)` carries `refine`, `check`, `overwrite`, `transform` and `pipe`, so the Zod schema runs the same callbacks as `k` `parse`. Three differences come from Zod itself and remain: Zod's number rejects `NaN` and `Infinity` where `k.number()` accepts them unless `.finite()` is declared, `z.any()` (the converted `k.custom`) accepts `undefined` where `k` refuses it, and a Zod union takes its first matching member where `k` prefers a member that accepts every key. Import `toZod` from `cvx-kit/zod/classic` for classic Zod with chain methods, or from `cvx-kit/zod` for `zod/mini`. `.catch` is not carried and throws. `toZod` maps a `k` default to Zod's `prefault`, so the default runs through the rest of the chain (normalisers and checks) as it does in `k`; Zod's `default` would skip them. A default declared above a transform or pipe supplies parsed output, so it converts to Zod's `default`. A `partial()` field converts without its default, matching `k`, where a partial field stays omitted.
 
 ### Components
 
@@ -526,16 +526,18 @@ export const invoiceInput = k.object({ number: k.string().trim().min(1), total: 
 
 // apps/web/src/invoice-form.tsx: a library that takes Zod
 import { zodResolver } from '@hookform/resolvers/zod'
-import * as z from 'zod'
-import { toZod } from 'cvx-kit/zod'
+import { toZod } from 'cvx-kit/zod/classic'
+import { toZod as toMiniZod } from 'cvx-kit/zod'
 import { invoiceInput } from '@acme/shared/invoice'
-const resolver = zodResolver(toZod(invoiceInput, { zod: z })) // classic Zod
-const tool = { inputSchema: toZod(invoiceInput) } // zod/mini, for libraries that take any Zod 4 schema
+const resolver = zodResolver(toZod(invoiceInput)) // classic Zod
+const tool = { inputSchema: toMiniZod(invoiceInput) } // zod/mini, for libraries that take any Zod 4 schema
 ```
+
+The classic entry imports named constructors: the one-field bundle test measures 219,220 Zod bytes, including English error messages and zero non-English locale bytes, versus 79,065 bytes for Mini with no locales. Passing the whole namespace retains 771,692 Zod bytes in that test; a consumer measured 754 KB. The deprecated `toZod(schema, { zod: z })` option from `cvx-kit/zod` remains supported, but keeps all of Zod in the bundle.
 
 Refinements, checks, normalisers, transforms and pipes are carried, so the Zod copy runs the same callbacks as the `k` schema; [Zod interop](#zod-interop) lists the three differences that remain. `.catch` is not carried. There is no conversion from Zod to `k`, which is why the `k` schema is the source. Keep `cvx-kit/zod` out of Convex function modules; it belongs where the Zod library is called.
 
-The codemod follows this pattern. When a file passes a schema to a third-party library (a call whose callee chain starts at an import that is not `zod`, `cvx-kit`, `convex` or `convex-helpers`), it leaves that schema and everything it references in Zod and reports `zod-consumer`. When the schema comes from another file of the run, it rewrites the schema there and reports the consumer site as `zod-consumer-import`: wrap the argument in `toZod(schema)`, or `toZod(schema, { zod: z })` for a library that needs classic Zod.
+The codemod follows this pattern. When a file passes a schema to a third-party library (a call whose callee chain starts at an import that is not `zod`, `cvx-kit`, `convex` or `convex-helpers`), it leaves that schema and everything it references in Zod and reports `zod-consumer`. When the schema comes from another file of the run, it rewrites the schema there and reports the consumer site as `zod-consumer-import`: wrap the argument in `toZod(schema)`, or `toZod(schema)` from `cvx-kit/zod/classic` for a library that needs classic Zod.
 
 ### Files that keep Zod: use the namespace import
 
@@ -631,7 +633,7 @@ The report holds `packagesWithoutKit` (skipped package directories), `summary` (
 | `zid-value`                  | `zid` used as a value rather than called                                                                                                                                                                                                      | Replace with `k.id` usage by hand.                                                                                                              |
 | `held-pipe-to-k`             | a statement held as Zod pipes into a schema that another file of the run rewrote to `k` (`z.string().pipe(code)`). The run exits 1                                                                                                            | Fix the reason the statement is held, then run again, or convert the pipe target back with `toZod`.                                             |
 | `zod-consumer`               | a schema (or an inline `z.` expression) passed to a third-party library in the same file: a call whose callee chain starts at an import other than `zod`, `cvx-kit`, `convex` or `convex-helpers`. The schema and what it references stay Zod | Keep it, or move the schema to `k` and pass `toZod(schema)`; see [Schemas shared with Zod libraries](#schemas-shared-with-zod-libraries).       |
-| `zod-consumer-import`        | a schema rewritten to `k` in another file of the run is passed to a third-party library here. Report only                                                                                                                                     | Wrap the argument: `toZod(schema)`, or `toZod(schema, { zod: z })` for classic Zod.                                                             |
+| `zod-consumer-import`        | a schema rewritten to `k` in another file of the run is passed to a third-party library here. Report only                                                                                                                                     | Wrap the argument: `toZod(schema)`, or `toZod(schema)` from `cvx-kit/zod/classic` for classic Zod.                                              |
 | `zod-consumer-unproven`      | a schema is passed to a builder imported by a relative path the codemod could not resolve, so it cannot tell whether a Zod library consumes it. Report only; the schema is rewritten                                                          | Check the builder; if it takes Zod, pass `toZod(schema)`.                                                                                       |
 | `v1-entry-string`            | a string literal naming the removed `cvx-kit/zod-table` entry, `zid` or a renamed v1 name (`zodTable`, `zodContract`, …), for example in lint tooling. Report only                                                                            | Update the string to the v2 name.                                                                                                               |
 | `keep-zod-marker`            | a Zod declaration in a file with the keep marker; the file is `kept`                                                                                                                                                                          | Nothing, unless the file should migrate: remove the marker.                                                                                     |
@@ -726,7 +728,7 @@ No data migration is expected: the stored shape and indexes are unchanged. If `n
 ## Client-side changes
 
 - Validation failures arrive as `ConvexError` with `data: { code: 'VALIDATION', issues: [{ path, code, message }] }`. Structural failures raised by Convex keep Convex's own error. An error contract decodes only the codes it declares, so read `error.data` directly for validation failures. See [client-failures](client-failures.md).
-- Forms: `k` schemas implement Standard Schema v1, so form libraries that accept Standard Schema (for example TanStack Form) take them directly, including `documents.commandInput`. Libraries that need Zod can use `toZod(schema)` from `cvx-kit/zod`, or `toZod(schema, { zod: z })` for classic Zod; refinements and transforms are carried. See [Schemas shared with Zod libraries](#schemas-shared-with-zod-libraries).
+- Forms: `k` schemas implement Standard Schema v1, so form libraries that accept Standard Schema (for example TanStack Form) take them directly, including `documents.commandInput`. Libraries that need Zod can use `toZod(schema)` from `cvx-kit/zod`, or `toZod(schema)` from `cvx-kit/zod/classic` for classic Zod; refinements and transforms are carried. See [Schemas shared with Zod libraries](#schemas-shared-with-zod-libraries).
 - Frontend Zod schemas that are not shared with Convex code do not need to change.
 - Ids typed `Id<'table'>` on input: pass ids from query results or the generated data model, not plain strings.
 

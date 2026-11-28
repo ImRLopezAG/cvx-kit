@@ -10,6 +10,23 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [2.0.0-beta.8]
+
+### Added
+
+- `cvx-kit/zod/classic` exports `toZod(schema)` with classic Zod types and chain methods, using named constructors so bundlers can remove unused Zod exports and non-English locales: 219 KB of Zod in a one-field bundle, against 772 KB for the namespace option and 79 KB for the `zod/mini` form.
+
+### Changed
+
+- `toZod(schema, { zod })` from `cvx-kit/zod` is deprecated in favour of the classic entry: passing the namespace keeps all of Zod in the bundle. The option remains supported, and `.toZod()` still returns Mini output.
+
+### Fixed
+
+Three regressions in beta.7, found by the Accord trial:
+
+- `k.enum(values)` infers again when `values` is a type parameter of the calling function. The conditional return type added with the object form stayed deferred there, so the enum was not assignable to a schema.
+- A converted schema works with `z.toJSONSchema` again: an `.optional()` field made it throw, and a field with a refinement or a normaliser lost its type in output mode.
+
 ## [2.0.0-beta.7]
 
 Closes the defects the Accord and one-office trials found on beta.6, and the findings of an independent review of beta.4–beta.6.

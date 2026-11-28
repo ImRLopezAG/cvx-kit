@@ -5,6 +5,7 @@ import * as z from 'zod'
 import * as mini from 'zod/mini'
 import { k } from '../src/k'
 import { kZodIds, toZod } from '../src/zod'
+import { toZod as toClassicZod } from '../src/zod-classic'
 
 const task = k.object({
 	title: k.string().trim().min(1).max(5),
@@ -63,8 +64,13 @@ describe('toZod', () => {
 		expect(z.globalRegistry.get(toZod(k.string().describe('d')))?.description).toBe('d')
 	})
 
-	describe.each(['mini', 'classic'] as const)('%s output', (output) => {
-		const options = output === 'classic' ? { zod: z } : undefined
+	describe.each(['mini', 'classic option', 'classic entry'] as const)('%s output', (output) => {
+		const convert =
+			output === 'classic entry'
+				? toClassicZod
+				: output === 'classic option'
+					? classicOption
+					: toZod
 
 		// Expected JSON Schema captured from the beta.6 converter (ffac0b7), using the same Zod.
 		describe.each([
@@ -462,7 +468,7 @@ describe('toZod', () => {
 			for (const io of ['input', 'output'] as const) {
 				if (!(io in expected)) continue
 				it(`preserves beta.6 ${io} JSON Schema`, () => {
-					const converted = toZod(schema, options)
+					const converted = convert(schema)
 					const actual = z.toJSONSchema(converted, { io })
 					expect(actual).toEqual({
 						$schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -477,13 +483,13 @@ describe('toZod', () => {
 				message: 'use yes',
 				path: ['name'],
 			})
-			const result = toZod(schema, options).safeParse({ name: 'no' })
+			const result = convert(schema).safeParse({ name: 'no' })
 			expect(result.success).toBe(false)
 			if (!result.success)
 				expect(result.error.issues).toMatchObject([
 					{ code: 'custom', message: 'use yes', path: ['name'] },
 				])
-			expect(toZod(schema, options).parse({ name: 'yes' })).toEqual(schema.parse({ name: 'yes' }))
+			expect(convert(schema).parse({ name: 'yes' })).toEqual(schema.parse({ name: 'yes' }))
 		})
 
 		it('carries every issue added by check', () => {
@@ -493,14 +499,14 @@ describe('toZod', () => {
 					context.addIssue({ code: 'invalid_value', message: 'second', path: ['b'] })
 				}
 			})
-			const result = toZod(schema, options).safeParse('bad')
+			const result = convert(schema).safeParse('bad')
 			expect(result.success).toBe(false)
 			if (!result.success)
 				expect(result.error.issues).toMatchObject([
 					{ message: 'first', path: ['a'] },
 					{ code: 'invalid_value', message: 'second', path: ['b'] },
 				])
-			expect(toZod(schema, options).parse('ok')).toBe('ok')
+			expect(convert(schema).parse('ok')).toBe('ok')
 		})
 
 		it('runs overwrite before checks and carries transform and pipe', () => {
@@ -508,17 +514,15 @@ describe('toZod', () => {
 				.string()
 				.min(2)
 				.overwrite((value) => value.trim())
-			expect(toZod(trimmed, options).parse(' ab ')).toBe(trimmed.parse(' ab '))
-			expect(toZod(trimmed, options).safeParse(' a ').success).toBe(false)
+			expect(convert(trimmed).parse(' ab ')).toBe(trimmed.parse(' ab '))
+			expect(convert(trimmed).safeParse(' a ').success).toBe(false)
 			const schema = trimmed
 				.transform((value) => value.length)
 				.pipe(k.number().min(3))
 				.refine((value) => value < 5, 'too long')
-			expect(toZod(schema, options).parse(' abc ')).toBe(schema.parse(' abc '))
+			expect(convert(schema).parse(' abc ')).toBe(schema.parse(' abc '))
 			for (const value of ['ab', 'abcde', 123])
-				expect(toZod(schema, options).safeParse(value).success).toBe(
-					schema.safeParse(value).success,
-				)
+				expect(convert(schema).safeParse(value).success).toBe(schema.safeParse(value).success)
 		})
 
 		it('does not encode undefined defaults', () => {
@@ -527,12 +531,12 @@ describe('toZod', () => {
 				.transform((value) => (value === undefined ? 'absent' : value))
 				.default(undefined)
 			for (const schema of [k.any().default(undefined), transformed]) {
-				const converted = toZod(schema, options)
+				const converted = convert(schema)
 				for (const io of ['input', 'output'] as const)
 					expect(() => z.toJSONSchema(converted, { io, unrepresentable: 'any' })).not.toThrow()
 			}
 			for (const input of [undefined, 'present'])
-				expect(toZod(transformed, options).safeParse(input)).toEqual(transformed.safeParse(input))
+				expect(convert(transformed).safeParse(input)).toEqual(transformed.safeParse(input))
 		})
 
 		it('preserves defaults around transforms', () => {
@@ -544,8 +548,8 @@ describe('toZod', () => {
 				.string()
 				.transform((value) => value.length)
 				.default(7)
-			expect(toZod(before, options).parse(undefined)).toBe(before.parse(undefined))
-			expect(toZod(after, options).parse(undefined)).toBe(after.parse(undefined))
+			expect(convert(before).parse(undefined)).toBe(before.parse(undefined))
+			expect(convert(after).parse(undefined)).toBe(after.parse(undefined))
 		})
 
 		it('skips overwrite when a wrapped inner run failed', () => {
@@ -557,7 +561,7 @@ describe('toZod', () => {
 					throw new Error('must not execute')
 				})
 			const expected = schema.safeParse('x')
-			const actual = toZod(schema, options).safeParse('x')
+			const actual = convert(schema).safeParse('x')
 			expect(actual.success).toBe(expected.success)
 			if (!actual.success && !expected.success)
 				expect(actual.error.issues).toMatchObject(expected.issues)
@@ -575,7 +579,7 @@ describe('toZod', () => {
 					context.addIssue({ message: 'outer failure' })
 				})
 				const expected = checked.safeParse(value)
-				const actual = toZod(checked, options).safeParse(value)
+				const actual = convert(checked).safeParse(value)
 				expect(actual.success).toBe(expected.success)
 				if (!actual.success && !expected.success)
 					expect(actual.error.issues.map(({ message }) => message)).toEqual(
@@ -586,7 +590,7 @@ describe('toZod', () => {
 				context.addIssue({ message: 'same run failure' })
 			})
 			const expected = sameRun.safeParse('x')
-			const actual = toZod(sameRun, options).safeParse('x')
+			const actual = convert(sameRun).safeParse('x')
 			if (!actual.success && !expected.success)
 				expect(actual.error.issues).toMatchObject(expected.issues)
 			expect(actual.success).toBe(expected.success)
@@ -596,7 +600,7 @@ describe('toZod', () => {
 			const schema = k
 				.object({ a: k.string().transform((value) => value.length) })
 				.default({ a: 3 })
-			expect(toZod(schema, options).safeParse(undefined)).toEqual(schema.safeParse(undefined))
+			expect(convert(schema).safeParse(undefined)).toEqual(schema.safeParse(undefined))
 		})
 
 		it('optional skips defaults hidden behind a transform or pipe', () => {
@@ -608,18 +612,18 @@ describe('toZod', () => {
 					.optional(),
 				k.string().default('a').pipe(k.string()).optional(),
 			]) {
-				expect(toZod(schema, options).safeParse(undefined)).toEqual(schema.safeParse(undefined))
-				expect(toZod(schema, options).safeParse('abc')).toEqual(schema.safeParse('abc'))
-				expect(() => z.toJSONSchema(toZod(schema, options), { io: 'input' })).not.toThrow()
+				expect(convert(schema).safeParse(undefined)).toEqual(schema.safeParse(undefined))
+				expect(convert(schema).safeParse('abc')).toEqual(schema.safeParse('abc'))
+				expect(() => z.toJSONSchema(convert(schema), { io: 'input' })).not.toThrow()
 				const object = k.object({ value: schema })
-				expect(toZod(object, options).safeParse({})).toEqual(object.safeParse({}))
+				expect(convert(object).safeParse({})).toEqual(object.safeParse({}))
 			}
 			const visible = k
 				.string()
 				.transform((value) => value.length)
 				.default(3)
 				.optional()
-			expect(toZod(visible, options).safeParse(undefined)).toEqual(visible.safeParse(undefined))
+			expect(convert(visible).safeParse(undefined)).toEqual(visible.safeParse(undefined))
 		})
 
 		it('preserves callback failure sentinels and synchronous-only transforms', () => {
@@ -630,7 +634,7 @@ describe('toZod', () => {
 				k.string().check(async () => {}),
 			]) {
 				const expected = schema.safeParse('value')
-				const actual = toZod(schema, options).safeParse('value')
+				const actual = convert(schema).safeParse('value')
 				expect(actual.success).toBe(expected.success)
 				if (!actual.success && !expected.success)
 					expect(actual.error.issues).toMatchObject(expected.issues)
@@ -645,7 +649,7 @@ describe('toZod', () => {
 				}
 				return value.length
 			})
-			const result = toZod(schema, options).safeParse('bad')
+			const result = convert(schema).safeParse('bad')
 			expect(result.success).toBe(false)
 			if (!result.success)
 				expect(result.error.issues).toMatchObject([
@@ -668,7 +672,7 @@ describe('toZod', () => {
 				elements: k.array(value),
 				branch: k.union([value, k.boolean()]),
 			})
-			const converted = toZod(schema, options)
+			const converted = convert(schema)
 			const good = { field: ' hi ', elements: [' hey '], branch: ' yes ' }
 			expect(converted.parse(good)).toEqual(schema.parse(good))
 			for (const input of ['', 'bad', 'x']) {
@@ -682,14 +686,12 @@ describe('toZod', () => {
 		})
 
 		it('keeps catch explicitly unsupported', () => {
-			expect(() => toZod(k.string().catch('fallback'), options)).toThrow(
-				'toZod: .catch() is not carried',
-			)
+			expect(() => convert(k.string().catch('fallback'))).toThrow('toZod: .catch() is not carried')
 		})
 	})
 
-	it('uses the injected classic namespace for the entire schema', () => {
-		const converted = toZod(task, { zod: z })
+	it.each([classicOption, toClassicZod])('builds classic schemas with chain methods', (convert) => {
+		const converted = convert(task)
 		expect(converted).toBeInstanceOf(z.ZodType)
 		expect(converted.optional().parse(undefined)).toBeUndefined()
 		expect(converted.parse(valid)).toEqual(task.parse(valid))
@@ -753,10 +755,15 @@ describe('toZod', () => {
 		expect(mini.optional(zod).safeParse(undefined).success).toBe(true)
 	})
 
-	it('installs .toZod() on every k schema', () => {
+	it('keeps the installed .toZod() method on Mini output after importing the classic entry', () => {
 		const zod = task.shape.title.toZod()
 		expect(zod).toBeInstanceOf(z.core.$ZodType)
+		expect(zod).not.toBeInstanceOf(z.ZodType)
 		expect(zod.parse(' a ')).toBe('a')
 		expect(k.string().optional().toZod().parse(undefined)).toBeUndefined()
 	})
 })
+
+function classicOption<S extends import('../src/k/types').KType>(schema: S) {
+	return toZod(schema, { zod: z })
+}

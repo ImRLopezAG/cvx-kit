@@ -27,7 +27,7 @@ import type {
 /** The converted schema preserves the kit schema's parsed output and accepted input types. */
 export type KZod<S extends KType> = z.ZodMiniType<S['_output'], S['validator']['type']>
 
-/** A converted schema built with the caller's classic Zod namespace. */
+/** A converted classic Zod schema with chain methods. */
 export type KClassicZod<S extends KType> = classic.ZodType<S['_output'], S['validator']['type']>
 
 /** Metadata `toZod` records on every converted `k.id`: the table the id belongs to. */
@@ -54,10 +54,18 @@ declare global {
  * `k.jsonObject()` checks Convex's key rule on top-level keys only. A schema holding `catch` throws.
  */
 export function toZod<S extends KType>(schema: S): KZod<S>
+/**
+ * @deprecated Import `toZod` from `cvx-kit/zod/classic` instead.
+ * Passing the namespace keeps all of Zod in the bundle.
+ */
 export function toZod<S extends KType>(
 	schema: S,
 	options: { zod: typeof classic.z },
 ): KClassicZod<S>
+/**
+ * @deprecated Import `toZod` from `cvx-kit/zod/classic` for classic output.
+ * Passing the namespace keeps all of Zod in the bundle.
+ */
 export function toZod<S extends KType>(
 	schema: S,
 	options: { zod: typeof classic.z } | undefined,
@@ -70,6 +78,13 @@ export function toZod<S extends KType>(
 	const factory = options === undefined ? miniFunctions : retyped<Factory>(options.zod)
 	// SAFETY: conversion preserves input/output types; the injected factory determines the method API.
 	return retyped<KZod<S> | KClassicZod<S>>(convert(schema, factory))
+}
+
+/** @internal Shared converter bridge for the named classic constructor table. */
+// oxlint-disable-next-line anti-slop/no-object-parameters -- the classic constructor table shares Mini signatures at runtime, but its method interfaces differ.
+export function toZodWithFactory<S extends KType>(schema: S, factory: object): KClassicZod<S> {
+	// SAFETY: Mini and classic functional constructors implement the same Zod core operations.
+	return retyped<KClassicZod<S>>(convert(schema, retyped<Factory>(factory)))
 }
 
 Object.defineProperty(KSchema.prototype, 'toZod', {

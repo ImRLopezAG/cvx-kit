@@ -10,7 +10,7 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
-## [Unreleased]
+## [2.0.0-rc.1]
 
 ### Fixed
 

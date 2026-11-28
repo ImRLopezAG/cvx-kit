@@ -359,3 +359,14 @@ const objectEnumType: Assert<Equal<k.output<typeof objectEnum>, 'a' | 'b'>> = tr
 void objectEnumType
 // @ts-expect-error int64 bounds remain bigint-only in TypeScript.
 k.int64().min(0)
+
+// An enum built from a caller's type parameter keeps its values (a conditional return type did not).
+function enumGrammar<Text extends string>(registry: { text: readonly [Text, ...Text[]] }) {
+	return k.strictObject({ field: k.enum(registry.text), value: k.string() })
+}
+const enumRule = enumGrammar({ text: ['name', 'email'] })
+type EnumRule = k.infer<typeof enumRule>
+const goodEnumRule: EnumRule = { field: 'name', value: 'x' }
+// @ts-expect-error an unknown field name must be rejected
+const badEnumRule: EnumRule = { field: 'nope', value: 'x' }
+void [goodEnumRule, badEnumRule]

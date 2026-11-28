@@ -455,11 +455,18 @@ export function literal<const V extends KLiteralValue>(value: V): KLiteral<V> {
 	return new KLiteral<V>(null, 'literal', value, undefined)
 }
 
-export function enumOf<
-	const V extends readonly [string, ...string[]] | Readonly<Record<string, string>>,
->(
-	values: V,
-): KEnum<V extends readonly [string, ...string[]] ? V : KEnumValues<Extract<V[keyof V], string>>> {
+// Two overloads, not one conditional return type: a conditional stays deferred when the values
+// are a type parameter of the caller, and the enum then infers nothing.
+// The list form is declared last, so `ReturnType` and `k.enum<[...]>` keep meaning the list form.
+// Its object form refuses a list in the parameter, not in the constraint, so `k.enum<[...]>` still
+// instantiates.
+export function enumOf<const V extends Readonly<Record<string, string>> | readonly unknown[]>(
+	values: V & (V extends readonly unknown[] ? never : unknown),
+): KEnum<KEnumValues<Extract<V[keyof V], string>>>
+export function enumOf<const V extends readonly [string, ...string[]]>(values: V): KEnum<V>
+export function enumOf(
+	values: readonly [string, ...string[]] | Readonly<Record<string, string>>,
+): KEnum<KEnumValues<string>> {
 	const entries = Array.isArray(values)
 		? values
 		: values !== null &&
@@ -467,9 +474,7 @@ export function enumOf<
 					Object.getPrototypeOf(values) === null)
 			? Object.values(values)
 			: []
-	return enumValues<
-		V extends readonly [string, ...string[]] ? V : KEnumValues<Extract<V[keyof V], string>>
-	>(entries)
+	return enumValues<KEnumValues<string>>(entries)
 }
 
 export function id<T extends string>(table: T): KId<T> {

@@ -28,7 +28,11 @@ import {
 	processZodChain,
 	SCHEMA_METHODS,
 } from './transforms/schema.mjs'
-import { consumerOrigin, isRegistrationCallee } from './transforms/consumer.mjs'
+import {
+	consumerOrigin,
+	isDomainContractCallee,
+	isRegistrationCallee,
+} from './transforms/consumer.mjs'
 import { getterEdits, isFunctionDefinition } from './transforms/getters.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './transforms/sites.mjs'
 import { isCreateTable, processTableCall, tableKind } from './transforms/tables.mjs'
@@ -44,6 +48,68 @@ const SCHEMA_ARGUMENT_FUNCTIONS = new Set([
 	'zodContract',
 	'effectZodApiBuilder',
 	'createTable',
+])
+
+const JS_GLOBALS = new Set([
+	'Object',
+	'Function',
+	'Boolean',
+	'Symbol',
+	'Number',
+	'BigInt',
+	'Math',
+	'Date',
+	'String',
+	'RegExp',
+	'Array',
+	'Map',
+	'Set',
+	'WeakMap',
+	'WeakSet',
+	'Promise',
+	'Reflect',
+	'Proxy',
+	'JSON',
+	'Intl',
+	'Error',
+	'TypeError',
+	'RangeError',
+	'ArrayBuffer',
+	'SharedArrayBuffer',
+	'DataView',
+	'Uint8Array',
+	'Uint16Array',
+	'Uint32Array',
+	'Int8Array',
+	'Int16Array',
+	'Int32Array',
+	'Float32Array',
+	'Float64Array',
+	'BigInt64Array',
+	'BigUint64Array',
+	'structuredClone',
+	'parseInt',
+	'parseFloat',
+	'isNaN',
+	'isFinite',
+	'globalThis',
+	'encodeURI',
+	'encodeURIComponent',
+	'decodeURI',
+	'decodeURIComponent',
+	'Atomics',
+	'WeakRef',
+	'FinalizationRegistry',
+	'EvalError',
+	'URIError',
+	'SyntaxError',
+	'ReferenceError',
+	'AggregateError',
+	'Iterator',
+	'AsyncIterator',
+	'Uint8ClampedArray',
+	'Float16Array',
+	'eval',
 ])
 
 const TYPE_DECLARATIONS = new Set(['TSTypeAliasDeclaration', 'TSInterfaceDeclaration'])
@@ -117,6 +183,7 @@ function createContext(path, source, program, options) {
 		imported: new Map(),
 		moduleDecls: new Map(),
 		schemaBindings: new Set(),
+		schemaPaths: new Set(),
 		refinedBindings: new Set(),
 		numberBindings: new Set(),
 		integerBindings: new Set(),
@@ -197,6 +264,15 @@ function rewrite(path, source, program, options) {
 	for (const unit of units) {
 		if (!isLeft(unit)) continue
 		checkHeldPipes(ctx, unit)
+		for (const binding of ctx.kit.values()) {
+			if (binding.imported !== 'zodToConvex') continue
+			for (const reference of binding.references ?? []) {
+				if (reference.unit === unit.index && binding.converted?.has(unit.index)) {
+					binding.bridgeUnknown = true
+					addManual(ctx, unit, ctx.parents.get(reference.node), 'zod-to-convex-unknown')
+				}
+			}
+		}
 		for (const node of unit.zidRefs) {
 			const binding = ctx.kit.get(node.name)
 			if (binding?.imported === 'zid' && binding.module === 'cvx-kit/zod-table')
@@ -209,6 +285,26 @@ function rewrite(path, source, program, options) {
 	const applied = units.filter((unit) => !isLeft(unit) && editsOf(unit).length > 0)
 	const needsK = applied.some((unit) => unit.edits.some((edit) => edit.usesK))
 	const imports = planImports(ctx, (index) => isLeft(units[index]), needsK)
+	const importSkips = []
+	for (const decl of program.body) {
+		if (decl.type !== 'ImportDeclaration' || decl.source.value !== 'cvx-kit/zod-table') continue
+		const bindings = [...ctx.kit.values()].filter((binding) => binding.decl === decl)
+		const unhandled =
+			decl.specifiers.length === 0 ||
+			bindings.length !== decl.specifiers.length ||
+			bindings.some(
+				(binding) =>
+					ZOD_INTEROP.has(binding.imported) &&
+					!binding.refs.some((index) => isLeft(units[index])) &&
+					!(
+						binding.imported === 'zodToConvex' &&
+						!binding.bridgeUnknown &&
+						binding.refs.every((index) => binding.converted?.has(index))
+					),
+			)
+		if (unhandled) importSkips.push({ ...siteAt(ctx, decl.source), code: 'v1-entry-string' })
+	}
+	ctx.importSkips = importSkips
 	const edits = [...units.flatMap(editsOf), ...imports.edits]
 	if (edits.length === 0) return summarize(path, source, ctx, units, isLeft, source, facts)
 	const output = applyEdits(source, edits)
@@ -275,6 +371,11 @@ function factsOf(ctx, units, isLeft) {
 		}
 	}
 	const kExports = [...exports].filter(([, local]) => kLocals.has(local)).map(([name]) => name)
+	for (const [exported, local] of exports) {
+		if (ctx.owners.get(local)?.some(isLeft)) continue
+		for (const path of ctx.schemaPaths)
+			if (path.startsWith(`${local}.`)) kExports.push(`${exported}${path.slice(local.length)}`)
+	}
 	const tableExports = [...exports]
 		.filter(([, local]) => kLocals.has(local) && ctx.tableBindings.has(local))
 		.map(([name]) => name)
@@ -308,7 +409,7 @@ function summarize(
 	status = 'untouched',
 	rewritten = 0,
 ) {
-	const skipped = []
+	const skipped = [...(ctx.importSkips ?? [])]
 	const info = []
 	const declarations = { rewritten: 0, left: 0 }
 	for (const unit of units) {
@@ -356,6 +457,7 @@ function isZodNumber(ctx, chain) {
 function classifyBindings(ctx, units) {
 	const bindings = [
 		ctx.schemaBindings,
+		ctx.schemaPaths,
 		ctx.tableBindings,
 		ctx.tableFactories,
 		ctx.refinedBindings,
@@ -372,6 +474,7 @@ function classifyBindings(ctx, units) {
 				if (declarator.id.type !== 'Identifier' || !declarator.init) continue
 				const name = declarator.id.name
 				const init = unwrap(declarator.init)
+				collectSchemaPaths(ctx, init, name)
 				if (init.type === 'ObjectExpression' && unit.declaration.kind === 'const') {
 					ctx.objectConsts.add(name)
 				}
@@ -399,7 +502,34 @@ function classifyBindings(ctx, units) {
 	}
 }
 
+/** Record schema leaves in literal objects and contract definitions, never arbitrary calls. */
+function collectSchemaPaths(ctx, expression, path) {
+	const node = unwrap(expression)
+	if (!node) return
+	if (isSchemaExpression(ctx, node)) {
+		ctx.schemaPaths.add(path)
+		return
+	}
+	if (node.type === 'CallExpression' && isDomainContractCallee(ctx, node.callee)) {
+		collectSchemaPaths(ctx, node.arguments[0], path)
+		return
+	}
+	if (node.type !== 'ObjectExpression') return
+	for (const property of node.properties) {
+		if (property.type !== 'Property' || property.computed || property.kind !== 'init') continue
+		collectSchemaPaths(ctx, property.value, `${path}.${property.key.name ?? property.key.value}`)
+	}
+}
+
 function scanUnit(ctx, unit) {
+	if (unit.declaration.type === 'VariableDeclaration')
+		for (const item of unit.declaration.declarations)
+			if (
+				item.init &&
+				(isSchemaExpression(ctx, item.init) ||
+					[...ctx.schemaPaths].some((path) => path.startsWith(`${item.id.name}.`)))
+			)
+				unit.contexts.push(item.init)
 	const identifiers = []
 	const calls = []
 	walk(
@@ -439,11 +569,7 @@ function scanUnit(ctx, unit) {
 			(external && ctx.options.run?.isTable(ctx.path, imported.source, imported.imported))
 		)
 			processBoundChain(ctx, unit, node, true)
-		else if (
-			ctx.schemaBindings.has(name) ||
-			(external && ctx.options.run?.isK(ctx.path, imported.source, imported.imported))
-		)
-			processBoundChain(ctx, unit, node, false)
+		else processBoundChain(ctx, unit, node, false)
 	}
 	if (unit.safeResults.size === 0) return
 	walk(unit.node, (node) => {
@@ -467,6 +593,7 @@ function unprovenSchemaCall(ctx, unit, call) {
 		call.arguments.length === 1 &&
 		['ObjectExpression', 'Identifier', 'MemberExpression'].includes(unwrap(call.arguments[0]).type)
 	if (!mask) return
+	if (isSchemaExpression(ctx, callee.object)) return
 	const { root } = chainOf(callee.object)
 	if (root.type === 'Identifier') {
 		if (ctx.zodNamespaces.has(root.name)) return
@@ -573,7 +700,10 @@ function decideComponents(ctx, units) {
 		unit.skips.length > 0 ||
 		declaredNames(unit.declaration).some(
 			(name) =>
-				ctx.schemaBindings.has(name) || ctx.tableBindings.has(name) || ctx.tableFactories.has(name),
+				ctx.schemaBindings.has(name) ||
+				ctx.tableBindings.has(name) ||
+				ctx.tableFactories.has(name) ||
+				[...ctx.schemaPaths].some((path) => path.startsWith(`${name}.`)),
 		)
 	const linkedBy = new Map()
 	for (const unit of units) {
@@ -607,6 +737,12 @@ function scanConsumers(ctx, unit) {
 		if (
 			root.type === 'Identifier' &&
 			/^(?:expect|assert|describe|it|test|vi|jest|console)$/.test(root.name)
+		)
+			return
+		if (
+			root.type === 'Identifier' &&
+			JS_GLOBALS.has(root.name) &&
+			!resolveBinding(root, ctx.parents)
 		)
 			return
 		const origin = consumerOrigin(ctx, call.callee)
@@ -686,6 +822,7 @@ function consumedSchemas(ctx, expression, seen = new Set()) {
 		const step = steps[index]
 		if (step.kind !== 'member') return result
 		if (step.name === 'shape') {
+			if (!steps[index + 1]) return result
 			if (steps[index + 1]?.kind === 'member') index++
 			continue
 		}

@@ -745,6 +745,55 @@ describe('codemod-v2 cross-file knowledge', () => {
 		}
 	}
 
+	it('rewrites imported constant masks and schema member paths across a run', () => {
+		tree(
+			{
+				'masks.ts':
+					'export const tenantScoped = ({ tenant: true } as const) satisfies Record<string, true>\n',
+				'schemas.ts':
+					"import { z } from 'zod'\nimport { defineDomainContract } from 'cvx-kit/contracts'\nexport const inboundArtifactInput = z.object({ tenant: z.string() })\nexport const contract = defineDomainContract({ commands: { ready: { input: z.object({ tenant: z.string() }), result: z.string() } } })\n",
+				'use.ts':
+					"import { z } from 'zod'\nimport * as inboundValidators from './schemas'\nimport { contract } from './schemas'\nimport { tenantScoped } from './masks'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\nexport const inboundArtifactInput = inboundValidators.inboundArtifactInput\nconst ready = contract.commands.ready.input.extend({ extra: z.string() })\nconst masked = ready.omit(tenantScoped)\ntype A = z.infer<typeof inboundArtifactInput>\ntype B = z.input<typeof contract.commands.ready.input>\ntype C = z.output<typeof ready>\nconst a = zodToConvex(ready)\nconst b = zodToConvex(contract.commands.ready.result)\n",
+			},
+			(root) => {
+				const first = run(['.', '--write'], root)
+				const output = readFileSync(join(root, 'use.ts'), 'utf8')
+				expect(output).toContain("ready.omit('tenant')")
+				expect(output).toContain('k.infer<typeof inboundArtifactInput>')
+				expect(output).toContain('k.input<typeof contract.commands.ready.input>')
+				expect(output).toContain('k.output<typeof ready>')
+				expect(output).toContain('a = ready.validator')
+				expect(output).toContain('b = contract.commands.ready.result.validator')
+				expect(first.report.totals).toEqual({})
+				expect(run(['.', '--write'], root).report.summary.rewritten).toBe(0)
+			},
+		)
+	})
+
+	it('follows literal schema objects and re-exported member aliases while holding unknown paths', () => {
+		tree(
+			{
+				'schemas.ts':
+					"import { z } from 'zod'\nconst good = z.string()\nconst held = z.string().brand<'Held'>()\nexport const validators = { held }\nexport const clean = { nested: { good } }\n",
+				'alias.ts': "import { clean } from './schemas'\nexport const alias = clean.nested.good\n",
+				'use.ts':
+					"import { z } from 'zod'\nimport { validators, clean } from './schemas'\nimport { alias } from './alias'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\ntype A = z.infer<typeof clean.nested.good>\ntype B = z.infer<typeof alias>\ntype Unknown = z.infer<typeof clean.missing>\ntype Held = z.infer<typeof validators.held>\nconst a = zodToConvex(clean.nested.good)\nconst unknown = zodToConvex(clean.missing)\n",
+			},
+			(root) => {
+				const first = run(['.', '--write'], root)
+				const output = readFileSync(join(root, 'use.ts'), 'utf8')
+				expect(output).toContain('k.infer<typeof clean.nested.good>')
+				expect(output).toContain('k.infer<typeof alias>')
+				expect(output).toContain('a = clean.nested.good.validator')
+				expect(output).toContain('z.infer<typeof validators.held>')
+				expect(output).toContain('z.infer<typeof clean.missing>')
+				expect(output).toContain('zodToConvex(clean.missing)')
+				expect(first.report.totals['type-helper-unknown']).toBeGreaterThanOrEqual(2)
+				expect(run(['.', '--write'], root).report.summary.rewritten).toBe(0)
+			},
+		)
+	})
+
 	it('follows exported builder initializers and reports unresolved relative builders', () => {
 		tree(
 			{
@@ -1154,6 +1203,85 @@ describe('source resolver with a tsconfig that cannot be loaded', () => {
 			expect(createSourceResolver(root)('src/schema.ts', './constants')).toBe('src/constants.ts')
 		} finally {
 			rmSync(root, { recursive: true, force: true })
+		}
+	})
+})
+
+describe('codemod-v2 app gap regressions', () => {
+	function transformTemp(path, source) {
+		const root = mkdtempSync(join(tmpdir(), 'cvx-codemod-gap-'))
+		try {
+			writeFileSync(join(root, path), source)
+			const { report } = run([path, '--write'], root)
+			return { ...report.files[0], output: readFileSync(join(root, path), 'utf8') }
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+		}
+	}
+
+	it('resolves lexical constant masks and leaves unsupported masks reported', () => {
+		const source =
+			"import { z } from 'zod'\nconst mask = ({ tenant: true } as const) satisfies Record<string, true>\nconst S = z.object({ tenant: z.string() })\nconst a = S.pick(mask); const b = S.omit(mask); const c = S.partial(mask); const d = S.required(mask)\nfunction scoped(mask: any) { return S.pick(mask) }\nconst bad = { tenant: false }; const e = S.omit(bad)\nconst spread = { ...mask }; const f = S.pick(spread)\nconst computed = { ['tenant']: true }; const g = S.pick(computed)\nlet mutable = { tenant: true }; const h = S.pick(mutable)\n"
+		const out = transformTemp('masks.ts', source)
+		for (const method of ['pick', 'omit', 'partial', 'required'])
+			expect(out.output).toContain(`S.${method}('tenant')`)
+		expect(out.output).toContain('const mask = ({ tenant: true } as const)')
+		expect(out.skipped.map((site) => site.code)).toEqual(Array(5).fill('mask-dynamic'))
+		expect(transformTemp('masks.ts', out.output).output).toBe(out.output)
+	})
+
+	it('rewrites void only in contract operation results', () => {
+		const source =
+			"import { z } from 'zod'\nimport { defineDomainContract as define } from 'cvx-kit/contracts'\nconst contract = define({ commands: { x: { input: z.object({}), result: z.void() } }, queries: { y: { input: z.string(), result: z.void() } } })\nregistry.command({ input: z.string(), result: z.void(), handler: () => {} })\nregistry.query({ input: z.string(), result: z.void(), handler: () => {} })\nconst bad = z.object({ result: z.void() })\nconst arr = z.array(z.void())\nconst union = z.union([z.string(), z.void()])\nregistry.command({ input: z.void(), result: z.string(), handler: () => {} })\n"
+		const out = transformTemp('void.ts', source)
+		expect(out.output.match(/result: k.void\(\)/g)).toHaveLength(4)
+		expect(out.skipped.filter((site) => site.code === 'void-position')).toHaveLength(4)
+		expect(transformTemp('void.ts', out.output).output).toBe(out.output)
+	})
+
+	it('rewrites call-produced enums with a runtime-check notice and holds numeric enums', () => {
+		const source =
+			"import { z } from 'zod'\nconst A = z.enum(list.map(item => item.slug))\nconst B = z.enum(list.filter(Boolean))\nconst C = z.enum(Object.keys(values))\nconst D = z.enum(Object.values(values))\nconst E = z.enum(load())\nenum Numeric { A, B }\nconst F = z.enum(Numeric)\nconst Mixed = { a: 'a', b: 1 } as const\nconst G = z.enum(Mixed)\n"
+		const out = transformTemp('enums.ts', source)
+		expect(out.info.map((site) => site.code)).toEqual(Array(5).fill('enum-runtime-checked'))
+		expect(out.skipped.map((site) => site.code)).toEqual(['enum-unproven', 'enum-unproven'])
+		expect(out.output).toContain('k.enum(list.map(item => item.slug))')
+		expect(transformTemp('enums.ts', out.output).output).toBe(out.output)
+	})
+
+	it('rewrites inline bridges in an otherwise kept file and reports unsupported inline bridges', () => {
+		const source =
+			"import { z } from 'zod'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\nconst held = z.string().brand<'Held'>()\nconst good = zodToConvex(z.object({ a: z.string() }))\nconst bad = zodToConvex(z.string().brand<'Bad'>())\n"
+		const out = transformTemp('inline.ts', source)
+		expect(out.output).toContain('(k.object({ a: k.string() })).validator')
+		expect(out.skipped.map((site) => site.code)).toContain('zod-to-convex-unknown')
+		expect(transformTemp('inline.ts', out.output).output).toBe(out.output)
+	})
+
+	it('does not treat JavaScript globals or a shape object as schema consumers', () => {
+		const source =
+			"import { z } from 'zod'\nimport { consume } from 'external'\nconst S = z.object({ a: z.string() })\nObject.keys(S.shape); Object.values(S.shape); Object.entries(S.shape); JSON.stringify(S); Array.from([S]); structuredClone(S); Reflect.ownKeys(S.shape); consume(S.shape)\n"
+		const out = transformTemp('globals.ts', source)
+		expect(out.skipped).toEqual([])
+		expect(out.output).toContain('k.object')
+	})
+
+	it('moves an unused paginated import and reports unhandled v1 entry imports', () => {
+		const moved = transformTemp('page.ts', "import { paginated } from 'cvx-kit/zod-table'\n")
+		expect(moved.output).toBe("import { paginated } from 'cvx-kit/table'\n")
+		const bridged = transformTemp(
+			'bridge.ts',
+			"import { z } from 'zod'\nimport { zodToConvex } from 'cvx-kit/zod-table'\nconst result = zodToConvex(z.string())\n",
+		)
+		expect(bridged.skipped).toEqual([])
+		expect(bridged.output).not.toContain('cvx-kit/zod-table')
+		for (const source of [
+			"import * as tables from 'cvx-kit/zod-table'\n",
+			"import 'cvx-kit/zod-table'\n",
+			"import { jsonSafeZid } from 'cvx-kit/zod-table'\n",
+		]) {
+			const out = transformTemp('old.ts', source)
+			expect(out.skipped.map((site) => site.code)).toContain('v1-entry-string')
 		}
 	})
 })

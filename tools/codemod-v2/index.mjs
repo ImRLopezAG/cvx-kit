@@ -20,9 +20,9 @@ import { buildReport, formatSummary } from './report.mjs'
 import { createSourceResolver, KIT_OR_ZOD_MODULE } from './resolve.mjs'
 import { formatRestoreSummary, gitReader, restoreStrictSource } from './restore-strict.mjs'
 import { transformSource } from './transform.mjs'
-import { parentMap, parseSource } from './transforms/ast.mjs'
+import { parentMap, parseSource, unwrap } from './transforms/ast.mjs'
 import { consumerOrigin as expressionConsumerOrigin } from './transforms/consumer.mjs'
-import { stringEnumArgument } from './transforms/schema.mjs'
+import { constantMaskKeys, stringEnumArgument } from './transforms/schema.mjs'
 
 export const HELP = `Usage: cvx-kit-codemod-v2 <path…> [options]
 
@@ -355,6 +355,39 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 	})
 	return {
 		resolveSource: resolve,
+		maskKeys(from, specifier, name, seen = new Set()) {
+			const target = resolve(from, specifier)
+			if (!target || seen.has(`${target}:${name}`)) return null
+			seen = new Set(seen).add(`${target}:${name}`)
+			const program = programOf(target)
+			for (const statement of program.body) {
+				if (statement.type !== 'ExportNamedDeclaration') continue
+				for (const spec of statement.specifiers) {
+					if ((spec.exported.name ?? spec.exported.value) !== name) continue
+					if (statement.source)
+						return this.maskKeys(
+							target,
+							statement.source.value,
+							spec.local.name ?? spec.local.value,
+							seen,
+						)
+					name = spec.local.name ?? spec.local.value
+				}
+			}
+			for (const statement of program.body) {
+				const declaration = statement.declaration ?? statement
+				if (declaration.type !== 'VariableDeclaration' || declaration.kind !== 'const') continue
+				const item = declaration.declarations.find((item) => item.id.name === name)
+				if (item) {
+					const init = unwrap(item.init)
+					return init?.type === 'ObjectExpression'
+						? constantMaskKeys({ parents: parentMap(program) }, init)
+						: null
+				}
+			}
+			return null
+		},
+
 		isStringEnum(from, specifier, name, arrayOnly = false, seen = new Set()) {
 			const target = resolve(from, specifier)
 			if (!target || seen.has(`${target}:${name}`)) return false

@@ -5,6 +5,7 @@
 // same run that exports it as `k`. Any other type argument stays Zod and is
 // reported, because `k.infer` of a Zod schema is silently `unknown`. Every other
 // type reached through the Zod binding stays and is reported.
+import { isSchemaExpression } from './schema.mjs'
 import { addEdit, addSkip } from './sites.mjs'
 
 const TYPE_HELPERS = new Set(['infer', 'input', 'output'])
@@ -33,16 +34,18 @@ export function processZodType(ctx, unit, id, qualified) {
 function knownK(ctx, reference) {
 	const argument = reference.typeArguments?.params?.[0]
 	if (argument?.type !== 'TSTypeQuery') return false
-	let name = argument.exprName
-	while (name.type === 'TSQualifiedName') name = name.left
-	if (name.type !== 'Identifier') return false
-	const root = name.name
-	if (ctx.schemaBindings.has(root) || ctx.tableBindings.has(root)) return true
-	const imported = ctx.imported.get(root)
-	// A type alias may share the imported value's name (`export type Ok = z.infer<typeof Ok>`).
-	const localValue = (ctx.owners.get(root) ?? []).some((owner) => !owner.isType)
-	if (!imported || localValue) return false
-	return ctx.options.run?.isK(ctx.path, imported.source, imported.imported) === true
+	const asExpression = (node) =>
+		node.type === 'TSQualifiedName'
+			? {
+					type: 'MemberExpression',
+					computed: false,
+					object: asExpression(node.left),
+					property: node.right,
+				}
+			: node
+	const expression = asExpression(argument.exprName)
+	// Synthetic member nodes retain the original identifier's lexical scope.
+	return isSchemaExpression(ctx, expression)
 }
 
 function outermostQualified(ctx, qualified) {

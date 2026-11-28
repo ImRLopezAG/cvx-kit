@@ -2,7 +2,7 @@
 // the chain methods applied to a proven schema, or records why a site stays Zod.
 import { chainOf, isShadowed, outerChain, resolveBinding, unwrap, walk } from './ast.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './sites.mjs'
-import { isRegistrationCallee } from './consumer.mjs'
+import { isDomainContractCallee, isRegistrationCallee } from './consumer.mjs'
 import { isFunctionDefinition } from './getters.mjs'
 
 const FACTORIES = new Map([
@@ -217,22 +217,46 @@ export function isSchemaExpression(ctx, expression, seen = new Set()) {
 		const first = steps[0]
 		return first?.kind === 'member' && steps[1]?.kind === 'call'
 	}
-	if (ctx.schemaBindings.has(root.name)) return steps.length === 0 || steps[0].kind === 'member'
 	if (ctx.tableBindings.has(root.name)) return tableSchemaSteps(steps) > 0
-	const imported = ctx.imported.get(root.name)
-	if (imported && !ctx.owners.get(root.name)?.some((owner) => !owner.isType)) {
-		const run = ctx.options.run
-		if (run?.isTable(ctx.path, imported.source, imported.imported))
-			return tableSchemaSteps(steps) > 0
-		if (run?.isK(ctx.path, imported.source, imported.imported)) {
-			return steps.every(
-				(step, index) =>
+	const tableImport = ctx.imported.get(root.name)
+	if (
+		tableImport &&
+		!ctx.owners.get(root.name)?.some((owner) => !owner.isType) &&
+		ctx.options.run?.isTable(ctx.path, tableImport.source, tableImport.imported)
+	)
+		return tableSchemaSteps(steps) > 0
+	const prefix = schemaMemberSteps(ctx, root, steps)
+	if (prefix >= 0)
+		return steps
+			.slice(prefix)
+			.every(
+				(step, index, rest) =>
 					step.kind === 'call' ||
-					(DERIVED_METHODS.has(step.name) && steps[index + 1]?.kind === 'call'),
+					(DERIVED_METHODS.has(step.name) && rest[index + 1]?.kind === 'call'),
 			)
-		}
-	}
 	return false
+}
+
+/** Number of member selections before a proven schema, or -1 if the path is unknown. */
+export function schemaMemberSteps(ctx, root, steps) {
+	let path = root.name
+	const imported = ctx.imported.get(root.name)
+	for (let index = 0; index <= steps.length; index++) {
+		const local = index === 0 ? ctx.schemaBindings.has(path) : ctx.schemaPaths?.has(path)
+		const members = path.split('.').slice(1)
+		const exported =
+			imported?.imported === '*' ? members.join('.') : [imported?.imported, ...members].join('.')
+		if (
+			local ||
+			(imported &&
+				!ctx.owners.get(root.name)?.some((owner) => !owner.isType) &&
+				ctx.options.run?.isK(ctx.path, imported.source, exported))
+		)
+			return index
+		if (steps[index]?.kind !== 'member' || steps[index].name === null) break
+		path += `.${steps[index].name}`
+	}
+	return -1
 }
 
 const DERIVED_METHODS = new Set([
@@ -357,7 +381,7 @@ export function processZodChain(ctx, unit, id) {
 			parent?.type !== 'Property' ||
 			parent.value !== outer ||
 			parent.computed ||
-			(parent.key.name ?? parent.key.value) !== 'returns' ||
+			!['returns', 'result'].includes(parent.key.name ?? parent.key.value) ||
 			call.arguments.length !== 0 ||
 			!isReturnsDefinition(ctx, parent)
 		) {
@@ -370,8 +394,12 @@ export function processZodChain(ctx, unit, id) {
 		return
 	}
 	if (first.name === 'enum' && !stringEnumArgument(ctx, call.arguments[0])) {
-		addSkip(ctx, unit, span(next), 'enum-unproven')
-		return
+		if (unwrap(call.arguments[0])?.type === 'CallExpression')
+			addInfo(ctx, unit, span(next), 'enum-runtime-checked')
+		else {
+			addSkip(ctx, unit, span(next), 'enum-unproven')
+			return
+		}
 	}
 	if (first.name === 'custom' && !customArgumentsMap(steps[next].node)) {
 		addSkip(ctx, unit, span(next), 'custom')
@@ -466,8 +494,8 @@ function numberBounds(ctx, unit, steps, next, factory, site) {
 export function processBoundChain(ctx, unit, id, table) {
 	const outer = outerChain(id, ctx.parents)
 	const { steps } = chainOf(outer)
-	const from = table ? tableSchemaSteps(steps) : 0
-	if (table && from === 0) return false
+	const from = table ? tableSchemaSteps(steps) : schemaMemberSteps(ctx, id, steps)
+	if (from < 0 || (table && from === 0)) return false
 	const method = steps[from]
 	if (method?.kind !== 'member' || steps[from + 1]?.kind !== 'call') return false
 	unit.contexts.push(outer)
@@ -822,12 +850,27 @@ function maskStep(ctx, unit, call, site) {
 		return
 	}
 	const mask = args.length === 1 ? args[0] : null
-	const keys = mask?.type === 'ObjectExpression' ? maskKeys(mask) : null
+	const keys = constantMaskKeys(ctx, mask)
 	if (!keys || keys.length === 0) {
 		addManual(ctx, unit, site, 'mask-dynamic')
 		return
 	}
 	addEdit(unit, mask, keys.map((key) => `'${key.replace(/[\\']/g, '\\$&')}'`).join(', '))
+}
+
+/** Resolve only lexical const object masks, including constants exported by another file. */
+export function constantMaskKeys(ctx, expression) {
+	const node = unwrap(expression)
+	if (node?.type === 'ObjectExpression') return maskKeys(node)
+	if (node?.type !== 'Identifier') return null
+	const binding = resolveBinding(node, ctx.parents)
+	if (binding?.kind === 'const' && binding.path?.length === 0) {
+		const init = unwrap(binding.init)
+		return init?.type === 'ObjectExpression' ? maskKeys(init) : null
+	}
+	if (binding?.kind === 'import')
+		return ctx.options.run?.maskKeys(ctx.path, binding.source, binding.imported) ?? null
+	return null
 }
 
 function maskKeys(mask) {
@@ -943,11 +986,38 @@ function stringEnumMembers(declaration) {
 function isReturnsDefinition(ctx, property) {
 	const object = ctx.parents.get(property)
 	const call = ctx.parents.get(object)
-	if (
-		object?.type !== 'ObjectExpression' ||
-		call?.type !== 'CallExpression' ||
-		!call.arguments.includes(object)
+	if (object?.type !== 'ObjectExpression') return false
+	const key = property.key.name ?? property.key.value
+	if (key === 'returns')
+		return (
+			call?.type === 'CallExpression' &&
+			call.arguments.includes(object) &&
+			(isFunctionDefinition(object, call) || isRegistrationCallee(ctx, call.callee))
+		)
+	if (call?.type === 'CallExpression' && isFunctionDefinition(object, call)) {
+		const callee = unwrap(call.callee)
+		return (
+			callee.type === 'MemberExpression' &&
+			!callee.computed &&
+			['command', 'query'].includes(callee.property.name)
+		)
+	}
+	const operation = ctx.parents.get(object)
+	const operations = ctx.parents.get(operation)
+	const group = ctx.parents.get(operations)
+	const definition = ctx.parents.get(group)
+	const factory = ctx.parents.get(definition)
+	return (
+		operation?.type === 'Property' &&
+		!operation.computed &&
+		operation.value === object &&
+		operations?.type === 'ObjectExpression' &&
+		group?.type === 'Property' &&
+		!group.computed &&
+		['commands', 'queries'].includes(group.key.name ?? group.key.value) &&
+		definition?.type === 'ObjectExpression' &&
+		factory?.type === 'CallExpression' &&
+		factory.arguments[0] === definition &&
+		isDomainContractCallee(ctx, factory.callee)
 	)
-		return false
-	return isFunctionDefinition(object, call) || isRegistrationCallee(ctx, call.callee)
 }

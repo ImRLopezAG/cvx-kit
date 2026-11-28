@@ -92,3 +92,15 @@ export function isRegistrationCallee(ctx, callee, seen = new Set()) {
 		)
 	return false
 }
+
+/** Contract factories preserve the operation tree passed as their first argument. */
+export function isDomainContractCallee(ctx, callee) {
+	const { root, steps } = chainOf(unwrap(callee))
+	if (root.type !== 'Identifier') return false
+	const binding = resolveBinding(root, ctx.parents)
+	if (binding?.kind !== 'import' || !/^cvx-kit(?:\/contracts)?$/.test(binding.source)) return false
+	const members = steps.filter((step) => step.kind === 'member')
+	return binding.imported === '*'
+		? members.length === 1 && members[0].name === 'defineDomainContract'
+		: steps.length === 0 && binding.imported === 'defineDomainContract'
+}

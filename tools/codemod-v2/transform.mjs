@@ -30,6 +30,7 @@ import {
 } from './transforms/schema.mjs'
 import {
 	consumerOrigin,
+	contractDefinition,
 	isDomainContractCallee,
 	isRegistrationCallee,
 } from './transforms/consumer.mjs'
@@ -267,7 +268,10 @@ function rewrite(path, source, program, options) {
 		for (const binding of ctx.kit.values()) {
 			if (binding.imported !== 'zodToConvex') continue
 			for (const reference of binding.references ?? []) {
-				if (reference.unit === unit.index && binding.converted?.has(unit.index)) {
+				if (
+					reference.unit === unit.index &&
+					binding.convertedCalls?.has(ctx.parents.get(reference.node))
+				) {
 					binding.bridgeUnknown = true
 					addManual(ctx, unit, ctx.parents.get(reference.node), 'zod-to-convex-unknown')
 				}
@@ -374,7 +378,8 @@ function factsOf(ctx, units, isLeft) {
 	for (const [exported, local] of exports) {
 		if (ctx.owners.get(local)?.some(isLeft)) continue
 		for (const path of ctx.schemaPaths)
-			if (path.startsWith(`${local}.`)) kExports.push(`${exported}${path.slice(local.length)}`)
+			if (path === local || path.startsWith(`${local}.`))
+				kExports.push(`${exported}${path.slice(local.length)}`)
 	}
 	const tableExports = [...exports]
 		.filter(([, local]) => kLocals.has(local) && ctx.tableBindings.has(local))
@@ -471,6 +476,12 @@ function classifyBindings(ctx, units) {
 		for (const unit of units) {
 			if (unit.declaration.type !== 'VariableDeclaration') continue
 			for (const declarator of unit.declaration.declarations) {
+				if (declarator.id.type === 'ObjectPattern' && declarator.init) {
+					for (const name of patternNames(declarator.id)) {
+						const binding = resolveBinding(declarator.id, ctx.parents, name)
+						if (binding?.path) collectSchemaPaths(ctx, declarator.init, name, binding.path)
+					}
+				}
 				if (declarator.id.type !== 'Identifier' || !declarator.init) continue
 				const name = declarator.id.name
 				const init = unwrap(declarator.init)
@@ -503,21 +514,55 @@ function classifyBindings(ctx, units) {
 }
 
 /** Record schema leaves in literal objects and contract definitions, never arbitrary calls. */
-function collectSchemaPaths(ctx, expression, path) {
+function collectSchemaPaths(ctx, expression, path, selected = [], seen = new Set()) {
 	const node = unwrap(expression)
-	if (!node) return
+	if (!node || seen.has(node)) return
+	seen = new Set(seen).add(node)
+	if (node.type === 'MemberExpression' && (!node.computed || node.property.type === 'Literal')) {
+		collectSchemaPaths(
+			ctx,
+			node.object,
+			path,
+			[node.property.name ?? node.property.value, ...selected],
+			seen,
+		)
+		return
+	}
+	if (node.type === 'Identifier') {
+		const binding = resolveBinding(node, ctx.parents)
+		const prefix = [node.name, ...selected].join('.')
+		for (const known of [...ctx.schemaPaths, ...ctx.schemaBindings]) {
+			if (known === prefix || known.startsWith(`${prefix}.`))
+				ctx.schemaPaths.add(path + known.slice(prefix.length))
+		}
+		if (binding?.kind === 'import') {
+			const imported =
+				binding.imported === '*' ? selected.join('.') : [binding.imported, ...selected].join('.')
+			for (const suffix of ctx.options.run?.schemaPaths?.(ctx.path, binding.source, imported) ?? [])
+				ctx.schemaPaths.add(path + suffix)
+		} else if (binding?.kind === 'const' && binding.path) {
+			collectSchemaPaths(ctx, binding.init, path, [...binding.path, ...selected], seen)
+		}
+		return
+	}
+	if (selected.length > 0 && node.type !== 'ObjectExpression' && node.type !== 'CallExpression')
+		return
 	if (isSchemaExpression(ctx, node)) {
-		ctx.schemaPaths.add(path)
+		if (selected.length === 0) ctx.schemaPaths.add(path)
 		return
 	}
 	if (node.type === 'CallExpression' && isDomainContractCallee(ctx, node.callee)) {
-		collectSchemaPaths(ctx, node.arguments[0], path)
+		collectSchemaPaths(ctx, contractDefinition(node.arguments[0]), path, selected, seen)
 		return
 	}
 	if (node.type !== 'ObjectExpression') return
 	for (const property of node.properties) {
 		if (property.type !== 'Property' || property.computed || property.kind !== 'init') continue
-		collectSchemaPaths(ctx, property.value, `${path}.${property.key.name ?? property.key.value}`)
+		const key = property.key.name ?? property.key.value
+		if (selected.length > 0) {
+			if (selected[0] === key)
+				collectSchemaPaths(ctx, property.value, path, selected.slice(1), seen)
+		} else collectSchemaPaths(ctx, property.value, `${path}.${key}`, [], seen)
 	}
 }
 
@@ -642,6 +687,8 @@ function kitReference(ctx, unit, node, parent) {
 		) {
 			binding.converted ??= new Set()
 			binding.converted.add(unit.index)
+			binding.convertedCalls ??= new Set()
+			binding.convertedCalls.add(parent)
 			unit.contexts.push(parent)
 			const simple = argument.type === 'Identifier' || argument.type === 'MemberExpression'
 			addEdit(unit, { start: parent.start, end: argument.start }, simple ? '' : '(')

@@ -2,7 +2,7 @@
 // the chain methods applied to a proven schema, or records why a site stays Zod.
 import { chainOf, isShadowed, outerChain, resolveBinding, unwrap, walk } from './ast.mjs'
 import { addEdit, addInfo, addManual, addSkip } from './sites.mjs'
-import { isDomainContractCallee, isRegistrationCallee } from './consumer.mjs'
+import { contractDefinition, isDomainContractCallee, isRegistrationCallee } from './consumer.mjs'
 import { isFunctionDefinition } from './getters.mjs'
 
 const FACTORIES = new Map([
@@ -242,7 +242,7 @@ export function schemaMemberSteps(ctx, root, steps) {
 	let path = root.name
 	const imported = ctx.imported.get(root.name)
 	for (let index = 0; index <= steps.length; index++) {
-		const local = index === 0 ? ctx.schemaBindings.has(path) : ctx.schemaPaths?.has(path)
+		const local = (index === 0 && ctx.schemaBindings.has(path)) || ctx.schemaPaths?.has(path)
 		const members = path.split('.').slice(1)
 		const exported =
 			imported?.imported === '*' ? members.join('.') : [imported?.imported, ...members].join('.')
@@ -1006,7 +1006,10 @@ function isReturnsDefinition(ctx, property) {
 	const operations = ctx.parents.get(operation)
 	const group = ctx.parents.get(operations)
 	const definition = ctx.parents.get(group)
-	const factory = ctx.parents.get(definition)
+	let factory = ctx.parents.get(definition)
+	while (factory && unwrap(factory) === definition) factory = ctx.parents.get(factory)
+	if (factory?.type === 'ReturnStatement') factory = ctx.parents.get(ctx.parents.get(factory))
+	if (factory?.type === 'ArrowFunctionExpression') factory = ctx.parents.get(factory)
 	return (
 		operation?.type === 'Property' &&
 		!operation.computed &&
@@ -1017,7 +1020,7 @@ function isReturnsDefinition(ctx, property) {
 		['commands', 'queries'].includes(group.key.name ?? group.key.value) &&
 		definition?.type === 'ObjectExpression' &&
 		factory?.type === 'CallExpression' &&
-		factory.arguments[0] === definition &&
+		contractDefinition(factory.arguments[0]) === definition &&
 		isDomainContractCallee(ctx, factory.callee)
 	)
 }

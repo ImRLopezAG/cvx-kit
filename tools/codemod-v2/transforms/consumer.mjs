@@ -94,6 +94,16 @@ export function isRegistrationCallee(ctx, callee, seen = new Set()) {
 }
 
 /** Contract factories preserve the operation tree passed as their first argument. */
+export function contractDefinition(expression) {
+	const node = unwrap(expression)
+	if (node?.type !== 'ArrowFunctionExpression') return node
+	if (node.async || node.params.length !== 0) return null
+	if (node.body.type !== 'BlockStatement') return unwrap(node.body)
+	return node.body.body.length === 1 && node.body.body[0].type === 'ReturnStatement'
+		? unwrap(node.body.body[0].argument)
+		: null
+}
+
 export function isDomainContractCallee(ctx, callee) {
 	const { root, steps } = chainOf(unwrap(callee))
 	if (root.type !== 'Identifier') return false

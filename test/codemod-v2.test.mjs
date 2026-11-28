@@ -745,6 +745,79 @@ describe('codemod-v2 cross-file knowledge', () => {
 		}
 	}
 
+	it.each(['() => ({ BODY })', '() => { return { BODY } }'])(
+		'follows thunk contracts, object aliases and destructuring: %s',
+		(thunk) => {
+			tree(
+				{
+					'leaf.ts':
+						"import { z } from 'zod'\nexport const dto = z.object({ tenant: z.string() })\n",
+					'contract.ts':
+						"import { z } from 'zod'\nimport { dto } from './leaf'\nimport { defineDomainContract } from 'cvx-kit/contracts'\nexport const contract = defineDomainContract(" +
+						thunk.replace(
+							'BODY',
+							'commands: { ready: { input: dto, result: z.void() } }, queries: { get: { input: dto, result: dto } }',
+						) +
+						')\n',
+					'client.ts': "import { contract } from './contract'\nexport const alias = contract\n",
+					'barrel.ts': "export { alias as forwarded } from './client'\n",
+					'ready.ts':
+						"import { forwarded } from './barrel'\nexport const ready = forwarded.commands.ready.input.extend({})\n",
+					'use.ts':
+						"import { z } from 'zod'\nimport { forwarded } from './barrel'\nimport { ready } from './ready'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\nconst { commands: ops, queries } = forwarded\nconst mask = { tenant: true } as const\nconst input = ops.ready.input.omit(mask)\ntype A = z.infer<typeof ops.ready.input>\ntype B = z.output<typeof forwarded.commands.ready.result>\ntype C = z.input<typeof ready>\nconst validator = zodToConvex(ready)\nconst result = zodToConvex(forwarded.commands.ready.result)\nconst fields = queries.get.input.shape\n",
+				},
+				(root) => {
+					const first = run(['.', '--write'], root)
+					const output = readFileSync(join(root, 'use.ts'), 'utf8')
+					expect(output).toContain("ops.ready.input.omit('tenant')")
+					expect(output).toContain('k.infer<typeof ops.ready.input>')
+					expect(output).toContain('k.output<typeof forwarded.commands.ready.result>')
+					expect(output).toContain('k.input<typeof ready>')
+					expect(output).toContain('validator = ready.validator')
+					expect(output).toContain('result = forwarded.commands.ready.result.validator')
+					expect(output).toContain('fields = queries.get.input.shape')
+					expect(readFileSync(join(root, 'contract.ts'), 'utf8')).toContain('result: k.void()')
+					expect(first.report.totals).toEqual({})
+					expect(run(['.', '--write'], root).report.summary.rewritten).toBe(0)
+				},
+			)
+		},
+	)
+
+	it('reports each bridge once when another bridge in its held statement was convertible', () => {
+		const out = transformSource(
+			'held.ts',
+			"import { z } from 'zod'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\nconst fn = configure({ args: zodToConvex(z.object({})), returns: zodToConvex(external), handler: (value: z.output<typeof external>) => value })\n",
+		)
+		expect(out.skipped.filter((site) => site.code === 'zod-to-convex-unknown')).toHaveLength(2)
+	})
+
+	it('keeps held and external thunk leaves unproven while following table DTO results', () => {
+		tree(
+			{
+				'tables.ts':
+					"import { z } from 'zod'\nimport { zodTable } from 'cvx-kit/zod-table'\nexport const table = zodTable('items', () => ({ tenant: z.string() }))\nexport const held = z.string().brand<'Held'>()\n",
+				'contract.ts':
+					"import { defineDomainContract } from 'cvx-kit/contracts'\nimport { table, held } from './tables'\nimport { external } from 'outside'\nexport const contract = defineDomainContract(() => ({ commands: { good: { input: table.insertSchema, result: table.dto(true) }, bad: { input: held, result: external } } }))\n",
+				'use.ts':
+					"import { z } from 'zod'\nimport { zodToConvex } from 'convex-helpers/server/zod4'\nimport { contract } from './contract'\nconst { result: dto } = contract.commands.good\nexport { dto }\ntype Good = z.output<typeof dto>\nconst good = zodToConvex(contract.commands.good.result)\ntype Bad = z.output<typeof contract.commands.bad.input>\nconst bad = zodToConvex(contract.commands.bad.result)\nconst mask = { tenant: true } as const\nconst held = contract.commands.bad.input.omit(mask)\n",
+			},
+			(root) => {
+				const first = run(['.', '--write'], root)
+				const output = readFileSync(join(root, 'use.ts'), 'utf8')
+				expect(output).toContain('k.output<typeof dto>')
+				expect(output).toContain('good = contract.commands.good.result.validator')
+				expect(output).toContain('z.output<typeof contract.commands.bad.input>')
+				expect(output).toContain('zodToConvex(contract.commands.bad.result)')
+				expect(output).toContain('contract.commands.bad.input.omit(mask)')
+				expect(first.report.totals['type-helper-unknown']).toBe(1)
+				expect(first.report.totals['zod-to-convex-unknown']).toBe(1)
+				expect(first.report.totals['unproven-mask']).toBe(1)
+				expect(run(['.', '--write'], root).report.summary.rewritten).toBe(0)
+			},
+		)
+	})
+
 	it('rewrites imported constant masks and schema member paths across a run', () => {
 		tree(
 			{

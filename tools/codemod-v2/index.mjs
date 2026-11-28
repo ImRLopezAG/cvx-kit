@@ -355,6 +355,30 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 	})
 	return {
 		resolveSource: resolve,
+		schemaPaths(from, specifier, name, seen = new Set()) {
+			const target = resolve(from, specifier)
+			if (!target || !kExports.has(target) || seen.has(`${target}:${name}`)) return []
+			seen = new Set(seen).add(`${target}:${name}`)
+			const paths = [...kExports.get(target)]
+				.filter((path) => path === name || path.startsWith(`${name}.`))
+				.map((path) => path.slice(name.length))
+			const [head, ...members] = name.split('.')
+			for (const statement of programOf(target).body) {
+				if (statement.type !== 'ExportNamedDeclaration' || !statement.source) continue
+				for (const spec of statement.specifiers) {
+					if ((spec.exported.name ?? spec.exported.value) === head)
+						paths.push(
+							...this.schemaPaths(
+								target,
+								statement.source.value,
+								[spec.local.name ?? spec.local.value, ...members].join('.'),
+								seen,
+							),
+						)
+				}
+			}
+			return paths
+		},
 		maskKeys(from, specifier, name, seen = new Set()) {
 			const target = resolve(from, specifier)
 			if (!target || seen.has(`${target}:${name}`)) return null
@@ -500,8 +524,7 @@ function runKnowledge(files, outcomes, cwd, { resolve, programs }) {
 			return target !== null && tableExports.get(target)?.has(name) === true
 		},
 		isK(fromPath, specifier, name) {
-			const target = resolve(fromPath, specifier)
-			return target !== null && kExports.get(target)?.has(name) === true
+			return this.schemaPaths(fromPath, specifier, name).includes('')
 		},
 	}
 }

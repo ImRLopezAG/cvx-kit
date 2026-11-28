@@ -10,6 +10,10 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [Unreleased]
+
+- Codemod: foreign schema fields are reported without holding the surrounding object, contract, function or shared locals; replace the reported field with a local `k` schema without rerunning.
+
 ## [2.0.0-rc.2]
 
 From the full reviews both consumer apps wrote on rc.1.

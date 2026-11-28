@@ -1004,11 +1004,10 @@ function scanForeignSchemas(ctx, unit) {
 		)
 	}
 	unit.foreignProperties = new Set()
-	const report = (property, hold = true) => {
+	const report = (property) => {
 		if (unit.foreignProperties.has(property)) return
 		unit.foreignProperties.add(property)
-		if (hold) addSkip(ctx, unit, property.value, 'zod-foreign-schema')
-		else addManual(ctx, unit, property.value, 'zod-foreign-schema')
+		addManual(ctx, unit, property.value, 'zod-foreign-schema')
 	}
 	walk(unit.node, (node, parent) => {
 		if (
@@ -1026,9 +1025,9 @@ function scanForeignSchemas(ctx, unit) {
 				)
 					return false
 				const schemas = consumedSchemas(ctx, property.value)
-				return schemas.local || schemas.imported
+				return schemas.local || schemas.imported || isSchemaExpression(ctx, property.value)
 			})
-			if (kind === 'kit' || (kind === 'unproven' && rewrittenSibling)) report(node)
+			if (kind === 'kit' || (kind !== 'zod' && rewrittenSibling)) report(node)
 			else unit.foreignProperties.add(node)
 		}
 		if (node.type !== 'CallExpression') return
@@ -1041,7 +1040,7 @@ function scanForeignSchemas(ctx, unit) {
 						['args', 'returns'].includes(property.key.name ?? property.key.value) &&
 						foreign(property.value)
 					)
-						report(property, false)
+						report(property)
 		}
 		if (isDomainContractCallee(ctx, node.callee)) {
 			const definition = contractDefinition(node.arguments[0])
@@ -1061,22 +1060,21 @@ function scanForeignSchemas(ctx, unit) {
 								['input', 'result'].includes(property.key.name ?? property.key.value) &&
 								foreign(property.value)
 							)
-								report(property, false)
+								report(property)
 					}
 				}
 		}
 		const { root, steps } = chainOf(node.callee)
 		if (
 			root.type !== 'Identifier' ||
-			!ctx.zodNamespaces.has(root.name) ||
+			!(ctx.zodNamespaces.has(root.name) || (root.name === 'k' && ctx.hasK)) ||
 			!['object', 'strictObject', 'looseObject'].includes(steps[0]?.name)
 		)
 			return
 		const fields = unwrap(node.arguments[0])
 		if (fields?.type !== 'ObjectExpression') return
 		for (const property of fields.properties)
-			if (property.type === 'Property' && foreign(property.value))
-				addSkip(ctx, unit, property.value, 'mixed-reference')
+			if (property.type === 'Property' && foreign(property.value)) report(property)
 	})
 }
 

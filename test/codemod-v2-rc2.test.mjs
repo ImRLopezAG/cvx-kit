@@ -23,15 +23,15 @@ function tree(files, body) {
 	}
 }
 describe('codemod migration corrections', () => {
-	it('reports foreign registration schemas and holds foreign object fields', () => {
+	it('reports foreign registration schemas and rewrites around foreign object fields', () => {
 		const result = transformSource(
 			'foreign.ts',
 			"import { effectZodApiBuilder } from 'cvx-kit/effect'; const query = effectZodApiBuilder(base, {}); import { credentialInput, paginationOpts } from '@x/pkg'\nimport { z } from 'zod'\nexport const get = query({ args: credentialInput, returns: credentialInput.nullable(), handler })\nconst input = z.object({ paginationOpts, unreadOnly: z.boolean().optional() })",
 		)
 		expect(codes(result)).toContain('zod-foreign-schema')
-		expect(codes(result)).toContain('mixed-reference')
+		expect(codes(result)).not.toContain('mixed-reference')
 		expect(result.output).toContain('returns: credentialInput.nullable()')
-		expect(result.output).toContain('const input = z.object(')
+		expect(result.output).toContain('const input = k.object(')
 	})
 	it('rewrites masks after shape element and unwrap and reports unknown receivers', () => {
 		const result = convert(
@@ -363,12 +363,12 @@ describe('codemod conservative alias and helper handling', () => {
 			'literal-array',
 		)
 	})
-	it('holds foreign schemas reached through local aliases', () => {
+	it('reports foreign schemas reached through local aliases without holding the object', () => {
 		const result = convert(
 			`import { foreign } from './foreign'; const alias = foreign; const a=z.object({ a: alias })`,
 		)
-		expect(codes(result)).toContain('mixed-reference')
-		expect(result.output).toContain('z.object({ a: alias })')
+		expect(codes(result)).toEqual(['zod-foreign-schema'])
+		expect(result.output).toContain('k.object({ a: alias })')
 	})
 	it.each(['args', 'returns'])(
 		'holds foreign schemas in a registration %s field map',

@@ -78,7 +78,7 @@ export const REPORT_FIXES = {
 	file: 'Store an uploaded file reference or validated bytes instead.',
 	'template-literal': 'Use a string schema with a regular expression.',
 	'zod-foreign-schema':
-		'Migrate the source schema, keep a Zod function builder, or bridge with `zodToConvex` and parse in the handler.',
+		'Replace this foreign schema with a local `k` schema, such as `convexPaginationOptions()` for pagination options; no rerun is needed.',
 	'table-type-arguments':
 		'Use element unions for server, client and public field keys and check the table signature.',
 	'refine-async': 'Move async validation into the handler and keep schema refinements synchronous.',

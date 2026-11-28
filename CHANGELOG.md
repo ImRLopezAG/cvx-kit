@@ -10,6 +10,49 @@ export-name API audit) — until then, the six 0.1.0 helper surfaces may still
 be renamed in a minor. Every release tag gets a GitHub Release whose notes
 are this file's matching section.
 
+## [Unreleased]
+
+Planned as 2.0.0-rc.2. From the full reviews both consumer apps wrote on rc.1.
+
+### Fixed
+
+- A non-primitive `.default(value)` or `.catch(value)` returned the same instance on every parse, so one caller's mutation showed up in later parses. Plain objects and arrays are now copied on every fill, in `parse`, object fields, table inserts and function arguments.
+- A field that is not a `k` schema (a Zod schema, a string) throws when the schema is declared and names the field. It used to overflow the stack at parse.
+- `pick`, `omit`, `required` and `partial(...keys)` throw at definition for a key the object does not have.
+- A number bound of `NaN` throws at definition.
+- An array's length bound is checked before its elements.
+- `k.enum(['a', 'a'])` exports the literal once.
+- `toZod` carries the `k.record` key rule in both entries.
+- A `KValidationError` thrown by an application `parse` is named `KValidationError` and has a stack. Failures at kit boundaries stay without frames.
+- Codemod: a Zod schema from a package the run cannot prove is `k` is reported as `zod-foreign-schema` when used as `args` or `returns` (directly, through a local alias or inside a field map), and holds the object it is a field of. It used to be rewritten around, which did not compile.
+- Codemod: a mask after `.shape.<field>`, `.element` or `.unwrap()` is rewritten; a mask constant whose every use was rewritten is removed unless it is exported or used as a type.
+- Codemod: explicit table type arguments written as `typeof keys` become `(typeof keys)[number]`.
+- Codemod: a private helper typed `T extends z.ZodType` is rewritten to `AnyKSchema` when every caller passes a rewritten schema and its body uses only members `k` has.
+- Codemod: `z.literal([...])` of strings becomes `k.enum([...])`; a factory called with a params object is held as `factory-params`; an async `refine` is held as `refine-async`.
+- Codemod: an unknown option or a missing path exits 1.
+
+### Changed
+
+- `refine` passes on any truthy return, as `k.custom` and Zod do. A returned promise fails with "A refinement must be synchronous".
+- String `min`, `max` and `length` count Unicode code points, as Zod 4 and JSON Schema do. They counted UTF-16 units, so `'😀'` failed `.max(1)`.
+- Codemod report codes renamed where they named the wrong thing (`.readonly()`, `z.preprocess`, `.catchall()`, `z.file()`, `z.templateLiteral`). Every code carries a one-sentence fix in the JSON report and the summary.
+- The `zod/mini` interop entry pulls 83,324 bytes of Zod (rc.1: 79,065); the added bytes are Zod's tuple and never constructors.
+
+### Added
+
+- `.default(() => value)` and `.catch(() => value)`: the function is called on every fill. JSON Schema carries no `default` for a factory.
+- `k.ipv4()`, `k.ipv6()`, `k.uuid()` and the matching string methods, accepting what Zod 4's constructors accept.
+- Number `.gt()`, `.lt()` and `.multipleOf()`.
+- `k.never()`.
+- `k.tuple([a, b])`, `k.tuple([a], rest)` and `.rest(schema)`. Convex stores an array and checks each element against the union of the members; the kit checks position and length. Optional positions are not supported.
+- `toJsonSchema(schema, { unknownKeys: 'parse' })` publishes what application `parse` accepts: a plain object allows extra keys. The default output is unchanged.
+- `asId(table, value)` in `cvx-kit/test`, `componentResult(schema)` in `cvx-kit/contracts`, and `convexPaginationOptions()` in `cvx-kit/table`.
+- Codemod: mappings for all of the above, a table callback with local declarations is rewritten in place, and informational codes `iso-datetime-offset`, `normalise-before-check`, `union-member-order` and `record-key-rule` mark rewrites whose behaviour differs from Zod.
+
+### Not in this release
+
+- Recursive schemas. Convex validators cannot be recursive; a depth-bounded form changes what is accepted at the cut-off and an unbounded one stores as `v.any()`.
+
 ## [2.0.0-rc.1]
 
 ### Fixed

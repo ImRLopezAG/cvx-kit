@@ -1139,3 +1139,21 @@ describe('codemod-v2 cross-file knowledge', () => {
 		)
 	})
 })
+
+describe('source resolver with a tsconfig that cannot be loaded', () => {
+	it('still resolves relative imports when `extends` names a package that is not installed', () => {
+		const root = mkdtempSync(join(tmpdir(), 'cvx-codemod-extends-'))
+		try {
+			mkdirSync(join(root, 'src'), { recursive: true })
+			writeFileSync(
+				join(root, 'tsconfig.json'),
+				JSON.stringify({ extends: '@not-installed/tooling/base.json' }),
+			)
+			writeFileSync(join(root, 'src/constants.ts'), "export const A = ['x'] as const\n")
+			writeFileSync(join(root, 'src/schema.ts'), "import { A } from './constants'\nexport { A }\n")
+			expect(createSourceResolver(root)('src/schema.ts', './constants')).toBe('src/constants.ts')
+		} finally {
+			rmSync(root, { recursive: true, force: true })
+		}
+	})
+})

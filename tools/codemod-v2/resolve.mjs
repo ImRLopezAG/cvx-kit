@@ -43,6 +43,17 @@ export function createSourceResolver(cwd = process.cwd()) {
 		const directory = dirname(resolve(root, fromPath))
 		const resolver = sourceResolver(directory)
 		let target = resolver.sync(directory, specifier).path
+		// A tsconfig that cannot be loaded (an `extends` that is not installed) must not cost the
+		// relative imports their resolution.
+		if (!target && resolver !== sourceResolver.plain) {
+			sourceResolver.plain ??= new ResolverFactory({
+				symlinks: false,
+				extensions: ['.ts', '.tsx', '.mts'],
+				extensionAlias: { '.js': ['.ts', '.tsx'], '.mjs': ['.mts'], '.jsx': ['.tsx'] },
+				modules: [],
+			})
+			if (specifier.startsWith('.')) target = sourceResolver.plain.sync(directory, specifier).path
+		}
 		if (!target && !specifier.startsWith('.') && !specifier.startsWith('/')) {
 			workspaces ??= workspacePackages(root)
 			for (const { directory: packageDirectory, manifest } of workspaces) {
